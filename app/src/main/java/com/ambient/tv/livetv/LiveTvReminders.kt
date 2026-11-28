@@ -15,6 +15,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import androidx.compose.runtime.mutableLongStateOf
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.EntryPointAccessors
 import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -50,6 +56,8 @@ data class LiveTvReminder(
     val snoozedUntilMs: Long = 0L,
     val stopEpochSeconds: Long? = null,
     val imageUrl: String? = null,
+    val ready: Boolean = false,
+    val probeAttempts: Int = 0,
 ) {
     val id: String get() = if (youtube) "youtube:$eventId" else "$sourceId|$eventId"
     fun route(): String = if (youtube) Destinations.youtubePlayer(eventId)
@@ -121,6 +129,7 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
                 old.copy(startEpochSeconds = event.startEpochSeconds, stopEpochSeconds = event.stopEpochSeconds,
                     title = event.title, channelName = event.channelName,
                     due = if (moved) false else old.due,
+                    ready = if (moved) false else old.ready,
                     snoozedUntilMs = if (moved) 0L else old.snoozedUntilMs).also { if (it != old) changed.add(it) }
             }
         }
@@ -142,15 +151,36 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
             LiveTvReminderScheduler.schedule(context, reminder)
             return@synchronized null
         }
-        val updated = reminder.copy(due = true, snoozedUntilMs = 0L)
+        val updated = reminder.copy(due = true, snoozedUntilMs = 0L, ready = false)
         save(current.map { if (it.id == id) updated else it })
         updated
+    }
+
+    fun markYoutubeReady(expected: LiveTvReminder) = synchronized(lock) {
+        val current = load()
+        if (current.none { it == expected && it.youtube && it.due }) return@synchronized
+        save(current.map { if (it.id == expected.id) it.copy(ready = true, probeAttempts = 0) else it })
+    }
+
+    /** Preserve a delayed premiere; stale probes must not resurrect a removed or snoozed entry. */
+    fun deferYoutube(expected: LiveTvReminder, revisedStartMs: Long?) = synchronized(lock) {
+        val current = load()
+        if (current.none { it == expected && it.youtube && it.due }) return@synchronized
+        val now = System.currentTimeMillis()
+        val attempt = (expected.probeAttempts + 1).coerceIn(1, 5)
+        val retry = now + (30_000L shl (attempt - 1)).coerceAtMost(300_000L)
+        val start = revisedStartMs?.takeIf { it > now }?.div(1000) ?: expected.startEpochSeconds
+        val updated = expected.copy(startEpochSeconds = start, due = false, ready = false,
+            snoozedUntilMs = maxOf(retry, start * 1000), probeAttempts = attempt)
+        save(current.map { if (it.id == expected.id) updated else it })
+        context.getSystemService(NotificationManager::class.java)?.cancel(expected.id, 0)
+        LiveTvReminderScheduler.schedule(context, updated)
     }
 
     fun snooze(id: String) = synchronized(lock) {
         val current = load()
         val reminder = current.firstOrNull { it.id == id } ?: return@synchronized
-        val updated = reminder.copy(due = false, snoozedUntilMs = System.currentTimeMillis() + 5 * 60_000L)
+        val updated = reminder.copy(due = false, ready = false, snoozedUntilMs = System.currentTimeMillis() + 5 * 60_000L)
         save(current.map { if (it.id == id) updated else it })
         context.getSystemService(NotificationManager::class.java)?.cancel(id, 0)
         LiveTvReminderScheduler.schedule(context, updated)
@@ -284,6 +314,13 @@ class LiveTvReminderReceiver : BroadcastReceiver() {
     private companion object { const val CHANNEL = "live_tv_reminders" }
 }
 
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface ProgrammeReminderProbeEntryPoint {
+    fun smartTubeEngine(): com.ambient.tv.youtube.SmartTubeEngine
+    fun appPreferences(): com.ambient.tv.data.local.AppPreferences
+}
+
 /** Persisted queue: unresolved reminders survive process death and are displayed one at a time. */
 @Composable
 fun LiveTvReminderPromptDialog() {
@@ -309,18 +346,41 @@ fun LiveTvReminderPromptDialog() {
         delay((nextAt - System.currentTimeMillis()).coerceAtLeast(0L))
         store.markDue(next.id)
     }
+    val nextProbe = reminders.filter { it.youtube && it.due && !it.ready }.minByOrNull { it.startEpochSeconds }
+    LaunchedEffect(resumed, nextProbe) {
+        if (!resumed || nextProbe == null) return@LaunchedEffect
+        delay((nextProbe.startEpochSeconds * 1000 - System.currentTimeMillis()).coerceAtLeast(0L))
+        try {
+            val entry = EntryPointAccessors.fromApplication(context, ProgrammeReminderProbeEntryPoint::class.java)
+            check(entry.appPreferences().youtubeEnabled && entry.smartTubeEngine().available)
+            val offline = entry.smartTubeEngine().probeProgrammeReminder(nextProbe.eventId)
+            if (offline == null) store.markYoutubeReady(nextProbe)
+            else store.deferYoutube(nextProbe, offline.scheduledStartMs)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            store.deferYoutube(nextProbe, null)
+        }
+    }
+    var lastLaunchAt by remember { mutableLongStateOf(0L) }
     if (!resumed) return
-    val due = reminders.filter { it.due && it.isRelevant(System.currentTimeMillis()) }.sortedBy { it.startEpochSeconds }
+    val now = System.currentTimeMillis()
+    val due = reminders.filter { it.due && it.isRelevant(now) &&
+        (!it.youtube || it.ready || it.startEpochSeconds * 1000 > now) }.sortedBy { it.startEpochSeconds }
     val selected = reminders.firstOrNull { it.id == selectedId }
     val reminder = selected ?: due.firstOrNull() ?: return
     val time = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
         .format(java.util.Date(reminder.startEpochSeconds * 1000))
-    val automatic = selected == null && due.size == 1 && pendingRoute == null &&
+    val competing = reminders.any { it.id != reminder.id && (it.due ||
+        kotlin.math.abs(it.startEpochSeconds - reminder.startEpochSeconds) <= 60L) }
+    val automatic = selected == null && due.size == 1 && !competing && pendingRoute == null &&
+        now - lastLaunchAt >= 60_000L && (!reminder.youtube || reminder.ready) &&
         LiveTvReminderScheduler.autoSwitch(context, reminder.youtube) &&
-        reminder.startEpochSeconds * 1000 <= System.currentTimeMillis()
+        reminder.startEpochSeconds * 1000 <= now
     if (automatic) {
         LaunchedEffect(reminder.id) {
             if (store.find(reminder.id)?.due != true || LauncherIntents.requests.value != null) return@LaunchedEffect
+            lastLaunchAt = System.currentTimeMillis()
             if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
             LauncherIntents.post(reminder.route())
         }
@@ -335,6 +395,7 @@ fun LiveTvReminderPromptDialog() {
             if (reminder.due) {
                 TvActionButton(stringResource(R.string.programme_reminder_play), {
                     closeSelection()
+                    lastLaunchAt = System.currentTimeMillis()
                     if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
                     LauncherIntents.post(reminder.route())
                 }, selected = true)
@@ -344,6 +405,7 @@ fun LiveTvReminderPromptDialog() {
             if (!reminder.due) TvActionButton(stringResource(R.string.common_back), closeSelection)
         },
     ) {
-        if (reminder.youtube && reminder.due) Text(stringResource(R.string.programme_reminder_scheduled_hint))
+        if (reminder.youtube && reminder.due) Text(stringResource(
+            if (reminder.ready) R.string.programme_reminder_ready else R.string.programme_reminder_scheduled_hint))
     }
 }
