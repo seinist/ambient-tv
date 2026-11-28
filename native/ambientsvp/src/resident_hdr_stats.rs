@@ -32,13 +32,16 @@ fn ellipse_rotation(angle:u32)->(i32,i32){
         _=>f64::from(angle).to_radians().sin_cos()};
     ((cos*ANGLE_SCALE as f64).round() as i32,(sin*ANGLE_SCALE as f64).round() as i32)
 }
-fn ellipse_contains_fixed(dx:i64,dy:i64,axes:[u32;3])->bool{
-    let (c,s)=ellipse_rotation(axes[2]);
-    let (x,y)=(i128::from(dx),i128::from(dy));
+fn ellipse_value_fixed(dx:i64,dy:i64,trig:(i32,i32),a2:i128,b2:i128)->i128{
+    let (c,s)=trig;let (x,y)=(i128::from(dx),i128::from(dy));
     let u=x*i128::from(c)+y*i128::from(s);
     let v=-x*i128::from(s)+y*i128::from(c);
+    u*u*b2+v*v*a2
+}
+#[cfg(test)]
+fn ellipse_contains_fixed(dx:i64,dy:i64,axes:[u32;3])->bool{
     let (a2,b2)=(i128::from(axes[0]).pow(2),i128::from(axes[1]).pow(2));
-    u*u*b2+v*v*a2<=a2*b2*ANGLE_SCALE*ANGLE_SCALE
+    ellipse_value_fixed(dx,dy,ellipse_rotation(axes[2]),a2,b2)<=a2*b2*ANGLE_SCALE*ANGLE_SCALE
 }
 fn pq_table()->&'static Vec<u32>{
     static TABLE:std::sync::OnceLock<Vec<u32>>=std::sync::OnceLock::new();
@@ -107,29 +110,34 @@ impl Buffer{
 // per-pixel GPU trigonometry and f32 uncertainty near the ellipse boundary.
 // Coordinates follow section 6.1 (pixel centers, clockwise angle).
 fn ellipse_spans(rect:[u32;4],center:[u32;2],axes:[u32;3],height:u32)->Vec<u32>{
-    let [a,b,angle]=axes;
-    let (c,s)=ellipse_rotation(angle);
-    let (sin,cos)=(f64::from(s)/ANGLE_SCALE as f64,f64::from(c)/ANGLE_SCALE as f64);
-    let (a,b)=(f64::from(a),f64::from(b));
-    let inv_a=1.0/(a*a);let inv_b=1.0/(b*b);
-    let aa=cos*cos*inv_a+sin*sin*inv_b;
-    let ab=sin*cos*(inv_a-inv_b);
-    // det = 1/(a²b²), computed directly to avoid cancellation.
-    let det=inv_a*inv_b*(sin*sin+cos*cos).powi(2);
+    let trig=ellipse_rotation(axes[2]);
+    let (a2,b2)=(i128::from(axes[0]).pow(2),i128::from(axes[1]).pow(2));
+    let limit=a2*b2*ANGLE_SCALE*ANGLE_SCALE;
     let mut spans=vec![0;2*height as usize];
-    let inside=|x:i64,y:i64|ellipse_contains_fixed(x-i64::from(center[0]),y-i64::from(center[1]),axes);
     for y in rect[1]..rect[3].min(height){
-        let dy=f64::from(y)-f64::from(center[1]);
-        let rad=aa-det*dy*dy;
-        if rad< -aa*8.0*f64::EPSILON{continue;}
-        let shift=-ab*dy/aa+f64::from(center[0]);
-        let radius=rad.max(0.0).sqrt()/aa;
-        let left=i64::from(rect[0]);let right=i64::from(rect[2]);
-        let mut lo=((shift-radius).floor() as i64-1).clamp(left,right);
-        let mut hi=((shift+radius).ceil() as i64+2).clamp(left,right);
-        while lo<hi&&!inside(lo,i64::from(y)){lo+=1;}
-        while lo<hi&&!inside(hi-1,i64::from(y)){hi-=1;}
-        spans[2*y as usize]=lo as u32;spans[2*y as usize+1]=hi as u32;
+        let dy=i64::from(y)-i64::from(center[1]);
+        let value=|x:u32|ellipse_value_fixed(i64::from(x)-i64::from(center[0]),dy,trig,a2,b2);
+        // Same discrete convex search as the GPU. No floating point root
+        // or epsilon is used, including at a tangential intersection.
+        let (mut lo,mut hi)=(rect[0],rect[2]-1);
+        while lo<hi{
+            let mid=lo+(hi-lo)/2;
+            if value(mid)<=value(mid+1){hi=mid;}else{lo=mid+1;}
+        }
+        let middle=lo;
+        if value(middle)>limit{continue;}
+        (lo,hi)=(rect[0],middle);
+        while lo<hi{
+            let mid=lo+(hi-lo)/2;
+            if value(mid)<=limit{hi=mid;}else{lo=mid+1;}
+        }
+        spans[2*y as usize]=lo;
+        (lo,hi)=(middle,rect[2]);
+        while lo+1<hi{
+            let mid=lo+(hi-lo)/2;
+            if value(mid)<=limit{lo=mid;}else{hi=mid;}
+        }
+        spans[2*y as usize+1]=hi;
     }
     spans
 }
@@ -257,8 +265,8 @@ impl StatsJob{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::DependencyFlags::empty(),&between,&[],&[]);
             self.pipelines.reduce.dispatch(cmd,self.set,params,self.windows.len() as u32,1);
+            self.pipelines.linear.dispatch(cmd,self.set,params,w.div_ceil(8),h.div_ceil(8));
             if let Some(hist)=&self.scene_hist{
-                self.pipelines.linear.dispatch(cmd,self.set,params,w.div_ceil(8),h.div_ceil(8));
                 self.pipelines.proxy.dispatch(cmd,self.set,params,w.div_ceil(5).div_ceil(8),h.div_ceil(5).div_ceil(8));
                 d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::COMPUTE_SHADER,
                     vk::DependencyFlags::empty(),&between,&[],&[]);
@@ -430,7 +438,11 @@ impl StatsJob{
             if pixels==0||pixels>area||(row[67]==0&&pixels!=area)||row[40]>pixels||row[40]==0||row[20..39].iter().any(|&x|x>100000){
                 return Err("invalid GPU HDR statistics".into());
             }
-            result.maxscl.copy_from_slice(&row[20..23]);result.average=row[23];
+            let sum=u64::from(row[72])|(u64::from(row[73])<<32);
+            if sum>u64::from(pixels)*1_000_000_000{return Err("invalid linear MaxRGB sum".into());}
+            let denominator=u64::from(pixels)*10_000;
+            result.maxscl.copy_from_slice(&row[20..23]);result.average=((sum+denominator/2)/denominator) as u32;
+            if result.average>*result.maxscl.iter().max().unwrap(){return Err("average exceeds MaxSCL".into());}
             result.percentiles.copy_from_slice(&row[24..39]);result.pixels=pixels;result.brightest=row[40];
         }
         Ok(())
