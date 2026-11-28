@@ -53,7 +53,17 @@ int main(void) {
             path = Path(temp) / "test.cpp"
             path.write_text(r"""
 #include <cassert>
+#include <sys/wait.h>
+#include <signal.h>
 #include "citra_fastmem.h"
+static void inaccessible(const uint8_t* address) {
+    pid_t pid = fork();
+    assert(pid >= 0);
+    if (!pid) { volatile uint8_t value = *address; (void)value; _exit(0); }
+    int status=0;
+    assert(waitpid(pid, &status, 0) == pid);
+    assert(WIFSIGNALED(status) && (WTERMSIG(status) == SIGSEGV || WTERMSIG(status) == SIGBUS));
+}
 int main() {
     using namespace AmbientFastmem;
     const size_t page = host_page();
@@ -79,12 +89,15 @@ int main() {
         assert(guest[17] == 77 && guest[page+17] == 77);
         pointers[0] = nullptr;
         arena.sync(pointers, 0, 1);
+        inaccessible(guest+17);
         assert(guest[page+17] == 77);
         pointers[0] = memory.data();
         arena.sync(pointers, 0, 1);
         assert(guest[17] == 77);
     }
     // Backing destruction revokes both aliases, even before a page table refresh.
+    inaccessible(guest+17);
+    inaccessible(guest+page+17);
     auto& r = registry();
     std::lock_guard<std::mutex> lock(r.mutex);
     assert(r.allocations.empty());

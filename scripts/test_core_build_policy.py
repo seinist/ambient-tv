@@ -15,6 +15,23 @@ class CoreBuildPolicyTest(unittest.TestCase):
     def setUp(self):
         self.catalog = json.loads((Path(__file__).resolve().parents[1] / "cores/cores.json").read_text())
 
+    def test_citra_ci_version_template_accepts_empty_repository(self):
+        import tempfile
+        from pathlib import Path
+        from core_build_policy import prepare_cmake
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "src/common/CMakeLists.txt"
+            path.parent.mkdir(parents=True)
+            path.write_text('string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR ${BUILD_REPOSITORY})')
+            prepare_cmake(Path(temp), "citra2018", "baseline")
+            self.assertIn('"${BUILD_REPOSITORY}"', path.read_text())
+
+    def test_ndk_dotdot_source_identity(self):
+        from core_acceleration_audit import evidence
+        self.assertTrue(evidence([["-c", "/src/yabause/src/libretro/jni/../../sh2int.c",
+                                   "-DAMBIENT_SH2_ARM64_JIT=1"]],
+                                 "yabause/src/sh2int.c", (("AMBIENT_SH2_ARM64_JIT", "1"),)))
+
     def test_pgo_is_artifact_only_and_requires_one_explicit_target(self):
         for profile in ("pgo-generate", "pgo-use"):
             jobs = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,

@@ -345,6 +345,13 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
 
 
 def prepare_cmake(root, core, profile):
+    if core == "citra2018":
+        path = root / "src/common/CMakeLists.txt"
+        source = path.read_text()
+        marker = 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR ${BUILD_REPOSITORY})'
+        if source.count(marker) != 1:
+            raise ValueError("Citra CI version template changed")
+        path.write_text(source.replace(marker, 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR "${BUILD_REPOSITORY}")'))
     # SwanStation's pin sets IPO unconditionally for Release, overriding cache flags.
     # Preserve the upstream baseline. In explicit candidates disable only the
     # automatic IPO block; the workflow supplies the requested LTO mode itself.

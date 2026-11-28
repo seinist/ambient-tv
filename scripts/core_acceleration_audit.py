@@ -1,5 +1,6 @@
 """Inspect emitted compiler commands for architecture-specific core acceleration."""
 from pathlib import Path
+import posixpath
 import re
 import shlex
 
@@ -161,6 +162,10 @@ def evidence(commands, source, required=()):
     """Require the source and its effective macros in the SAME invocation."""
     for args in commands:
         path = compile_source(args)
+        if path is not None:
+            # ndk-build emits absolute paths containing jni/../..; compare
+            # normalized source identities rather than raw command spelling.
+            path = posixpath.normpath(path)
         if path is None or not (path == source or path.endswith("/" + source)):
             continue
         macros = defines(args)
