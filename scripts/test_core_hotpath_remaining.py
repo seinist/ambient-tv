@@ -183,15 +183,19 @@ void kernel%d(Span<uint32> pixels, Span<uint32> dest, Span<const bool> mask,
 #include <cstdint>
 #include <vector>
 #include <algorithm>
-enum class ScreenLayout { TopOnly, BottomOnly, Other };
+enum class ScreenLayout { TopOnly, BottomOnly, Other, Hybrid, Large, Scaled };
 struct Point { unsigned x, y; };
 constexpr unsigned NDS_SCREEN_WIDTH = 4, NDS_SCREEN_HEIGHT = 3;
 static bool direct = true;
 bool LayoutSupportsDirectCopy(ScreenLayout) { return direct; }
+bool IsHybridLayout(ScreenLayout l) { return l == ScreenLayout::Hybrid; }
+bool IsLargeScreenLayout(ScreenLayout l) { return l == ScreenLayout::Large; }
+bool LayoutSupportsSecondaryScreenScale(ScreenLayout l) { return l == ScreenLayout::Scaled; }
 struct Layout {
     ScreenLayout layout;
     Point top, bottom;
     ScreenLayout LayoutValue() const { return layout; }
+    unsigned SecondaryScreenScale() const { return 50; }
     ScreenLayout GetTopScreenTranslation() const { return top; }
     ScreenLayout GetBottomScreenTranslation() const { return bottom; }
 };
@@ -209,6 +213,12 @@ struct Buffer {
 };
 void combine(Buffer& buffer, const Layout& screenLayout,
              const std::vector<uint32_t>& topBuffer, const std::vector<uint32_t>& bottomBuffer) {
+    auto CopyScreen = [&](const uint32_t* src, Point p, ScreenLayout) {
+        ++buffer.copies;
+        for (unsigned y=0;y<NDS_SCREEN_HEIGHT;++y)
+            for(unsigned x=0;x<NDS_SCREEN_WIDTH;++x)
+                buffer.pixels[(p.y+y)*buffer.width+p.x+x] = src[y*NDS_SCREEN_WIDTH+x];
+    };
 """ + candidate.replace("screenLayout.Layout()", "screenLayout.LayoutValue()") + r"""
 }
 int main() {
@@ -230,6 +240,28 @@ int main() {
                             else
                                 for (auto pixel : b.pixels) assert(pixel == 0);
                         }
+    for (auto layout : {ScreenLayout::Other, ScreenLayout::Hybrid, ScreenLayout::Large, ScreenLayout::Scaled}) {
+        for (bool horizontal : {false,true}) {
+            direct = !horizontal;
+            const unsigned w = horizontal ? 8 : 4;
+            const unsigned h = horizontal ? 3 : 6;
+            for (bool swapped : {false,true}) {
+                Point first{0,0}, second{horizontal ? 4u : 0u, horizontal ? 0u : 3u};
+                Buffer b{w,h,0,0,std::vector<uint32_t>(w*h,0xffffffff)};
+                combine(b, Layout{layout,swapped ? second : first,swapped ? first : second},top,bottom);
+                if (layout != ScreenLayout::Other) {
+                    assert(b.clears == 1 && b.copies == 0);
+                    continue;
+                }
+                assert(b.clears == 0 && b.copies == 2);
+                for (unsigned y=0;y<h;++y)
+                    for (unsigned x=0;x<w;++x) {
+                        const bool firstScreen = horizontal ? x<4 : y<3;
+                        assert(b.pixels[y*w+x] == (firstScreen != swapped ? top[0] : bottom[0]));
+                    }
+            }
+        }
+    }
 }
 """
         with tempfile.TemporaryDirectory() as directory:
