@@ -9,6 +9,14 @@
 #include <math.h>
 #include <libplacebo/vulkan.h>
 #include "ambientsvp_vulkan.h"
+struct svp_placebo_hdr {
+    uint32_t count;
+    AmbientSvpHdrWindow windows[3];
+    AmbientSvpHdrTrack tracks[3];
+    uint32_t axes[3][3],rects[3][4],ellipses[3][3];
+    int32_t shifts[3][2];
+    AmbientSvpHdrResult results[3];
+};
 struct svp_placebo_quality {
     void *lib;
     AmbientSvpVk *engine;
@@ -17,6 +25,10 @@ struct svp_placebo_quality {
         uint32_t,uint32_t,uint32_t,const AmbientSvpQuality *);
     int (*render)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float);
+    int (*render_hdr)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+        const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,
+        const AmbientSvpHdrTrack *,const uint32_t (*)[3],AmbientSvpHdrResult *,
+        uint32_t (*)[4],uint32_t (*)[3],int32_t (*)[2],uint32_t);
     VkSemaphore done;
     uint64_t value;
     int w,h;
@@ -38,8 +50,8 @@ static inline bool svp_placebo_quality_target(pl_gpu gpu,pl_tex *tex,int w,int h
     return w>0&&h>0&&fmt&&pl_tex_recreate(gpu,tex,pl_tex_params(
         .w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true,.storable=storage));
 }
-static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_quality *s,
-    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options)
+static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_quality *s,
+    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr)
 {
     if(!a||!b||!options||!out||a==b||!isfinite(phase)||phase<=0||phase>=1||
         a->params.w!=b->params.w||a->params.h!=b->params.h)return false;
@@ -55,8 +67,10 @@ static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_qual
         s->create=dlsym(s->lib,"ambient_svp_vk_create_quality");
         s->destroy=dlsym(s->lib,"ambient_svp_vk_destroy");
         s->render=dlsym(s->lib,"ambient_svp_vk_render_held");
+        s->render_hdr=dlsym(s->lib,"ambient_svp_vk_render_held_hdr");
         if(!s->create||!s->destroy||!s->render){dlclose(s->lib);s->lib=NULL;return false;}
     }
+    if(hdr&&(!s->render_hdr||!hdr->count||hdr->count>3))return false;
     const int w=a->params.w,h=a->params.h;
     if(!s->engine||w!=s->w||h!=s->h||memcmp(&s->options,options,sizeof(*options))){
         if(s->engine)s->destroy(s->engine);
@@ -80,7 +94,7 @@ static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_qual
             !(usage&(i==count-1?VK_IMAGE_USAGE_STORAGE_BIT:VK_IMAGE_USAGE_SAMPLED_BIT)))return false;
         for(unsigned j=0;j<i;j++)if(images[i]==images[j])return false;
     }
-    unsigned held=0;bool ok=false;
+    unsigned held=0;bool ok=false,retired=false;
     for(unsigned i=0;i<count;i++){
         holds[i]=pl_vulkan_sem_create(gpu,pl_vulkan_sem_params(.type=VK_SEMAPHORE_TYPE_BINARY));
         if(!holds[i]||!pl_vulkan_hold_ex(gpu,pl_vulkan_hold_params(.tex=tex[i],
@@ -95,21 +109,28 @@ static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_qual
     get_queue(vk->device,family,0,&queue);
     if(!queue)goto cleanup;
     vk->lock_queue(vk,family,0);
-    int rc=s->render(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase);
+    int rc=hdr?s->render_hdr(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
+        hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count):
+        s->render(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase);
     // Defensive panic recovery: if the native boundary could not
     // establish its own retirement, prove queue retirement here before
     // releasing any renderer texture. Never free an in-flight image.
     if(rc==-2){VkResult status;do{status=wait_idle(queue);}while(status!=VK_SUCCESS&&status!=VK_ERROR_DEVICE_LOST);}
     vk->unlock_queue(vk,family,0);
-    if(rc==0){s->value++;ok=true;}
+    if(rc==0||rc==1){s->value++;retired=true;ok=rc==0;}
 cleanup:
     // The native helper returns only after fence completion or confirmed
     // device loss. On pre-submit failure retire libplacebo's hold signals.
-    if(!ok)pl_gpu_finish(gpu);
+    if(!retired)pl_gpu_finish(gpu);
     for(unsigned i=0;i<held;i++)
         pl_vulkan_release_ex(gpu,pl_vulkan_release_params(.tex=tex[i],.layout=VK_IMAGE_LAYOUT_GENERAL,
-            .qf=VK_QUEUE_FAMILY_IGNORED,.semaphore={ok?s->done:VK_NULL_HANDLE,ok?s->value:0}));
+            .qf=VK_QUEUE_FAMILY_IGNORED,.semaphore={retired?s->done:VK_NULL_HANDLE,retired?s->value:0}));
     for(unsigned i=0;i<count;i++)if(holds[i])pl_vulkan_sem_destroy(gpu,&holds[i]);
     return ok;
+}
+static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_quality *s,
+    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options)
+{
+    return svp_placebo_quality_render_hdr(gpu,s,a,b,previous,next,out,phase,options,NULL);
 }
 #endif
