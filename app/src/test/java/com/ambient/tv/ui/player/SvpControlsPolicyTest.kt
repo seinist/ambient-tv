@@ -33,6 +33,7 @@ class SvpControlsPolicyTest {
         assertEquals(R.string.svp_mode_light, svpModeLabelRes("auto"))
         assertEquals(R.string.svp_mode_balanced, svpModeLabelRes("balanced"))
         assertEquals(R.string.svp_mode_smooth, svpModeLabelRes("quality"))
+        assertEquals(R.string.svp_mode_adaptive, svpModeLabelRes("adaptive"))
         assertEquals(R.string.player_off, svpModeLabelRes("off"))
     }
 

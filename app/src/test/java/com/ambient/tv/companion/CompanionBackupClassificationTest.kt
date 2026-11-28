@@ -149,4 +149,29 @@ class CompanionBackupClassificationTest {
         assertEquals(existing.monogramApiCredentials, protected.monogramApiCredentials)
     }
 
+    @Test fun experimentalVlcPreferencesTravelOnlyWithExplicitDeviceSettings() {
+        val target = SettingsBackup(schemaVersion = 80, exportedAtEpochMs = 1,
+            extras = SettingsBackupExtras(device = com.ambient.tv.data.local.DeviceSettingsExtras(
+                vlcExperimentalFeaturesEnabled = false, vlcHdrGpuEnabled = false)))
+        val source = target.copy(exportedAtEpochMs = 2,
+            extras = SettingsBackupExtras(device = com.ambient.tv.data.local.DeviceSettingsExtras(
+                vlcExperimentalFeaturesEnabled = true, vlcHdrGpuEnabled = true)))
+        fun merged(sender: SettingsBackup, device: Boolean, mode: String = "preferences") =
+            CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(
+                CompanionBackupPolicy.merge(sender, target, mode, overwrite = true, deviceSettings = device)).extras?.device
+        assertEquals(true, merged(source, true)?.vlcExperimentalFeaturesEnabled)
+        assertEquals(true, merged(source, true)?.vlcHdrGpuEnabled)
+        assertEquals(false, merged(source, false)?.vlcExperimentalFeaturesEnabled)
+        assertEquals(false, merged(source, false)?.vlcHdrGpuEnabled)
+        assertEquals(false, merged(source, true, "accounts")?.vlcExperimentalFeaturesEnabled)
+        assertEquals(false, merged(source, true, "accounts")?.vlcHdrGpuEnabled)
+        assertEquals(false, merged(source.copy(schemaVersion = 79), true)?.vlcExperimentalFeaturesEnabled)
+        assertEquals(false, merged(source.copy(extras = SettingsBackupExtras()), true)?.vlcHdrGpuEnabled)
+        val enabledReceiver = source
+        val partial = target.copy(extras = SettingsBackupExtras(device = com.ambient.tv.data.local.DeviceSettingsExtras()))
+        val unchanged = CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(
+            CompanionBackupPolicy.merge(partial, enabledReceiver, "preferences", overwrite = true, deviceSettings = true))
+        assertEquals(true, unchanged.extras?.device?.vlcExperimentalFeaturesEnabled)
+        assertEquals(true, unchanged.extras?.device?.vlcHdrGpuEnabled)
+    }
 }

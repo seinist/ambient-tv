@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="Ambient VLC seek audit" android:allowBackup="false" />
+    <instrumentation android:name=".SeekAudit" android:targetPackage="com.ambient.vlcseekaudit"
+        android:label="VLC AFM3 integration audit" />
+</manifest>

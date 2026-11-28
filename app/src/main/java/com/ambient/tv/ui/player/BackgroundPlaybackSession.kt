@@ -228,6 +228,11 @@ object BackgroundPlaybackSession {
     private var subtitlePolicy = SubtitleSessionPolicy()
     private var subtitlePreferences: com.ambient.tv.data.local.AppPreferences? = null
     private var lastSubtitleCheck = 0L
+    private val otherLiveSync = LiveSyncWatch()
+    private var otherLiveSyncKey: Triple<String, String, String?>? = null
+    private var otherLiveSyncGeneration = -1L
+    private var otherLiveSyncSeekVersion = -1
+    private var lastOtherLiveSyncAt = 0L
     private var lastTitleSettingsSave = 0L
     /** Defaults changed (e.g. SmartTube's subtitle switch): drop a manual choice, apply them anew. */
     fun resetSubtitleSelection() {
@@ -707,7 +712,11 @@ object BackgroundPlaybackSession {
 
     fun tick() {
         checkThread()
-        val player = handle ?: return
+        val player = handle ?: run {
+            otherLiveSync.resetSession()
+            otherLiveSyncKey = null
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         if (now - lastSubtitleCheck >= 1_000L) {
             lastSubtitleCheck = now
@@ -743,6 +752,58 @@ object BackgroundPlaybackSession {
             wantsToPlay = if (current.replacingSource) current.wantsToPlay
                 else player.wantsToPlay() || DisplayPlaybackStartup.isWaiting(player))
         SleepSession.tick(sleepTarget)
+        if (handle === player) pollOtherLiveSync(player, now)
+    }
+
+    /**
+     * TVHeadend keeps its provider-specific recovery in its view model. Extend the same
+     * bounded recovery to other non-seekable live video, including the persistent player.
+     * Never reopen DVR/timeshift windows here: their provider owns the wall-clock position.
+     */
+    private fun pollOtherLiveSync(player: PlaybackHandle, now: Long) {
+        val current = snapshot.value
+        val metadata = current.metadata
+        val key = metadata?.let { Triple(it.route, it.mediaId, it.sourceAccessIdentity) }
+        if (key != otherLiveSyncKey) {
+            otherLiveSync.resetSession()
+            otherLiveSyncKey = key
+            lastOtherLiveSyncAt = 0L
+        }
+        if (otherLiveSyncGeneration != current.generation.toLong() || otherLiveSyncSeekVersion != externalSeekVersion) {
+            otherLiveSyncGeneration = current.generation.toLong()
+            otherLiveSyncSeekVersion = externalSeekVersion
+            otherLiveSync.resetObservation()
+        }
+        if (metadata == null || !metadata.isLive || !metadata.hasVideo || metadata.source == "tvheadend" ||
+            current.replacingSource || !current.wantsToPlay || !current.status.playing ||
+            current.status.error != null || !player.requestedPlayIntent() ||
+            DisplayPlaybackStartup.isWaiting(player) || PlaybackOutputTransition.active() ||
+            com.ambient.tv.livetv.LiveTimeshift.current != null || runCatching { player.canSeekNow() }.getOrDefault(true)) {
+            otherLiveSync.resetObservation()
+            return
+        }
+        if (now - lastOtherLiveSyncAt < 1_000L) return
+        lastOtherLiveSyncAt = now
+        val sample = runCatching {
+            when (player) {
+                is Media3PlaybackHandle -> player.liveSyncSample()
+                is com.ambient.tv.ui.player.backend.VlcPlaybackController -> player.liveSyncSample()
+                is com.ambient.tv.ui.player.backend.MpvPlaybackController -> player.liveSyncSample()
+                else -> null
+            }
+        }.getOrNull()?.takeIf { now - it.atMs in -250L..2_500L }
+        val delayMs = playbackProfileAudio(player)?.options?.delayMs ?: 0
+        val fault = otherLiveSync.observe(sample, delayMs) ?: return
+        if (handle !== player || snapshot.value.generation != current.generation) return
+        val reopened = runCatching {
+            when (player) {
+                is Media3PlaybackHandle -> player.reopenForLiveSync()
+                is com.ambient.tv.ui.player.backend.VlcPlaybackController -> player.reopenForLiveSync()
+                is com.ambient.tv.ui.player.backend.MpvPlaybackController -> player.reopenForLiveSync(requireNotNull(sample).generation)
+                else -> false
+            }
+        }.onFailure { timber.log.Timber.w(it, "Live playback resync failed") }.getOrDefault(false)
+        if (reopened) timber.log.Timber.w("Live playback resync backend=%s reason=%s", current.backend, fault)
     }
 
     /** Bumped on every user key/touch; player OSD auto-hide restarts its timeout on it. */

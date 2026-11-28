@@ -3,7 +3,11 @@ Open-SVPFlow Android integration (experimental)
 Open-SVPFlow: https://github.com/Z1xus/open-svpflow
 Revision: badc0debd33fe4034d0557bc736b9e0b7cfaf784
 License: Apache-2.0; see OPEN-SVPFLOW-LICENSE.
-The original smooth.wgsl is included unmodified. The Android C ABI, bounded
+The original smooth.wgsl is included unmodified. src/smoother.rs adapts the
+Apache-2.0 licensed upstream crates/svpflow-wasm/src/smoother.rs at the
+base revision badc0debd33fe4034d0557bc736b9e0b7cfaf784; source ownership,
+caching and CPU expansion are modified,
+while the upstream Engine/Job rendering algorithm remains in use. The Android C ABI, bounded
 streaming adapter and native wgpu/Vulkan host implementation are app additions.
 The MPV and VLC filter adapters are LGPL-2.1-or-later.
 

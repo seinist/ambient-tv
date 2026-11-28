@@ -24,7 +24,7 @@
     <string name="settings_mpv_hdr_gpu_direct_hint">HDR läuft über die Grafik, sobald ein Filter gewählt ist. Direkt im Player schickt HDR an den Fernseher.</string>
     <string name="image_mpv_hdr_shader_hint">Bei HDR wirken nur Schärfen, Debanding und einzelne Skalierer.</string>
     <string name="player_output_hdr_gpu_surface_unverifiable">GPU-Weg nicht möglich, HDR läuft direkt zum Fernseher.</string>
-    <string name="settings_mpv_zero_copy_locked">Eine frühere Wiedergabe ist damit fehlgeschlagen. MPV nutzt den sichereren Bildweg, bis die App aktualisiert wird.</string>
+    <string name="settings_mpv_zero_copy_locked">Eine frühere Wiedergabe ist damit fehlgeschlagen. MPV nutzt für betroffene Quellen vorübergehend den sichereren Bildweg.</string>
     <string name="settings_mpv_zero_copy_reset">Sperre aufheben</string>
     <string name="settings_mpv_zero_copy_reset_done">Der schnelle Bildweg wird bei der nächsten Wiedergabe wieder versucht.</string>
 </resources>

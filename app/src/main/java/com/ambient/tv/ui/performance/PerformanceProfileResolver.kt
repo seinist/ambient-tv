@@ -33,7 +33,7 @@ class PerformanceProfileResolver @Inject constructor(
     fun setPreviewModeKeys(uiKey: String?, playbackKey: String?) {
         previewUiModeKey = uiKey?.takeIf { it in PerformanceMode.KEYS }
         previewPlaybackModeKey = playbackKey?.takeIf { it in PerformanceMode.KEYS }
-        SvpNative.updateGate(currentPlaybackMode() == PerformanceMode.MAXIMUM)
+        SvpNative.updateGate(currentPlaybackMode() == PerformanceMode.MAXIMUM, context)
     }
 
     fun currentUiMode(): PerformanceMode =
@@ -45,7 +45,7 @@ class PerformanceProfileResolver @Inject constructor(
     @Synchronized
     fun current(): PerformanceProfile =
         PerformanceProfile.resolve(currentUiMode(), isLowEndDevice(), currentPlaybackMode()).also {
-            SvpNative.updateGate(it.allowSvpInterpolation)
+            SvpNative.updateGate(it.allowSvpInterpolation, context)
         }
 
     fun effectiveHighQualityAssets(): Boolean =

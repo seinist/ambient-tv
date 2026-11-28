@@ -32,6 +32,21 @@ class GameMetadataLibretroMirrorTest {
             name = "Tetris (World) (Rev 1).png"))!!.pathSegments[1])
     }
 
+    @Test fun releaseTagsSurviveStrictUriValidationAndMirrorConstruction() {
+        val title = "[Release] Super Mario World (Europe) [!]"
+        val candidate = GameMetadataPlatforms.libretroCandidates(GameMetadataQuery(
+            "snes", title, "$title.sfc")).first().metadata
+        for (reference in listOf(candidate.coverUrl, candidate.backdropUrl, candidate.titleScreenUrl)) {
+            val safe = requireNotNull(sanitizedGameArtworkUrl(provider, reference))
+            val url = safe.toHttpUrl()
+            assertEquals("$title.png", url.pathSegments.last())
+            assertTrue(url.encodedPath.contains("%5BRelease%5D"))
+            val mirror = requireNotNull(libretroArtworkMirrorUrl(url))
+            assertEquals("$title.png", mirror.pathSegments.last())
+            assertNotNull(sanitizedGameArtworkUrl(provider, mirror.toString()))
+        }
+    }
+
     @Test fun fallbackConstructionDropsEveryQueryAndFragmentWithoutChangingTheCanonicalReference() {
         val canonical = primary().newBuilder().addQueryParameter("apikey", "secret")
             .addQueryParameter("download", "1").fragment("secret").build()
@@ -44,6 +59,22 @@ class GameMetadataLibretroMirrorTest {
             "snes", "Super Mario World (USA)", "Super Mario World (USA).sfc")).first().metadata
         assertEquals(primary().toString(), candidate.coverUrl)
         assertEquals("$namespace|Super Mario World (USA)", candidate.providerGameId)
+    }
+
+    @Test fun bracketedRomNamesSurviveStrictUriValidationAndMirrorFallback() {
+        val name = "[Release] Super Mario World (Europe) [!]"
+        val query = GameMetadataQuery("snes", name, "$name.sfc")
+        val candidate = GameMetadataPlatforms.libretroCandidates(query).first().metadata
+        val cover = requireNotNull(candidate.coverUrl)
+        assertTrue(cover.contains("%5BRelease%5D"))
+        assertEquals(cover, sanitizedGameMetadataUrl(cover))
+        assertEquals(cover, sanitizedGameArtworkUrl(provider, cover))
+        val canonical = cover.toHttpUrl()
+        val mirror = requireNotNull(libretroArtworkMirrorUrl(canonical))
+        assertEquals("$name.png", canonical.pathSegments.last())
+        assertEquals(canonical.pathSegments.last(), mirror.pathSegments.last())
+        assertEquals(mirror.pathSegments, credentialFreeGameUrl(mirror).pathSegments)
+        assertEquals(cover, candidate.bounded().coverUrl)
     }
 
     @Test fun rawHostIsRestrictedToOfficialRepositoriesBranchesDirectoriesAndSinglePngFiles() {

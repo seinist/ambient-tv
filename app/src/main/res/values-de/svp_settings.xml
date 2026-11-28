@@ -51,4 +51,9 @@
     <string name="svp_reason_passthrough">keine Zwischenbilder</string>
     <string name="svp_reason_starting">startet …</string>
     <string name="svp_reason_overload">zu langsam, für diese Wiedergabe aus</string>
+    <string name="svp_mode_adaptive">Adaptiv</string>
+    <string name="svp_adaptive_hint">Beginnt mit leichter Analyse und reduziert bei Überlast die Bewegungsanalysequalität. Bildrate und Zeitstempel bleiben gleich.</string>
+    <string name="svp_hdr_two_pass">HDR10+ Zweipass (experimentell)</string>
+    <string name="svp_hdr_two_pass_on">Analysieren und erneut abspielen</string>
+    <string name="svp_hdr_two_pass_hint">Lokale oder vollständige HEVC-HDR10+-Netzwerkdateien bis zur gewählten Auflösung. Versucht eine beschleunigte Analyse ohne sichtbare Wiedergabe. Falls nicht unterstützt, misst der erste Wiedergabedurchlauf alle Bilder und startet danach erneut. Springen bricht die Analyse ab.</string>
 </resources>

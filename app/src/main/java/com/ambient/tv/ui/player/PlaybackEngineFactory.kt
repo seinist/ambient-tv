@@ -116,11 +116,14 @@ object PlaybackEngineFactory {
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
-                listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled, mimeType)) {
+                listOf(streamUrl, startPositionMs, streamHeaders.toMap(), audioPassthroughEnabled, mimeType,
+                    subtitleTracks.toList(), maxVideoHeight, preferredVideoMimeType, maxVideoFrameRate,
+                    sourceHdrStandard, preferOriginalAudio, preferredAudioLanguage, audioOnly, mpvAudioAllowed,
+                    centerYouTubeCaptions, liveStream, streamTuning, streamUrlRenewer != null, dataSourceFactory != null)) {
                 // Every Media3 player (Live TV, VOD, YouTube) takes part in the native release gate
                 // like MPV and VLC: it neither opens its stream while the previous player still
                 // holds one nor lets the next player open before its own stream is gone.
-                gatedMedia3Handle { deferPrepare ->
+                gatedMedia3Handle(context) { deferPrepare ->
                     create(context.applicationContext, streamUrl, startPositionMs,
                         subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, preferredAudioLanguage = preferredAudioLanguage, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
                         deferPrepare = deferPrepare, liveStream = liveStream, streamTuning = streamTuning,
@@ -170,12 +173,16 @@ object PlaybackEngineFactory {
                 )
                 .build()
 
-            val httpDataSourceFactory = media3HttpDataSourceFactory(context, streamTuning?.networkEngine, streamingHttpClient)
+            val networkEngine = streamTuning?.networkEngine
+            val httpDataSourceFactory = media3HttpDataSourceFactory(context, networkEngine, streamingHttpClient)
                 .setDefaultRequestProperties(streamHeaders)
+            // Apply one shared renewal policy to every HTTP engine, outside the
+            // transport, so failed opens are closed before a bounded retry.
             val networkSource = streamUrlRenewer?.let { RenewingMedia3DataSourceFactory(httpDataSourceFactory, it) }
                 ?: httpDataSourceFactory
+            val sourceFactory = DefaultDataSource.Factory(context, networkSource)
             val mediaSourceFactory = DefaultMediaSourceFactory(context)
-                .setDataSourceFactory(dataSourceFactory ?: DefaultDataSource.Factory(context, networkSource))
+                .setDataSourceFactory(dataSourceFactory ?: sourceFactory)
                 .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
 
             val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
@@ -200,7 +207,7 @@ object PlaybackEngineFactory {
                 "start_buffer_ms=${liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS} " +
                     "rebuffer_ms=${liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS} " +
                     "target_bytes=$targetBytes max_height=$maxVideoHeight" +
-                    (streamTuning?.let { " network=${it.networkEngine}" } ?: "") + " buffer=$bufferKey")
+                    (networkEngine?.let { " network=$it" } ?: "") + " buffer=$bufferKey")
 
             ExoPlayer.Builder(context, renderersFactory)
                 .setMediaSourceFactory(mediaSourceFactory)
@@ -285,15 +292,15 @@ object PlaybackEngineFactory {
      * Media3) still closes, [build] gets deferPrepare = true and the player prepares afterwards.
      * Call inside [BackgroundPlaybackSession.acquire]: the outgoing release has begun there.
      */
-    internal fun gatedMedia3Handle(build: (deferPrepare: Boolean) -> ExoPlayer): Media3PlaybackHandle {
-        val wait = com.ambient.tv.ui.player.backend.nativeAudioReleases.snapshot().takeIf { !it.isDone }
+    internal fun gatedMedia3Handle(context: Context, build: (deferPrepare: Boolean) -> ExoPlayer): Media3PlaybackHandle {
+        val wait = com.ambient.tv.ui.player.backend.nativeAudioReleases.snapshot().takeIf { !it.isDone || it.blocked }
         val player = build(wait != null)
         return Media3PlaybackHandle(player, joinsReleaseGate = true, waitingForPreviousRelease = wait != null).also { handle ->
-            if (wait != null) prepareAfterPreviousRelease(handle, wait)
+            if (wait != null) prepareAfterPreviousRelease(context.applicationContext, handle, wait)
         }
     }
 
-    private fun prepareAfterPreviousRelease(handle: Media3PlaybackHandle, previous: com.ambient.tv.ui.player.backend.PreviousRelease) {
+    private fun prepareAfterPreviousRelease(context: Context, handle: Media3PlaybackHandle, previous: com.ambient.tv.ui.player.backend.PreviousRelease) {
         val player = handle.player
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         val started = android.os.SystemClock.elapsedRealtime()
@@ -301,14 +308,27 @@ object PlaybackEngineFactory {
             main.post {
                 val waited = android.os.SystemClock.elapsedRealtime() - started
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "previous player $outcome after $waited ms")
-                // Deliberately different from MPV/VLC on TIMED_OUT: Media3 has no start-error path of
-                // its own. Its errors arrive as PlaybackException and trigger renderer fallbacks
-                // (Live TV switches to MPV/VLC), which would open yet another native player next to
-                // the hung one. Media3 plays through Android's AudioTrack, so it starts anyway.
-                if (outcome != com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.READY)
-                    Timber.w(previous.failure, "Media3 start: previous player %s after %d ms; starting anyway", outcome, waited)
-                // Released meanwhile (channel change, Back): nothing to prepare.
-                if (Media3PlaybackHandle.forPlayer(player) != null) handle.previousReleaseSettled()
+                if (Media3PlaybackHandle.forPlayer(player) !== handle) return@post
+                if (outcome == com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.BLOCKED) {
+                    handle.previousReleaseTimedOut(context.getString(com.ambient.tv.R.string.audio_output_release_failed))
+                    Timber.e(previous.failure, "Media3 start blocked: native output ownership uncertain")
+                } else if (outcome == com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.TIMED_OUT) {
+                    Timber.w("Media3 start: previous player still closing after %d ms; keeping prepare deferred", waited)
+                    handle.previousReleaseTimedOut(context.getString(com.ambient.tv.R.string.audio_output_release_failed))
+                    val target = java.lang.ref.WeakReference(handle)
+                    previous.future.whenComplete { _, _ ->
+                        main.post {
+                            target.get()?.let { current ->
+                                if (Media3PlaybackHandle.forPlayer(current.player) === current && !previous.blocked)
+                                    current.previousReleaseSettled()
+                            }
+                        }
+                    }
+                } else {
+                    if (outcome != com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.READY)
+                        Timber.w(previous.failure, "Media3 start: previous player %s after %d ms", outcome, waited)
+                    handle.previousReleaseSettled()
+                }
             }
         }
     }
@@ -366,7 +386,7 @@ internal fun media3TunedBuffer(key: String): Media3TunedBuffer = when (key) {
 
 /**
  * OkHttp unless SmartTube's setting picks another engine. Cronet comes from Play Services; without
- * it playback stays on OkHttp.
+ * it playback stays on OkHttp. Signed URL renewal is enabled for every selected engine.
  */
 private fun media3HttpDataSourceFactory(
     context: Context,
@@ -392,6 +412,8 @@ private fun cronetEngine(context: Context): org.chromium.net.CronetEngine? {
     (cronetEngineCache as? org.chromium.net.CronetEngine)?.let { return it }
     if (cronetEngineCache == false) return null
     return synchronized(cronetExecutor) {
+        (cronetEngineCache as? org.chromium.net.CronetEngine)?.let { return@synchronized it }
+        if (cronetEngineCache == false) return@synchronized null
         val engine = runCatching { androidx.media3.datasource.cronet.CronetUtil.buildCronetEngine(context.applicationContext) }
             .onFailure { Timber.w(it, "Cronet engine failed") }.getOrNull()
         cronetEngineCache = engine ?: false

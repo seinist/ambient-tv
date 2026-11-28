@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.player.backend
 
 import java.io.Closeable
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
@@ -13,6 +15,7 @@ import kotlin.concurrent.thread
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * libVLC cannot send an Authorization header, and credentials placed in the MRL end up in its
@@ -24,22 +27,37 @@ internal class AuthenticatedStreamProxy(
     private val upstreamUrl: String,
     private val upstreamHeaders: Map<String, String>,
 ) : Closeable {
+    private val origin = requireNotNull(upstreamUrl.toHttpUrlOrNull()) { "Invalid media relay URI" }
     private val token = UUID.randomUUID().toString() + UUID.randomUUID().toString()
+    private val routes = HlsRelayRoutes(origin, "/$token")
     private val listener = ServerSocket(0, 8, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val capacity = java.util.concurrent.Semaphore(8)
     private val sockets = ConcurrentHashMap.newKeySet<Socket>()
     private val calls = ConcurrentHashMap.newKeySet<Call>()
 
-    val url: String = "http://127.0.0.1:${listener.localPort}/$token"
+    private val localOrigin = "http://127.0.0.1:${listener.localPort}"
+    val url: String = "$localOrigin/$token"
 
     init {
         thread(name = "vlc-auth-listener", isDaemon = true) {
             while (!listener.isClosed) {
                 val socket = try { listener.accept() } catch (_: Exception) { break }
+                if (!capacity.tryAcquire()) {
+                    runCatching { socket.close() }
+                    continue
+                }
                 sockets.add(socket)
+                if (closed.get()) {
+                    sockets.remove(socket)
+                    capacity.release()
+                    runCatching { socket.close() }
+                    break
+                }
                 thread(name = "vlc-auth-stream", isDaemon = true) {
                     try { socket.use(::serve) } catch (_: Exception) {
                         // A failed relay just closes the connection; VLC surfaces the error.
-                    } finally { sockets.remove(socket) }
+                    } finally { sockets.remove(socket); capacity.release() }
                 }
             }
         }
@@ -72,21 +90,71 @@ internal class AuthenticatedStreamProxy(
         }
         if (!done) { status(output, 431, "Request Header Fields Too Large"); return }
         if (request.size != 3 || request[0] !in setOf("GET", "HEAD")) { status(output, 405, "Method Not Allowed"); return }
-        if (request[1].removePrefix("/") != token) { status(output, 404, "Not Found"); return }
+        val resource = routes.resolve(request[1]) ?: run { status(output, 404, "Not Found"); return }
         val headOnly = request[0] == "HEAD"
 
-        val upstream = Request.Builder().url(upstreamUrl).apply {
-            upstreamHeaders.forEach { (name, value) -> header(name, value) }
-            // Keep Content-Length/Content-Range byte-exact for seekable recordings.
-            header("Accept-Encoding", "identity")
-            range?.let { header("Range", it) }
-            if (headOnly) head()
-        }.build()
-        val call = client.newCall(upstream)
-        calls.add(call)
+        var opened = openUpstream(resource, range, headOnly)
+        // Extensionless manifests can first be discovered through a ranged probe.
+        // Repeat once without Range rather than trying to rewrite an incomplete XML/M3U.
+        if (opened.response.code == 206 && !resource.playlist &&
+            (vlcDashContentType(opened.response.header("Content-Type")) ||
+                vlcHlsContentType(opened.response.header("Content-Type")) ||
+                vlcDashPath(opened.response.request.url) || vlcHlsPath(opened.response.request.url))) {
+            opened.response.close()
+            calls.remove(opened.call)
+            opened = openUpstream(resource.copy(playlist = true), null, headOnly)
+        }
+        val call = opened.call
         try {
-            call.execute().use { response ->
+            opened.response.use { response ->
                 if (!response.isSuccessful && response.code != 416) { status(output, response.code, response.message.ifBlank { "Error" }); return }
+                val contentType = response.header("Content-Type")
+                val dash = vlcDashPath(response.request.url) || vlcDashContentType(contentType)
+                val playlist = resource.playlist || vlcHlsPath(response.request.url) || vlcHlsContentType(contentType)
+                if (dash || playlist) {
+                    val manifestType = if (dash) "application/dash+xml" else "application/vnd.apple.mpegurl"
+                    if (response.code != 200) { status(output, 502, "Partial playlist unsupported"); return }
+                    if (request[1].substringBefore('?') == "/$token") routes.markRootPlaylist()
+                    if (headOnly) {
+                        output.write("HTTP/1.1 200 OK\r\nContent-Type: $manifestType\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+                        output.flush()
+                        return
+                    }
+                    val rewritten = try {
+                        val manifest = readManifest(response.body.byteStream())
+                        val localUri: (okhttp3.HttpUrl, Boolean) -> String = { child, isPlaylist ->
+                            requireVlcRelayTransport(response.request.url, child)
+                            localOrigin + routes.register(child, isPlaylist, opened.credentialed)
+                        }
+                        val rewrittenText = if (dash) rewriteVlcDashManifest(manifest, response.request.url,
+                            localUri, { template ->
+                                val sample = template.resolve(List(template.slots.size) { "0" })
+                                    ?: throw IOException("Invalid DASH template")
+                                requireVlcRelayTransport(response.request.url, sample)
+                                localOrigin + routes.registerTemplate(template, opened.credentialed)
+                            })
+                        else {
+                            // A foreign CDN playlist must not import variables (possibly a
+                            // signed ticket) supplied by a different parent origin.
+                            val inherited = resource.variables.takeIf {
+                                vlcRelayOriginAllowed(resource.url, response.request.url)
+                            }.orEmpty()
+                            rewriteVlcHlsManifest(manifest, response.request.url, inherited) { child, isPlaylist, vars ->
+                                requireVlcRelayTransport(response.request.url, child)
+                                localOrigin + routes.register(child, isPlaylist, opened.credentialed,
+                                    if (vlcRelayOriginAllowed(response.request.url, child)) vars else emptyMap())
+                            }
+                        }
+                        rewrittenText.toByteArray(Charsets.UTF_8)
+                    } catch (_: IOException) {
+                        status(output, 502, "Unsupported playlist")
+                        return
+                    }
+                    output.write("HTTP/1.1 200 OK\r\nContent-Type: $manifestType\r\nContent-Length: ${rewritten.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+                    output.write(rewritten)
+                    output.flush()
+                    return
+                }
                 val head = StringBuilder("HTTP/1.1 ${response.code} ${response.message.ifBlank { "OK" }}\r\nConnection: close\r\n")
                 RELAYED_HEADERS.forEach { name -> response.header(name)?.let { head.append(name).append(": ").append(it).append("\r\n") } }
                 output.write(head.append("\r\n").toString().toByteArray(Charsets.ISO_8859_1))
@@ -114,18 +182,75 @@ internal class AuthenticatedStreamProxy(
         }
     }
 
+    private data class Opened(val call: Call, val response: okhttp3.Response, val credentialed: Boolean)
+
+    /**
+     * Redirects are explicit, bounded and never restore credentials after leaving the origin.
+     * Foreign children and redirect targets use a separate anonymous client with public DNS.
+     */
+    private fun openUpstream(resource: HlsRelayRoutes.Resource, range: String?, headOnly: Boolean): Opened {
+        var url = resource.url
+        var sendCredentials = resource.credentialed && vlcRelayOriginAllowed(origin, url)
+        repeat(6) {
+            if (closed.get()) throw IOException("Media relay closed")
+            if (!vlcRelayResourceAllowed(origin, url) || !sendCredentials && !vlcRelayCdnUrlAllowed(url))
+                throw IOException("Media relay origin refused")
+            val upstream = Request.Builder().url(url).apply {
+                if (sendCredentials) upstreamHeaders.forEach { (name, value) ->
+                    // Connection and authority are controlled by the actual destination.
+                    if (name.lowercase(java.util.Locale.ROOT) !in HOP_HEADERS) header(name, value)
+                }
+                header("Accept-Encoding", "identity")
+                if (resource.playlist) removeHeader("Range") else range?.let { header("Range", it) }
+                if (headOnly) head()
+            }.build()
+            val call = (if (sendCredentials) client else cdnClient).newCall(upstream)
+            calls.add(call)
+            if (closed.get()) call.cancel()
+            val response = try { call.execute() } catch (error: Throwable) {
+                calls.remove(call)
+                throw error
+            }
+            if (response.code !in REDIRECTS) return Opened(call, response, sendCredentials)
+            val target = response.header("Location")?.let(url::resolve)
+            response.close()
+            calls.remove(call)
+            if (target == null) throw IOException("Invalid media redirect")
+            requireVlcRelayTransport(url, target)
+            sendCredentials = sendCredentials && vlcRelayOriginAllowed(origin, target)
+            url = target
+        }
+        throw IOException("Too many media redirects")
+    }
+
+    private fun readManifest(input: InputStream): String {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (output.size() + count > 2 * 1024 * 1024) throw IOException("Manifest too large")
+            output.write(buffer, 0, count)
+        }
+        return output.toString(Charsets.UTF_8.name())
+    }
+
     private fun status(output: OutputStream, code: Int, message: String) {
         output.write("HTTP/1.1 $code $message\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
         output.flush()
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         runCatching { listener.close() }
         calls.forEach { it.cancel() }
         sockets.forEach { runCatching { it.close() } }
     }
 
     private companion object {
+        val REDIRECTS = setOf(301, 302, 303, 307, 308)
+        val HOP_HEADERS = setOf("host", "connection", "proxy-connection", "proxy-authorization", "transfer-encoding",
+            "content-length", "upgrade", "keep-alive", "te", "trailer")
         val RELAYED_HEADERS = listOf("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges")
 
         // Deliberately without any logging interceptor. The read timeout matches the Media3
@@ -134,9 +259,43 @@ internal class AuthenticatedStreamProxy(
             OkHttpClient.Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)
-                // The upstream headers carry server credentials: never to a redirect elsewhere.
-                .let(com.ambient.tv.network.CredentialRedirectGuard::install)
+                // The relay handles each redirect itself before creating the next request.
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+        }
+        val cdnClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .proxy(java.net.Proxy.NO_PROXY)
+                .dns(VlcRelayPublicDns())
                 .build()
         }
     }
+}
+
+internal fun vlcHttpRelaySupported(url: String): Boolean {
+    return url.toHttpUrlOrNull() != null
+}
+
+internal fun vlcDirectHttpRelaySupported(url: String): Boolean {
+    val parsed = url.toHttpUrlOrNull() ?: return false
+    val path = parsed.encodedPath.lowercase(java.util.Locale.ROOT)
+    return !path.endsWith(".m3u8") && !path.endsWith(".mpd") && !path.endsWith(".m3u")
+}
+
+/** Do not forward arbitrary primary-stream headers to another host or port. */
+internal fun vlcSameHttpOrigin(first: String, second: String): Boolean {
+    val a = first.toHttpUrlOrNull() ?: return false
+    val b = second.toHttpUrlOrNull() ?: return false
+    return a.scheme == b.scheme && a.host == b.host && a.port == b.port
+}
+
+/** HTTP origins may upgrade to TLS, but a secure redirect or manifest must never send a
+ * subsequent request back over plaintext, even to the originally configured HTTP origin. */
+internal fun requireVlcRelayTransport(parent: okhttp3.HttpUrl, target: okhttp3.HttpUrl) {
+    if (parent.isHttps && !target.isHttps) throw IOException("Media relay TLS downgrade refused")
 }

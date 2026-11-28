@@ -1,0 +1,1200 @@
+name: Experimental VLC Android hardware buffer
+on:
+  pull_request:
+    paths:
+      - 'native/vlc-aar/experimental/**'
+      - 'native/vlc-aar/patches/**'
+      - 'native/vlc-aar/jni-patches/**'
+      - 'native/vlc-aar/build.gradle.kts'
+      - 'native/vlc-aar/settings.gradle.kts'
+      - 'native/vlc-aar/consumer-rules.pro'
+      - 'scripts/prepare_svp_sources.sh'
+      - 'native/ambientsvp/adapters/**'
+      - 'native/ambientsvp/src/**'
+      - 'scripts/prepare_svp_vlc_hdr_bridge.py'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/HdrOffscreenAnalysis.kt'
+      - 'native/ambientsvp/include/**'
+      - 'gradle/external-versions.properties'
+      - 'gradle/libs.versions.toml'
+      - 'gradle/wrapper/gradle-wrapper.properties'
+      - 'app/build.gradle.kts'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VlcPlaybackView.kt'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VideoAccelerationPolicy.kt'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VlcNativeRetirement.kt'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VlcLibraryReleaseGate.kt'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VideoAccelerationCapabilities.kt'
+      - 'native/vulkan/**'
+      - 'app/src/test/java/com/ambient/tv/ui/player/backend/VlcAhbExperimentPolicyTest.kt'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VlcTimedMetadata*.kt'
+      - 'app/src/test/java/com/ambient/tv/ui/player/backend/VlcTimedMetadataTest.kt'
+      - 'app/src/androidTest/java/com/ambient/tv/ui/player/VlcMetadataSocketAudit.kt'
+      - 'app/src/androidTest/java/com/ambient/tv/ui/player/PlaybackAuditInstrumentation.kt'
+      - 'scripts/test_vlc_ahb_import.sh'
+      - 'scripts/test_vlc_contrib_toolchain.sh'
+      - 'scripts/tests/test_vlc_*.py'
+      - 'scripts/prepare_vlc_ahb_experimental.sh'
+      - 'scripts/build_vlc_vulkan.sh'
+      - 'scripts/run_vlc_seek_e2e.sh'
+      - 'scripts/verify_vlc_cached_aar.py'
+      - 'scripts/vlc_ccache_compiler.sh'
+      - 'scripts/audit_profile7_stream.sh'
+      - 'native/vlc-aar/seek-audit/**'
+      - '.github/workflows/vlc-ahb-experimental.yml'
+  workflow_dispatch:
+    inputs:
+      aom_reference:
+        description: 'Run official Netflix/AOM reference input (confirm NC-ND-compatible use)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  ndk-contract:
+    concurrency:
+      group: vlc-ahb-contract-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: haasn/libplacebo
+          ref: v5.264.1
+          path: .ci/libplacebo
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: videolan/vlc
+          ref: c84ef1eda4f14f8b57a5b266b51c843cf51ed28b
+          path: .ci/vlc
+          persist-credentials: false
+      - name: Apply reviewed production VLC patches before contract checks
+        run: |
+          for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/patches/*.patch; do
+            git -C .ci/vlc apply "$patch"
+          done
+          # Check sequential applicability, as actual staging does. A single
+          # git apply --check with many patches can miss conflicting hunks
+          # against the same original file.
+          for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/vlc-patches/*.patch; do
+            echo "Checking experimental patch: $(basename "$patch")"
+            git -C .ci/vlc apply --check "$patch"
+            git -C .ci/vlc apply "$patch"
+          done
+          # Staging below must recognize the already applied series. It also
+          # generates shaders, copies headers and applies the contrib changes.
+      - name: Install pinned Android NDK and shader compiler
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          echo "sdkmanager: $sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;30.0.16248370" || "$sdkmanager" --channel=3 "ndk;30.0.16248370"
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y glslc libvulkan-dev
+      - name: Stage experimental display module and embedded shaders
+        run: |
+          touch .ci/vlc/.ambient-ahb-experimental
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          bash scripts/prepare_vlc_ahb_experimental.sh .ci/vlc
+          bash scripts/prepare_vlc_ahb_experimental.sh .ci/vlc
+          # Production patch files include pre-existing whitespace in nested
+          # contrib patches; validate only the experimental staging delta.
+          git -C .ci/vlc diff --check -- modules/video_output modules/codec/omxil src/video_output
+          # Compile the actual combined display after verifying the upstream patch series.
+          bash scripts/prepare_svp_sources.sh vlc .ci/vlc
+          python3 scripts/prepare_svp_vlc_hdr_bridge.py .ci/vlc
+          first="$(sha256sum .ci/vlc/modules/video_output/libplacebo/display.c)"
+          bash scripts/prepare_svp_sources.sh vlc .ci/vlc
+          bash scripts/prepare_vlc_ahb_experimental.sh .ci/vlc
+          python3 scripts/prepare_svp_vlc_hdr_bridge.py .ci/vlc
+          [[ "$first" == "$(sha256sum .ci/vlc/modules/video_output/libplacebo/display.c)" ]]
+      - name: Apply experimental libplacebo patches for ABI checks
+        run: |
+          for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/libplacebo-patches/*.patch; do
+            git -C .ci/libplacebo apply --check "$patch"
+            git -C .ci/libplacebo apply "$patch"
+          done
+      - name: Host sanitizer regressions, GLSL and Android ABI checks
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          export LIBPLACEBO_SOURCE="$GITHUB_WORKSPACE/.ci/libplacebo"
+          export VLC_SOURCE="$GITHUB_WORKSPACE/.ci/vlc"
+          bash -n scripts/build_vlc_vulkan.sh scripts/prepare_vlc_ahb_experimental.sh
+          normal_hash="$(VLC_EXPERIMENTAL_AHB=0 bash scripts/build_vlc_vulkan.sh --hash)"
+          experimental_hash="$(VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh --hash)"
+          [[ "$normal_hash" != "$experimental_hash" ]]
+          bash scripts/test_vlc_contrib_toolchain.sh
+          bash scripts/test_vlc_ahb_import.sh
+
+  ffmpeg-rpu-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: FFmpeg/FFmpeg
+          ref: 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+          path: .ci/ffmpeg
+          persist-credentials: false
+      - name: Install encoder for synthetic Main10 EL fixture
+        run: |
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y ffmpeg
+      - name: Compile and exercise the real pinned FFmpeg RPU parser
+        run: |
+          cd .ci/ffmpeg
+          git apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/ffmpeg-patches/ambient-dovi-parser.patch"
+          ./configure --disable-everything --disable-autodetect --disable-programs --disable-doc --disable-network --disable-x86asm --disable-shared --enable-static --enable-decoder=hevc --enable-bsf=dovi_rpu,dovi_split --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample --disable-avformat
+          make -j2 libavcodec/libavcodec.a libavutil/libavutil.a
+          cc -I . -I libavcodec -I "$GITHUB_WORKSPACE/native/vlc-aar/experimental" "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_ambient_dovi_parser.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-ambient-dovi
+          ./test-ambient-dovi
+          # Actual external FEL coefficients, pinned to a single public Git blob.
+          curl --fail --location --retry 3 --max-time 60 \
+            https://raw.githubusercontent.com/quietvoid/dovi_tool/41dae646193c12de152333ff5dbc33579cb9ef4a/assets/tests/fel_orig.bin -o real-fel.rpu
+          test "$(git hash-object real-fel.rpu)" = a7926febb39043d938ebc49dce0a4c043b5b32f0
+          cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/export_external_fel_rpu.c" \
+            libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o export-external-fel
+          ./export-external-fel real-fel.rpu real-fel-snapshot.bin
+          cc -std=c11 -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_hdr10plus_ffmpeg.c" libavutil/libavutil.a -lm -pthread -o test-hdr10plus-ffmpeg
+          ./test-hdr10plus-ffmpeg
+          cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_split.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-dovi-split
+          ./test-dovi-split
+          # Real independently encoded Main10 picture, wrapped as type-63 EL.
+          # The system encoder is only for a test fixture; decoding uses the pinned static FFmpeg.
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=s=64x64:r=1 -frames:v 1 -pix_fmt yuv420p10le -c:v libx265 -x265-params 'pools=1:frame-threads=1:repeat-headers=1:log-level=error' -f hevc -y test-el.hevc
+          cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_fel_decoder.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-fel-decoder
+          # Encode a genuine B-frame GOP; take packet PTS/DTS from MP4 and
+          # keep access-unit boundaries via AUD in the Annex B stream.
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=s=64x64:r=24 -frames:v 8 -pix_fmt yuv420p10le -c:v libx265 -x265-params 'pools=1:frame-threads=1:repeat-headers=1:aud=1:bframes=2:b-adapt=0:keyint=8:min-keyint=8:scenecut=0:log-level=error' -y test-el-reorder.mp4
+          ffprobe -v error -select_streams v:0 -show_entries packet=pts,dts -of csv=p=0 test-el-reorder.mp4 > test-el-reorder.csv
+          ffmpeg -hide_banner -loglevel error -i test-el-reorder.mp4 -map 0:v:0 -c copy -bsf:v hevc_mp4toannexb -f hevc -y test-el-reorder.hevc
+          ffmpeg -hide_banner -loglevel error -i test-el-reorder.mp4 -map 0:v:0 -pix_fmt yuv420p10le -f rawvideo -y test-el-reorder.yuv
+          ffmpeg -hide_banner -loglevel error -i test-el.hevc -c copy -bsf:v hevc_metadata=crop_right=2:crop_bottom=4 -f hevc -y test-el-pad.hevc
+          ffmpeg -hide_banner -loglevel error -i test-el.hevc -c copy -bsf:v hevc_metadata=crop_left=2:crop_top=4 -f hevc -y test-el-shift.hevc
+          ./test-fel-decoder test-el.hevc test-el-reorder.hevc test-el-reorder.csv test-el-reorder.yuv test-el-pad.hevc test-el-shift.hevc
+          # Actual HEVC-decoded samples for the independent spatial oracle.
+          # Different generated pictures; the public RPU coefficients are
+          # intentionally applied to both, not claimed to be their original metadata.
+          ffmpeg -hide_banner -loglevel error -i test-el-reorder.mp4 -frames:v 1 -pix_fmt yuv420p10le -f rawvideo -y real-bl-plane.yuv
+          ffmpeg -hide_banner -loglevel error -i test-el.hevc -frames:v 1 -pix_fmt yuv420p10le -f rawvideo -y real-el-plane.yuv
+          test "$(wc -c < real-bl-plane.yuv)" = 12288
+          test "$(wc -c < real-el-plane.yuv)" = 12288
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: external-fel-rpu-snapshot
+          path: |
+            .ci/ffmpeg/real-fel-snapshot.bin
+            .ci/ffmpeg/real-bl-plane.yuv
+            .ci/ffmpeg/real-el-plane.yuv
+          if-no-files-found: error
+          retention-days: 1
+
+  hdrplus-spatial-gpu:
+    needs: ffmpeg-rpu-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: haasn/libplacebo
+          ref: v5.264.1
+          path: .ci/libplacebo
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: videolan/vlc
+          ref: c84ef1eda4f14f8b57a5b266b51c843cf51ed28b
+          path: .ci/vlc-hdr
+          persist-credentials: false
+          sparse-checkout: |
+            include
+            modules/video_output/libplacebo
+            modules/video_output/opengl
+      - uses: actions/checkout@v5
+        with:
+          repository: FFmpeg/FFmpeg
+          ref: 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+          path: .ci/profile7-ffmpeg
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          name: external-fel-rpu-snapshot
+          path: .ci/real-fel
+      - name: Install host Vulkan and libplacebo build dependencies
+        run: |
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev ffmpeg python3-numpy xvfb xauth libx11-dev
+      - name: Build pinned libplacebo and render local-window reference fixture
+        run: |
+          for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/libplacebo-patches/*.patch; do
+            git -C .ci/libplacebo apply --check "$patch"
+            git -C .ci/libplacebo apply "$patch"
+          done
+          meson setup .ci/pl-build .ci/libplacebo -Dvulkan=enabled -Dshaderc=enabled -Dglslang=disabled -Dopengl=disabled -Ddemos=false -Dtests=false -Dlcms=disabled -Dlibdovi=disabled -Dunwind=disabled
+          meson compile -C .ci/pl-build -j2
+          nm -D --defined-only .ci/pl-build/src/libplacebo.so > .ci/pl-exported-symbols.txt
+          grep -E '[[:space:]]pl_vulkan_swapchain_ambient_mark_retired$' .ci/pl-exported-symbols.txt
+          grep -E '[[:space:]]pl_vulkan_swapchain_ambient_presented$' .ci/pl-exported-symbols.txt
+          grep -E '[[:space:]]pl_vulkan_swapchain_ambient_enable$' .ci/pl-exported-symbols.txt
+          set -o pipefail
+          run_validated() {
+            local log=".ci/vulkan-$(basename "$1").log"
+            VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation "$@" 2>&1 | tee "$log"
+            if grep -Ei 'Validation Error|VUID-[^[:space:]]+|UNASSIGNED-[^[:space:]]+.*[Ee]rror' "$log"; then
+              echo "::error::Vulkan validation reported an error"
+              return 1
+            fi
+          }
+          cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_hdr10plus_spatial_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdrplus-spatial
+          run_validated .ci/test-hdrplus-spatial
+          cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_dovi_fel_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-dovi-fel
+          run_validated .ci/test-dovi-fel
+          python3 native/vlc-aar/experimental/generate_hdr_reference.py > .ci/hdr_reference_vectors.h
+          cc -std=c11 -I .ci -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_hdr_reference_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr-reference
+          run_validated .ci/test-hdr-reference
+          python3 native/vlc-aar/experimental/generate_hdr10plus_frame_reference.py > .ci/hdr10plus_frame_reference.h
+          cc -std=c11 -I .ci -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_hdr10plus_frame_reference_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr10plus-frame-reference
+          run_validated .ci/test-hdr10plus-frame-reference
+          cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_wsi_retirement_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lvulkan -lX11 -lm -o .ci/test-wsi-retirement
+          xvfb-run -a bash -c 'set -o pipefail; VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation timeout 90 .ci/test-wsi-retirement 2>&1 | tee .ci/wsi-validation.log'
+          if grep -Ei 'Validation Error|VUID-[^[:space:]]+' .ci/wsi-validation.log; then exit 1; fi
+          cc -std=gnu11 -Wall -Wextra -fsanitize=undefined -fno-sanitize-recover=all -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_etsi_external_fel_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-etsi-fel
+          run_validated .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin
+          run_validated .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin \
+            .ci/real-fel/real-bl-plane.yuv .ci/real-fel/real-el-plane.yuv
+          # Compile the real-data validator even when no licensed corpus is available.
+          python3 -m py_compile native/vlc-aar/experimental/run_official_hdr_reference.py
+          python3 native/vlc-aar/experimental/audit_public_hdr10plus.py --self-test
+          cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_official_hdr_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-official-hdr
+          git -C .ci/vlc-hdr apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/vlc-patches/utils-hdr-units.patch"
+          # Link the actual shared adapter, retaining only the functions under test.
+          clang -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -DMODULE_NAME=libplacebo '-DN_(s)=s' \
+            -ffunction-sections -fdata-sections -fsanitize=undefined -fno-sanitize-recover=all \
+            -I .ci/vlc-hdr/include -I .ci/vlc-hdr/modules/video_output/libplacebo \
+            -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            .ci/vlc-hdr/modules/video_output/libplacebo/utils.c native/vlc-aar/experimental/test_vlc_hdr_units.c \
+            -Wl,--gc-sections -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-vlc-hdr-units
+          .ci/test-vlc-hdr-units
+      - name: Decode original FFmpeg FATE Profile 7 streams and compare native GPU frames
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          (
+            cd .ci/profile7-ffmpeg
+            git apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/ffmpeg-patches/ambient-dovi-parser.patch"
+            ./configure --disable-everything --disable-autodetect --disable-programs --disable-doc --disable-network --disable-x86asm --disable-shared --enable-static --enable-avformat --enable-demuxer=matroska,mov --enable-protocol=file --enable-parser=hevc --enable-decoder=hevc --enable-bsf=dovi_split --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample
+            make -j2 libavformat/libavformat.a libavcodec/libavcodec.a libavutil/libavutil.a
+          )
+          export FFMPEG_SOURCE="$PWD/.ci/profile7-ffmpeg" PL_SOURCE="$PWD/.ci/libplacebo" PL_BUILD="$PWD/.ci/pl-build"
+          for entry in mkv/dovi-p7-hvce.mkv mov/dovi-p7-hvce.mp4; do
+            clip="$(mktemp)"
+            curl --fail --location --retry 3 --max-time 120 "https://fate-suite.ffmpeg.org/$entry" -o "$clip"
+            case "$entry" in
+              mkv/*) expected=3287bac8deade11e1c57bd65b9c7c8750a1e38e286666cbb4fa39eac264875df ;;
+              mov/*) expected=67baddaf158bc96c0c7955ca8894e92632df5ccca85bc68733f92f5f9fa7caaa ;;
+            esac
+            printf '%s  %s\n' "$expected" "$clip" | sha256sum -c -
+            bash scripts/audit_profile7_stream.sh "$clip" --uhd-bluray --require-fel
+            rm -f "$clip"
+          done
+          # Real published numerical parameters, independently reported for a
+          # commercial UHD title. No movie frames or original RPU are copied.
+          cc -std=c11 native/vlc-aar/experimental/export_reported_uhd_metadata.c -o .ci/export-reported-uhd
+          .ci/export-reported-uhd .ci/reported-uhd.bin
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/reported-uhd.bin \
+            .ci/real-fel/real-bl-plane.yuv .ci/real-fel/real-el-plane.yuv
+      - name: Compare official AOM HDR10+ conformance picture against independent reference
+        if: github.event_name == 'workflow_dispatch' && inputs.aom_reference
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --max-time 180 \
+            https://media.githubusercontent.com/media/AOMediaCodec/av1-hdr10plus/47f1059c45f95b21b77a94037618e79c44d79c4e/conformance/conformance_files/Netflix/sparks_libaom_4096x2160_0_888_hdr10plus.mp4 -o .ci/aom-hdr10plus.mp4
+          python3 native/vlc-aar/experimental/audit_public_hdr10plus.py .ci/aom-hdr10plus.mp4 \
+            --kind aom --permission-confirmed \
+            --sha256 79d2bd39fe7583055548628c2c06649a14dee05742887eeb71959938007e72d9 \
+            --gpu-runner .ci/test-official-hdr --report .ci/aom-hdr-report.json
+      - uses: actions/upload-artifact@v5
+        if: always() && hashFiles('.ci/aom-hdr-report.json') != ''
+        with:
+          name: aom-hdr10plus-metrics-only
+          path: .ci/aom-hdr-report.json
+          retention-days: 7
+
+  linked-arm64-aar:
+    name: linked-arm64-aar
+    # Only the repository-owned experiment or integration branch can spend time building the
+    # whole native stack. No release credentials or publishing step.
+    if: github.event_name == 'workflow_dispatch' || ((github.head_ref == 'experiment/vlc-vulkan-ahb-import' || github.head_ref == 'fix/video-renderer-deep-audit-20261126' || github.head_ref == 'perf/svp-native-pipeline') && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [ndk-contract, ffmpeg-rpu-contract, hdrplus-spatial-gpu]
+    # Let an expensive linked build finish even while a newer commit is
+    # audited. GitHub keeps only the newest queued build in this group.
+    concurrency:
+      group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}-arm64-v8a
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CI: 'true'
+      NATIVE_JOBS: '2'
+      CARGO_BUILD_JOBS: '2'
+      VLC_EXPERIMENTAL_AHB: '1'
+      VLC_VULKAN_ABIS: arm64-v8a
+      VLC_SEEK_AUDIT_ABI: arm64-v8a
+      VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
+      VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
+      AMBIENT_VLC_CCACHE_ROOT: ${{ github.workspace }}/.native/vlc-ccache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+            pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg ccache
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install pinned Meson and SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          "$RUNNER_TEMP/meson-venv/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0'
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # This job only runs on the repository-owned experiment branch
+          # or a manual dispatch. PR caches remain scoped to their merge ref.
+          cache-read-only: false
+      - name: Compute native build identity
+        id: native-key
+        run: |
+          echo "source=$(bash scripts/build_vlc_vulkan.sh --hash)" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$(bash scripts/build_vlc_vulkan.sh --toolchain-hash)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: native-aar-cache
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Validate cached AAR or discard invalid cache
+        id: verified-aar
+        run: |
+          if python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f native/vlc-aar/build/experimental/{libvlc-vulkan-ahb-experimental.aar,native-link-receipt.txt}
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/ffmpeg
+          key: vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/libplacebo
+          key: vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/vlc
+          key: vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/jni
+          key: vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/contrib
+          key: vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Build full linked VLC and JNI AAR (arm64-v8a)
+        if: steps.verified-aar.outputs.valid != 'true'
+        run: |
+          bash scripts/build_vlc_vulkan.sh
+          aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          unzip -tq "$aar"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlc.so"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlcjni.so"
+          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+      - uses: actions/cache/save@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-experimental-arm64
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain verified native libraries if packaging fails
+        if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-native-link-only-arm64-not-aar
+          path: |
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/arm64-v8a/libvlc.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/arm64-v8a/libvlcjni.so
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain native configure diagnostics (arm64)
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-configure-diagnostics-arm64
+          path: |
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/config.log
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/meson-log.txt
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/CMakeConfigureLog.yaml
+            .native/libvlcjni-ahb-experimental/vlc/build-android-*/config.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+
+  linked-x86_64-aar:
+    name: linked-x86_64-aar
+    # Only the repository-owned experiment or integration branch can spend time building the
+    # whole native stack. No release credentials or publishing step.
+    if: github.event_name == 'workflow_dispatch' || ((github.head_ref == 'experiment/vlc-vulkan-ahb-import' || github.head_ref == 'fix/video-renderer-deep-audit-20261126' || github.head_ref == 'perf/svp-native-pipeline') && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [ndk-contract, ffmpeg-rpu-contract, hdrplus-spatial-gpu]
+    # Let an expensive linked build finish even while a newer commit is
+    # audited. GitHub keeps only the newest queued build in this group.
+    concurrency:
+      group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}-x86_64
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CI: 'true'
+      NATIVE_JOBS: '2'
+      CARGO_BUILD_JOBS: '2'
+      VLC_EXPERIMENTAL_AHB: '1'
+      VLC_VULKAN_ABIS: x86_64
+      VLC_SEEK_AUDIT_ABI: x86_64
+      VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
+      VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
+      AMBIENT_VLC_CCACHE_ROOT: ${{ github.workspace }}/.native/vlc-ccache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+            pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg ccache
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install pinned Meson and SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          "$RUNNER_TEMP/meson-venv/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0'
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # This job only runs on the repository-owned experiment branch
+          # or a manual dispatch. PR caches remain scoped to their merge ref.
+          cache-read-only: false
+      - name: Compute native build identity
+        id: native-key
+        run: |
+          echo "source=$(bash scripts/build_vlc_vulkan.sh --hash)" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$(bash scripts/build_vlc_vulkan.sh --toolchain-hash)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: native-aar-cache
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Validate cached AAR or discard invalid cache
+        id: verified-aar
+        run: |
+          if python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f native/vlc-aar/build/experimental/{libvlc-vulkan-ahb-experimental.aar,native-link-receipt.txt}
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/ffmpeg
+          key: vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/libplacebo
+          key: vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/vlc
+          key: vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/jni
+          key: vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/contrib
+          key: vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Build full linked VLC and JNI AAR (x86_64)
+        if: steps.verified-aar.outputs.valid != 'true'
+        run: |
+          bash scripts/build_vlc_vulkan.sh
+          aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          unzip -tq "$aar"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlc.so"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlcjni.so"
+          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+      - uses: actions/cache/save@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-experimental-x86_64
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain verified native libraries if packaging fails
+        if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-native-link-only-x86_64-not-aar
+          path: |
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/x86_64/libvlc.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/x86_64/libvlcjni.so
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain native configure diagnostics (x86_64)
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-configure-diagnostics-x86_64
+          path: |
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/config.log
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/meson-log.txt
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/CMakeConfigureLog.yaml
+            .native/libvlcjni-ahb-experimental/vlc/build-android-*/config.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+
+  linked-arm32-aar:
+    name: linked-arm32-aar
+    # Only the repository-owned experiment or integration branch can spend time building the
+    # whole native stack. No release credentials or publishing step.
+    if: github.event_name == 'workflow_dispatch' || ((github.head_ref == 'experiment/vlc-vulkan-ahb-import' || github.head_ref == 'fix/video-renderer-deep-audit-20261126' || github.head_ref == 'perf/svp-native-pipeline') && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [ndk-contract, ffmpeg-rpu-contract, hdrplus-spatial-gpu]
+    # Let an expensive linked build finish even while a newer commit is
+    # audited. GitHub keeps only the newest queued build in this group.
+    concurrency:
+      group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}-armeabi-v7a
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CI: 'true'
+      NATIVE_JOBS: '2'
+      CARGO_BUILD_JOBS: '2'
+      VLC_EXPERIMENTAL_AHB: '1'
+      VLC_VULKAN_ABIS: armeabi-v7a
+      VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
+      VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
+      AMBIENT_VLC_CCACHE_ROOT: ${{ github.workspace }}/.native/vlc-ccache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+            pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg ccache
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install pinned Meson and SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          "$RUNNER_TEMP/meson-venv/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0'
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # This job only runs on the repository-owned experiment branch
+          # or a manual dispatch. PR caches remain scoped to their merge ref.
+          cache-read-only: false
+      - name: Compute native build identity
+        id: native-key
+        run: |
+          echo "source=$(bash scripts/build_vlc_vulkan.sh --hash)" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$(bash scripts/build_vlc_vulkan.sh --toolchain-hash)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: native-aar-cache
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Validate cached AAR or discard invalid cache
+        id: verified-aar
+        run: |
+          if python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f native/vlc-aar/build/experimental/{libvlc-vulkan-ahb-experimental.aar,native-link-receipt.txt}
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/ffmpeg
+          key: vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/libplacebo
+          key: vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/vlc
+          key: vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/jni
+          key: vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/contrib
+          key: vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Build full linked VLC and JNI AAR (armeabi-v7a)
+        if: steps.verified-aar.outputs.valid != 'true'
+        run: |
+          bash scripts/build_vlc_vulkan.sh
+          aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          unzip -tq "$aar"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlc.so"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlcjni.so"
+          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+      - uses: actions/cache/save@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-experimental-arm32
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain verified native libraries if packaging fails
+        if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-native-link-only-arm32-not-aar
+          path: |
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/armeabi-v7a/libvlc.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/armeabi-v7a/libvlcjni.so
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain native configure diagnostics (arm32)
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-configure-diagnostics-arm32
+          path: |
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/config.log
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/meson-log.txt
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/CMakeConfigureLog.yaml
+            .native/libvlcjni-ahb-experimental/vlc/build-android-*/config.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  linked-x86-aar:
+    name: linked-x86-aar
+    # Only the repository-owned experiment or integration branch can spend time building the
+    # whole native stack. No release credentials or publishing step.
+    if: github.event_name == 'workflow_dispatch' || ((github.head_ref == 'experiment/vlc-vulkan-ahb-import' || github.head_ref == 'fix/video-renderer-deep-audit-20261126' || github.head_ref == 'perf/svp-native-pipeline') && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [ndk-contract, ffmpeg-rpu-contract, hdrplus-spatial-gpu]
+    # Let an expensive linked build finish even while a newer commit is
+    # audited. GitHub keeps only the newest queued build in this group.
+    concurrency:
+      group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}-x86
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CI: 'true'
+      NATIVE_JOBS: '2'
+      CARGO_BUILD_JOBS: '2'
+      VLC_EXPERIMENTAL_AHB: '1'
+      VLC_VULKAN_ABIS: x86
+      VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
+      VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
+      AMBIENT_VLC_CCACHE_ROOT: ${{ github.workspace }}/.native/vlc-ccache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+            pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg ccache
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install pinned Meson and SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          "$RUNNER_TEMP/meson-venv/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0'
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # This job only runs on the repository-owned experiment branch
+          # or a manual dispatch. PR caches remain scoped to their merge ref.
+          cache-read-only: false
+      - name: Compute native build identity
+        id: native-key
+        run: |
+          echo "source=$(bash scripts/build_vlc_vulkan.sh --hash)" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$(bash scripts/build_vlc_vulkan.sh --toolchain-hash)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: native-aar-cache
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Validate cached AAR or discard invalid cache
+        id: verified-aar
+        run: |
+          if python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f native/vlc-aar/build/experimental/{libvlc-vulkan-ahb-experimental.aar,native-link-receipt.txt}
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/ffmpeg
+          key: vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/libplacebo
+          key: vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/vlc
+          key: vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/jni
+          key: vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/contrib
+          key: vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Build full linked VLC and JNI AAR (x86)
+        if: steps.verified-aar.outputs.valid != 'true'
+        run: |
+          bash scripts/build_vlc_vulkan.sh
+          aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          unzip -tq "$aar"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlc.so"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlcjni.so"
+          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+      - uses: actions/cache/save@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-experimental-x86
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain verified native libraries if packaging fails
+        if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-native-link-only-x86-not-aar
+          path: |
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/x86/libvlc.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/x86/libvlcjni.so
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain native configure diagnostics (x86)
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-configure-diagnostics-x86
+          path: |
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/config.log
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/meson-log.txt
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/CMakeConfigureLog.yaml
+            .native/libvlcjni-ahb-experimental/vlc/build-android-*/config.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  seek-audit-arm64-package:
+    name: seek-audit-arm64-apk
+    needs: linked-arm64-aar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VLC_SEEK_AUDIT_ABI: arm64-v8a
+      VLC_EXPERIMENTAL_AHB: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install seek audit dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y ffmpeg
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: actions/download-artifact@v5
+        with:
+          name: vlc-ahb-experimental-arm64
+          path: native/vlc-aar/build/experimental
+      - name: Build seek audit APK against the verified native AAR
+        run: bash scripts/run_vlc_seek_e2e.sh --prepare-only
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-seek-audit-arm64
+          path: |
+            native/vlc-aar/seek-audit/build/outputs/apk/debug/seek-audit-debug.apk
+            native/vlc-aar/seek-audit/build/seek-fixture.mp4
+            native/vlc-aar/seek-audit/build/seek-audit.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  seek-audit-x86_64-package:
+    name: seek-audit-x86_64-apk
+    needs: linked-x86_64-aar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VLC_SEEK_AUDIT_ABI: x86_64
+      VLC_EXPERIMENTAL_AHB: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install seek audit dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y ffmpeg
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: actions/download-artifact@v5
+        with:
+          name: vlc-ahb-experimental-x86_64
+          path: native/vlc-aar/build/experimental
+      - name: Build seek audit APK against the verified native AAR
+        run: bash scripts/run_vlc_seek_e2e.sh --prepare-only
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-seek-audit-x86_64
+          path: |
+            native/vlc-aar/seek-audit/build/outputs/apk/debug/seek-audit-debug.apk
+            native/vlc-aar/seek-audit/build/seek-fixture.mp4
+            native/vlc-aar/seek-audit/build/seek-audit.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  seek-x86_64-integration:
+    needs: seek-audit-x86_64-package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      VLC_SEEK_AUDIT_ABI: x86_64
+      VLC_EXPERIMENTAL_AHB: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v5
+        with:
+          name: vlc-ahb-experimental-x86_64
+          path: native/vlc-aar/build/experimental
+      - uses: actions/download-artifact@v5
+        with:
+          name: vlc-seek-audit-x86_64
+          path: native/vlc-aar/seek-audit/build
+      - name: Execute AFM3 real seek integration on Android emulator
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          mkdir -p "$RUNNER_TEMP/vlc-seek-logs"
+          logs="$RUNNER_TEMP/vlc-seek-logs"
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'emulator' 'platform-tools' 'system-images;android-35;google_apis;x86_64'
+          # cmdline-tools and the emulator may otherwise resolve different
+          # AVD homes on hosted runners (including legacy SDK_HOME).
+          export ANDROID_SDK_HOME="$RUNNER_TEMP/vlc-seek-android"
+          export ANDROID_USER_HOME="$ANDROID_SDK_HOME/.android"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          avd_path="$ANDROID_AVD_HOME/vlc-seek.avd"
+          printf 'no\n' | "$avdmanager" create avd --force --name vlc-seek \
+            --package 'system-images;android-35;google_apis;x86_64' --abi x86_64 \
+            --path "$avd_path" 2>&1 | tee "$logs/avd-create.log"
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          export ANDROID_SERIAL=emulator-5554
+          emulator="$ANDROID_HOME/emulator/emulator"
+          # Fail with useful evidence instead of retrying a nonexistent AVD.
+          "$avdmanager" list avd 2>&1 | tee "$logs/avd-manager-list.log"
+          "$emulator" -list-avds | tee "$logs/emulator-avd-list.log"
+          test -s "$ANDROID_AVD_HOME/vlc-seek.ini"
+          test -s "$avd_path/config.ini"
+          grep -Fxq "path=$avd_path" "$ANDROID_AVD_HOME/vlc-seek.ini"
+          grep -Fxq 'vlc-seek' "$logs/emulator-avd-list.log"
+          "$emulator" -accel-check
+          adb start-server
+          emulator_pid=
+          stop_emulator() {
+            if [[ -n "$emulator_pid" ]]; then
+              timeout 15 adb emu kill >/dev/null 2>&1 || true
+              kill "$emulator_pid" 2>/dev/null || true
+              for _ in {1..10}; do
+                kill -0 "$emulator_pid" 2>/dev/null || break
+                sleep 1
+              done
+              kill -KILL "$emulator_pid" 2>/dev/null || true
+              wait "$emulator_pid" 2>/dev/null || true
+              emulator_pid=
+            fi
+          }
+          diagnostics() {
+            adb devices -l || true
+            timeout 20 adb logcat -d -t 4000 > "$logs/logcat.txt" 2>&1 || true
+            timeout 20 adb logcat -b crash -d > "$logs/crash.txt" 2>&1 || true
+            tail -n 100 "$logs/crash.txt" || true
+            for log in "$logs"/emulator-*.log; do
+              [[ ! -f "$log" ]] || tail -n 120 "$log"
+            done
+          }
+          trap 'status=$?; if [[ "$status" != 0 ]]; then diagnostics; fi; stop_emulator; exit "$status"' EXIT
+          booted=0
+          for attempt in 1 2; do
+            # Retry infrastructure startup only, never a failed seek assertion.
+            gpu=swiftshader_indirect
+            [[ "$attempt" == 1 ]] || gpu=swiftshader
+            "$emulator" -avd vlc-seek -port 5554 -no-window -no-audio -no-snapshot -no-boot-anim -wipe-data -gpu "$gpu" -accel on > "$logs/emulator-$attempt.log" 2>&1 &
+            emulator_pid=$!
+            deadline=$((SECONDS + 420))
+            while (( SECONDS < deadline )); do
+              if ! kill -0 "$emulator_pid" 2>/dev/null; then
+                echo "Emulator exited before boot (attempt $attempt)"
+                break
+              fi
+              if [[ "$(timeout 10 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" == 1 ]]; then
+                booted=1
+                break
+              fi
+              sleep 3
+            done
+            [[ "$booted" == 0 ]] || break
+            diagnostics
+            stop_emulator
+          done
+          [[ "$booted" == 1 ]] || { echo "Android emulator did not boot after two attempts" >&2; exit 1; }
+          timeout 20 adb shell input keyevent 82
+          timeout 240 bash scripts/run_vlc_seek_e2e.sh --run-prepared
+      - name: Retain Android emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-seek-emulator-diagnostics
+          path: ${{ runner.temp }}/vlc-seek-logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+  renderer-release-gate:
+    name: renderer-release-gate
+    if: always() && (github.event_name == 'workflow_dispatch' || ((github.head_ref == 'experiment/vlc-vulkan-ahb-import' || github.head_ref == 'fix/video-renderer-deep-audit-20261126' || github.head_ref == 'perf/svp-native-pipeline') && github.event.pull_request.head.repo.full_name == github.repository))
+    needs: [ndk-contract, ffmpeg-rpu-contract, hdrplus-spatial-gpu, linked-arm64-aar, linked-arm32-aar, linked-x86_64-aar, linked-x86-aar, seek-audit-arm64-package, seek-audit-x86_64-package, seek-x86_64-integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every native contract, link and integration job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ["RESULTS"])
+          failed = {k:v["result"] for k,v in results.items() if v["result"] != "success"}
+          if failed:
+              raise SystemExit(f"Renderer release gate refused: {failed}")
+          print("All renderer CI release gates passed (not physical hardware certification).")
+          PY

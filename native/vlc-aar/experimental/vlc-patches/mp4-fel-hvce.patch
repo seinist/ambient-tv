@@ -1,0 +1,82 @@
+diff --git a/modules/demux/mp4/libmp4.c b/modules/demux/mp4/libmp4.c
+--- a/modules/demux/mp4/libmp4.c
++++ b/modules/demux/mp4/libmp4.c
+@@ -5125,7 +5125,8 @@
+     { ATOM_avcC,    MP4_ReadBox_avcC,         ATOM_avc3 },
+     { ATOM_vvcC,    MP4_ReadBox_Binary,       ATOM_vvc1 },
+     { ATOM_apvC,    MP4_ReadBox_Binary,       ATOM_apv1 },
+-    { ATOM_hvcC,    MP4_ReadBox_Binary,       0 },
++    { ATOM_hvcC,    MP4_ReadBox_Binary,       0 },
++    { VLC_FOURCC('h','v','c','E'), MP4_ReadBox_Binary, 0 }, /* Dolby Vision EL configuration */
+     { ATOM_jpeC,    MP4_ReadBox_Binary,       0 }, /* heif */
+     { ATOM_av1C,    MP4_ReadBox_av1C,         ATOM_ipco }, /* heif */
+     { ATOM_vpcC,    MP4_ReadBox_vpcC,         ATOM_vp08 },
+diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
+--- a/modules/demux/mp4/mp4.c
++++ b/modules/demux/mp4/mp4.c
+@@ -26,7 +26,8 @@
+ /*****************************************************************************
+  * Preamble
+  *****************************************************************************/
+-#include "mp4.h"
++#include "mp4.h"
++#include "dovi_fel_dual.h"
+ 
+ #include <vlc_arrays.h>
+ #include <vlc_demux.h>
+@@ -934,9 +935,52 @@
+ {
+     demux_sys_t *p_sys = p_demux->p_sys;
+ 
+-    p_block = MP4_Block_Convert( p_demux, p_track, p_block );
+-    if( p_block == NULL )
+-        return;
++    /* Profile 7 single-track hvcE: feed out-of-band EL configuration
++     * on random access/discontinuity, before the HEVC packetizer. */
++    if (p_track->fmt.i_cat == VIDEO_ES && p_track->fmt.video.dovi.profile == 7 &&
++        p_track->fmt.video.dovi.bl_present && p_track->fmt.video.dovi.el_present &&
++        p_track->fmt.video.dovi.rpu_present && p_track->p_sample &&
++        var_InheritBool(p_demux, "vk-ambient-ahb") &&
++        var_InheritBool(p_demux, "vk-ambient-dovi-ahb") &&
++        var_InheritBool(p_demux, "vk-ambient-dovi-fel")) {
++        const MP4_Box_t *el = MP4_BoxGet(p_track->p_sample, "hvcE");
++        const MP4_Box_t *bl = MP4_BoxGet(p_track->p_sample, "hvcC");
++        if (el && el->data.p_binary && bl && bl->data.p_binary) {
++            unsigned length = ambient_fel_hvcc_length(bl->data.p_binary->p_blob,
++                                                     bl->data.p_binary->i_blob);
++            bool wrapped, irap;
++            size_t el_offset;
++            if (ambient_fel_mp4_sample(p_block->p_buffer, p_block->i_buffer,
++                                       length, &wrapped, &irap, &el_offset) && wrapped &&
++                (irap || ((p_block->i_flags | p_track->i_next_block_flags) &
++                          BLOCK_FLAG_DISCONTINUITY))) {
++                const uint8_t *config = el->data.p_binary->p_blob;
++                size_t size = el->data.p_binary->i_blob, prefix = 0;
++                if (ambient_fel_hvce_prefix(config, size, length, NULL, 0, &prefix) &&
++                    p_block->i_buffer <= SIZE_MAX - prefix) {
++                    block_t *merged = block_Alloc(prefix + p_block->i_buffer);
++                    if (merged && ambient_fel_hvce_prefix(config, size, length,
++                                                          merged->p_buffer + el_offset, prefix, &prefix)) {
++                        memcpy(merged->p_buffer, p_block->p_buffer, el_offset);
++                        memcpy(merged->p_buffer + el_offset + prefix, p_block->p_buffer + el_offset,
++                               p_block->i_buffer - el_offset);
++                        block_CopyProperties(merged, p_block);
++                        block_Release(p_block);
++                        p_block = merged;
++                    } else {
++                        if (merged) block_Release(merged);
++                        msg_Warn(p_demux, "FEL hvcE configuration could not be injected");
++                    }
++                } else {
++                    msg_Warn(p_demux, "Invalid FEL hvcE configuration");
++                }
++            }
++        }
++    }
++
++    p_block = MP4_Block_Convert( p_demux, p_track, p_block );
++    if( p_block == NULL )
++        return;
+ 
+     if ( p_track->i_chans_to_reorder )
+     {

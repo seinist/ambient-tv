@@ -7,25 +7,30 @@ import org.videolan.libvlc.interfaces.IMedia
  * The stable Maven VLC 3 fallback is supported by the same adapter. */
 internal class VlcTrackAccess(private var player: MediaPlayer) {
     data class Track(val id: Int, val name: String?, val language: String? = null, val codec: String? = null, val channels: Int? = null)
-    val modern = player.javaClass.methods.any { it.name == "getSelectedTrack" }
+    private var methods = player.javaClass.methods.groupBy { it.name to it.parameterCount }
+    val modern get() = ("getSelectedTrack" to 1) in methods
     private val ids = linkedMapOf<String, Int>()
-    fun rebind(player: MediaPlayer) { this.player = player }
+    fun rebind(player: MediaPlayer) {
+        if (this.player.javaClass != player.javaClass) methods = player.javaClass.methods.groupBy { it.name to it.parameterCount }
+        this.player = player
+    }
     private fun id(raw: Any?): Int = when (raw) {
         is Number -> raw.toInt()
         is String -> ids.getOrPut(raw) { ids.size }
         else -> -1
     }
-    private fun field(value: Any, name: String): Any? = runCatching { value.javaClass.getField(name).get(value) }.getOrNull()
+    private fun field(value: Any, name: String): Any? = ReflectiveMembers.value(value, name)
     private fun call(name: String, vararg args: Any): Any? = runCatching {
-        player.javaClass.methods.first { it.name == name && it.parameterCount == args.size }.invoke(player, *args)
+        methods[name to args.size]?.firstOrNull()?.invoke(player, *args)
     }.getOrNull()
     private fun legacyName(type: Int) = when (type) { 0 -> "Audio"; 1 -> "Video"; else -> "Spu" }
     fun mediaTracks(type: Int): List<Track> {
         if (modern) return (call("getTracks", type) as? Array<*>)?.filterNotNull()?.map(::track).orEmpty()
         val media = player.media ?: return emptyList()
         return try {
-            val count = (media.javaClass.getMethod("getTrackCount").invoke(media) as Number).toInt()
-            (0 until count).mapNotNull { media.javaClass.getMethod("getTrack", Int::class.javaPrimitiveType).invoke(media, it) }
+            val count = (ReflectiveMembers.call(media, "getTrackCount") as? Number)?.toInt() ?: 0
+            val getTrack = media.javaClass.getMethod("getTrack", Int::class.javaPrimitiveType)
+            (0 until count).mapNotNull { getTrack.invoke(media, it) }
                 .filter { (field(it, "type") as? Number)?.toInt() == type }.map(::track)
         } catch (_: ReflectiveOperationException) { emptyList() }
         finally { media.release() }
@@ -54,9 +59,11 @@ internal class VlcTrackAccess(private var player: MediaPlayer) {
         val media = player.media ?: return null
         return try {
             val count = (ReflectiveMembers.call(media, "getTrackCount") as? Number)?.toInt() ?: 0
+            val selected = audioTrack
+            val getTrack = runCatching { media.javaClass.getMethod("getTrack", Int::class.javaPrimitiveType) }.getOrNull() ?: return null
             (0 until count).asSequence().mapNotNull { index ->
-                runCatching { media.javaClass.getMethod("getTrack", Int::class.javaPrimitiveType).invoke(media, index) as? IMedia.AudioTrack }.getOrNull()
-            }.firstOrNull { id(field(it, "id")) == audioTrack }
+                runCatching { getTrack.invoke(media, index) as? IMedia.AudioTrack }.getOrNull()
+            }.firstOrNull { id(field(it, "id")) == selected }
         } finally { media.release() }
     }
     fun getAudioTracks() = tracks(0)

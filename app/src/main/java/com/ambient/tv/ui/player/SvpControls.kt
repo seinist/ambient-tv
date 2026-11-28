@@ -30,6 +30,7 @@ internal fun svpModeLabelRes(mode: String): Int = when (mode) {
     "auto", "light" -> R.string.svp_mode_light
     "balanced" -> R.string.svp_mode_balanced
     "quality" -> R.string.svp_mode_smooth
+    "adaptive" -> R.string.svp_mode_adaptive
     else -> R.string.player_off
 }
 
@@ -147,6 +148,7 @@ internal fun SvpMainPage(
         "light" to stringResource(R.string.svp_mode_light),
         "balanced" to stringResource(R.string.svp_mode_balanced),
         "quality" to stringResource(R.string.svp_mode_smooth),
+        "adaptive" to stringResource(R.string.svp_mode_adaptive),
         "custom" to if (o.isCustom) stringResource(R.string.svp_mode_custom_of, base) else stringResource(R.string.svp_mode_custom),
     )) { choice ->
         val (nextMode, nextOptions) = svpApplyPresetChoice(choice, mode, o)
@@ -156,6 +158,19 @@ internal fun SvpMainPage(
         if (choice == "custom") onOpenAdvanced()
     }
     if (mode != "off") {
+        if (mode == "adaptive") ImageHint(stringResource(R.string.svp_adaptive_hint))
+        ImageChoice(R.string.svp_transport, if (o.hardwareResident) "resident" else "standard", listOf(
+            "standard" to stringResource(R.string.svp_transport_standard),
+            "resident" to stringResource(R.string.svp_transport_resident),
+        )) { change(mode, o.copy(hardwareResident = it == "resident")) }
+        if (o.hardwareResident) {
+            ImageHint(stringResource(R.string.svp_transport_hint))
+            ImageChoice(R.string.svp_hdr_two_pass, if (o.hdrTwoPass) "on" else "off", listOf(
+                "off" to stringResource(R.string.player_off),
+                "on" to stringResource(R.string.svp_hdr_two_pass_on),
+            )) { change(mode, o.copy(hdrTwoPass = it == "on")) }
+            if (o.hdrTwoPass) ImageHint(stringResource(R.string.svp_hdr_two_pass_hint))
+        }
         SvpChoice(R.string.svp_target, o.rateDivisor, listOf(
             1 to stringResource(R.string.svp_display_rate),
             2 to stringResource(R.string.svp_half_rate),

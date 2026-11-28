@@ -219,6 +219,13 @@ fn moving_edge_midpoint(backend: u32) {
                     row[7] > 170 && row[28] > 170,
                     "Expected compensated edge, not crossfade: {row:?}"
                 );
+                // The old host used 16x16 dispatch groups with an 8x8
+                // shader. A single middle-row assertion cannot establish
+                // coverage of the lower half or either chroma plane.
+                if backend == 2 {
+                    assert!(out[..64*64].iter().all(|v| *v >= 30), "unwritten luma pixels");
+                    assert!(out[64*64..].iter().all(|v| v.abs_diff(128) <= 2), "unwritten chroma pixels");
+                }
                 found = true;
             }
         }
@@ -328,4 +335,54 @@ fn explicit_vulkan_without_vulkan_falls_back_to_cpu() {
     c.backend = 2;
     let s = AmbientSvp::new(c).expect("explicit Vulkan must fall back instead of failing");
     assert_eq!(s.stats().backend, 1);
+}
+
+#[cfg(feature = "vulkan")]
+#[test]
+#[ignore = "requires hardware Vulkan"]
+fn vulkan_unaligned_planes_survive_reuse_and_seek() {
+    // I420 is even-sized, but chroma widths and plane offsets need not be
+    // multiples of a packed u32. Exercise both warm-cache and reset paths.
+    for (width, height) in [(66u32, 66u32), (130, 98)] {
+        let mut c = config();
+        c.width = width;
+        c.height = height;
+        c.backend = 2;
+        c.target_num = 48;
+        let luma = (width * height) as usize;
+        let input = |n: usize| {
+            let mut data = vec![112; luma * 3 / 2];
+            data[luma * 5 / 4..].fill(144);
+            for y in 0..height as usize {
+                for x in 0..width as usize {
+                    data[y * width as usize + x] =
+                        if (x + width as usize - n % width as usize) % (width as usize) < width as usize / 2 {
+                            200
+                        } else { 40 };
+                }
+            }
+            data
+        };
+        let mut s = AmbientSvp::new(c).unwrap();
+        let mut out = vec![0; s.frame_len()];
+        for origin in [0, 5_000_000] {
+            s.reset().unwrap();
+            let mut frames = 0;
+            let mut check = |data: &[u8]| {
+                assert!(data[..luma].iter().all(|v| *v >= 30), "unwritten luma {width}x{height}");
+                assert!(data[luma..luma * 5 / 4].iter().all(|v| v.abs_diff(112) <= 2), "U plane corruption");
+                assert!(data[luma * 5 / 4..].iter().all(|v| v.abs_diff(144) <= 2), "V plane corruption");
+                frames += 1;
+            };
+            for n in 0..12 {
+                s.push(&input(n * 2), origin + n as i64 * 1_000_000 / 24).unwrap();
+                while s.receive(&mut out, false).unwrap().is_some() { check(&out); }
+            }
+            while s.receive(&mut out, true).unwrap().is_some() { check(&out); }
+            assert_eq!(frames, 24);
+            assert_eq!(s.stats().backend, 2);
+            assert_eq!(s.stats().bypass_reason, 0);
+        }
+        assert!(s.stats().interpolated_frames > 0);
+    }
 }

@@ -56,6 +56,7 @@ class Media3FrameDropIntegrationTest {
                 "isPlaying", "getPlayWhenReady", "isCurrentMediaItemLive" -> true
                 "getPlayerError" -> null
                 "getPlaybackParameters" -> PlaybackParameters.DEFAULT
+                "setVideoFrameMetadataListener", "clearVideoFrameMetadataListener",
                 "clearVideoSurface", "clearMediaItems", "setPlayWhenReady", "release" -> null
                 else -> error("Unexpected player call: ${method.name}")
             }

@@ -33,13 +33,37 @@ class StopCrashGuardsTest {
             "fun cycleAudioTrack(", "fun cycleSubtitleTrack(", "fun preferredAudioTrack(",
             "override fun restoreAfterRendererSwitch(", "private fun mediaTrackLanguages(",
             "private fun refreshSelectedAudioCodec(").forEach {
-            assertTrue("$it lacks a released guard", body(it).contains("if (released) return"))
+            assertTrue("$it lacks a released guard", body(it).contains("if (released") || body(it).contains("if (nativeCommandsBlocked()) return"))
         }
-        assertTrue(body("fun currentVideoTrackId(").contains("if (released) -1"))
+        assertTrue(body("fun currentVideoTrackId(").contains("if (nativeCommandsBlocked()) -1"))
         assertTrue(body("fun isPlayingNow(").contains("!released"))
         assertTrue(vlc.contains("VlcPlaybackSnapshot(isPlaying = controller.isPlayingNow()"))
-        // The player is only replaced inside the controller.
-        assertTrue(Regex("""var player = MediaPlayer\(libVlc\)\s+private set""").containsMatchIn(vlc))
+        // The player remains privately settable and construction must use
+        // the failure-safe factory, including the initial player.
+        assertTrue(Regex("""var player = createPlayerWithNewLibrary\(libVlc\)\s+private set""").containsMatchIn(vlc))
+        val factory = vlc.substringAfter("private fun createPlayerWithNewLibrary(")
+            .substringBefore("var player =")
+        assertTrue(factory.contains("MediaPlayer(library)"))
+        assertTrue(factory.contains("VlcNativeRetirement.releaseUnopenedLibrary(library)"))
+        assertTrue(factory.contains("throw failure"))
+    }
+
+    @Test fun vlcFallbackGuardsCoverAllNativeOwnershipTransitions() {
+        val vlc = source("ui/player/backend/VlcPlaybackView.kt")
+        val guard = vlc.substringAfter("private fun nativeCommandsBlocked(): Boolean =").substringBefore("private val previousAudioRelease")
+        listOf("released", "restartStopFailed", "VlcNativeRetirement.isQuarantined", "vulkanFallbackPosted",
+            "restartStop != null", "rebuildRetirement != null", "dvRetirementPending").forEach {
+            assertTrue("missing ownership guard: $it", guard.contains(it))
+        }
+        val playing = vlc.substringAfter("MediaPlayer.Event.Playing -> {").substringBefore("private fun fourCc")
+        val codec = playing.indexOf("refreshSelectedAudioCodec()")
+        val recheck = playing.indexOf("if (nativeCommandsBlocked() || player !== eventPlayer)", codec)
+        val restore = playing.indexOf("pendingImageTrackSelection?.let", codec)
+        assertTrue(codec >= 0 && recheck > codec && restore > recheck)
+        val attach = vlc.substringAfter("fun attach(view: SurfaceView) {").substringBefore("private fun consumePendingAttachView")
+        assertTrue(attach.contains("if (attachedView === view) {"))
+        assertTrue(attach.indexOf("pendingAttachView = null") < attach.indexOf("pendingAttachView = view"))
+        assertTrue(attach.contains("if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) return"))
     }
 
     // 4 VLC: LibVLC outlives retiring DV-surface players ----------------------------------------
@@ -63,16 +87,20 @@ class StopCrashGuardsTest {
         assertEquals(2, released.size)
     }
 
-    @Test fun libVlcReleaseFailureDoesNotEscape() {
+    @Test fun libVlcReleaseFailureReachesTheNativeRetirementOwner() {
         val gate = VlcLibraryReleaseGate<String> { error("native") }
-        gate.releaseWhenIdle("lib")
-        gate.retiring("b"); gate.releaseWhenIdle("b"); gate.retired("b")
+        assertTrue(runCatching { gate.releaseWhenIdle("lib") }.isFailure)
+        gate.retiring("b"); gate.releaseWhenIdle("b")
+        assertTrue(runCatching { gate.retired("b") }.isFailure)
     }
 
     @Test fun everyLibVlcReleaseGoesThroughTheGate() {
         val vlc = source("ui/player/backend/VlcPlaybackView.kt")
         assertFalse(Regex("""libVlc\.release\(\)|retiringLibVlc\.release\(\)""").containsMatchIn(vlc))
-        assertEquals(3, Regex("""libVlcRelease\.releaseWhenIdle\(""").findAll(vlc).count())
+        assertEquals(2, Regex("""libVlcRelease\.releaseWhenIdle\(""").findAll(vlc).count())
+        assertFalse(vlc.contains("player.release(); libVlcRelease"))
+        assertTrue(vlc.contains("VlcNativeRetirement.release(retiringPlayer, retiringLibVlc)"))
+        assertTrue(vlc.contains("vlc-rebuild-release"))
         assertTrue(vlc.contains("libVlcRelease.retiring(retiringLibVlc)"))
         assertTrue(vlc.contains("libVlcRelease.retired(retiringLibVlc)"))
     }
@@ -191,7 +219,13 @@ class StopCrashGuardsTest {
         assertTrue(view.contains("Lifecycle.Event.ON_START -> {"))
         assertTrue(view.contains("Lifecycle.Event.ON_STOP -> {"))
         assertTrue(view.contains("attachIfReady()"))
-        assertTrue(controller.contains("} finally { surfaceGate.detached(ticket) }"))
+        assertFalse(controller.contains("} finally { surfaceGate.detached(ticket) }"))
+        val detach = controller.substring(controller.indexOf("fun detachSurface(surface:"), controller.indexOf("fun detachSurfaceAndWait("))
+        assertTrue(detach.indexOf("engine?.detachSurface()") < detach.indexOf("surfaceGate.detached(ticket)"))
+        assertTrue(wait.contains("retiringSurfaceIdentity === surface"))
+        val engine = source("ui/player/backend/MpvPlaybackEngine.kt")
+        assertTrue(engine.contains("check(trySetProperty(\"vo\", \"null\"))"))
+        assertFalse(engine.contains("runCatching { MpvNativeBridge.nativeDetachSurface(handle) }"))
         assertTrue(controller.contains("surfaceGate.closed()"))
         assertTrue(controller.indexOf("surfaceGate.attaching()") < controller.indexOf("player.attachSurface(copy, width, height)"))
         assertEquals(500L, SURFACE_DETACH_WAIT_MS)
@@ -218,6 +252,47 @@ class StopCrashGuardsTest {
             assertTrue(gate.await(2_000))
             assertTrue(done.await(2, TimeUnit.SECONDS))
         } finally { resume.countDown(); executor.shutdownNow() }
+    }
+
+    @Test fun mpvJniSurfaceOwnershipIsTransactional() {
+        val shim = listOf(File("../native/ambientmpv/ambientmpv.c"), File("native/ambientmpv/ambientmpv.c"))
+            .first { it.isFile }.readText()
+        val attach = shim.substring(shim.indexOf("MpvNativeBridge_nativeAttachSurface"),
+            shim.indexOf("MpvNativeBridge_nativeDetachSurface"))
+        assertTrue(attach.contains("|| ctx->surface"))
+        assertTrue(attach.contains("if (!next)"))
+        assertTrue(attach.contains("mpv_set_option(ctx->mpv, \"wid\", MPV_FORMAT_INT64, &wid) < 0"))
+        assertTrue(attach.indexOf("mpv_set_option") < attach.indexOf("ctx->surface = next"))
+        assertTrue(attach.contains("DeleteGlobalRef(env, next)"))
+        val detach = shim.substring(shim.indexOf("MpvNativeBridge_nativeDetachSurface"),
+            shim.indexOf("MpvNativeBridge_nativePollEvent"))
+        assertTrue(detach.contains("mpv_set_property_string(ctx->mpv, \"vo\", \"null\") < 0"))
+        assertTrue(detach.indexOf("mpv_set_option") < detach.indexOf("DeleteGlobalRef"))
+        assertTrue(detach.contains("surface_failure(env"))
+        val engine = source("ui/player/backend/MpvPlaybackEngine.kt")
+        val bind = engine.substring(engine.indexOf("MpvNativeBridge.nativeAttachSurface(handle, surface)"))
+        assertTrue(bind.indexOf("attachedSurface = surface") < bind.indexOf("setProperty(\"android-surface-size\""))
+    }
+
+    @Test fun failedDetachDoesNotWakeWaitersBeforeConfirmedClose() {
+        val gate = MpvSurfaceDetachGate()
+        val scheduled = ArrayDeque<() -> Unit>()
+        val errors = mutableListOf<Throwable>()
+        val queue = MpvCommandQueue({ scheduled.addLast(it) }, errors::add)
+        gate.attaching()
+        val ticket = gate.requestDetach()
+        queue.submit("surface-detach", keepOnClose = true) {
+            fun nativeDetach() { error("VO did not retire") }
+            nativeDetach()
+            gate.detached(ticket)
+        }
+        scheduled.removeFirst()()
+        assertEquals(1, errors.size)
+        assertTrue(gate.inUse)
+        assertFalse(gate.await(10))
+        queue.close { gate.closed() }
+        scheduled.removeFirst()()
+        assertTrue(gate.await(100))
     }
 
     @Test fun anEarlierDetachCannotAcknowledgeANewerRequest() {

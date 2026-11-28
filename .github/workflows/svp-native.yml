@@ -1,0 +1,293 @@
+name: SVP native checks
+
+on:
+  pull_request:
+    paths:
+      - 'native/ambientsvp/**'
+      - 'native/vlc-aar/experimental/hdr10plus*.h'
+      - 'scripts/prepare_svp_mpv*.py'
+      - 'scripts/prepare_svp_vlc*.py'
+      - 'scripts/prepare_svp_sources.sh'
+      - 'scripts/build_svp_android.sh'
+      - 'scripts/build_mpv_android.sh'
+      - 'scripts/build_mpv_vulkan.sh'
+      - 'scripts/profile_svp_android.sh'
+      - 'scripts/svp_pgo_metadata.sh'
+      - 'scripts/tests/test_svp_pgo_metadata.sh'
+      - 'scripts/svp_dependency.py'
+      - 'scripts/tests/test_svp_updates.py'
+      - 'scripts/tests/test_svp_mesa.sh'
+      - 'scripts/vendor_svp_licenses.sh'
+      - 'gradle/external-versions.properties'
+      - '.github/workflows/svp-native.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/ambientsvp/**'
+      - 'native/vlc-aar/experimental/hdr10plus*.h'
+      - 'scripts/prepare_svp_mpv*.py'
+      - 'scripts/prepare_svp_vlc*.py'
+      - 'scripts/prepare_svp_sources.sh'
+      - 'scripts/build_svp_android.sh'
+      - 'scripts/build_mpv_android.sh'
+      - 'scripts/build_mpv_vulkan.sh'
+      - 'scripts/profile_svp_android.sh'
+      - 'scripts/svp_pgo_metadata.sh'
+      - 'scripts/tests/test_svp_pgo_metadata.sh'
+      - 'scripts/svp_dependency.py'
+      - 'scripts/tests/test_svp_updates.py'
+      - 'scripts/tests/test_svp_mesa.sh'
+      - 'scripts/vendor_svp_licenses.sh'
+      - 'gradle/external-versions.properties'
+      - '.github/workflows/svp-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: svp-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Matches the host x86 build workaround in build_svp_android.sh.
+      RUSTFLAGS: "-C target-feature=+ssse3"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify source pin and updater integration
+        run: |
+          python3 scripts/svp_dependency.py
+          bash scripts/tests/test_svp_pgo_metadata.sh
+          python3 -m unittest discover -s scripts/tests -p test_svp_updates.py
+      - name: Verify native player MediaCodec patch application and idempotence
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mpv_pin="$(sed -n 's/^MPV_DEP_MPV_COMMIT=//p' gradle/external-versions.properties)"
+          vlc_pin="$(sed -n 's/^VLC_REF=//p' scripts/build_vlc_vulkan.sh)"
+          [[ "$mpv_pin" =~ ^[0-9a-f]{40}$ && "$vlc_pin" =~ ^[0-9a-f]{40}$ ]]
+          fetch_source() {
+            local player="$1" repo="$2" pin="$3" path
+            shift 3
+            for path in "$@"; do
+              mkdir -p "$tmp/$player/$(dirname "$path")"
+              curl -fsSL --retry 3 "https://raw.githubusercontent.com/$repo/$pin/$path" -o "$tmp/$player/$path"
+            done
+          }
+          fetch_source mpv mpv-player/mpv "$mpv_pin" meson.build filters/user_filters.h filters/user_filters.c \
+            video/out/gpu/hwdec.h video/out/gpu/hwdec.c video/out/hwdec/hwdec_vulkan.c video/decode/vd_lavc.c video/out/vulkan/context.c \
+            video/mp_image.h video/mp_image.c video/out/vo_gpu_next.c
+          mkdir -p "$tmp/mpv/video/filter"
+          fetch_source vlc videolan/vlc "$vlc_pin" modules/codec/Makefile.am modules/video_filter/Makefile.am src/video_output/video_output.c \
+            modules/video_output/android/utils.h modules/codec/omxil/mediacodec.c modules/video_output/android/display.c modules/video_output/opengl/interop_aimage.c
+          for player in mpv vlc; do
+            bash scripts/prepare_svp_sources.sh "$player" "$tmp/$player"
+            first="$(find "$tmp/$player" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum)"
+            bash scripts/prepare_svp_sources.sh "$player" "$tmp/$player"
+            second="$(find "$tmp/$player" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum)"
+            [[ "$first" == "$second" ]]
+          done
+      - name: Check independent HDR10+ numeric reference
+        run: python3 native/ambientsvp/tests/hdr10plus_reference.py -v
+      - name: Test synthetic versioned HDR10+ bitstream payloads
+        run: python3 native/ambientsvp/tests/hdr10plus_bitstream_reference.py --self-test
+      - name: Prepare Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Test native CPU fallback
+        run: cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --no-default-features --lib --tests
+      - name: Compile Vulkan path and run portable regressions
+        run: cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib --tests
+  native-gpu:
+    name: native-gpu (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [math_motion, held_benchmark, shared_device, streaming, uploads]
+    env:
+      RUSTFLAGS: "-C target-feature=+ssse3"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Install Mesa software Vulkan
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan-dev
+      - name: Run Vulkan test shard
+        env:
+          XDG_RUNTIME_DIR: ${{ runner.temp }}
+          MESA_SHADER_CACHE_DIR: ${{ runner.temp }}/svp-mesa-cache
+          MESA_SHADER_CACHE_MAX_SIZE: 1G
+        run: |
+          mkdir -p "$MESA_SHADER_CACHE_DIR"
+          bash scripts/tests/test_svp_mesa.sh "${{ matrix.group }}"
+
+  native-adapters:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Install C and shader validation dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libvulkan-dev glslang-tools spirv-tools
+      - name: Cross-check Android JNI, MediaCodec external memory and private Vulkan cache
+        if: ${{ !cancelled() }}
+        run: |
+          glslangValidator -V --target-env vulkan1.1 -S comp -o "$RUNNER_TEMP/ahb_convert.spv" native/ambientsvp/shaders/ahb_convert.comp
+          spirv-val --target-env vulkan1.1 "$RUNNER_TEMP/ahb_convert.spv"
+          rustup target add --toolchain stable aarch64-linux-android
+          RUSTFLAGS="" cargo +stable check --manifest-path native/ambientsvp/Cargo.toml --release --locked --target aarch64-linux-android --lib --tests
+      - name: Cross-check MPV native Vulkan adapter against pinned FFmpeg headers
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^FFMPEG_COMMIT=//p' gradle/external-versions.properties)"
+          [[ "$pin" =~ ^[0-9a-f]{40}$ ]]
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          curl --fail --location --retry 3 "https://github.com/FFmpeg/FFmpeg/archive/$pin.tar.gz" -o "$tmp/ffmpeg.tar.gz"
+          mkdir "$tmp/ffmpeg"
+          tar -xzf "$tmp/ffmpeg.tar.gz" --strip-components=1 -C "$tmp/ffmpeg"
+          (cd "$tmp/ffmpeg" && ./configure --disable-all --disable-autodetect --disable-x86asm --disable-programs --disable-doc > "$tmp/configure.log" 2>&1) || { cat "$tmp/configure.log"; exit 1; }
+          cc -std=c11 -Wall -Wextra -Werror -Wno-unused-function -fsyntax-only -I "$tmp/ffmpeg" \
+            -I native/ambientsvp/include native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-function -ffunction-sections -fdata-sections \
+            -DSVP_METADATA_TEST -I "$tmp/ffmpeg" -I native/ambientsvp/include \
+            native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c -Wl,--gc-sections -ldl -lm -o "$tmp/metadata"
+          "$tmp/metadata"
+      - name: Cross-check shared libplacebo quality bridge against pinned headers
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^MPV_DEP_LIBPLACEBO_COMMIT=//p' gradle/external-versions.properties)"
+          [[ "$pin" =~ ^[0-9a-f]{40}$ ]]
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          curl --fail --location --retry 3 "https://github.com/haasn/libplacebo/archive/$pin.tar.gz" -o "$tmp/placebo.tar.gz"
+          mkdir "$tmp/placebo"
+          tar -xzf "$tmp/placebo.tar.gz" --strip-components=1 -C "$tmp/placebo"
+          # The pinned header config is generated by Meson in actual builds.
+          # Generate only the public syntax fixture, without building libplacebo.
+          major="$(sed -n '/# Major version/{n;s/[^0-9]//gp;q;}' "$tmp/placebo/meson.build")"
+          api="$(sed -n "/# API version/{n;n;s/.*'\\([0-9][0-9]*\\)'.*/\\1/p;q;}" "$tmp/placebo/meson.build")"
+          [[ "$major" =~ ^[0-9]+$ && "$api" =~ ^[0-9]+$ ]]
+          inc="$tmp/placebo/src/include"
+          sed -e "s/@majorver@/$major/g" -e "s/@apiver@/$api/g" -e 's/@extra_defs@/#define PL_HAVE_VULKAN 1/' \
+            "$inc/libplacebo/config.h.in" > "$inc/libplacebo/config.h"
+          printf '%s\n' '#include "svp_placebo_quality.h"' > "$tmp/bridge.c"
+          cc -std=c11 -Wall -Wextra -Werror -Wno-unused-function -fsyntax-only \
+            -I "$inc" -I native/ambientsvp/include -I native/ambientsvp/adapters "$tmp/bridge.c"
+      - name: Test C adapters' shared helpers
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          bash -n scripts/prepare_svp_sources.sh
+          bash -n scripts/build_svp_android.sh
+          bash -n scripts/profile_svp_android.sh
+          bash -n scripts/benchmark_svp_resident_android.sh
+          for test in svp_retry_test svp_planes_test svp_sdr_profile_test svp_av1_config_test svp_hevc_hdr_guard_test; do
+            cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "native/ambientsvp/tests/$test.c" -o "/tmp/$test"
+            "/tmp/$test"
+          done
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          src=native/ambientsvp/tests/svp_loader_test.c
+          cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "$src" -ldl -o "$tmp/loader"
+          for variant in legacy direct mismatch incomplete; do
+            mkdir "$tmp/$variant"
+            flags=(-DMOCK_RUNTIME)
+            expected=reject
+            case "$variant" in
+              legacy) expected=legacy;;
+              direct) flags+=(-DDIRECT_APIS); expected=direct;;
+              mismatch) flags+=(-DWRONG_ABI);;
+              incomplete) flags+=(-DMISSING_REQUIRED);;
+            esac
+            cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared -I native/ambientsvp/include "${flags[@]}" "$src" -o "$tmp/$variant/libambientsvp.so"
+            LD_LIBRARY_PATH="$tmp/$variant" "$tmp/loader" "$expected"
+          done
+
+  # Preserve the existing required check. Every independent group must pass.
+  linked-mpv-android:
+    name: Linked MPV Android integration
+    if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'perf/svp-native-pipeline' && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [native-portable, native-adapters]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      MPV_SKIP_HOST_DEPS: '1'
+      MPV_ENABLE_VULKAN: '1'
+      NATIVE_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends build-essential autoconf automake autopoint gettext libtool libtool-bin pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo curl wget unzip zip xz-utils patch perl python3 python3-venv python3-jinja2 libssl-dev glslang-tools
+          python3 -m venv "$RUNNER_TEMP/mpv-meson"
+          "$RUNNER_TEMP/mpv-meson/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0' jinja2
+          echo "$RUNNER_TEMP/mpv-meson/bin" >> "$GITHUB_PATH"
+      - name: Install reviewed Android NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'ndk;30.0.16248370'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - name: Build and link the actual patched Android MPV stack
+        run: bash scripts/build_mpv_android.sh
+      - name: Verify installed libraries and SVP source receipts
+        run: |
+          expected="$(bash scripts/prepare_svp_sources.sh --hash mpv)"
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            dir="app/src/main/jniLibs/$abi"
+            test -s "$dir/libmpv.so"
+            test -s "$dir/libambientmpv.so"
+            test "$(cat "$dir/.svp-mpv")" = "$expected"
+          done
+
+  native-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [native-portable, native-gpu, native-adapters]
+    if: ${{ always() }}
+    steps:
+      - name: Require every native validation group to succeed
+        env:
+          PORTABLE_RESULT: ${{ needs.native-portable.result }}
+          GPU_RESULT: ${{ needs.native-gpu.result }}
+          ADAPTERS_RESULT: ${{ needs.native-adapters.result }}
+        run: |
+          printf 'Portable: %s\nGPU: %s\nAdapters: %s\n' "$PORTABLE_RESULT" "$GPU_RESULT" "$ADAPTERS_RESULT"
+          [[ "$PORTABLE_RESULT" == success && "$GPU_RESULT" == success && "$ADAPTERS_RESULT" == success ]]
+
+  hdr10plus-external-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compare real FFmpeg FATE HDR10+ bitstream with reference metadata
+        run: |
+          set -euo pipefail
+          sample="$(mktemp)"
+          trap 'rm -f "$sample"' EXIT
+          curl --proto '=https' --proto-redir '=https' -fSL --retry 3 --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+            https://fate-suite.ffmpeg.org/hevc/hdr10_plus_h265_sample.hevc -o "$sample"
+          echo "663bd5179571133660a1e8ac260aa1f5bf8ce61d33dedb828a1cd7188771abcc  $sample" | sha256sum --check --strict
+          python3 native/ambientsvp/tests/hdr10plus_bitstream_reference.py "$sample" --fate

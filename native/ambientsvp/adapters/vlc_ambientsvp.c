@@ -10,6 +10,10 @@
 #include <math.h>
 #include "ambientsvp_loader.h"
 #include "svp_retry.h"
+#include "svp_planes.h"
+#ifdef __ANDROID__
+#include "svp_vlc_android.h"
+#endif
 
 static int Open(filter_t *filter);
 vlc_module_begin()
@@ -17,8 +21,13 @@ vlc_module_begin()
     set_shortname("Open-SVPFlow")
     set_subcategory(SUBCAT_VIDEO_VFILTER)
     add_shortcut("ambientsvp")
+    add_bool("ambientsvp-hwresident", false, N_("Experimental Android GPU-resident transport"), NULL)
+    add_integer_with_range("ambientsvp-hdr-pass", 0, 0, 2, N_("HDR scene pass (0 off, 1 capture, 2 replay)"), NULL)
+    add_string("ambientsvp-hdr-plan", NULL, N_("HDR scene plan"), NULL)
+    add_string("ambientsvp-hdr-cache", NULL, N_("HDR scene cache"), NULL)
+    add_string("ambientsvp-hdr-key", NULL, N_("HDR source SHA256"), NULL)
     add_float_with_range("ambientsvp-fps", 60., 5., 120., N_("Target frame rate"), NULL)
-    add_integer_with_range("ambientsvp-preset", 0, 0, 3, N_("Quality preset"), NULL)
+    add_integer_with_range("ambientsvp-preset", 0, 0, 4, N_("Quality preset"), NULL)
     add_integer_with_range("ambientsvp-backend", 0, 0, 2, N_("Compute backend"), NULL)
     add_integer_with_range("ambientsvp-threads", 0, 0, 8, N_("SVP threads"), NULL)
     add_integer_with_range("ambientsvp-artifacts", 0, 0, 3, N_("SVP artifacts"), NULL)
@@ -48,18 +57,43 @@ static void Transfer(picture_t *pic, uint8_t *data, int w, int h, bool pack) {
     const bool nv12 = pic->format.i_chroma == VLC_CODEC_NV12;
     for (int plane = 0, offset = 0; plane < 3; plane++) {
         int shift = plane != 0, pw = w >> shift, ph = h >> shift;
-        int idx = nv12 && plane ? 1 : plane;
-        int step = nv12 && plane ? 2 : 1;
-        int ox = (pic->format.i_x_offset >> shift) * step + (nv12 && plane ? plane-1 : 0);
+        int ox = pic->format.i_x_offset >> shift;
         int oy = pic->format.i_y_offset >> shift;
-        for (int y = 0; y < ph; y++) {
-            uint8_t *pixels = pic->p[idx].p_pixels + (y+oy)*pic->p[idx].i_pitch + ox;
-            uint8_t *row = data + offset + y*pw;
-            if (step == 1) { if (pack) memcpy(row,pixels,pw); else memcpy(pixels,row,pw); }
-            else for (int x = 0; x < pw; x++) { if (pack) row[x]=pixels[x*2]; else pixels[x*2]=row[x]; }
+        ptrdiff_t pitch = pic->p[plane].i_pitch;
+        if (nv12 && plane == 1) {
+            uint8_t *u = data + offset, *v = u + pw*ph;
+            for (int y = 0; y < ph; y++) {
+                uint8_t *uv = pic->p[1].p_pixels + (ptrdiff_t)(y+oy)*pitch + 2*ox;
+                if (pack) svp_split_uv(u + y*pw, v + y*pw, uv, pw);
+                else svp_join_uv(uv, u + y*pw, v + y*pw, pw);
+            }
+            break;
         }
+        uint8_t *pixels = pic->p[plane].p_pixels + (ptrdiff_t)oy*pitch + ox;
+        if (pack) svp_copy_plane(data + offset, pw, pixels, pitch, pw, ph);
+        else svp_copy_plane(pixels, pitch, data + offset, pw, pw, ph);
         offset += pw*ph;
     }
+}
+typedef struct {
+    picture_t *picture;
+    int w, h;
+} SvpFillContext;
+static int FillInput(void *context, uint8_t *dst, size_t len) {
+    SvpFillContext *src = context;
+    if (len != (size_t)src->w * src->h * 3 / 2) return -1;
+    Transfer(src->picture, dst, src->w, src->h, true);
+    return 0;
+}
+static int PushPicture(filter_sys_t *s, picture_t *pic) {
+    const int w = s->config.width, h = s->config.height;
+    int64_t pts = US_FROM_VLC_TICK(pic->date);
+    if (s->api.push_fill) {
+        SvpFillContext context = {pic, w, h};
+        return s->api.push_fill(s->engine, pts, &context, FillInput);
+    }
+    Transfer(pic, s->buffer, w, h, true);
+    return s->api.push(s->engine, s->buffer, s->bytes, pts);
 }
 static void DropEngine(filter_t *f) {
     filter_sys_t *s = f->p_sys;
@@ -89,18 +123,37 @@ static void Close(filter_t *f) {
     filter_sys_t *s = f->p_sys; DropEngine(f); free(s->buffer);
     if (s->api.lib) dlclose(s->api.lib);
 }
+static void VisitOutput(void *context, const uint8_t *data, size_t len) {
+    SvpFillContext *dst = context;
+    if (len != (size_t)dst->w * dst->h * 3 / 2) return;
+    // Transfer only reads data in the unpack direction.
+    Transfer(dst->picture, (uint8_t *)data, dst->w, dst->h, false);
+}
 static picture_t *Drain(filter_t *f, bool eof) {
     filter_sys_t *s = f->p_sys; picture_t *head = NULL, **tail = &head;
     if (!s->engine || !s->reference) return NULL;
     for (int n = 0; n < 60; n++) {
+        if (s->api.ready) {
+            int ready = s->api.ready(s->engine, eof);
+            if (ready <= 0) {
+                if (ready < 0) s->api.bypass(s->engine, 3);
+                break;
+            }
+        }
         int64_t pts;
-        int r = s->api.receive(s->engine, s->buffer, s->bytes, &pts, eof);
-        if (r <= 0) { if (r < 0) s->api.bypass(s->engine, 3); break; }
         picture_t *out = filter_NewPicture(f);
         if (!out) { s->api.bypass(s->engine, 3); break; }
+        SvpFillContext context = {out, s->config.width, s->config.height};
+        int r = s->api.receive_visit
+            ? s->api.receive_visit(s->engine, &context, VisitOutput, &pts, eof)
+            : s->api.receive(s->engine, s->buffer, s->bytes, &pts, eof);
+        if (r <= 0) {
+            picture_Release(out);
+            if (r < 0) s->api.bypass(s->engine, 3);
+            break;
+        }
         picture_CopyProperties(out, s->reference);
-        const int w = s->config.width, h = s->config.height;
-        Transfer(out, s->buffer, w, h, false);
+        if (!s->api.receive_visit) VisitOutput(&context, s->buffer, s->bytes);
         out->date = VLC_TICK_FROM_US(pts);
         *tail = out; tail = &out->p_next;
     }
@@ -142,15 +195,13 @@ static picture_t *Filter(filter_t *f, picture_t *pic) {
         msg_Info(f, "Open-SVPFlow %ux%u %u/%u -> %u/%u", s->config.width, s->config.height,
             s->config.source_num, s->config.source_den, s->config.target_num, s->config.target_den);
     }
-    const int w = s->config.width, h = s->config.height;
-    Transfer(pic, s->buffer, w, h, true);
-    int r = s->api.push(s->engine, s->buffer, s->bytes, US_FROM_VLC_TICK(pic->date));
+    int r = PushPicture(s, pic);
     if (r == -3 && s->timing_resets++ < 5) {
         // The vout can skip source pictures while the first Vulkan pipelines
         // compile. Reset temporal history but retain compiled GPU resources.
         msg_Dbg(f,"SVP timing reset %d, input delta %lld us",s->timing_resets,
             (long long)(s->reference ? US_FROM_VLC_TICK(pic->date-s->reference->date) : 0));
-        if (!s->api.reset(s->engine)) r=s->api.push(s->engine,s->buffer,s->bytes,US_FROM_VLC_TICK(pic->date));
+        if (!s->api.reset(s->engine)) r=PushPicture(s, pic);
     }
     if (r == -3) {
         // Still discontinuous after the quick resets: pass through for a cool-down, then retry.
@@ -170,6 +221,13 @@ static picture_t *Filter(filter_t *f, picture_t *pic) {
 static const struct vlc_filter_operations ops = {.filter_video = Filter, .flush = Flush, .close = Close};
 static int Open(filter_t *f) {
     const video_format_t *v = &f->fmt_in.video;
+#ifdef __ANDROID__
+    if (v->i_chroma == VLC_CODEC_ANDROID_OPAQUE) {
+        static const char *const resident_options[]={"fps","hwresident","preset","block","overlap","pel","search","artifacts","scene","algo","hdr-pass","hdr-plan","hdr-cache","hdr-key",NULL};
+        config_ChainParse(f,"ambientsvp-",resident_options,f->p_cfg);
+        return svp_android_open(f);
+    }
+#endif
     // No high-bit-depth/HDR conversion just to enable an optional effect.
     if ((v->i_chroma != VLC_CODEC_I420 && v->i_chroma != VLC_CODEC_NV12)
         || f->fmt_out.video.i_chroma != v->i_chroma
@@ -190,8 +248,10 @@ static int Open(filter_t *f) {
     if ((!s->measure_rate && (uint64_t)s->config.source_num * s->config.target_den >= (uint64_t)s->config.target_num * s->config.source_den)
         || !svp_load(&s->api)) { msg_Dbg(f,"SVP source >= target or library unavailable"); return VLC_EGENERIC; }
     s->bytes = (size_t)s->config.width * s->config.height * 3 / 2;
-    s->buffer = malloc(s->bytes);
-    if (!s->buffer) { dlclose(s->api.lib); return VLC_ENOMEM; }
+    if (!s->api.push_fill || !s->api.receive_visit) {
+        s->buffer = malloc(s->bytes);
+        if (!s->buffer) { dlclose(s->api.lib); return VLC_ENOMEM; }
+    }
     f->fmt_out.video.i_frame_rate = s->config.target_num;
     f->fmt_out.video.i_frame_rate_base = s->config.target_den;
     f->ops = &ops; return VLC_SUCCESS;

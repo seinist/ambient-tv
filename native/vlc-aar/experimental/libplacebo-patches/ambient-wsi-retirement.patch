@@ -1,0 +1,316 @@
+diff --git a/src/include/libplacebo/vulkan.h b/src/include/libplacebo/vulkan.h
+--- a/src/include/libplacebo/vulkan.h
++++ b/src/include/libplacebo/vulkan.h
+@@ -351,6 +351,15 @@
+ // who have `params->allow_suboptimal` enabled.
+ bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw);
+ 
++// Ambient VLC: caller has flushed and proven graphics queue zero idle.
++// Wait for other queues in this family (call on bounded terminal worker).
++// No submissions may follow. False means retain the device.
++bool pl_vulkan_swapchain_ambient_mark_retired(pl_swapchain sw);
++// True only when the most recent submit actually queued a present.
++bool pl_vulkan_swapchain_ambient_presented(pl_swapchain sw);
++// Enable bounded acquire and image-indexed present semaphores before first resize.
++bool pl_vulkan_swapchain_ambient_enable(pl_swapchain sw);
++
+ // Vulkan interop API, for sharing a single VkDevice (and associated vulkan
+ // resources) directly with the API user. The use of this API is a bit sketchy
+ // and requires careful communication of Vulkan API state.
+diff --git a/src/vulkan/swapchain.c b/src/vulkan/swapchain.c
+--- a/src/vulkan/swapchain.c
++++ b/src/vulkan/swapchain.c
+@@ -45,6 +45,12 @@
+     pl_rc_t frames_in_flight;       // number of frames currently queued
+     bool suboptimal;                // true once VK_SUBOPTIMAL_KHR is returned
+     bool needs_recreate;            // swapchain needs to be recreated
++    bool ambient_retired;           // externally verified terminal queue idle
++    bool ambient_presented;         // most recent successful queue present
++    bool ambient_wsi;               // opt-in Android external renderer
++    bool ambient_failed;            // never reuse a semaphore after uncertain submission
++    PL_ARRAY(VkSwapchainKHR) ambient_old_swapchains;
++    PL_ARRAY(struct sem_pair) ambient_old_sems;
+     struct pl_color_repr color_repr;
+     struct pl_color_space color_space;
+     struct pl_hdr_metadata hdr_metadata;
+@@ -406,16 +412,14 @@
+     struct priv *p = PL_PRIV(sw);
+     struct vk_ctx *vk = p->vk;
+ 
+-    pl_gpu_flush(gpu);
+-    vk_wait_idle(vk);
++    if (!p->ambient_retired) {
++        pl_gpu_flush(gpu);
++        vk_wait_idle(vk);
+ 
+-    // Vulkan offers no way to know when a queue presentation command is done,
+-    // leading to spec-mandated undefined behavior when destroying resources
+-    // tied to the swapchain. Use an extra `vkQueueWaitIdle` on all of the
+-    // queues we may have oustanding presentation calls on, to hopefully inform
+-    // the driver that we want to wait until the device is truly idle.
+-    for (int i = 0; i < vk->pool_graphics->num_queues; i++)
+-        vk->QueueWaitIdle(vk->pool_graphics->queues[i]);
++        // Default upstream path for clients without external retirement proof.
++        for (int i = 0; i < vk->pool_graphics->num_queues; i++)
++            vk->QueueWaitIdle(vk->pool_graphics->queues[i]);
++    }
+ 
+     for (int i = 0; i < p->images.num; i++)
+         pl_tex_destroy(gpu, &p->images.elem[i]);
+@@ -424,6 +428,14 @@
+         vk->DestroySemaphore(vk->dev, p->sems.elem[i].out, PL_VK_ALLOC);
+     }
+ 
++    // Old generations are retained until all graphics queues retire. Never
++    // reuse a presentation semaphore belonging to another swapchain.
++    for (int i = 0; i < p->ambient_old_sems.num; i++) {
++        vk->DestroySemaphore(vk->dev, p->ambient_old_sems.elem[i].in, PL_VK_ALLOC);
++        vk->DestroySemaphore(vk->dev, p->ambient_old_sems.elem[i].out, PL_VK_ALLOC);
++    }
++    for (int i = 0; i < p->ambient_old_swapchains.num; i++)
++        vk->DestroySwapchainKHR(vk->dev, p->ambient_old_swapchains.elem[i], PL_VK_ALLOC);
+     vk->DestroySwapchainKHR(vk->dev, p->swapchain, PL_VK_ALLOC);
+     pl_mutex_destroy(&p->lock);
+     pl_free((void *) sw);
+@@ -577,6 +589,13 @@
+     VkImage *vkimages = NULL;
+     uint32_t num_images = 0;
+ 
++    // Bound the retained WSI generations. A pathological resize loop must
++    // fall back rather than grow native allocations without limit.
++    if (p->ambient_wsi && (p->ambient_failed ||
++        (p->swapchain && p->ambient_old_swapchains.num >= 8))) {
++        p->ambient_failed = true;
++        return false;
++    }
+     if (!update_swapchain_info(p, &p->protoInfo, w, h))
+         return false;
+ 
+@@ -606,7 +625,15 @@
+     sinfo.oldSwapchain = p->swapchain;
+     p->swapchain = VK_NULL_HANDLE;
+     VkResult res = vk->CreateSwapchainKHR(vk->dev, &sinfo, PL_VK_ALLOC, &p->swapchain);
+-    vk_dev_callback(vk, (vk_cb) destroy_swapchain, vk, vk_wrap_handle(sinfo.oldSwapchain));
++    if (p->ambient_wsi && sinfo.oldSwapchain) {
++        PL_ARRAY_APPEND(sw, p->ambient_old_swapchains, sinfo.oldSwapchain);
++        for (int i = 0; i < p->sems.num; i++)
++            PL_ARRAY_APPEND(sw, p->ambient_old_sems, p->sems.elem[i]);
++        p->sems.num = 0;
++        p->idx_sems = 0;
++    } else {
++        vk_dev_callback(vk, (vk_cb) destroy_swapchain, vk, vk_wrap_handle(sinfo.oldSwapchain));
++    }
+     PL_VK_ASSERT(res, "vk->CreateSwapchainKHR(...)");
+ 
+     // Get the new swapchain images
+@@ -624,7 +651,11 @@
+             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+         };
+         VK(vk->CreateSemaphore(vk->dev, &seminfo, PL_VK_ALLOC, &sem_in));
+-        VK(vk->CreateSemaphore(vk->dev, &seminfo, PL_VK_ALLOC, &sem_out));
++        VkResult sem_result = vk->CreateSemaphore(vk->dev, &seminfo, PL_VK_ALLOC, &sem_out);
++        if (sem_result != VK_SUCCESS) {
++            vk->DestroySemaphore(vk->dev, sem_in, PL_VK_ALLOC);
++            PL_VK_ASSERT(sem_result, "vkCreateSemaphore");
++        }
+         PL_VK_NAME(SEMAPHORE, sem_in, "swapchain in");
+         PL_VK_NAME(SEMAPHORE, sem_out, "swapchain out");
+ 
+@@ -681,8 +712,14 @@
+ error:
+     PL_ERR(vk, "Failed (re)creating swapchain!");
+     pl_free(vkimages);
+-    vk->DestroySwapchainKHR(vk->dev, p->swapchain, PL_VK_ALLOC);
+-    p->swapchain = VK_NULL_HANDLE;
++    if (p->ambient_wsi) {
++        // Partial image wrappers and semaphores remain owned until terminal
++        // teardown. Do not retry acquisition with an incomplete generation.
++        p->ambient_failed = true;
++    } else {
++        vk->DestroySwapchainKHR(vk->dev, p->swapchain, PL_VK_ALLOC);
++        p->swapchain = VK_NULL_HANDLE;
++    }
+     p->cur_width = p->cur_height = 0;
+     return false;
+ }
+@@ -694,6 +731,10 @@
+     struct vk_ctx *vk = p->vk;
+     pl_mutex_lock(&p->lock);
+ 
++    if (p->ambient_wsi && p->ambient_failed) {
++        pl_mutex_unlock(&p->lock);
++        return false;
++    }
+     bool recreate = !p->swapchain || p->needs_recreate;
+     if (p->suboptimal && !p->params.allow_suboptimal)
+         recreate = true;
+@@ -703,12 +744,23 @@
+         return false;
+     }
+ 
+-    VkSemaphore sem_in = p->sems.elem[p->idx_sems].in;
+-    PL_TRACE(vk, "vkAcquireNextImageKHR signals 0x%"PRIx64, (uint64_t) sem_in);
+-
+     for (int attempts = 0; attempts < 2; attempts++) {
++        if (p->ambient_wsi) {
++            // Callback retirement proves that previous acquire waits were
++            // consumed. FIFO completion prevents the ring overtaking a slot.
++            vk_poll_commands(vk, 0);
++            if (p->ambient_failed || vk->failed || !p->sems.num ||
++                pl_rc_count(&p->frames_in_flight) >= PL_MIN(p->sems.num, p->swapchain_depth)) {
++                pl_mutex_unlock(&p->lock);
++                return false;
++            }
++        }
++        // Re-select after OUT_OF_DATE: recreation replaces the entire ring.
++        VkSemaphore sem_in = p->sems.elem[p->idx_sems].in;
++        PL_TRACE(vk, "vkAcquireNextImageKHR signals 0x%"PRIx64, (uint64_t) sem_in);
+         uint32_t imgidx = 0;
+-        VkResult res = vk->AcquireNextImageKHR(vk->dev, p->swapchain, UINT64_MAX,
++        VkResult res = vk->AcquireNextImageKHR(vk->dev, p->swapchain,
++                                               p->ambient_wsi ? 50000000 : UINT64_MAX,
+                                                sem_in, VK_NULL_HANDLE, &imgidx);
+ 
+         switch (res) {
+@@ -741,7 +793,15 @@
+             continue;
+         }
+ 
++        case VK_TIMEOUT:
++        case VK_NOT_READY:
++            if (p->ambient_wsi) {
++                pl_mutex_unlock(&p->lock);
++                return false;
++            }
++            // fall through
+         default:
++            if (p->ambient_wsi) p->ambient_failed = true;
+             PL_ERR(vk, "Failed acquiring swapchain image: %s", vk_res_str(res));
+             pl_mutex_unlock(&p->lock);
+             return false;
+@@ -763,12 +823,15 @@
+ {
+     pl_gpu gpu = sw->gpu;
+     struct priv *p = PL_PRIV(sw);
++    p->ambient_presented = false;
+     struct vk_ctx *vk = p->vk;
+     pl_assert(p->last_imgidx >= 0);
+     pl_assert(p->swapchain);
+     uint32_t idx = p->last_imgidx;
+-    VkSemaphore sem_out = p->sems.elem[p->idx_sems++].out;
+-    p->idx_sems %= p->sems.num;
++    // Acquisition of this specific image establishes retirement of its
++    // previous present wait. A rotating present semaphore does not.
++    VkSemaphore sem_out = p->sems.elem[p->ambient_wsi ? idx : p->idx_sems].out;
++    p->idx_sems = (p->idx_sems + 1) % p->sems.num;
+     p->last_imgidx = -1;
+ 
+     bool held = pl_vulkan_hold_ex(gpu, pl_vulkan_hold_params(
+@@ -779,6 +842,7 @@
+     ));
+ 
+     if (!held) {
++        if (p->ambient_wsi) p->ambient_failed = true;
+         PL_ERR(gpu, "Failed holding swapchain image for presentation");
+         pl_mutex_unlock(&p->lock);
+         return false;
+@@ -786,6 +850,7 @@
+ 
+     struct vk_cmd *cmd = pl_vk_steal_cmd(gpu);
+     if (!cmd) {
++        if (p->ambient_wsi) p->ambient_failed = true;
+         pl_mutex_unlock(&p->lock);
+         return false;
+     }
+@@ -793,6 +858,7 @@
+     pl_rc_ref(&p->frames_in_flight);
+     vk_cmd_callback(cmd, (vk_cb) present_cb, p, NULL);
+     if (!vk_cmd_submit(vk, &cmd)) {
++        if (p->ambient_wsi) p->ambient_failed = true;
+         pl_mutex_unlock(&p->lock);
+         return false;
+     }
+@@ -817,6 +883,14 @@
+     vk->lock_queue(vk->queue_ctx, pool->qf, qidx);
+     VkResult res = vk->QueuePresentKHR(queue, &pinfo);
+     vk->unlock_queue(vk->queue_ctx, pool->qf, qidx);
++    p->ambient_presented = res == VK_SUCCESS ||
++                           res == VK_SUBOPTIMAL_KHR;
++    if (p->ambient_wsi) {
++        if (res == VK_ERROR_OUT_OF_DATE_KHR)
++            p->needs_recreate = true;
++        else if (!p->ambient_presented)
++            p->ambient_failed = true;
++    }
+     pl_mutex_unlock(&p->lock);
+ 
+     switch (res) {
+@@ -842,6 +916,12 @@
+ {
+     struct priv *p = PL_PRIV(sw);
+ 
++    if (p->ambient_wsi) {
++        // Start-frame applies bounded backpressure; never wait indefinitely
++        // on a driver timeline in the playback/display loop.
++        vk_poll_commands(p->vk, 0);
++        return;
++    }
+     pl_mutex_lock(&p->lock);
+     while (pl_rc_count(&p->frames_in_flight) >= p->swapchain_depth) {
+         pl_mutex_unlock(&p->lock); // don't hold mutex while blocking
+@@ -884,6 +964,55 @@
+     pl_mutex_unlock(&p->lock);
+ }
+ 
++bool pl_vulkan_swapchain_ambient_enable(pl_swapchain sw)
++{
++    if (!sw)
++        return false;
++    struct priv *p = PL_PRIV(sw);
++    if (p->impl.destroy != vk_sw_destroy || p->swapchain || p->sems.num ||
++        p->vk->pools.num != 1)
++        return false;
++    p->ambient_wsi = true;
++    return true;
++}
++
++bool pl_vulkan_swapchain_ambient_mark_retired(pl_swapchain sw)
++{
++    if (!sw)
++        return false;
++    struct priv *p = PL_PRIV(sw);
++    struct vk_ctx *vk = p->vk;
++    if (p->impl.destroy != vk_sw_destroy || vk->pools.num != 1 ||
++        vk->pool_graphics->num_queues < 1)
++        return false;
++    // Queue zero has already retired. All other queues were flushed before
++    // the raw terminal fence; no new work may be submitted at this point.
++    struct vk_cmdpool *pool = vk->pool_graphics;
++    for (int i = 1; i < pool->num_queues; i++) {
++        vk->lock_queue(vk->queue_ctx, pool->qf, i);
++        VkResult res = vk->QueueWaitIdle(pool->queues[i]);
++        vk->unlock_queue(vk->queue_ctx, pool->qf, i);
++        if (res != VK_SUCCESS && res != VK_ERROR_DEVICE_LOST)
++            return false;
++    }
++    // Drain callbacks nonblocking and reject if anything remains outstanding.
++    vk_poll_commands(vk, 0);
++    pl_mutex_lock(&vk->lock);
++    bool empty = vk->cmds_pending.num == 0 && vk->num_pending_callbacks == 0 &&
++                 p->last_imgidx < 0 && pl_rc_count(&p->frames_in_flight) == 0;
++    pl_mutex_unlock(&vk->lock);
++    p->ambient_retired = empty;
++    return empty;
++}
++
++bool pl_vulkan_swapchain_ambient_presented(pl_swapchain sw)
++{
++    if (!sw)
++        return false;
++    struct priv *p = PL_PRIV(sw);
++    return p->impl.destroy == vk_sw_destroy && p->ambient_presented;
++}
++
+ bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw)
+ {
+     struct priv *p = PL_PRIV(sw);

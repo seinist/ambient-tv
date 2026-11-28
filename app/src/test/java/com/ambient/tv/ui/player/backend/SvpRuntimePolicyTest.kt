@@ -88,6 +88,43 @@ class SvpRuntimePolicyTest {
         assertFalse(vlcSvpApplies(60.0, 60.0, o, 1920, 1080))
     }
 
+    @Test fun residentTransportIsExplicitAndRejectsCpuAndOversizeSources() {
+        val resident = SvpOptions(hardwareResident = true)
+        assertFalse(svpResidentRequested(SvpOptions()))
+        assertTrue(svpResidentRequested(resident, 1920, 1080))
+        assertFalse(svpResidentRequested(resident, 3840, 2160))
+        assertFalse(svpResidentRequested(resident.copy(backend = 1)))
+        assertTrue(svpProbeOptions(resident).hardwareResident)
+        val standard = mpvSvpFilter("light", 24.0, 60.0, resident)!!
+        assertFalse(standard.contains("hwresident"))
+        assertTrue(mpvSvpFilter("light", 24.0, 60.0, resident, 1920, 1080, hardwareResident = true)!!.endsWith(":hwresident=1"))
+        assertFalse(mpvSvpFilter("light", 24.0, 60.0, resident.copy(backend = 1), hardwareResident = true)!!.contains("hwresident"))
+    }
+
+    @Test fun mpvResidentStartupAndVlcSurfaceOptionsRetainSafeFallbacks() {
+        val tuning = SvpOptions(hardwareResident = true)
+        val options = com.ambient.tv.data.local.MpvImageOptions(svpMode = "light", svp = tuning)
+        val base = MpvAccelerationPlan("vulkan", "mediacodec")
+        val plan = base.withSvpResident(options, supported = true, hdr = false)
+        assertTrue(plan.svpResident)
+        assertEquals("mediacodec,mediacodec-copy", plan.hwdec)
+        assertEquals("mediacodec-copy", plan.hwdecForProcessing(true, false))
+        assertFalse(base.withSvpResident(options, supported = false, hdr = false).svpResident)
+        assertFalse(base.withSvpResident(options, supported = true, hdr = true).svpResident)
+        assertFalse(base.withSvpResident(options.copy(denoise = "light"), true, false).svpResident)
+        assertFalse(base.copy(output = "gpu").withSvpResident(options, true, false).svpResident)
+        val vlc = com.ambient.tv.data.local.VlcImageOptions(svpMode = "balanced", svp = tuning)
+        val direct = vlcImageMediaOptions(vlc, 60.0, hardwareResident = true)
+        assertTrue(":mediacodec-dr" in direct)
+        assertTrue(":mediacodec-svp-vulkan" in direct)
+        assertTrue(direct.any { it.contains("hwresident=1") })
+        assertFalse(":no-mediacodec-dr" in direct)
+        val standard = vlcImageMediaOptions(vlc, 60.0)
+        assertTrue(":no-mediacodec-dr" in standard)
+        assertFalse(standard.any { it.contains("hwresident") || it.contains("svp-vulkan") })
+        assertTrue(":no-mediacodec-dr" in vlcImageMediaOptions(vlc.copy(softwareProcessing = true), 60.0, true))
+    }
+
     @Test fun probeKeepsOutputLimitsAndDevice() {
         val tuning = SvpOptions(rateDivisor = 3, algorithm = 23, block = 8, maxHeight = 720, filmOnly = false, backend = 2, threads = 3)
         assertEquals(SvpOptions(rateDivisor = 3, maxHeight = 720, filmOnly = false, backend = 2, threads = 3), svpProbeOptions(tuning))

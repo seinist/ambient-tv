@@ -113,7 +113,7 @@ object VideoImageCatalog {
     val media3Sharpening = setOf("off", "light", "medium", "strong", "cas", "adaptive")
     val media3Deband = strengths
     val toneMapping = setOf("auto", "bt.2390", "reinhard", "hable", "mobius", "clip")
-    val svpModes = setOf("off", "light", "balanced", "quality")
+    val svpModes = setOf("off", "light", "balanced", "quality", "adaptive")
     val colorMatrix = setOf("auto", "601_to_709", "709_to_601")
 }
 
@@ -142,6 +142,10 @@ data class SvpOptions(
     val maxHeight: Int = 1080,
     /** Interpolate only sources up to 30 fps (film and TV), not 50/60 fps video. */
     val filmOnly: Boolean = true,
+    /** Experimental GPU-only decoder transport; old profiles default to copy-back. */
+    val hardwareResident: Boolean = false,
+    /** Explicitly opt in to a full first playback followed by automatic HDR10+ replay. */
+    val hdrTwoPass: Boolean = false,
 ) {
     fun normalized() = copy(
         rateDivisor = rateDivisor.takeIf { it in 1..3 } ?: 1,

@@ -16,6 +16,7 @@ internal object MpvNativeFeatures {
     const val COLOR_INFO = "ffmpeg-color-info"
     /** libmpv tags its EGL window surface BT2020_PQ (mpv-android-egl-hdr-surface.patch). */
     const val EGL_HDR_SURFACE = "mpv-egl-hdr-surface"
+    const val SVP_RESIDENT = "mpv-svp-resident"
 
     val current: Set<String> by lazy {
         if (!MpvBackendAvailability.nativeRuntimeAvailable) return@lazy emptySet()

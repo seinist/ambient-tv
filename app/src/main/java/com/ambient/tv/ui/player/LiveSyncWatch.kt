@@ -12,6 +12,8 @@ internal data class LiveSyncSample(
     val avSyncSeconds: Double? = null,
     /** MPV's video-related time-pos can stop while audio-pts continues. */
     val videoPositionMs: Long? = null,
+    /** True when the backend already included the intentional audio delay in its A-V error. */
+    val avSyncCompensated: Boolean = false,
 )
 
 internal enum class LiveSyncFault { VIDEO_STALLED, CLOCK_DRIFT }
@@ -25,12 +27,14 @@ internal class LiveSyncWatch {
     private var healthyFrom: Long? = null
     private var attempts = 0
     private var retryAt = 0L
+    private var lastIntentionalDelayMs: Int? = null
 
     fun resetObservation() {
         last = null
         frozenFrom = null
         driftFrom = null
         healthyFrom = null
+        lastIntentionalDelayMs = null
     }
 
     fun resetSession() {
@@ -41,6 +45,9 @@ internal class LiveSyncWatch {
 
     fun observe(sample: LiveSyncSample?, intentionalDelayMs: Int = 0): LiveSyncFault? {
         if (sample == null) { resetObservation(); return null }
+        // Do not bridge an explicit delay change with the previous drift window.
+        if (lastIntentionalDelayMs != null && lastIntentionalDelayMs != intentionalDelayMs) resetObservation()
+        lastIntentionalDelayMs = intentionalDelayMs
         val before = last
         if (before != null && sample.atMs == before.atMs && sample.generation == before.generation) return null
         last = sample
@@ -63,7 +70,13 @@ internal class LiveSyncWatch {
         if (videoFrozen && clockMoves) {
             if (frozenFrom == null) frozenFrom = before
         } else frozenFrom = null
-        val drift = sample.avSyncSeconds?.let { it.isFinite() && abs(it) >= 0.65 + abs(intentionalDelayMs / 1000.0) } == true
+        // A raw A-V clock difference should be -delay when audio is intentionally late.
+        // mpv's avsync is already compensated (playing_audio_pts - video_pts + audio_delay).
+        // Adding the absolute delay to the threshold masked equally large real faults.
+        val drift = sample.avSyncSeconds?.let { sync ->
+            val residual = if (sample.avSyncCompensated) sync else sync + intentionalDelayMs / 1000.0
+            residual.isFinite() && abs(residual) >= 0.65
+        } == true
         if (drift && clockMoves) {
             if (driftFrom == null) driftFrom = sample.atMs
         } else driftFrom = null

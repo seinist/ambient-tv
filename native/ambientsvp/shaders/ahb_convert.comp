@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+#version 450
+// A single combined immutable YCbCr sampler is required for Android
+// external-format images. Separate texture/sampler WGSL bindings cannot
+// express this contract. The conversion is supplied by the actual AHB.
+layout(local_size_x=8,local_size_y=8) in;
+layout(set=0,binding=0) uniform sampler2D decoder_image;
+#ifdef SVP_HIGH_DEPTH
+layout(set=0,binding=1,rgba16f) writeonly uniform image2D destination;
+#else
+layout(set=0,binding=1,rgba8) writeonly uniform image2D destination;
+#endif
+layout(push_constant) uniform Geometry {
+    uvec4 crop; // left, top, visible width, visible height
+    uvec2 allocation;
+} geometry;
+void main(){
+    uvec2 p=gl_GlobalInvocationID.xy;
+    if(any(greaterThanEqual(p,geometry.crop.zw))) return;
+    // Do not sample padded decoder rows or a cropped-out region.
+    vec2 uv=(vec2(p+geometry.crop.xy)+vec2(0.5))/vec2(geometry.allocation);
+    vec3 rgb=textureLod(decoder_image,uv,0.0).rgb;
+#ifdef SVP_HIGH_DEPTH
+    imageStore(destination,ivec2(p),vec4(rgb,1.0));
+#else
+    imageStore(destination,ivec2(p),vec4(clamp(rgb,0.0,1.0),1.0));
+#endif
+}

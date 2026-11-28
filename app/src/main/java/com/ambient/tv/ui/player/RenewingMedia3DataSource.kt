@@ -1,57 +1,53 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.ambient.tv.ui.player
 
 import android.net.Uri
-import androidx.annotation.OptIn
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
-import java.io.IOException
 
-/** Per-player signed-URL recovery for every Media3 HTTP transport. */
-@OptIn(UnstableApi::class)
-internal class RenewingMedia3DataSourceFactory(
-    private val upstream: DataSource.Factory,
-    private val renew: (String) -> String?,
-) : DataSource.Factory {
-    private val replacements = LinkedHashMap<String, String>()
-    private val attempted = LinkedHashMap<String, Long>()
-
-    @Synchronized private fun current(url: String): String = replacements[url] ?: url
-
-    @Synchronized private fun replacement(original: String, failed: String): String? {
-        current(original).takeIf { it != failed }?.let { return it }
-        val now = System.nanoTime()
-        attempted[failed]?.let { if (now - it < 30_000_000_000L) return null }
-        attempted[failed] = now
-        while (attempted.size > 64) attempted.remove(attempted.keys.first())
-        val fresh = runCatching { renew(failed) }.getOrNull()?.takeIf { it.isNotBlank() && it != failed } ?: return null
-        replacements[original] = fresh
-        while (replacements.size > 64) replacements.remove(replacements.keys.first())
-        return fresh
-    }
-
-    override fun createDataSource(): DataSource {
-        val source = upstream.createDataSource()
-        return object : DataSource by source {
-            override fun open(dataSpec: DataSpec): Long {
-                val original = dataSpec.uri.toString()
-                val url = current(original)
-                val request = if (url == original) dataSpec else dataSpec.withUri(Uri.parse(url))
-                try {
-                    return source.open(request)
-                } catch (error: HttpDataSource.InvalidResponseCodeException) {
-                    if (error.responseCode != 403 && error.responseCode != 410) throw error
-                    val fresh = replacement(original, url) ?: throw error
-                    try {
-                        source.close()
-                    } catch (closeError: IOException) {
-                        error.addSuppressed(closeError)
-                        throw error
-                    }
-                    return source.open(dataSpec.withUri(Uri.parse(fresh)))
-                }
+/**
+ * Retry only an expired HTTP URL during open(), never a partially consumed read.
+ * Preserve DataSpec (range, headers, flags, key, method, body) while changing only its URI.
+ * The factory shares the same replacement/cooldown map across parallel audio/video loads.
+ */
+internal class RenewingMedia3DataSource(
+    private val upstream: DataSource,
+    private val policy: StreamUrlRenewalPolicy,
+) : DataSource by upstream {
+    override fun open(dataSpec: DataSpec): Long {
+        if (dataSpec.uri.scheme !in setOf("http", "https")) return upstream.open(dataSpec)
+        val original = dataSpec.uri.toString()
+        val current = policy.current(original)
+        val request = if (current == original) dataSpec else dataSpec.withUri(Uri.parse(current))
+        try {
+            return upstream.open(request)
+        } catch (failure: HttpDataSource.InvalidResponseCodeException) {
+            if (failure.responseCode != 403 && failure.responseCode != 410) throw failure
+            // Media3 HTTP sources can be partially initialized after a failed open.
+            // Close before attempting a replacement so no native connection/transfer remains.
+            try {
+                upstream.close()
+            } catch (closeError: Exception) {
+                failure.addSuppressed(closeError)
+                throw failure
             }
+            val fresh = policy.replacement(original, current) ?: throw failure
+            return upstream.open(dataSpec.withUri(Uri.parse(fresh)))
         }
     }
+
+    class Factory(
+        private val upstream: DataSource.Factory,
+        renew: (String) -> String?,
+    ) : DataSource.Factory {
+        private val policy = StreamUrlRenewalPolicy(renew = renew)
+        override fun createDataSource(): DataSource =
+            RenewingMedia3DataSource(upstream.createDataSource(), policy)
+    }
 }
+
+/** Keep the transport-neutral factory entry point used by Main. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal class RenewingMedia3DataSourceFactory(upstream: DataSource.Factory, renew: (String) -> String?) :
+    DataSource.Factory by RenewingMedia3DataSource.Factory(upstream, renew)

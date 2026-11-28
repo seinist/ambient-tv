@@ -1,0 +1,17 @@
+diff --git a/contrib/src/main.mak b/contrib/src/main.mak
+--- a/contrib/src/main.mak
++++ b/contrib/src/main.mak
+@@ -428,7 +428,12 @@
+ 	$(GIT) init --bare "$(@:.tar.xz=)" && \
+ 	(cd "$(@:.tar.xz=)" && \
+ 	$(GIT) remote add origin "$(1)" && \
+-	$(GIT) fetch origin "$(2)") && \
++	( for attempt in 1 2 3 4; do \
++		$(GIT) fetch origin "$(2)" && exit 0; \
++		test "$$attempt" != 4 || exit 1; \
++		echo "Retrying pinned contrib Git fetch ($$attempt/4)" >&2; \
++		sleep $$((attempt * 15)); \
++	done )) && \
+ 	(cd "$(@:.tar.xz=)" && \
+ 	$(GIT) archive --prefix="$(notdir $(@:.tar.xz=))/" \
+ 		--format=tar "$(3)") > "$(@:.xz=)" && \

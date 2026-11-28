@@ -67,7 +67,9 @@ class PlaybackFrameDropOverlayTest {
             "isCurrentMediaItemLive" -> false
             "getPlaybackParameters" -> PlaybackParameters.DEFAULT
             "getMediaItemCount" -> 0
+            "getApplicationLooper" -> android.os.Looper.getMainLooper()
             "getTrackSelectionParameters" -> TrackSelectionParameters.DEFAULT
+            "setVideoFrameMetadataListener", "clearVideoFrameMetadataListener",
             "addListener", "removeListener", "setTrackSelectionParameters", "clearVideoSurface",
             "clearMediaItems", "setPlayWhenReady", "release" -> null
             else -> error("Unexpected player call: ${method.name}")

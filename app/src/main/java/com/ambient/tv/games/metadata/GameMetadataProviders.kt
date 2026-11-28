@@ -494,7 +494,8 @@ internal fun libretroArtworkMirrorUrl(primary: HttpUrl): HttpUrl? {
     // Construct afresh: no credentials, query parameters or fragments can reach the mirror.
     return HttpUrl.Builder().scheme("https").host("raw.githubusercontent.com")
         .addPathSegment("libretro-thumbnails").addPathSegment(repository).addPathSegment("master")
-        .addPathSegment(path[1]).addPathSegment(path[2]).build()
+        .addPathSegment(path[1])
+        .addEncodedPathSegment(primary.encodedPathSegments.last().replace("[", "%5B").replace("]", "%5D")).build()
 }
 
 /** Shared with parsers/tests: no application identity or user credentials may survive to SQLite. */
@@ -506,7 +507,9 @@ internal fun sanitizedGameArtworkUrl(provider: String, input: String?): String? 
 }
 
 internal fun credentialFreeGameUrl(url: HttpUrl): HttpUrl {
-    return sanitizedGameMetadataUrl(url.toString())?.toHttpUrlOrNull()
+    // OkHttp permits literal square brackets in a path, but the strict
+    // java.net.URI persistence boundary requires them percent-encoded.
+    return sanitizedGameMetadataUrl(url.toUri().toASCIIString())?.toHttpUrlOrNull()
         ?: throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
 }
 

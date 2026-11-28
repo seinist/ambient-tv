@@ -1,0 +1,316 @@
+diff --git a/src/input/input_internal.h b/src/input/input_internal.h
+--- a/src/input/input_internal.h
++++ b/src/input/input_internal.h
+@@ -440,8 +440,9 @@
+     } list;
+     struct {
+         bool b_fast_seek;
+-        vlc_tick_t i_val;
+-    } time;
++        vlc_tick_t i_val;
++        uint64_t ambient_seek_id;
++    } time;
+     struct {
+         bool b_fast_seek;
+         double f_val;
+diff --git a/src/input/input.c b/src/input/input.c
+--- a/src/input/input.c
++++ b/src/input/input.c
+@@ -181,7 +181,8 @@
+     input_control_param_t param;
+ 
+     param.time.i_val = i_time;
+-    param.time.b_fast_seek = b_fast;
++    param.time.b_fast_seek = b_fast;
++    param.time.ambient_seek_id = 0;
+     input_ControlPush( p_input, INPUT_CONTROL_SET_TIME, &param );
+ }
+ 
+@@ -1918,14 +1919,25 @@
+     free(array);
+ }
+ 
+-static int ControlSetTime( input_thread_t *p_input, vlc_tick_t val,
+-                           bool fast_seek )
+-{
+-    input_thread_private_t *priv = input_priv(p_input);
+-    int i_ret;
+-
+-    i_ret = demux_SetTime( priv->master->p_demux, priv->i_start + val,
+-                           !fast_seek );
++/* Scoped to the synchronous master demux control, not a shared player variable.
++ * The queue carries the ID with its time, including when controls are coalesced. */
++static _Thread_local uint64_t ambient_seek_id;
++
++uint64_t vlc_demux_AmbientSeekId(void)
++{
++    return ambient_seek_id;
++}
++
++static int ControlSetTime( input_thread_t *p_input, vlc_tick_t val,
++                           bool fast_seek, uint64_t request_id )
++{
++    input_thread_private_t *priv = input_priv(p_input);
++    int i_ret;
++    uint64_t previous_id = ambient_seek_id;
++    ambient_seek_id = request_id;
++
++    i_ret = demux_SetTime( priv->master->p_demux, priv->i_start + val,
++                           !fast_seek );
+     if( i_ret )
+     {
+         vlc_tick_t i_length = InputSourceGetLength( priv->master, priv->p_item, NULL );
+@@ -1933,12 +1945,13 @@
+         if( i_length > 0 )
+         {
+             double f_pos = (double)(priv->i_start + val) / (double)i_length;
+-            i_ret = demux_SetPosition( priv->master->p_demux, f_pos,
+-                                       !fast_seek );
+-        }
+-    }
+-
+-    if( i_ret == VLC_SUCCESS )
++            i_ret = demux_SetPosition( priv->master->p_demux, f_pos,
++                                       !fast_seek );
++        }
++    }
++    ambient_seek_id = previous_id;
++
++    if( i_ret == VLC_SUCCESS )
+     {
+         if( priv->i_slave > 0 )
+             SlaveSeek( p_input );
+@@ -2035,7 +2048,7 @@
+     es_out_PrivControl(priv->p_es_out, ES_OUT_PRIV_RESET_PCR_FRAME_PREV,
+                        buffering_duration);
+ 
+-    int ret = ControlSetTime(input, pts, false);
++    int ret = ControlSetTime(input, pts, false, 0);
+     if (ret == VLC_SUCCESS)
+         return; /* The decoder will send the status */
+ 
+@@ -2097,7 +2110,7 @@
+             priv->next_frame_need_data = false;
+ 
+             int i_ret = ControlSetTime( p_input, param.time.i_val,
+-                                        param.time.b_fast_seek );
++                                        param.time.b_fast_seek, param.time.ambient_seek_id );
+ 
+             if( i_ret )
+                 msg_Warn( p_input, "INPUT_CONTROL_SET_TIME @%"PRId64
+diff --git a/include/vlc_demux.h b/include/vlc_demux.h
+--- a/include/vlc_demux.h
++++ b/include/vlc_demux.h
+@@ -560,7 +560,9 @@
+     return demux_Control( p_demux, DEMUX_SET_POSITION, pos, precise );
+ }
+ 
+-static inline int demux_SetTime( demux_t *p_demux, vlc_tick_t time, bool precise )
++VLC_API uint64_t vlc_demux_AmbientSeekId(void);
++
++static inline int demux_SetTime( demux_t *p_demux, vlc_tick_t time, bool precise )
+ {
+     if( time < 0 )
+         time = 0;
+diff --git a/src/player/player.h b/src/player/player.h
+--- a/src/player/player.h
++++ b/src/player/player.h
+@@ -478,10 +478,15 @@
+                            enum vlc_player_seek_speed speed,
+                            enum vlc_player_whence whence);
+ 
+-void
+-vlc_player_input_SeekByTime(struct vlc_player_input *input, vlc_tick_t time,
+-                            enum vlc_player_seek_speed speed,
+-                            enum vlc_player_whence whence);
++int
++vlc_player_input_SeekByTimeWithId(struct vlc_player_input *input, vlc_tick_t time,
++                            enum vlc_player_seek_speed speed,
++                            enum vlc_player_whence whence, uint64_t request_id);
++
++void
++vlc_player_input_SeekByTime(struct vlc_player_input *input, vlc_tick_t time,
++                            enum vlc_player_seek_speed speed,
++                            enum vlc_player_whence whence);
+ 
+ void
+ vlc_player_input_UpdateViewpoint(struct vlc_player_input *input,
+diff --git a/src/player/input.c b/src/player/input.c
+--- a/src/player/input.c
++++ b/src/player/input.c
+@@ -144,10 +144,10 @@
+         vlc_player_osd_Position(player, input, VLC_TICK_INVALID, position);
+ }
+ 
+-void
+-vlc_player_input_SeekByTime(struct vlc_player_input *input, vlc_tick_t time,
+-                            enum vlc_player_seek_speed speed,
+-                            enum vlc_player_whence whence)
++int
++vlc_player_input_SeekByTimeWithId(struct vlc_player_input *input, vlc_tick_t time,
++                            enum vlc_player_seek_speed speed,
++                            enum vlc_player_whence whence, uint64_t request_id)
+ {
+     vlc_player_t *player = input->player;
+     vlc_player_assert_seek_params(speed, whence);
+@@ -162,13 +162,23 @@
+ 
+     int ret = input_ControlPush(input->thread, INPUT_CONTROL_SET_TIME,
+         &(input_control_param_t) {
+-            .time.i_val = time,
+-            .time.b_fast_seek = speed == VLC_PLAYER_SEEK_FAST,
+-    });
+-
+-    if (ret == VLC_SUCCESS)
+-        vlc_player_osd_Position(player, input, time, -1);
+-}
++            .time.i_val = time,
++            .time.b_fast_seek = speed == VLC_PLAYER_SEEK_FAST,
++            .time.ambient_seek_id = request_id,
++    });
++
++    if (ret == VLC_SUCCESS)
++        vlc_player_osd_Position(player, input, time, -1);
++    return ret;
++}
++
++void
++vlc_player_input_SeekByTime(struct vlc_player_input *input, vlc_tick_t time,
++                            enum vlc_player_seek_speed speed,
++                            enum vlc_player_whence whence)
++{
++    vlc_player_input_SeekByTimeWithId(input, time, speed, whence, 0);
++}
+ 
+ void
+ vlc_player_input_UpdateViewpoint(struct vlc_player_input *input,
+diff --git a/src/player/player.c b/src/player/player.c
+--- a/src/player/player.c
++++ b/src/player/player.c
+@@ -1485,8 +1485,18 @@
+         vlc_player_input_SeekByPos(input, position, speed, whence);
+ }
+ 
+-void
+-vlc_player_SeekByTime(vlc_player_t *player, vlc_tick_t time,
++int
++vlc_player_SeekByTimeWithId(vlc_player_t *player, vlc_tick_t time, uint64_t request_id)
++{
++    struct vlc_player_input *input = vlc_player_get_input_locked(player);
++    if (!input || !request_id)
++        return VLC_EGENERIC;
++    return vlc_player_input_SeekByTimeWithId(input, time,
++        VLC_PLAYER_SEEK_PRECISE, VLC_PLAYER_WHENCE_ABSOLUTE, request_id);
++}
++
++void
++vlc_player_SeekByTime(vlc_player_t *player, vlc_tick_t time,
+                       enum vlc_player_seek_speed speed,
+                       enum vlc_player_whence whence)
+ {
+diff --git a/include/vlc_player.h b/include/vlc_player.h
+--- a/include/vlc_player.h
++++ b/include/vlc_player.h
+@@ -724,10 +724,13 @@
+  * @param speed precise of fast
+  * @param whence absolute or relative
+  */
+-VLC_API void
+-vlc_player_SeekByTime(vlc_player_t *player, vlc_tick_t time,
+-                      enum vlc_player_seek_speed speed,
+-                      enum vlc_player_whence whence);
++VLC_API void
++vlc_player_SeekByTime(vlc_player_t *player, vlc_tick_t time,
++                      enum vlc_player_seek_speed speed,
++                      enum vlc_player_whence whence);
++
++VLC_API int
++vlc_player_SeekByTimeWithId(vlc_player_t *player, vlc_tick_t time, uint64_t request_id);
+ 
+ /**
+  * Helper to set the absolute position precisely
+diff --git a/lib/media_player.c b/lib/media_player.c
+--- a/lib/media_player.c
++++ b/lib/media_player.c
+@@ -1462,7 +1462,26 @@
+     return set_time( p_mi, i_time, b_fast, VLC_PLAYER_WHENCE_ABSOLUTE );
+ }
+ 
+-int libvlc_media_player_jump_time( libvlc_media_player_t *p_mi,
++/* Implemented in libvlccore; keep the exported query independent of a player. */
++extern bool vlc_ambient_output_quarantined(void);
++bool libvlc_ambient_output_quarantined(void)
++{
++    return vlc_ambient_output_quarantined();
++}
++
++int libvlc_media_player_ambient_set_time_with_id(libvlc_media_player_t *p_mi,
++                                                 libvlc_time_t time, uint64_t request_id)
++{
++    if (time < 0 || time > INT64_MAX / 1000 || !request_id)
++        return -1;
++    vlc_player_t *player = p_mi->player;
++    vlc_player_Lock(player);
++    int ret = vlc_player_SeekByTimeWithId(player, vlc_tick_from_libvlc_time(time), request_id);
++    vlc_player_Unlock(player);
++    return ret == VLC_SUCCESS ? 0 : -1;
++}
++
++int libvlc_media_player_jump_time( libvlc_media_player_t *p_mi,
+                                    libvlc_time_t i_time )
+ {
+     return set_time( p_mi, i_time, false, VLC_PLAYER_WHENCE_RELATIVE );
+diff --git a/include/vlc/libvlc_media_player.h b/include/vlc/libvlc_media_player.h
+--- a/include/vlc/libvlc_media_player.h
++++ b/include/vlc/libvlc_media_player.h
+@@ -1325,7 +1325,12 @@
+  * \param b_fast prefer fast seeking or precise seeking
+  * \return 0 on success, -1 on error
+  */
+-LIBVLC_API int libvlc_media_player_set_time( libvlc_media_player_t *p_mi,
++LIBVLC_API bool libvlc_ambient_output_quarantined(void);
++
++LIBVLC_API int libvlc_media_player_ambient_set_time_with_id(libvlc_media_player_t *p_mi,
++    libvlc_time_t time, uint64_t request_id);
++
++LIBVLC_API int libvlc_media_player_set_time( libvlc_media_player_t *p_mi,
+                                              libvlc_time_t i_time, bool b_fast );
+ 
+ /**
+diff --git a/lib/libvlc.sym b/lib/libvlc.sym
+--- a/lib/libvlc.sym
++++ b/lib/libvlc.sym
+@@ -173,7 +173,9 @@
+ libvlc_media_player_set_rate
+ libvlc_media_player_set_renderer
+ libvlc_media_player_set_role
+-libvlc_media_player_set_time
++libvlc_media_player_set_time
++libvlc_media_player_ambient_set_time_with_id
++libvlc_ambient_output_quarantined
+ libvlc_media_player_jump_time
+ libvlc_media_player_set_title
+ libvlc_media_player_set_xwindow
+diff --git a/src/libvlccore.sym b/src/libvlccore.sym
+--- a/src/libvlccore.sym
++++ b/src/libvlccore.sym
+@@ -105,7 +105,8 @@
+ vlc_decoder_device_Release
+ demux_PacketizerDestroy
+ demux_PacketizerNew
+-demux_New
++demux_New
++vlc_demux_AmbientSeekId
+ demux_Demux
+ demux_vaControl
+ demux_vaControlHelper
+@@ -915,7 +916,8 @@
+ vlc_player_RestorePlaybackPos
+ vlc_player_Resume
+ vlc_player_SeekByPos
+-vlc_player_SeekByTime
++vlc_player_SeekByTime
++vlc_player_SeekByTimeWithId
+ vlc_player_SelectCategoryLanguage
+ vlc_player_SelectChapter
+ vlc_player_SelectChapterIdx

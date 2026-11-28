@@ -10,7 +10,12 @@ typedef struct {
     void (*destroy)(AmbientSvp *);
     int (*reset)(AmbientSvp *);
     int (*push)(AmbientSvp *, const uint8_t *, size_t, int64_t);
+    int (*push_fill)(AmbientSvp *, int64_t, void *, AmbientSvpFill);
     int (*receive)(AmbientSvp *, uint8_t *, size_t, int64_t *, int);
+    int (*ready)(AmbientSvp *, int);
+    int (*receive_visit)(AmbientSvp *, void *, AmbientSvpVisit, int64_t *, int);
+    int (*push_ahardwarebuffer)(AmbientSvp *, struct AHardwareBuffer *, uint32_t, uint32_t, int, int64_t);
+    int (*receive_ahardwarebuffer)(AmbientSvp *, struct AHardwareBuffer *, uint32_t, uint32_t, int, int *, int64_t *, int);
     int (*stats)(const AmbientSvp *, AmbientSvpStats *);
     void (*bypass)(AmbientSvp *, uint32_t);
     int (*enabled)(void);
@@ -25,6 +30,12 @@ static inline int svp_load(SvpApi *api) {
     SVP_LOAD(stats); SVP_LOAD(bypass); SVP_LOAD(enabled);
 #undef SVP_LOAD
     if (!abi || abi() != AMBIENTSVP_ABI) goto fail;
+    /* Optional on older ABI-compatible engines; retain legacy packed path. */
+    api->push_fill = dlsym(api->lib, "ambient_svp_push_fill");
+    api->ready = dlsym(api->lib, "ambient_svp_ready");
+    api->receive_visit = dlsym(api->lib, "ambient_svp_receive_visit");
+    api->push_ahardwarebuffer = dlsym(api->lib, "ambient_svp_push_ahardwarebuffer");
+    api->receive_ahardwarebuffer = dlsym(api->lib, "ambient_svp_receive_ahardwarebuffer");
     return 1;
 fail:
     dlclose(api->lib); memset(api, 0, sizeof(*api)); return 0;

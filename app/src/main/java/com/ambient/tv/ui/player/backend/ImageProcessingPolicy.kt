@@ -614,7 +614,8 @@ internal fun vlcSwscaleMode(filterKey: String): Int = when (filterKey) {
 }
 
 /** Only modules confirmed in the bundled libVLC 3.7.5 ARM runtime are exposed. */
-internal fun vlcImageMediaOptions(options: VlcImageOptions, svpTargetFps: Double? = null): List<String> = buildList {
+internal fun vlcImageMediaOptions(options: VlcImageOptions, svpTargetFps: Double? = null,
+    hardwareResident: Boolean = false, hdrSceneOptions: List<String> = emptyList()): List<String> = buildList {
     val o = options.normalized()
     add(":swscale-mode=${vlcSwscaleMode(o.scaler)}")
     val filters = mutableListOf<String>()
@@ -641,8 +642,13 @@ internal fun vlcImageMediaOptions(options: VlcImageOptions, svpTargetFps: Double
     }
     val target = svpTargetFps?.takeIf { it.isFinite() && it in 5.0..120.0 }
     if (o.svpMode != "off" && target != null) {
-        filters += "ambientsvp{fps=$target,preset=${svpPreset(o.svpMode)},${svpNativeOptions(o.svp, ",")}}"
-        add(":no-mediacodec-dr")
+        val resident = hardwareResident && !o.softwareProcessing && svpResidentRequested(o.svp)
+        val transport = if (resident) ",hwresident=1" + hdrSceneOptions.joinToString("") { ",$it" } else ""
+        filters += "ambientsvp{fps=$target,preset=${svpPreset(o.svpMode)},${svpNativeOptions(o.svp, ",")}$transport}"
+        if (resident) {
+            add(":mediacodec-dr")
+            if (hdrSceneOptions.isEmpty()) add(":mediacodec-svp-vulkan")
+        } else add(":no-mediacodec-dr")
     }
     if (filters.isNotEmpty()) add(":video-filter=${filters.joinToString(":")}")
 }
@@ -723,9 +729,14 @@ internal fun vlcOptionsForNativeHdr(
     options: VlcImageOptions,
     nativeHdrPreferred: Boolean,
     sourceHdrStandard: com.ambient.tv.ui.player.HdrStandard? = null,
+    hdrResidentAvailable: Boolean = false,
+    hdrBridgeAvailable: Boolean = false,
 ): VlcImageOptions =
     if (!nativeHdrPreferred && sourceHdrStandard == null) options else options.copy(
-        softwareProcessing = false, svpMode = "off", deband = "off", denoise = "off",
+        softwareProcessing = false, svpMode = if (nativeHdrPreferred && hdrResidentAvailable &&
+            (svpStaticHdrResident(sourceHdrStandard) || sourceHdrStandard == com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS && (options.svp.hdrTwoPass || hdrBridgeAvailable) ||
+                sourceHdrStandard == com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION && hdrBridgeAvailable) && svpResidentRequested(options.svp)) options.svpMode else "off",
+        deband = "off", denoise = "off",
         brightness = 0, contrast = 0, saturation = 0, gamma = 0,
     )
 

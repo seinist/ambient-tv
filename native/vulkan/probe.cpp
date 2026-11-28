@@ -32,18 +32,87 @@ struct Probe {
     ANativeWindow *window = nullptr;
     template<class T> T fn(const char *name) { return reinterpret_cast<T>(get(instance, name)); }
     ~Probe() {
-        if (surface) fn<PFN_vkDestroySurfaceKHR>("vkDestroySurfaceKHR")(instance, surface, nullptr);
-        if (instance) fn<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
+        if (surface) {
+            auto destroy = fn<PFN_vkDestroySurfaceKHR>("vkDestroySurfaceKHR");
+            if (destroy) destroy(instance, surface, nullptr);
+        }
+        if (instance) {
+            auto destroy = fn<PFN_vkDestroyInstance>("vkDestroyInstance");
+            if (destroy) destroy(instance, nullptr);
+        }
         if (window) ANativeWindow_release(window);
         if (lib) dlclose(lib);
     }
-    std::string run(JNIEnv *env, jobject javaSurface) {
+    // Surface recreation does not change the device's decoder profiles or external-memory
+    // features. Recheck only the actual graphics/presentation queue and surface formats.
+    std::string deviceUuid(VkPhysicalDevice device) {
+        auto props2 = fn<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2");
+        if (!props2) return {};
+        VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+        VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        props.pNext = &id;
+        props2(device, &props);
+        std::string uuid;
+        bool nonzero = false;
+        constexpr char hex[] = "0123456789abcdef";
+        for (auto byte : id.deviceUUID) {
+            nonzero |= byte != 0;
+            uuid += hex[byte >> 4];
+            uuid += hex[byte & 15];
+        }
+        return nonzero ? uuid : std::string{};
+    }
+    std::string validatedSurface(VkPhysicalDevice device, const VkPhysicalDeviceProperties &props,
+                                 const std::string &uuid) {
+        auto failure = [&](const char *why) { return "{\"device\":" + quote(props.deviceName) + ",\"version\":" +
+            std::to_string(props.apiVersion) + ",\"reason\":" + quote(why) + "}"; };
+        if (!surface) return failure("surface_create");
+        auto queues = fn<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
+        auto present = fn<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>("vkGetPhysicalDeviceSurfaceSupportKHR");
+        auto formats = fn<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>("vkGetPhysicalDeviceSurfaceFormatsKHR");
+        if (!queues || !present || !formats) return failure("surface_functions");
+        uint32_t count = 0;
+        queues(device, &count, nullptr);
+        if (!count) return failure("present_queue");
+        std::vector<VkQueueFamilyProperties> families(count);
+        queues(device, &count, families.data());
+        bool supported = false;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (!families[i].queueCount || !(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) continue;
+            VkBool32 yes = VK_FALSE;
+            if (present(device, i, surface, &yes) == VK_SUCCESS && yes) { supported = true; break; }
+        }
+        if (!supported) return failure("present_queue");
+        count = 0;
+        if (formats(device, surface, &count, nullptr) != VK_SUCCESS || !count) return failure("surface_formats");
+        std::vector<VkSurfaceFormatKHR> values(count);
+        if (formats(device, surface, &count, values.data()) != VK_SUCCESS || !count) return failure("surface_formats");
+        values.resize(count);
+        std::ostringstream out;
+        out << "{\"render\":true,\"reason\":\"\",\"device\":" << quote(props.deviceName)
+            << ",\"version\":" << props.apiVersion << ",\"deviceUuid\":" << quote(uuid.c_str()) << ",\"surfaceColorSpaces\":[";
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i) out << ',';
+            out << static_cast<int>(values[i].colorSpace);
+        }
+        out << "],\"surfaceFormats\":[";
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i) out << ',';
+            out << "{\"format\":" << static_cast<int>(values[i].format)
+                << ",\"colorSpace\":" << static_cast<int>(values[i].colorSpace) << '}';
+        }
+        out << "]}";
+        return out.str();
+    }
+    std::string run(JNIEnv *env, jobject javaSurface, const char *validatedDevice = nullptr, uint32_t validatedVersion = 0, const char *validatedUuid = nullptr) {
         if (!get) return "{\"reason\":\"loader\"}";
         auto enumerate = fn<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties");
+        if (!enumerate) return "{\"reason\":\"instance_functions\"}";
         uint32_t count = 0;
         if (enumerate(nullptr, &count, nullptr) != VK_SUCCESS) return "{}";
         std::vector<VkExtensionProperties> ext(count);
         if (enumerate(nullptr, &count, ext.data()) != VK_SUCCESS) return "{}";
+        ext.resize(count);
         if (!has(ext, VK_KHR_SURFACE_EXTENSION_NAME) || !has(ext, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME))
             return "{\"reason\":\"android_surface\"}";
         uint32_t version = VK_API_VERSION_1_0;
@@ -60,29 +129,41 @@ struct Probe {
         app.apiVersion = version;
         VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         info.pApplicationInfo = &app; info.enabledExtensionCount = extensions.size(); info.ppEnabledExtensionNames = extensions.data();
-        if (fn<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance) != VK_SUCCESS) return "{}";
+        auto create = fn<PFN_vkCreateInstance>("vkCreateInstance");
+        if (!create || create(&info, nullptr, &instance) != VK_SUCCESS) return "{}";
         if (javaSurface) {
             window = ANativeWindow_fromSurface(env, javaSurface);
             if (!window) return "{\"reason\":\"native_window\"}";
             VkAndroidSurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
             si.window = window;
-            if (fn<PFN_vkCreateAndroidSurfaceKHR>("vkCreateAndroidSurfaceKHR")(instance, &si, nullptr, &surface) != VK_SUCCESS) return "{\"reason\":\"surface_create\"}";
+            auto createSurface = fn<PFN_vkCreateAndroidSurfaceKHR>("vkCreateAndroidSurfaceKHR");
+            if (!createSurface || createSurface(instance, &si, nullptr, &surface) != VK_SUCCESS) return "{\"reason\":\"surface_create\"}";
         }
         auto devices = fn<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
-        if (devices(instance, &count, nullptr) != VK_SUCCESS) return "{}";
+        auto properties = fn<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
+        if (!devices || !properties || devices(instance, &count, nullptr) != VK_SUCCESS || !count) return "{}";
         std::vector<VkPhysicalDevice> physical(count);
         if (devices(instance, &count, physical.data()) != VK_SUCCESS) return "{}";
+        physical.resize(count);
         std::string unsupported = "{\"reason\":\"device\"}";
         for (auto device : physical) {
             VkPhysicalDeviceProperties props;
-            fn<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(device, &props);
+            properties(device, &props);
             auto failure = [&](const char *why) { return "{\"device\":" + quote(props.deviceName) + ",\"version\":" + std::to_string(props.apiVersion) + ",\"reason\":" + quote(why) + "}"; };
+            if (validatedDevice && (strcmp(props.deviceName, validatedDevice) || props.apiVersion != validatedVersion)) continue;
             unsupported = failure("device_features");
             if (props.apiVersion < VK_API_VERSION_1_1 || props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) continue;
+            const auto uuid = deviceUuid(device);
+            if (validatedDevice) {
+                if (!validatedUuid || uuid.empty() || uuid != validatedUuid) continue;
+                return validatedSurface(device, props, uuid);
+            }
             auto devExt = fn<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             if (devExt(device, nullptr, &count, nullptr) != VK_SUCCESS) continue;
             ext.resize(count);
-            if (devExt(device, nullptr, &count, ext.data()) != VK_SUCCESS || !has(ext, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
+            if (devExt(device, nullptr, &count, ext.data()) != VK_SUCCESS) continue;
+            ext.resize(count);
+            if (!has(ext, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
             if (props.apiVersion < VK_API_VERSION_1_2 && !has(ext, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
                 unsupported = failure("timeline_semaphore"); continue;
             }
@@ -114,6 +195,24 @@ struct Probe {
             features.pNext = &timeline;
             fn<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(device, &features);
             if (!timeline.timelineSemaphore) { unsupported = failure("timeline_semaphore"); continue; }
+
+            // AHB import is only a prerequisite for native MediaCodec interop. Report
+            // independently from renderer support; neither VLC nor libplacebo enables it here.
+            bool ahbImport = has(ext, VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME);
+            bool foreignQueue = has(ext, VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME);
+            VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES};
+            VkPhysicalDeviceFeatures2 interopFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            interopFeatures.pNext = &ycbcr;
+            fn<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(device, &interopFeatures);
+            VkPhysicalDeviceExternalSemaphoreInfo externalSemaphore{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO};
+            externalSemaphore.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+            VkExternalSemaphoreProperties semaphoreProperties{VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES};
+            auto getSemaphore = fn<PFN_vkGetPhysicalDeviceExternalSemaphoreProperties>("vkGetPhysicalDeviceExternalSemaphoreProperties");
+            if (getSemaphore && has(ext, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME))
+                getSemaphore(device, &externalSemaphore, &semaphoreProperties);
+            const auto requiredSemaphore = VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT | VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT;
+            bool syncFd = (semaphoreProperties.externalSemaphoreFeatures & requiredSemaphore) == requiredSemaphore;
+            // Only the full device probe reaches logical-device creation.
             const float priority = 1.0f;
             VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             qi.queueFamilyIndex = graphics; qi.queueCount = 1; qi.pQueuePriorities = &priority;
@@ -135,7 +234,11 @@ struct Probe {
                 surfaceFormats.resize(formats);
             }
             std::ostringstream out;
-            out << "{\"render\":true,\"reason\":\"\",\"hostQueryReset\":" << (hostReset.hostQueryReset ? "true" : "false") << ",\"device\":" << quote(props.deviceName) << ",\"version\":" << props.apiVersion << ",\"profiles\":[";
+            out << "{\"render\":true,\"reason\":\"\",\"hostQueryReset\":" << (hostReset.hostQueryReset ? "true" : "false") << ",\"device\":" << quote(props.deviceName) << ",\"version\":" << props.apiVersion << ",\"deviceUuid\":" << quote(uuid.c_str()) << ",\"androidHardwareBufferImport\":" << (ahbImport ? "true" : "false")
+                << ",\"foreignQueueFamily\":" << (foreignQueue ? "true" : "false")
+                << ",\"samplerYcbcrConversion\":" << (ycbcr.samplerYcbcrConversion ? "true" : "false")
+                << ",\"syncFdImportExport\":" << (syncFd ? "true" : "false")
+                << ",\"profiles\":[";
             bool first = true;
             auto capsFn = fn<PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR>("vkGetPhysicalDeviceVideoCapabilitiesKHR");
             auto formatsFn = fn<PFN_vkGetPhysicalDeviceVideoFormatPropertiesKHR>("vkGetPhysicalDeviceVideoFormatPropertiesKHR");
@@ -197,6 +300,30 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_probe(JNIEnv *env, jobject, jobject surface) {
     Probe probe;
     auto result = probe.run(env, surface);
+    return env->NewStringUTF(result.c_str());
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_probeValidatedSurface(JNIEnv *env, jobject, jobject surface, jstring device, jlong version) {
+    if (!surface || !device) return env->NewStringUTF("{}");
+    const char *name = env->GetStringUTFChars(device, nullptr);
+    if (!name) return nullptr;
+    Probe probe;
+    // Older Java callers cannot supply a stable physical identity: run the full probe.
+    auto result = probe.run(env, surface);
+    env->ReleaseStringUTFChars(device, name);
+    return env->NewStringUTF(result.c_str());
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_probeValidatedSurfaceIdentity(JNIEnv *env, jobject, jobject surface, jstring device, jlong version, jstring uuid) {
+    if (!surface || !device || !uuid) return env->NewStringUTF("{}");
+    const char *name = env->GetStringUTFChars(device, nullptr);
+    if (!name) return nullptr;
+    const char *identity = env->GetStringUTFChars(uuid, nullptr);
+    if (!identity) { env->ReleaseStringUTFChars(device, name); return nullptr; }
+    Probe probe;
+    auto result = probe.run(env, surface, name, static_cast<uint32_t>(version), identity);
+    env->ReleaseStringUTFChars(uuid, identity);
+    env->ReleaseStringUTFChars(device, name);
     return env->NewStringUTF(result.c_str());
 }
 extern "C" JNIEXPORT jboolean JNICALL

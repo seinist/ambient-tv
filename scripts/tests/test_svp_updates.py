@@ -27,6 +27,8 @@ class SvpUpdateTest(unittest.TestCase):
             dest = self.crate / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(svp.ROOT / "native/ambientsvp" / name, dest)
+        for name in ("build.rs", "shaders/ahb_convert.comp"):
+            shutil.copyfile(svp.ROOT / "native/ambientsvp" / name, self.crate / name)
         (self.root / "gradle").mkdir()
         self.props = self.root / "gradle/external-versions.properties"
         shutil.copyfile(updater.PROPS, self.props)
@@ -64,6 +66,20 @@ class SvpUpdateTest(unittest.TestCase):
 
     def test_existing_sources_are_consistent(self):
         svp.verify(self.crate, self.old)
+
+    def test_reference_smoother_pin_is_checked_in_dev_dependencies(self):
+        manifest = self.crate / "Cargo.toml"
+        original = manifest.read_text()
+        line = next(line for line in original.splitlines() if line.startswith("svpflow-wasm = "))
+        manifest.write_text(original.replace(line, line.replace(self.old, NEW)))
+        with self.assertRaisesRegex(RuntimeError, "svpflow-wasm pin mismatch"):
+            svp.verify(self.crate, self.old)
+        manifest.write_text(original.replace(line + "\n", ""))
+        with self.assertRaisesRegex(RuntimeError, "svpflow-wasm pin mismatch"):
+            svp.verify(self.crate, self.old)
+        manifest.write_text(original.replace("[dependencies]\n", "[dependencies]\n" + line + "\n"))
+        with self.assertRaisesRegex(RuntimeError, "svpflow-wasm pin mismatch"):
+            svp.verify(self.crate, self.old)
 
     def test_changed_shader_is_rejected(self):
         (self.crate / "shaders/smooth.wgsl").write_bytes(b"stale")
@@ -195,7 +211,8 @@ class SvpUpdateTest(unittest.TestCase):
 
     def test_fingerprint_changes_on_engine_source_and_stays_location_independent(self):
         (self.root / "scripts").mkdir()
-        for name in ("build_svp_android.sh", "vendor_svp_licenses.sh", "svp_dependency.py"):
+        for name in ("build_svp_android.sh", "vendor_svp_licenses.sh", "svp_dependency.py",
+                     "svp_pgo_metadata.sh", "profile_svp_android.sh"):
             shutil.copyfile(SCRIPTS / name, self.root / "scripts" / name)
         (self.crate / "src").mkdir()
         source = self.crate / "src/lib.rs"
@@ -204,10 +221,14 @@ class SvpUpdateTest(unittest.TestCase):
         source.write_text("// changed\n")
         second = svp.fingerprint(self.root)
         self.assertNotEqual(first, second)
+        shader = self.crate / "shaders/ahb_convert.comp"
+        shader.write_bytes(shader.read_bytes() + b"\n// fingerprint regression\n")
+        third = svp.fingerprint(self.root)
+        self.assertNotEqual(second, third)
         with tempfile.TemporaryDirectory() as other:
             clone = Path(other) / "copy"
             shutil.copytree(self.root, clone)
-            self.assertEqual(second, svp.fingerprint(clone))
+            self.assertEqual(third, svp.fingerprint(clone))
 
     @unittest.skipUnless(os.environ.get("SVP_UPDATE_NETWORK_TEST") == "1", "explicit network/Cargo resolution test")
     def test_real_upstream_update_resolves_in_isolation(self):

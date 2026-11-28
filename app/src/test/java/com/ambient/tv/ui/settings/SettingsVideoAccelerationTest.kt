@@ -29,4 +29,23 @@ class SettingsVideoAccelerationTest {
         assertEquals("1080", merged.gpuRenderResolutionKey)
         assertEquals("bt1886", merged.mpvSdrCurveKey)
     }
+    @org.junit.Test fun experimentalVlcSwitchIsOffByDefaultAndSurvivesSettingsMerge() {
+        val baseline = SettingsUiState()
+        val draft = baseline.copy(uiDisplay = baseline.uiDisplay.copy(vlcExperimentalFeaturesEnabled = true))
+        org.junit.Assert.assertFalse(baseline.vlcExperimentalFeaturesEnabled)
+        org.junit.Assert.assertTrue(mergeStoredSettings(draft, baseline, baseline).vlcExperimentalFeaturesEnabled)
+        org.junit.Assert.assertNotEquals(baseline.editableValues(), draft.editableValues())
+        org.junit.Assert.assertFalse(mergeStoredSettings(baseline, draft, draft).vlcExperimentalFeaturesEnabled)
+    }
+    @Test fun vlcHdrGpuIsSeparateAndOffByDefault() {
+        val baseline = SettingsUiState()
+        val draft = baseline.copy(uiDisplay = baseline.uiDisplay.copy(vlcHdrGpuEnabled = true))
+        val stored = baseline.copy(uiDisplay = baseline.uiDisplay.copy(vlcExperimentalFeaturesEnabled = true))
+        assertFalse(baseline.vlcHdrGpuEnabled)
+        assertFalse(draft.vlcExperimentalFeaturesEnabled)
+        val merged = mergeStoredSettings(draft, baseline, stored)
+        assertTrue(merged.vlcExperimentalFeaturesEnabled)
+        assertTrue(merged.vlcHdrGpuEnabled)
+        assertNotEquals(baseline.editableValues(), draft.editableValues())
+    }
 }

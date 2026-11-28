@@ -36,6 +36,7 @@ internal fun svpPreset(mode: String): Int = when (mode) {
     "auto", "light" -> 1
     "balanced" -> 2
     "quality" -> 3
+    "adaptive" -> 4
     else -> 0
 }
 
@@ -120,10 +121,12 @@ internal fun mpvSvpFilter(
     options: SvpOptions = SvpOptions(),
     width: Int? = null,
     height: Int? = null,
+    hardwareResident: Boolean = false,
 ): String? {
-    if (mode !in setOf("auto", "light", "balanced", "quality")) return null
+    if (mode !in setOf("auto", "light", "balanced", "quality", "adaptive")) return null
     val run = svpDecision(sourceFps, displayFps, options, width, height) as? SvpDecision.Run ?: return null
-    return "ambientsvp=source=${run.source}:fps=${run.target}:preset=${svpPreset(mode)}:${svpNativeOptions(options, ":")}"
+    return "ambientsvp=source=${run.source}:fps=${run.target}:preset=${svpPreset(mode)}:${svpNativeOptions(options, ":")}" +
+        if (hardwareResident && svpResidentRequested(options, width, height)) ":hwresident=1" else ""
 }
 
 /**
@@ -147,10 +150,30 @@ internal fun svpNativeOptions(options: SvpOptions, separator: String): String {
         "pel=${o.pel}", "search=${o.search}").joinToString(separator)
 }
 
+/** The independent resident algorithm supports SDR8 and verified high-depth/1080p.
+ * Dynamic HDR and Dolby Vision require a compatible metadata-aware renderer.
+ * An explicit CPU backend must never be overridden by the transport choice.
+ * Unknown sizes are checked again by the native decoder before importing. */
+internal fun svpStaticHdrResident(source: com.ambient.tv.ui.player.HdrStandard?): Boolean =
+    source == com.ambient.tv.ui.player.HdrStandard.HDR10 || source == com.ambient.tv.ui.player.HdrStandard.HLG
+
+/** Dynamic metadata must reach the renderer in the original decoded
+ * Vulkan frames; the opaque MediaCodec RGB route cannot guarantee it. */
+internal fun svpMpvHdrResident(source: com.ambient.tv.ui.player.HdrStandard?, decoder: String): Boolean =
+    svpStaticHdrResident(source) || decoder == "vulkan" &&
+        (source == com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS ||
+            source == com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION)
+
+internal fun svpResidentRequested(options: SvpOptions, width: Int? = null, height: Int? = null): Boolean =
+    options.hardwareResident && options.normalized().backend != 1 &&
+        (width == null || width in 32..(if (options.hdrTwoPass && options.maxHeight == 2160) 3840 else 1920)) &&
+        (height == null || height in 32..(if (options.hdrTwoPass && options.maxHeight == 2160) 2160 else 1080))
+
 /** Probe and recovery must use the same cheap analysis, even with explicit quality overrides. */
 internal fun svpProbeOptions(options: SvpOptions): SvpOptions = SvpOptions(
     rateDivisor = options.rateDivisor, backend = options.backend, threads = options.threads,
-    maxHeight = options.maxHeight, filmOnly = options.filmOnly,
+    maxHeight = options.maxHeight, filmOnly = options.filmOnly, hardwareResident = options.hardwareResident,
+    hdrTwoPass = options.hdrTwoPass,
 ).normalized()
 
 /**

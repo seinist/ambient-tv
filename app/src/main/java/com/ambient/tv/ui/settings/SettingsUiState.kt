@@ -48,6 +48,8 @@ data class UiDisplayDraft(
     val scale: Float = 1f,
     val renderResolutionKey: String = UiRenderResolutionPolicy.SYSTEM,
     val mousePointerHideSeconds: Int = MousePointerSettings.DEFAULT_SECONDS,
+    val vlcExperimentalFeaturesEnabled: Boolean = false,
+    val vlcHdrGpuEnabled: Boolean = false,
 )
 
 /** Keep Next Up drafts together; the parent constructor is at the JVM parameter-slot limit. */
@@ -324,6 +326,8 @@ data class SettingsUiState(
     val uiScale: Float get() = uiDisplay.scale
     val uiRenderResolutionKey: String get() = uiDisplay.renderResolutionKey
     val mousePointerHideSeconds: Int get() = uiDisplay.mousePointerHideSeconds
+    val vlcExperimentalFeaturesEnabled: Boolean get() = uiDisplay.vlcExperimentalFeaturesEnabled
+    val vlcHdrGpuEnabled: Boolean get() = uiDisplay.vlcHdrGpuEnabled
     val nextUpEnabled: Boolean get() = nextUp.enabled
     val nextUpLeadSeconds: Int get() = nextUp.leadSeconds
     val nextUpCreditsDelaySeconds: Int get() = nextUp.creditsDelaySeconds
@@ -449,6 +453,8 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     mpvVideoDecoderKey,
     mpvHdrGpuEnabled,
     vlcVideoOutputModeKey,
+    vlcExperimentalFeaturesEnabled,
+    vlcHdrGpuEnabled,
     autoPictureInPicture,
     visibleBackgroundVideoPlayback,
     backgroundVideoDimPercent,
@@ -606,6 +612,9 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     forcedSubtitlesInUiLanguage = if (draft.forcedSubtitlesInUiLanguage != baseline.forcedSubtitlesInUiLanguage) draft.forcedSubtitlesInUiLanguage else stored.forcedSubtitlesInUiLanguage,
     forcedSubtitlesEnabled = if (draft.forcedSubtitlesEnabled != baseline.forcedSubtitlesEnabled) draft.forcedSubtitlesEnabled else stored.forcedSubtitlesEnabled,
     uiDisplay = UiDisplayDraft(
+        vlcHdrGpuEnabled = if (draft.vlcHdrGpuEnabled != baseline.vlcHdrGpuEnabled) draft.vlcHdrGpuEnabled else stored.vlcHdrGpuEnabled,
+        vlcExperimentalFeaturesEnabled = if (draft.vlcExperimentalFeaturesEnabled != baseline.vlcExperimentalFeaturesEnabled)
+            draft.vlcExperimentalFeaturesEnabled else stored.vlcExperimentalFeaturesEnabled,
         scale = if (draft.uiScale != baseline.uiScale) draft.uiScale else stored.uiScale,
         renderResolutionKey = if (draft.uiRenderResolutionKey != baseline.uiRenderResolutionKey)
             draft.uiRenderResolutionKey else stored.uiRenderResolutionKey,
