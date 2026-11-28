@@ -21,7 +21,7 @@ struct svp_placebo_hdr {
 struct svp_placebo_pending {
     AmbientSvpVkHeld *job;
     AmbientSvpHdrPass *capture;
-    uint64_t index;
+    uint64_t index,stats_token;
     unsigned count;
     pl_tex textures[5];
     VkSemaphore holds[5];
@@ -71,19 +71,47 @@ struct svp_placebo_quality {
 };
 // Retire native image views before a renderer-owned texture can be
 // destroyed or recreated. No queue mutex is held during fence waits.
+static inline void svp_placebo_remove_pending(pl_gpu gpu,struct svp_placebo_quality *s,unsigned i)
+{
+    struct svp_placebo_pending *p=&s->pending[i];
+    for(unsigned j=0;j<p->count;j++)pl_vulkan_sem_destroy(gpu,&p->holds[j]);
+    --s->pending_count;
+    memmove(p,p+1,(s->pending_count-i)*sizeof(*p));
+    s->pending[s->pending_count]=(struct svp_placebo_pending){0};
+}
+static inline void svp_placebo_discard_stats(struct svp_placebo_quality *s,uint64_t token)
+{
+    for(unsigned i=0;i<s->pending_count;i++)if(s->pending[i].stats_token==token)s->pending[i].stats_token=0;
+}
+static inline bool svp_placebo_collect_stats(pl_gpu gpu,struct svp_placebo_quality *s,uint64_t token,
+    struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index)
+{
+    if(!token||!hdr||!s->collect_stats)return false;
+    for(unsigned i=0;i<s->pending_count;i++){
+        struct svp_placebo_pending *p=&s->pending[i];
+        if(p->stats_token!=token)continue;
+        if(p->index!=index)return false;
+        int rc=s->collect_stats(p->job,s->retire_status?2:1,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index);
+        if(rc==3)s->device_lost=true;
+        if(rc==1||rc==2||rc==3)svp_placebo_remove_pending(gpu,s,i);
+        else p->stats_token=0; // keep GPU ownership, abandon metadata
+        return rc==1;
+    }
+    return false;
+}
 static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality *s,unsigned i,unsigned wait)
 {
     struct svp_placebo_pending *p=&s->pending[i];
+    // A renderer-owned statistics result must survive automatic polling.
+    // Destruction may explicitly discard it, but backpressure cannot.
+    if(p->stats_token){if(wait!=1)return false;p->stats_token=0;}
     unsigned mode=wait==2&&!s->retire_status?0:wait;
     int rc=p->capture&&!s->capture_failed?s->retire_capture(p->job,mode,p->capture,p->index):
         s->retire_status?s->retire_status(p->job,mode):s->retire(p->job,mode);
     if(rc!=1&&rc!=2&&rc!=3)return false;
     if(rc==3)s->device_lost=true;
-    if(rc!=1)s->capture_failed=true;
-    for(unsigned j=0;j<p->count;j++)pl_vulkan_sem_destroy(gpu,&p->holds[j]);
-    --s->pending_count;
-    memmove(p,p+1,(s->pending_count-i)*sizeof(*p));
-    s->pending[s->pending_count]=(struct svp_placebo_pending){0};
+    if(rc!=1&&p->capture)s->capture_failed=true;
+    svp_placebo_remove_pending(gpu,s,i);
     return true;
 }
 static inline void svp_placebo_quality_retire_texture(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
@@ -124,9 +152,10 @@ static inline bool svp_placebo_quality_target(pl_gpu gpu,struct svp_placebo_qual
     if(*tex)svp_placebo_quality_retire_texture(gpu,s,*tex);
     return pl_tex_recreate(gpu,tex,pl_tex_params(.w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true,.storable=storage));
 }
-static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo_quality *s,
-    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index,bool capture)
+static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_placebo_quality *s,
+    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index,bool capture,uint64_t *deferred_token)
 {
+    if(deferred_token)*deferred_token=0;
     if(s->device_lost||!a||!b||!options||!out||(!pass&&a==b)||!isfinite(phase)||phase<0||phase>=1||(!pass&&phase==0)|| (a==b&&phase!=0)||
         a->params.w!=b->params.w||a->params.h!=b->params.h)return false;
     pl_vulkan vk=pl_vulkan_get(gpu);
@@ -229,7 +258,9 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     if(rc==0||rc==1){s->value++;retired=true;ok=rc==0;}
     // Metadata belongs to this exact output, but collection no longer
     // holds the external Vulkan queue lock while waiting for the fence.
-    if(split_stats&&job){
+    if(split_stats&&job&&deferred_token&&ok){
+        *deferred_token=s->value;
+    }else if(split_stats&&job){
         int result=s->collect_stats(job,s->retire_status?2:1,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index);
         if(result==1||result==2||result==3)job=NULL;
         // On timeout keep the ticket and its textures alive, and fall back
@@ -247,12 +278,18 @@ cleanup:
     if(job){
         struct svp_placebo_pending *p=&s->pending[s->pending_count++];
         p->job=job;p->count=count;p->capture=capture?pass:NULL;p->index=index;
+        p->stats_token=deferred_token?*deferred_token:0;
         memcpy(p->textures,tex,count*sizeof(*tex));
         memcpy(p->holds,holds,count*sizeof(*holds));
     }else{
         for(unsigned i=0;i<count;i++)if(holds[i])pl_vulkan_sem_destroy(gpu,&holds[i]);
     }
     return ok;
+}
+static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo_quality *s,
+    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index,bool capture)
+{
+    return svp_placebo_quality_render_pass_ex(gpu,s,a,b,previous,next,out,phase,options,hdr,pass,index,capture,NULL);
 }
 static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_quality *s,
     pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr)

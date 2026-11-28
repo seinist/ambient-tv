@@ -115,11 +115,21 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
         *tail=out;tail=&out->p_next;next++;count++;
     }
     if(!count)goto fail;
-    if(s->scene){
-        for(picture_t *out=head;out;out=out->p_next){
-            struct vlc_ancillary *anc=picture_GetAncillary(out,AMBIENT_SVP_PAIR_ID);
-            struct ambient_svp_pair *pair=anc?vlc_ancillary_GetData(anc):NULL;
-            if(!pair)goto fail;
+    float phases[8]={0};
+    unsigned slot=0;
+    for(picture_t *out=head;out;out=out->p_next){
+        struct vlc_ancillary *anc=picture_GetAncillary(out,AMBIENT_SVP_PAIR_ID);
+        struct ambient_svp_pair *pair=anc?vlc_ancillary_GetData(anc):NULL;
+        if(!pair||slot>=count)goto fail;
+        phases[slot++]=pair->phase;
+    }
+    if(slot!=count)goto fail;
+    slot=0;
+    for(picture_t *out=head;out;out=out->p_next){
+        struct ambient_svp_pair *pair=vlc_ancillary_GetData(picture_GetAncillary(out,AMBIENT_SVP_PAIR_ID));
+        pair->group_first=s->tick;pair->phase_slot=slot++;pair->phase_count=count;
+        memcpy(pair->group_phases,phases,sizeof(phases));
+        if(s->scene){
             pair->scene_pair_end=next;
             pair->scene_final=!pic&&!center&&!out->p_next;
         }

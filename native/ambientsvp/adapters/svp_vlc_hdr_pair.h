@@ -42,6 +42,11 @@ struct ambient_svp_pair {
     picture_t *a,*b,*past,*future;
     uint64_t a_id,b_id,past_id,future_id;
     float phase;
+    // The filter knows the entire immutable phase group before publishing
+    // any picture. The display can pre-submit measured HDR phases safely.
+    uint64_t group_first;
+    unsigned phase_slot,phase_count;
+    float group_phases[8];
     AmbientSvpQuality quality;
     struct ambient_svp_scene_config *scene;
     uint64_t scene_index,scene_pair_end;
