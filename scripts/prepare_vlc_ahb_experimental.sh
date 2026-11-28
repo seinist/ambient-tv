@@ -38,14 +38,38 @@ with (root / "ambient_sample_spv.h").open("w") as out:
             out.write("    " + ", ".join(f"0x{v:08x}u" for v in words[i:i+8]) + ",\n")
         out.write("};\n")
 PY
-# Strict applicability: do not restore or overwrite upstream/local modifications.
-for patch in "$SRC"/vlc-patches/*.patch; do
-    if git -C "$VLC" apply --check "$patch" 2>/dev/null; then
-        git -C "$VLC" apply "$patch"
-    else
-        git -C "$VLC" apply --reverse --check "$patch"
+# Check the entire ordered series, not individual patches. Later patches may
+# change context introduced by earlier ones (e.g. seek-request-id/result).
+# Use a private index populated from the worktree, so reverse verification
+# never modifies the checkout or its real index. All patches in this series
+# modify existing tracked VLC files.
+patches=("$SRC"/vlc-patches/*.patch)
+snapshot_index() {
+    GIT_INDEX_FILE="$TMP/patch-index" git -C "$VLC" read-tree --reset HEAD || exit 1
+    GIT_INDEX_FILE="$TMP/patch-index" git -C "$VLC" add -u || exit 1
+}
+snapshot_index
+already_applied=true
+for ((i=${#patches[@]}-1; i>=0; i--)); do
+    if ! GIT_INDEX_FILE="$TMP/patch-index" git -C "$VLC" apply --cached --reverse "${patches[i]}" 2>/dev/null; then
+        already_applied=false
+        break
     fi
 done
+if [[ "$already_applied" == true ]]; then
+    echo "Experimental VLC patch series already applied"
+else
+    # Reject partial/conflicting series before modifying any tracked file.
+    # Reset only the private index after the speculative reverse pass.
+    snapshot_index
+    for patch in "${patches[@]}"; do
+        echo "Checking experimental VLC patch: $(basename "$patch")"
+        GIT_INDEX_FILE="$TMP/patch-index" git -C "$VLC" apply --cached "$patch" || exit 1
+    done
+    for patch in "${patches[@]}"; do
+        git -C "$VLC" apply "$patch" || exit 1
+    done
+fi
 for file in dovi_fel_hvce.h dovi_fel_dual.h ambient_metadata_wire.h; do
     cp "$SRC/$file" "$VLC/modules/demux/mp4/$file"
 done
