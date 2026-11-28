@@ -45,6 +45,7 @@ def compare(manifest, directory):
     kinds = set()
     binaries = {}
     schedules = set()
+    runner_timing = set()
     for run in manifest["runs"]:
         profile = run["profile"]
         if profile not in profiles:
@@ -94,20 +95,30 @@ def compare(manifest, directory):
         # Demand matching, recent, non-throttled thermal readings throughout.
         cursor = -1
         schedules.add(tuple((rate, samples) for _, _, rate, samples in measured))
-        for start, duration, _, _ in measured:
-            while cursor+1 < len(thermals) and thermals[cursor+1][0] <= start:
-                cursor += 1
-            if cursor < 0 or thermals[cursor][1] not in (0, 1):
+        timing_modes={samples is not None for _, _, _, samples in measured}
+        if len(timing_modes)!=1:
+            raise ValueError("Mixed dynamic A/V timing evidence")
+        diagnostic=next(iter(timing_modes))
+        runner_timing.add(diagnostic)
+        first=measured[0][0]
+        last=measured[-1][0]+measured[-1][1]
+        while cursor+1 < len(thermals) and thermals[cursor+1][0] <= first:
+            cursor += 1
+        if cursor < 0 or thermals[cursor][1] not in (0, 1) or first-thermals[cursor][0]>5_000_000_000:
+            raise ValueError("Missing/stale or throttled thermal evidence")
+        previous=thermals[cursor][0]
+        tail=False
+        for ts,status in thermals[cursor+1:]:
+            if ts>last and not diagnostic:
+                break
+            if status not in (0,1) or ts-previous>5_000_000_000 or ts<previous:
                 raise ValueError("Missing/stale or throttled thermal evidence")
-            previous = thermals[cursor][0]
-            for ts, status in thermals[cursor+1:]:
-                if ts > start + duration:
-                    break
-                if status not in (0, 1) or ts - previous > 5_000_000_000:
-                    raise ValueError("Missing/stale or throttled thermal evidence")
-                previous = ts
-            if start + duration - previous > 5_000_000_000:
-                raise ValueError("Missing/stale or throttled thermal evidence")
+            previous=ts
+            if ts>=last:
+                tail=True
+                break
+        if last-previous>5_000_000_000 or (diagnostic and not tail):
+            raise ValueError("Missing/stale or throttled thermal evidence")
         durations = sorted(d for _, d, _, _ in measured)
         key = (int(run["round"]), profile)
         if key in repetitions:
@@ -119,7 +130,7 @@ def compare(manifest, directory):
                             "trace_sha256": sha(directory/run["slices"]),
                             "thermal_sha256": sha(directory/run["thermal"]),
                             "build_report_sha256": sha(report_path)}
-    if len(schedules) != 1:
+    if len(schedules) != 1 or len(runner_timing)!=1:
         raise ValueError("Incomparable dynamic A/V timing schedule")
     rounds = sorted({round_id for round_id, _ in repetitions})
     if len(kinds) != 1 or len(rounds) < 3 or set(repetitions) != {(n,p) for n in rounds for p in profiles}:
@@ -138,8 +149,8 @@ def compare(manifest, directory):
         result[profile] = {"binary_sha256": binaries[profile], "median": med, "runs": stats}
     return {"identity": {key: manifest[key] for key in required}, "trace_kind": next(iter(kinds)),
             "warmup_frames": warmup, "measured_frames": count, "rounds": rounds,
-            "profiles": result, "measurement": ("Core-call plus synchronous GPU work; not end-to-end input latency"
-                 if next(iter(kinds)) == "direct" else "App core-call trace; not end-to-end input latency")}
+            "profiles": result, "measurement": ("Diagnostic core-call plus synchronous GPU work when hardware-backed; not end-to-end input latency"
+                 if next(iter(runner_timing)) else "App core-call trace; not end-to-end input latency")}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

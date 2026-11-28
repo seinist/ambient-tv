@@ -378,3 +378,9 @@ an attached device. The protected workflow must be configured with the
 `core-device-validation` environment and a self-hosted Android runner before
 use. Without actual device results there is no claim of measured speedup or
 universal rewind compatibility.
+
+Thermal evidence now covers the complete measured interval, including gaps
+between frames and the final diagnostic sample. Legacy app trace captures
+remain distinguishable from standalone diagnostic GPU-synchronized timings.
+Device summary artifacts bind fixture identities by digest instead of
+publishing raw local filenames or ADB serial numbers.

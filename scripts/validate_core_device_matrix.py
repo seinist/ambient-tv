@@ -4,8 +4,8 @@ No content, BIOS or save state is published. A failure is never treated as a ski
 """
 import argparse
 import json
+import hashlib
 from pathlib import Path
-import re
 import subprocess
 from types import SimpleNamespace
 from core_build_policy import validate_catalog
@@ -105,6 +105,11 @@ def validate(args):
             if config["verify_rewind"] and any(p.get("rewind_checked",0)<4
                     for p in report["output_correctness"].values()):
                 raise ValueError("Missing rewind proof")
+            # Preserve identity evidence without exporting local filenames,
+            # serial numbers or arbitrary fixture metadata in a CI artifact.
+            fixture_identity=report.pop("fixture",{})
+            report["fixture_sha256"]=hashlib.sha256(
+                json.dumps(fixture_identity,sort_keys=True,separators=(",",":")).encode()).hexdigest()
             result["results"][core]={"status":"pass","profiles":profiles,
                 "state_validation": "verified" if config["verify_states"] and config["verify_rewind"] else "limited",
                 "state_validation_limitation":limitation,"comparison":report}
