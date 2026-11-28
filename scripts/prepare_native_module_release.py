@@ -111,7 +111,10 @@ def verify(root, module, run_id, sha):
                 if "code/classes.dex" not in names:
                     raise ValueError("Incomplete VLC adapter DEX")
             native = {n.removeprefix("lib/") for n in names if n.startswith("lib/")}
-            if native != roots:
+            if module == "libretrodroid" and any(n.startswith("code/") for n in names):
+                if "code/classes.dex" not in names or not roots <= native or native - roots - packages.HOST_LIBRARIES[module]:
+                    raise ValueError("Unexpected LibretroDroid DEX native payload")
+            elif native != roots:
                 raise ValueError("Unexpected native payload")
             for name in native:
                 validate_elf(archive.read("lib/" + name), abi)
@@ -157,6 +160,8 @@ def build(args):
             command += ["--vlc-aar", str(ROOT / "app/libs/libvlc-vulkan.aar")]
             if args.vlc_dex:
                 command += ["--vlc-dex-dir", str(ROOT / "app/build/outputs/system-modules/vlc-dex")]
+        if args.module == "libretrodroid" and args.libretro_dex:
+            command += ["--libretrodroid-dex-dir", str(ROOT / "app/build/outputs/system-modules/libretrodroid-dex")]
         subprocess.run(command, cwd=ROOT, check=True)
     shutil.copyfile(args.source, args.output / args.source.name)
     (args.output / "provenance.json").write_text(json.dumps({"commit": args.sha, "runId": args.run_id,
@@ -177,6 +182,7 @@ def main():
     parser.add_argument("--notices", type=Path)
     parser.add_argument("--source", type=Path)
     parser.add_argument("--vlc-dex", action="store_true")
+    parser.add_argument("--libretro-dex", action="store_true")
     args = parser.parse_args()
     if args.action == "build":
         if not all((args.dist, args.aapt2, args.apksigner, args.notices, args.source)):

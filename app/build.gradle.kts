@@ -198,6 +198,29 @@ val libretroModuleBinding = if (libretroModuleMarker.isFile && libretroModuleJav
     }
 } else ""
 val libretroBundled = !modularPreview || libretroModuleBinding.isBlank()
+val libretroDexEnabled = providers.gradleProperty("LIBRETRO_DEX_MODULE")
+    .orElse(providers.environmentVariable("LIBRETRO_DEX_MODULE")).orElse("0").get() == "1"
+require(!libretroDexEnabled || libretroModuleBinding.isNotBlank()) { "Libretro DEX requires the patched frontend" }
+require(!libretroDexEnabled || !stableModular) { "Libretro DEX requires preview/device validation" }
+val libretroDexInputs = fileTree("src/main/java/com/ambient/tv/ui/games") {
+    include("Retro*Port.kt", "BundledRetro*.kt", "LibretroModuleAdapter.kt")
+}.files + setOf(file("src/main/java/com/ambient/tv/games/GameDirectContent.kt"),
+    file("src/main/java/com/ambient/tv/games/RetroShaderConfig.kt"),
+    file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
+    file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
+    rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/external-versions.properties"),
+    rootProject.file("scripts/export_monogram_adapter.py"), rootProject.file("scripts/strip_smarttube_classes.py"))
+val libretroDexBinding = if (libretroModuleBinding.isNotBlank()) MessageDigest.getInstance("SHA-256").let { digest ->
+    digest.update("ambient-libretro-dex-v1".toByteArray(Charsets.UTF_8))
+    digest.update(libretroModuleBinding.toByteArray(Charsets.UTF_8))
+    libretroDexInputs.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(it.readBytes())
+        digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+} else ""
 // An older custom AAR or Maven fallback must remain bundled until its Java
 // load sites support the same absolute path as the system module host.
 val vlcModuleBinding = if (vulkanVlcAar.isFile) ZipFile(vulkanVlcAar).use { aar ->
@@ -506,6 +529,8 @@ android {
         buildConfigField("String", "FFMPEG_REF", quotedBuildConfigString(externalVersion("FFMPEG_COMMIT")))
         buildConfigField("boolean", "LIBRETRODROID_BUNDLED", libretroBundled.toString())
         buildConfigField("String", "LIBRETRODROID_MODULE_BINDING_SHA256", quotedBuildConfigString(libretroModuleBinding))
+        buildConfigField("String", "LIBRETRODROID_DEX_BINDING_SHA256", quotedBuildConfigString(libretroDexBinding))
+        buildConfigField("boolean", "LIBRETRODROID_DEX_ENABLED", libretroDexEnabled.toString())
         buildConfigField("String", "LIBRETRODROID_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_COMMIT")))
         buildConfigField("String", "RCHEEVOS_VERSION", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_VERSION")))
         buildConfigField("String", "RCHEEVOS_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_COMMIT")))
@@ -726,6 +751,22 @@ if (vlcDexEnabled && !modularPreview) {
     }
 }
 
+if (libretroDexEnabled && !modularPreview) {
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+        val task = tasks.register<ExportMonogramDex>("exportLibretroAdapterDex") {
+            exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            binding.set(libretroDexBinding)
+            module.set("libretrodroid")
+            androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
+            d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
+            destination.set(layout.buildDirectory.dir("outputs/system-modules/libretrodroid-dex"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
+            ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
+    }
+}
+
 /** Remove engine classes before D8/R8 while retaining normal AAR resource merging. */
 abstract class StripSmartTubeClasses @Inject constructor(
     private val execOperations: ExecOperations,
@@ -748,14 +789,15 @@ abstract class StripSmartTubeClasses @Inject constructor(
     }
 }
 
-if (modularPreview && (smartTubeHostResources || vlcDexEnabled)) {
+if (modularPreview && (smartTubeHostResources || vlcDexEnabled || libretroDexEnabled)) {
     androidComponents.onVariants(androidComponents.selector().all()) { variant ->
         val task = tasks.register<StripSmartTubeClasses>(
             "strip" + variant.name.replaceFirstChar { it.uppercase() } + "SmartTubeClasses",
         ) {
             stripper.set(rootProject.layout.projectDirectory.file("scripts/strip_smarttube_classes.py"))
             ownershipScript.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
-            modules.set(listOfNotNull("smarttube".takeIf { smartTubeHostResources }, "vlc".takeIf { vlcDexEnabled }))
+            modules.set(listOfNotNull("smarttube".takeIf { smartTubeHostResources }, "vlc".takeIf { vlcDexEnabled },
+                "libretrodroid".takeIf { libretroDexEnabled }))
         }
         variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toTransform(
             ScopedArtifact.CLASSES, StripSmartTubeClasses::allJars,

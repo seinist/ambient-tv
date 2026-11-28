@@ -296,3 +296,33 @@ Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_sharedVlcFunctions(
     if (result) env->SetLongArrayRegion(result, 0, 2, values);
     return result;
 }
+
+namespace {
+    std::mutex shaderResolverLock;
+    void *hostShaderHandle = nullptr; // process-lifetime lease
+    void *resolveHostShader(const char *name) {
+        if (!name || strncmp(name, "libra_", 6) != 0) return nullptr;
+        std::lock_guard<std::mutex> guard(shaderResolverLock);
+        return hostShaderHandle ? dlsym(hostShaderHandle, name) : nullptr;
+    }
+}
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_sharedShaderResolver(
+    JNIEnv *env, jobject, jstring path) {
+    if (!path) return 0;
+    std::lock_guard<std::mutex> guard(shaderResolverLock);
+    if (!hostShaderHandle) {
+        const char *name = env->GetStringUTFChars(path, nullptr);
+        if (!name) return 0;
+        void *handle = dlopen(name, RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL);
+        env->ReleaseStringUTFChars(path, name);
+        if (!handle) return 0;
+        if (!dlsym(handle, "libra_instance_abi_version") ||
+            !dlsym(handle, "libra_vk_filter_chain_create")) {
+            dlclose(handle);
+            return 0;
+        }
+        hostShaderHandle = handle;
+    }
+    return static_cast<jlong>(reinterpret_cast<uintptr_t>(&resolveHostShader));
+}

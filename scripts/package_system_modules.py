@@ -215,6 +215,7 @@ def adapter_dex(out, module, version, dex_dir, apks, licenses):
         "monogram": ("libmonogram_mtproto.so", {"libmonogram_mtproto.so", "libjnidispatch.so"}),
         "smarttube": ("libj2v8.so", {"libj2v8.so"}),
         "vlc": ("libvlc.so", set(NATIVE_ROOTS["vlc"]) | {"libc++_shared.so"}),
+        "libretrodroid": ("liblibretrodroid.so", {"liblibretrodroid.so"}),
     }[module]
     entries = []
     seen = set()
@@ -231,12 +232,18 @@ def adapter_dex(out, module, version, dex_dir, apks, licenses):
                     raise ValueError(f"duplicate APK ABI: {abi}")
                 seen.add(abi)
                 files = {"code/" + name: data for name, data in dex.items()}
-                for name in sorted(roots):
+                allowed = roots | (HOST_LIBRARIES["libretrodroid"] if module == "libretrodroid" else set())
+                def visit(name):
+                    if name in PLATFORM or "lib/" + name in files:
+                        return
+                    if name not in allowed:
+                        raise ValueError(f"unapproved adapter native dependency: {name}")
                     data = archive.read(prefix + name)
-                    needed = native_dependencies(data, name)
-                    if needed - PLATFORM - roots:
-                        raise ValueError(f"unapproved adapter native dependencies: {name}: {needed}")
                     files["lib/" + name] = data
+                    for needed in sorted(native_dependencies(data, name)):
+                        visit(needed)
+                for name in sorted(roots):
+                    visit(name)
                 for license in licenses:
                     path = "licenses/" + license.name
                     if path in files:
@@ -265,6 +272,7 @@ def main():
     parser.add_argument("--monogram-dex-dir", type=Path)
     parser.add_argument("--smarttube-dex-dir", type=Path)
     parser.add_argument("--vlc-dex-dir", type=Path)
+    parser.add_argument("--libretrodroid-dex-dir", type=Path)
     args = parser.parse_args()
     if args.version <= 0 or not re.fullmatch(r"modules-" + args.module + r"-[A-Za-z0-9._-]{1,70}", args.tag):
         parser.error("invalid tag or version")
@@ -285,6 +293,10 @@ def main():
             parser.error("VLC DEX requires matching Full APKs, patched AAR and notices")
         vlc_binding(args.vlc_aar)
         entries = adapter_dex(args.output, "vlc", args.version, args.vlc_dex_dir, args.apk, args.license)
+    elif args.module == "libretrodroid" and args.libretrodroid_dex_dir:
+        if not args.apk or not args.license:
+            parser.error("LibretroDroid DEX requires matching Full APKs and notices")
+        entries = adapter_dex(args.output, "libretrodroid", args.version, args.libretrodroid_dex_dir, args.apk, args.license)
     elif args.module == "smarttube":
         if not args.smarttube_dex_dir or not args.apk or not args.license:
             parser.error("SmartTube requires matching DEX, Full APKs and license notices")

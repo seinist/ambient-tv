@@ -16,6 +16,10 @@ on:
         description: 'Build Full and Modular together (only after device and module availability review)'
         type: boolean
         default: false
+      libretro_dex_candidate:
+        description: 'Experimental LibretroDroid DEX candidate (requires module_candidate=libretrodroid)'
+        type: boolean
+        default: false
       vlc_dex_candidate:
         description: 'Experimental VLC DEX/JNI candidate (requires module_candidate=vlc)'
         type: boolean
@@ -50,6 +54,16 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      - name: Check experimental Libretro DEX request
+        if: inputs.libretro_dex_candidate
+        env:
+          MODULE: ${{ inputs.module_candidate }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$MODULE" = libretrodroid
+          echo 'LIBRETRO_DEX_MODULE=1' >> "$GITHUB_ENV"
 
       - name: Check experimental VLC DEX request
         if: inputs.vlc_dex_candidate
@@ -470,11 +484,13 @@ jobs:
             monogram) ./gradlew :app:exportMonogramAdapterDex -PAPK_ABI=arm64 ;;
             smarttube) ./gradlew :app:exportSmartTubeAdapterDex -PAPK_ABI=arm64 ;;
             vlc) if [[ "${VLC_DEX_MODULE:-0}" == 1 ]]; then ./gradlew :app:exportVlcAdapterDex -PAPK_ABI=arm64; fi ;;
+            libretrodroid) if [[ "${LIBRETRO_DEX_MODULE:-0}" == 1 ]]; then ./gradlew :app:exportLibretroAdapterDex -PAPK_ABI=arm64; fi ;;
           esac
           python3 scripts/module_corresponding_source.py --module "$MODULE" --sha "$GITHUB_SHA" --output source-candidate/corresponding-source.tar.gz --notices source-candidate/notices
           notices=source-candidate/notices
           args=()
           if [[ "${VLC_DEX_MODULE:-0}" == 1 ]]; then args+=(--vlc-dex); fi
+          if [[ "${LIBRETRO_DEX_MODULE:-0}" == 1 ]]; then args+=(--libretro-dex); fi
           python3 scripts/prepare_native_module_release.py build --module "$MODULE" --run-id "$GITHUB_RUN_ID" --sha "$GITHUB_SHA" --output module-candidate --dist dist --aapt2 "$ANDROID_HOME/build-tools/37.0.0/aapt2" --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner" --notices "$notices" --source source-candidate/corresponding-source.tar.gz "${args[@]}"
 
       - name: Upload native module candidate

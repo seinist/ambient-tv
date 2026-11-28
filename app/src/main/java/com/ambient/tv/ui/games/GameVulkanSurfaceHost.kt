@@ -11,7 +11,6 @@ import android.widget.FrameLayout
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.swordfish.libretrodroid.GLRetroView
 
 /**
  * A separate real Android Vulkan WSI Surface, initially only 1x1 in the UI.
@@ -22,11 +21,11 @@ import com.swordfish.libretrodroid.GLRetroView
  * The media-overlay layer stays below the window's Compose OSD, never on top
  * of the entire window. Its Z order is chosen before window attachment.
  *
- * All native Vulkan calls are serialized through GLRetroView.queueEvent.
+ * All native Vulkan calls are serialized through RetroViewPort.queueEvent.
  */
 internal class GameVulkanSurfaceHost(
     context: Context,
-    private val retro: GLRetroView,
+    private val retro: RetroViewPort,
     private val outputTransfer: GameVulkanTransferMode,
     private val onFormats: (GameVulkanSurfaceFormats) -> Unit,
     private val onNativeStatus: (GameVulkanSdrStatus) -> Unit,
@@ -60,16 +59,16 @@ internal class GameVulkanSurfaceHost(
         isFocusable = false
         isFocusableInTouchMode = false
         isClickable = false
-        // Above GLRetroView's Surface, but below the Activity/Compose window.
+        // Above RetroViewPort's Surface, but below the Activity/Compose window.
         // setZOrderOnTop(true) would hide OSD, so never use it here.
         setZOrderMediaOverlay(true)
         holder.setFixedSize(16, 16)
     }
 
     init {
-        // The regular view hierarchy keeps touch with the fullscreen GLRetroView.
+        // The regular view hierarchy keeps touch with the fullscreen RetroViewPort.
         addView(probeSurface, LayoutParams(1, 1, Gravity.BOTTOM or Gravity.END))
-        addView(retro, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(retro.surface, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         probeSurface.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 fullscreenSurfaceReady = false
@@ -115,7 +114,7 @@ internal class GameVulkanSurfaceHost(
      * The surface that currently shows the game, as Compose state: handheld ambient fill must
      * follow a switch to native Vulkan WSI, where GLES may skip drawing its own surface.
      */
-    private var presentation by mutableStateOf<SurfaceView>(retro)
+    private var presentation by mutableStateOf<SurfaceView>(retro.surface)
 
     /** Sample the actual presentation for handheld ambient fill, including native Vulkan WSI. */
     fun presentationSurface(): SurfaceView = presentation
@@ -243,7 +242,7 @@ internal class GameVulkanSurfaceHost(
         presentation = probeSurface
         val attempt = ++fullscreenAttempt
         // Trigger a real Surface resize and Vulkan swapchain recreation.
-        // Compose overlays remain visible; GLRetroView still receives input.
+        // Compose overlays remain visible; RetroViewPort still receives input.
         probeSurface.holder.setSizeFromLayout()
         probeSurface.layoutParams = LayoutParams(
             LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
@@ -266,7 +265,7 @@ internal class GameVulkanSurfaceHost(
         fullscreenSurfaceReady = false
         if (!fullscreenVisible) return
         fullscreenVisible = false
-        presentation = retro
+        presentation = retro.surface
         generation++
         fullscreenAttempt++
         probeSurface.holder.setFixedSize(16, 16)

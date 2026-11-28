@@ -636,6 +636,26 @@ Achievement definitions similarly cross the neutral RetroCorePort rather
 than leaking vendor data classes. The remaining GLRetroView/lifecycle and
 netplay view-specific operations are still directly coupled.
 
+### Experimental complete Libretro frontend DEX
+
+LIBRETRO_DEX_MODULE=1 selects the isolated frontend contract. The host
+owns the actual view/lifecycle API, input and render events, rewind,
+netplay, state operations, controller descriptions, ROM descriptors and
+shader policy. The signed adapter owns GLRetroView, native JNI and its
+implementation. It returns the original Android SurfaceView and observer,
+so no extra rendering view, GL queue or lifecycle is introduced.
+The exporter and class-stripping step reject remaining vendor linkages.
+The package includes the frontend's private ELF dependency closure and
+retains only the needed host resources. The Vulkan Slang runtime is
+borrowed from the already loaded host through a process-lifetime symbol
+resolver rather than loaded a second time. Individual signed game cores
+remain separate downloads.
+
+The Build release workflow accepts libretro_dex_candidate with
+module_candidate=libretrodroid. Stable packaging remains gated until
+Android builds and device tests establish correct JNI/renderer and core
+loading behaviour, including netplay and Vulkan shaders.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

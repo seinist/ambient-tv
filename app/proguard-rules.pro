@@ -170,3 +170,21 @@
 -keep class androidx.legacy.** { *; }
 -keep class androidx.fragment.** { *; }
 -keep class org.videolan.libvlc.R$* { *; }
+
+# Libretro frontend DEX shares only the host-owned ABI and Android lifecycle.
+-keep class com.ambient.tv.ui.games.BundledRetroCore { *; }
+-keep class com.ambient.tv.ui.games.LibretroModuleAdapter { *; }
+-keep interface com.ambient.tv.ui.games.Retro*Port { *; }
+-keep class com.ambient.tv.ui.games.RetroViewConfig { *; }
+-keep class com.ambient.tv.ui.games.RetroVariable { *; }
+-keep class com.ambient.tv.ui.games.RetroController { *; }
+-keep class com.ambient.tv.ui.games.RetroRenderEvent { *; }
+-keep class com.ambient.tv.ui.games.RetroViewError { *; }
+-keep class com.ambient.tv.ui.games.RetroRumble { *; }
+-keep class com.ambient.tv.ui.games.RetroAchievementDefinition { *; }
+-keep class com.ambient.tv.games.GameVirtualFile { *; }
+-keep class com.ambient.tv.games.RetroShaderConfig { *; }
+-keep class com.ambient.tv.games.RetroShaderConfig$* { *; }
+-keep interface com.ambient.tv.games.RetroShaderConfig { *; }
+-keep class androidx.lifecycle.** { *; }
+-keep class com.swordfish.libretrodroid.R$* { *; }

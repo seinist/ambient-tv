@@ -92,15 +92,23 @@ internal object SystemModuleHost {
         return mapOf(SystemModule.VLC to if (BuildConfig.VLC_DEX_ENABLED) dex else native)
     }
 
-    private fun libretroContracts(): Map<SystemModule, SystemModuleRuntime.Contract> =
-        if (BuildConfig.LIBRETRODROID_MODULE_BINDING_SHA256.isNotBlank()) mapOf(
-            SystemModule.LIBRETRODROID to SystemModuleRuntime.Contract(
-                nativeRoots = setOf("liblibretrodroid.so"),
-                bundledOverrides = setOf("liblibretrodroid.so"),
-                hostLibraries = setOf("libc++_shared.so", "libadrenotools.so", "liboboe.so"),
-                hostBindingSha256 = BuildConfig.LIBRETRODROID_MODULE_BINDING_SHA256,
-            )
-        ) else emptyMap()
+    private fun libretroContracts(): Map<SystemModule, SystemModuleRuntime.Contract> {
+        if (BuildConfig.LIBRETRODROID_MODULE_BINDING_SHA256.isBlank()) return emptyMap()
+        val dex = SystemModuleRuntime.Contract(
+            entryClass = "com.ambient.tv.ui.games.LibretroModuleAdapter",
+            hostBindingSha256 = BuildConfig.LIBRETRODROID_DEX_BINDING_SHA256,
+            dexOwnership = ModuleDexOwnership.LIBRETRODROID,
+            dexNativeRoots = setOf("liblibretrodroid.so"),
+            dexOptionalNativeRoots = setOf("libc++_shared.so", "libadrenotools.so", "liboboe.so"),
+        )
+        val native = SystemModuleRuntime.Contract(
+            nativeRoots = setOf("liblibretrodroid.so"),
+            bundledOverrides = setOf("liblibretrodroid.so"),
+            hostLibraries = setOf("libc++_shared.so", "libadrenotools.so", "liboboe.so"),
+            hostBindingSha256 = BuildConfig.LIBRETRODROID_MODULE_BINDING_SHA256,
+        )
+        return mapOf(SystemModule.LIBRETRODROID to if (BuildConfig.LIBRETRODROID_DEX_ENABLED) dex else native)
+    }
 
     private fun moonlightContracts(): Map<SystemModule, SystemModuleRuntime.Contract> =
         if (BuildConfig.MOONLIGHT_MODULE_BINDING_SHA256.isNotBlank()) mapOf(

@@ -1247,6 +1247,9 @@ build_release() {
         if [[ "${VLC_DEX_MODULE:-0}" == 1 ]]; then
             module_audit_args+=(--expect-vlc-dex)
         fi
+        if [[ "${LIBRETRO_DEX_MODULE:-0}" == 1 ]]; then
+            module_audit_args+=(--expect-libretro-dex)
+        fi
         python3 "$ROOT_DIR/scripts/check_modular_preview_apk.py" "${module_audit_args[@]}" "${UPDATE_APKS[@]}"
     fi
     generate_release_update_manifest

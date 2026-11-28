@@ -15,15 +15,28 @@ REPLACEMENT = """        String directory = System.getProperty("ambient.libretro
         }"""
 
 
+SHARED_SHADER = "    public static native void ambientBindSharedShader(long resolver);"
+
+
 def patch(path):
     source = path.read_text()
     if REPLACEMENT in source:
         if source.count(REPLACEMENT) != 1:
             raise ValueError("duplicate LibretroDroid module loader")
-        return
-    if source.count(LOAD) != 1:
-        raise ValueError("pinned LibretroDroid static JNI load site changed")
-    path.write_text(source.replace(LOAD, REPLACEMENT, 1))
+    else:
+        if source.count(LOAD) != 1:
+            raise ValueError("pinned LibretroDroid static JNI load site changed")
+        source = source.replace(LOAD, REPLACEMENT, 1)
+    if SHARED_SHADER not in source:
+        # Insert a declaration immediately before the final class brace.
+        end = source.rstrip().rfind("}")
+        if end < 0:
+            raise ValueError("LibretroDroid class declaration changed")
+        source = source[:end] + SHARED_SHADER + "\n" + source[end:]
+    if source.count(SHARED_SHADER) != 1:
+        raise ValueError("duplicate shader resolver declaration")
+    if path.read_text() != source:
+        path.write_text(source)
 
 
 if __name__ == "__main__":

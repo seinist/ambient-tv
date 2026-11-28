@@ -59,9 +59,42 @@ def owns_vlc(path):
     )
 
 
+LIBRETRO_PREFIX = "com/swordfish/libretrodroid/"
+LIBRETRO_CLASSES = tuple("com/ambient/tv/ui/games/" + name for name in (
+    "LibretroModuleAdapter", "BundledRetroCore", "BundledRetroView",
+    "BundledRetroContentAdapterKt", "BundledRetroShaderAdapterKt",
+))
+LIBRETRO_REQUIRED = tuple(name + ".class" for name in LIBRETRO_CLASSES) + tuple(
+    LIBRETRO_PREFIX + name + ".class" for name in ("LibretroDroid", "GLRetroView", "GLRetroViewData")
+)
+
+
+def owns_libretrodroid(path):
+    if not path.endswith(".class"):
+        return False
+    name = path[:-6]
+    simple = name.rsplit("/", 1)[-1]
+    if simple == "R" or simple.startswith("R$"):
+        return False
+    return name.startswith(LIBRETRO_PREFIX) or any(
+        name == owned or name.startswith(owned + "$") for owned in LIBRETRO_CLASSES
+    )
+
+
+def validate_libretro_boundary(name, data):
+    if not data.startswith(b"\xca\xfe\xba\xbe"):
+        return
+    matches = re.findall(rb"com/swordfish/libretrodroid/[A-Za-z0-9_/$-]+", data)
+    if any(owns_libretrodroid(match.decode("ascii") + ".class") for match in matches):
+        raise ValueError(f"host class references private LibretroDroid type: {name}")
+    if any(owned.encode() in data for owned in LIBRETRO_CLASSES):
+        raise ValueError(f"host class references private LibretroDroid adapter: {name}")
+
+
 def ownership(module):
     return {"monogram": (owns, REQUIRED), "smarttube": (owns_smarttube, SMARTTUBE_REQUIRED),
-            "vlc": (owns_vlc, VLC_REQUIRED)}[module]
+            "vlc": (owns_vlc, VLC_REQUIRED),
+            "libretrodroid": (owns_libretrodroid, LIBRETRO_REQUIRED)}[module]
 
 
 def validate_vlc_boundary(name, data):
@@ -141,6 +174,8 @@ def split(inputs, program, classpath, module='monogram'):
                         validate_private_boundary(name, data)
                     if module == 'vlc':
                         validate_vlc_boundary(name, data)
+                    if module == 'libretrodroid':
+                        validate_libretro_boundary(name, data)
                     h.writestr(name, data)
     if not set(required) <= owned:
         raise ValueError(f"missing adapter classes: {set(required) - owned}")
@@ -155,7 +190,7 @@ def main():
     parser.add_argument("--android-lib", type=Path, action="append", required=True)
     parser.add_argument("--d8", type=Path, required=True)
     parser.add_argument("--binding", required=True)
-    parser.add_argument("--module", choices=("monogram", "smarttube", "vlc"), default="monogram")
+    parser.add_argument("--module", choices=("monogram", "smarttube", "vlc", "libretrodroid"), default="monogram")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{64}", args.binding):

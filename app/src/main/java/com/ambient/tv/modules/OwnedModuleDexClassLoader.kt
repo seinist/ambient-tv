@@ -44,6 +44,21 @@ internal class ModuleDexOwnership(
             ),
             hostResourceClasses = true,
         )
+        val LIBRETRODROID = ModuleDexOwnership(
+            setOf("com.swordfish.libretrodroid."),
+            setOf("com.ambient.tv.ui.games.LibretroModuleAdapter",
+                "com.ambient.tv.ui.games.BundledRetroCore",
+                "com.ambient.tv.ui.games.BundledRetroView",
+                "com.ambient.tv.ui.games.BundledRetroContentAdapterKt",
+                "com.ambient.tv.ui.games.BundledRetroShaderAdapterKt"),
+            required = setOf("com.ambient.tv.ui.games.LibretroModuleAdapter",
+                "com.ambient.tv.ui.games.BundledRetroCore",
+                "com.ambient.tv.ui.games.BundledRetroView",
+                "com.swordfish.libretrodroid.LibretroDroid",
+                "com.swordfish.libretrodroid.GLRetroView",
+                "com.swordfish.libretrodroid.GLRetroViewData"),
+            hostResourceClasses = true,
+        )
         val VLC = ModuleDexOwnership(
             setOf("org.videolan.libvlc."),
             setOf("com.ambient.tv.ui.player.backend.VlcModuleAdapter",

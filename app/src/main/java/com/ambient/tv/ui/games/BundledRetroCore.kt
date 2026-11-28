@@ -4,7 +4,14 @@ import android.view.Surface
 import com.swordfish.libretrodroid.LibretroDroid
 
 /** Vendor calls stay here; view-specific ownership remains in the GL frontend. */
-internal object BundledRetroCore : RetroCorePort {
+internal object BundledRetroCore : RetroFrontendPort {
+    override fun createView(context: android.content.Context, config: RetroViewConfig): RetroViewPort =
+        BundledRetroView(context, config)
+    override fun bindSharedShader(resolver: Long) {
+        // Reflection keeps old bundled JNI builds compatible. Only the DEX path calls this.
+        LibretroDroid::class.java.getMethod("ambientBindSharedShader", Long::class.javaPrimitiveType)
+            .invoke(null, resolver)
+    }
     override fun getVulkanFrameStatus(): Int = LibretroDroid.getVulkanFrameStatus()
     override fun getVulkanCoreSourceFormat(): Int = LibretroDroid.getVulkanCoreSourceFormat()
     override fun getCoreHdrPixelFormatStatus(): Int = LibretroDroid.getCoreHdrPixelFormatStatus()

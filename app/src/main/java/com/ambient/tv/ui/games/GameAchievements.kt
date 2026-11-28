@@ -9,7 +9,6 @@ import com.ambient.tv.games.RaAchievement
 import com.ambient.tv.games.RaConsoles
 import com.ambient.tv.games.RaGame
 import com.ambient.tv.games.RetroAchievementsClient
-import com.swordfish.libretrodroid.GLRetroView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,7 +54,7 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
         }
     private var job: Job? = null
 
-    fun start(view: GLRetroView, game: PreparedGame, enabled: Boolean, hardcoreRequested: Boolean) {
+    fun start(view: RetroViewPort, game: PreparedGame, enabled: Boolean, hardcoreRequested: Boolean) {
         job?.cancel()
         val account = client.account
         val console = RaConsoles.forGame(game.system, GameSystems.extension(game.file.name))
@@ -116,7 +115,7 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
         }
     }
 
-    fun stop(view: GLRetroView) {
+    fun stop(view: RetroViewPort) {
         job?.cancel()
         view.achievementUnlockListener = null
         if (state is GameAchievementState.Active) view.queueEvent { runCatching { RetroCoreRuntime.core.clearAchievements() } }

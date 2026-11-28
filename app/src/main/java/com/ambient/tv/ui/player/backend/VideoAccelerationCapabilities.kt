@@ -20,6 +20,7 @@ internal object VulkanNativeProbe {
     external fun probe(surface: Surface?): String
     external fun vlcModules(): Boolean
     external fun sharedVlcFunctions(svpPath: String?, pcmPath: String?): LongArray
+    external fun sharedShaderResolver(path: String): Long
     /** Read-only producer dataspace, not a Vulkan capability query. Unknown returns zero. */
     external fun dataSpace(surface: Surface): Int
     external fun restoreDataSpace(surface: Surface, dataSpace: Int): Boolean

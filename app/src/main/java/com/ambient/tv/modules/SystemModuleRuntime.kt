@@ -42,6 +42,7 @@ internal class SystemModuleRuntime(
         val hostBindingSha256: String? = null,
         val dexOwnership: ModuleDexOwnership? = null,
         val dexNativeRoots: Set<String> = emptySet(),
+        val dexOptionalNativeRoots: Set<String> = emptySet(),
         val dexAlternative: Contract? = null,
         val requireSoname: Boolean = false,
         // Module-to-module dependencies require an explicit reviewed host contract.
@@ -92,7 +93,9 @@ internal class SystemModuleRuntime(
                     val files = SystemModuleMaterializer.prepare(pkg, root, pageSize, pkg.build.hostNativeSha256.keys)
                     prepared[id] = files
                     validateContract(contract, files)
-                    for (name in files.native.keys) {
+                    // DEX native libraries use their own Android linker namespace.
+                    // Reserve global SONAMEs only for host-loader native packages.
+                    for (name in files.native.keys.filter { contract.entryClass == null }) {
                         val owner = reserved.putIfAbsent(name, id)
                         if (owner != null && owner != id)
                             throw SystemModuleTrustException("Conflicting native libraries in module graph")
@@ -106,10 +109,11 @@ internal class SystemModuleRuntime(
                 for ((id, files) in prepared) {
                     // Once activation begins, retain directories and reserve
                     // native names even on failure: constructors may have run.
-                    files.native.keys.forEach { nativeOwners[it] = id }
+                    val contract = contractFor(id, files.build)
+                    if (contract.entryClass == null) files.native.keys.forEach { nativeOwners[it] = id }
                     try {
                         SystemModuleMaterializer.verifyFiles(files)
-                        active[id] = activate(files, contractFor(id, files.build))
+                        active[id] = activate(files, contract)
                     } catch (e: Exception) {
                         failed += id
                         throw e
@@ -176,9 +180,12 @@ internal class SystemModuleRuntime(
         if (modes != 1) throw SystemModuleTrustException("Invalid host module contract")
         when {
             contract.entryClass != null -> {
-                if (files.dex.isEmpty() || files.native.keys != contract.dexNativeRoots ||
+                if (files.dex.isEmpty() || !files.native.keys.containsAll(contract.dexNativeRoots) ||
+                    !((contract.dexNativeRoots + contract.dexOptionalNativeRoots).containsAll(files.native.keys)) ||
                     files.build.hostNativeSha256.isNotEmpty())
                     throw SystemModuleTrustException("Module adapter DEX or native payload mismatch")
+                val visited = nativeOrder(files.native, contract.dexNativeRoots).toSet()
+                if (visited != files.native.keys) throw SystemModuleTrustException("Unused private native dependency")
                 val ownership = contract.dexOwnership
                     ?: throw SystemModuleTrustException("Module adapter ownership missing")
                 if (contract.entryClass !in files.dexClasses || !ownership.accepts(files.dexClasses))

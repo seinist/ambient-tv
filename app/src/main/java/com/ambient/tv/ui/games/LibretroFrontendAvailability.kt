@@ -18,16 +18,17 @@ internal object LibretroFrontendAvailability {
             val module = if (SystemModule.LIBRETRODROID in SystemModuleHost.supported)
                 SystemModuleHost.loadSelected(SystemModule.LIBRETRODROID) else null
             external = module != null
-            if (module != null) {
+            if (module != null && module.entrypoint == null) {
                 val native = checkNotNull(module.nativeDirectory)
                 check(native.resolve("liblibretrodroid.so").isFile)
                 System.setProperty("ambient.libretrodroid.native.directory", native.absolutePath)
-            } else {
+            } else if (module == null) {
                 if (!SystemModuleAvailability.bundled(SystemModule.LIBRETRODROID)) return false
                 System.clearProperty("ambient.libretrodroid.native.directory")
             }
             // Read-only atomic status; no core, surface, or audio session is started.
-            RetroCoreRuntime.core.getVulkanFrameStatus()
+            RetroCoreRuntime.bind(module)
+            if (module?.entrypoint == null) RetroCoreRuntime.core.getVulkanFrameStatus()
             ready = true
             return true
         } catch (e: Exception) {

@@ -5,7 +5,7 @@ from pathlib import Path
 import zipfile
 import struct
 import re
-from export_monogram_adapter import owns, owns_smarttube, owns_vlc
+from export_monogram_adapter import owns, owns_smarttube, owns_vlc, owns_libretrodroid
 
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
 EXTERNAL = {"libprojectM-4.so", "libambientprojectm.so",
@@ -14,7 +14,7 @@ VLC_EXTERNAL = {"libvlc.so", "libvlcjni.so"}
 SHARED = {"libc++_shared.so", "libavcodec.so", "libavutil.so", "libswresample.so"}
 
 
-def verify_no_optional_classes(data, expect_vlc_dex=False):
+def verify_no_optional_classes(data, expect_vlc_dex=False, expect_libretro_dex=False):
     """Check defined classes, not reference strings (host ports still refer to adapters)."""
     if len(data) < 112 or data[:4] != b"dex\n":
         raise ValueError("invalid APK DEX")
@@ -61,16 +61,18 @@ def verify_no_optional_classes(data, expect_vlc_dex=False):
                 raise ValueError(f"bundled SmartTube adapter class: {descriptor}")
             if expect_vlc_dex and owns_vlc(name):
                 raise ValueError(f"bundled VLC adapter class: {descriptor}")
+            if expect_libretro_dex and owns_libretrodroid(name):
+                raise ValueError(f"bundled LibretroDroid adapter class: {descriptor}")
 
 
-def verify(apk, expect_vlc_external=False, expect_vlc_dex=False):
+def verify(apk, expect_vlc_external=False, expect_vlc_dex=False, expect_libretro_dex=False):
     expect_vlc_external = expect_vlc_external or expect_vlc_dex
     external = EXTERNAL | (VLC_EXTERNAL if expect_vlc_external else set())
     with zipfile.ZipFile(apk) as archive:
         names = archive.namelist()
         for name in names:
             if re.fullmatch(r"classes([2-9]|[1-9][0-9]+)?[.]dex", name):
-                verify_no_optional_classes(archive.read(name), expect_vlc_dex)
+                verify_no_optional_classes(archive.read(name), expect_vlc_dex, expect_libretro_dex)
     if len(names) != len(set(names)):
         raise ValueError(f"{apk}: duplicate APK entries")
     libraries = {}
@@ -96,11 +98,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--expect-vlc-external", action="store_true")
     parser.add_argument("--expect-vlc-dex", action="store_true")
+    parser.add_argument("--expect-libretro-dex", action="store_true")
     parser.add_argument("apks", nargs="+", type=Path)
     args = parser.parse_args()
     seen = set()
     for apk in args.apks:
-        abis = verify(apk, args.expect_vlc_external, args.expect_vlc_dex)
+        abis = verify(apk, args.expect_vlc_external, args.expect_vlc_dex, args.expect_libretro_dex)
         if seen & abis:
             raise ValueError("duplicate ABI across preview APKs")
         seen.update(abis)

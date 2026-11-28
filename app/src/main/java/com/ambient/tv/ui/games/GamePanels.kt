@@ -42,8 +42,6 @@ import com.ambient.tv.games.PreparedGame
 import com.ambient.tv.games.RaAchievement
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvTextField
-import com.swordfish.libretrodroid.Controller
-import com.swordfish.libretrodroid.GLRetroView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -90,7 +88,7 @@ internal fun GameOverlayNote(text: String, modifier: Modifier = Modifier) {
 /** The device type each player's port uses (pad, analog pad, mouse …), as the core offers them. */
 @Composable
 internal fun GameDeviceTypesPanel(
-    controllers: Array<Array<Controller>>,
+    controllers: Array<Array<RetroController>>,
     current: (Int) -> Int?,
     enabled: Boolean,
     onChoose: (port: Int, type: Int) -> Unit,
@@ -211,7 +209,7 @@ internal fun GameCheatsPanel(
 @Composable
 internal fun GameNetplayPanel(
     netplay: GameNetplay,
-    view: GLRetroView,
+    view: RetroViewPort,
     game: PreparedGame,
     coreStamp: String,
     vulkan: Boolean,

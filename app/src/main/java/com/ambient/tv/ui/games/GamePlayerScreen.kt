@@ -158,9 +158,6 @@ import com.ambient.tv.ui.player.ReferencePlayerBottomContent
 import com.ambient.tv.ui.player.ReferencePlayerClock
 import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
-import com.swordfish.libretrodroid.GLRetroView
-import com.swordfish.libretrodroid.GLRetroViewData
-import com.swordfish.libretrodroid.Variable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -294,7 +291,7 @@ private const val REWIND_BUDGET_BYTES = 64L * 1024 * 1024
 private const val OTHER_CATEGORY = "\u0000other"
 
 /** The game's current frame, scaled for save state previews; null when there is none yet. */
-private suspend fun GLRetroView.preview(
+private suspend fun RetroViewPort.preview(
     input: GameHdrToneMap,
     verifiedHdrSource: Boolean,
 ): Bitmap? = withContext(Dispatchers.Default) {
@@ -594,42 +591,28 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
 
     val owner = remember { GameLifecycleOwner() }
     val retroView = remember {
-        GLRetroView(context, GLRetroViewData(context).apply {
-            coreFilePath = session.coreFile.absolutePath
-            if (game.direct) {
-                // The fork owns FDs after its VFS initializes, and seeks the original SAF/NAS ROM.
-                gameVirtualFiles = requireNotNull(game.directContent).virtualFiles.map { it.toLibretroVirtualFile() }
-            } else {
-                gameFilePath = game.file.absolutePath
-            }
-            systemDirectory = session.systemDirectory.absolutePath
-            savesDirectory = session.savesDirectory.absolutePath
-            // The graphics interface decides the GPU cores' renderer options.
+        RetroCoreRuntime.core.createView(context, RetroViewConfig(
+            coreFilePath = session.coreFile.absolutePath,
+            gameFilePath = game.file.absolutePath.takeUnless { game.direct },
+            gameVirtualFiles = if (game.direct) requireNotNull(game.directContent).virtualFiles else emptyList(),
+            systemDirectory = session.systemDirectory.absolutePath,
+            savesDirectory = session.savesDirectory.absolutePath,
             variables = (settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions)
-                .map { (key, value) -> Variable(key, value) }.toTypedArray()
-            saveRAMState = session.sram
-            sdrToHdrReferenceWhiteNits = if (sdrToHdrSession) gameSdrWhiteNits(settings.sdrReferenceWhite, displayHdr) else 0
-            this.shader = GameHdrToneMapShader.forConfig(
+                .map { (key, value) -> RetroVariable(key, value) }.toTypedArray(),
+            saveRAMState = session.sram,
+            sdrToHdrReferenceWhiteNits = if (sdrToHdrSession) gameSdrWhiteNits(settings.sdrReferenceWhite, displayHdr) else 0,
+            shader = GameHdrToneMapShader.forConfig(
                 selectedPackConfig ?: shader.config(shaderIntensity),
                 toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
                 effect = effect.takeIf { selectedPackConfig == null },
-            ).toLibretroShader()
-            rumbleEventsEnabled = true
-            preferLowLatencyAudio = true
-            // A requested cadence must never change the core's native game speed.
-            forceSoftwareTiming = gameDisplayProfile.active
-            preferVulkan = session.vulkan
-            // Before retro_init an HDR-aware Vulkan core may ask for configured PQ output;
-            // distinguish capability from the later verified real-surface HDR signal.
-            configuredHdrOutputMode = GameVulkanTransferGate.configuredCoreOutputMode(
-                toneMap, displayHdr, session.vulkan,
-            )
-            preferHighPrecisionVulkanFrames = GameHdrToneMapShader.prefersFp16Bridge(toneMap, session.vulkan)
-        }).apply {
-            // Input reaches the core through RetroPadInput only.
-            isFocusable = false
-            isFocusableInTouchMode = false
-            // Starts paused: the first composition decides whether it runs.
+            ),
+            forceSoftwareTiming = gameDisplayProfile.active,
+            preferVulkan = session.vulkan,
+            configuredHdrOutputMode = GameVulkanTransferGate.configuredCoreOutputMode(toneMap, displayHdr, session.vulkan),
+            preferHighPrecisionVulkanFrames = GameHdrToneMapShader.prefersFp16Bridge(toneMap, session.vulkan),
+        )).apply {
+            surface.isFocusable = false
+            surface.isFocusableInTouchMode = false
             suppressAutoResume = true
             aspectRatioOverride = aspect.ratio ?: -1f
             this.integerScalingAuto = integerScaling == GameIntegerScaling.AUTO
@@ -649,7 +632,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 game.close()
             }
             view.beforeDetach = nativeOwner::release
-            view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            view.surface.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(attached: View) {
                     // A physical detach can also be temporary; wait until Compose has finished
                     // the current apply pass before deciding whether this owner is still retained.
@@ -659,7 +642,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 }
                 override fun onViewDetachedFromWindow(detached: View) = Unit
             })
-            owner.registry.addObserver(view)
+            owner.registry.addObserver(view.lifecycleObserver)
             owner.move(Lifecycle.State.CREATED)
         }
     }
@@ -672,7 +655,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 selectedPackConfig ?: shader.config(shaderIntensity),
                 toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
                 effect = effect.takeIf { selectedPackConfig == null },
-            ).toLibretroShader()
+            )
         }
     }
 
@@ -1187,7 +1170,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         retroView.getGLRetroEvents().collect { event ->
             val now = android.os.SystemClock.elapsedRealtime()
             val statusIntervalMs = if (nativeSdrFullscreenRequested) 500L else 2_000L
-            if (event == GLRetroView.GLRetroEvents.FrameRendered &&
+            if (event == RetroRenderEvent.FrameRendered &&
                 session.vulkan && now - lastStatusPollMs >= statusIntervalMs) {
                 lastStatusPollMs = now
                 // Frame notifications are conflated; keep status reads on a wall-clock cadence.
@@ -1214,9 +1197,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             }
             // Readiness and sampled frame notifications are independent. A completed
             // frame also proves that native initialization succeeded.
-            if (event == GLRetroView.GLRetroEvents.SurfaceCreated ||
-                event == GLRetroView.GLRetroEvents.FrameRendered) coreReady = true
-            if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
+            if (event == RetroRenderEvent.SurfaceCreated ||
+                event == RetroRenderEvent.FrameRendered) coreReady = true
+            if (event == RetroRenderEvent.FrameRendered && !loaded) {
                 loaded = true
                 // Do not park the renderer before the core has delivered its first frame.
                 retroView.enablePausedPresentationOnDemand()
@@ -1246,7 +1229,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 applyCheats(cheats)
                 achievements.start(retroView, game, !game.direct && core.achievements && GameSettings.state.achievements, hardcoreRequested)
                 achievementsInitialized = true
-            } else if (event == GLRetroView.GLRetroEvents.FrameRendered && loaded &&
+            } else if (event == RetroRenderEvent.FrameRendered && loaded &&
                 !stateAvailable && core.saveStates && serializationPolicy.persistentStates &&
                 serializationPolicy.mustInitialize && now - lastInitializationPollMs >= 1_000L) {
                 // A slow-starting core gets another probe after a second of real elapsed time,
@@ -1262,7 +1245,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             if (session.vulkan && !loaded && model.retryWithoutVulkan()) return@collect
             // A broken core update is restored from the previous installed version, with
             // its own state stamp. Only if no rollback exists is the bad library removed.
-            if (code == GLRetroView.ERROR_LOAD_LIBRARY) {
+            if (code.loadLibrary) {
                 if (model.rollbackCore(core, session.coreSource)) {
                     destroy()
                     model.restart()
@@ -1270,7 +1253,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 }
                 model.removeCore(core, session.coreSource, keepPrevious = true)
             }
-            model.failed(context.getString(R.string.game_error_code, code))
+            model.failed(context.getString(R.string.game_error_code, code.code))
         }
     }
 
@@ -1462,7 +1445,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         )
         // Update the native surface as well as Compose, including Vulkan's hosting view.
         // A null icon restores Android's normal menu/device pointer resolution.
-        retroView.pointerIcon = if (showGamePointer) null else hiddenPointer
+        retroView.surface.pointerIcon = if (showGamePointer) null else hiddenPointer
         vulkanSurfaceHost?.pointerIcon = if (showGamePointer) null else hiddenPointer
         if (!handheld) {
             CompanionGamepadSession.setInteraction(input, companionInteraction, gameInputPage,
@@ -1590,7 +1573,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             .then(if (showGamePointer) Modifier else
                 Modifier.pointerHoverIcon(hiddenComposePointer, overrideDescendants = true))) {
             if (handheld && settings.performanceProfile.handheldBackdrop) AmbientSurfaceBackdropLayer(
-                surface = vulkanSurfaceHost?.presentationSurface() ?: retroView,
+                surface = vulkanSurfaceHost?.presentationSurface() ?: retroView.surface,
                 enabled = true,
                 landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
                     android.content.res.Configuration.ORIENTATION_LANDSCAPE,
@@ -1622,7 +1605,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 onButton = { button, pressed -> input.touchButton(button, pressed) },
                 onStick = { index, x, y -> input.touchStick(index, x, y) },
                 surface = { surfaceModifier ->
-                    AndroidView(factory = { vulkanSurfaceHost ?: retroView }, modifier = surfaceModifier)
+                    AndroidView(factory = { vulkanSurfaceHost ?: retroView.surface }, modifier = surfaceModifier)
                 },
             )
             if ((displayHold || (gameDisplayProfile.active && !displayPrepared && !videoOwnsDisplay)) && !menuOpen) {
@@ -1857,7 +1840,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     val changes = options.mapNotNull { item ->
                         if (!values.containsKey(item.key)) return@mapNotNull null
                         val value = values[item.key] ?: item.default
-                        Variable(item.key, value).takeIf { value != item.value }
+                        RetroVariable(item.key, value).takeIf { value != item.value }
                     }
                     if (changes.isNotEmpty()) runCatching { retroView.updateVariables(*changes.toTypedArray()) }
                     optionsVersion++
@@ -2240,7 +2223,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     option = item,
                                     origin = settings.coreOptionOrigin(core, game.saveKey, item.key),
                                     onSelected = { value ->
-                                        runCatching { retroView.updateVariables(Variable(item.key, value)) }
+                                        runCatching { retroView.updateVariables(RetroVariable(item.key, value)) }
                                         // Choosing the inherited value clears this scope's override.
                                         val inherited = if (gameScope) settings.coreOptions(core)[item.key] ?: item.default
                                             else item.default

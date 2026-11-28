@@ -46,5 +46,22 @@ internal interface RetroCorePort {
 internal data class RetroAchievementDefinition(val id: Int, val memory: String)
 
 internal object RetroCoreRuntime {
-    val core: RetroCorePort = BundledRetroCore
+    @Volatile private var selected: RetroFrontendPort? = null
+    @Volatile var isolated = false
+        private set
+    val core: RetroFrontendPort get() = checkNotNull(selected) { "Libretro frontend not initialized" }
+
+    fun bind(module: com.ambient.tv.modules.SystemModuleRuntime.Loaded?) {
+        check(selected == null)
+        val external = module?.entrypoint
+        val frontend = if (external != null) {
+            external as? RetroFrontendPort ?: error("Invalid Libretro frontend entrypoint")
+        } else {
+            val type = Class.forName("com.ambient.tv.ui.games.BundledRetroCore", true, javaClass.classLoader)
+            type.getField("INSTANCE").get(null) as RetroFrontendPort
+        }
+        isolated = external != null
+        if (isolated) frontend.bindSharedShader(0L)
+        selected = frontend
+    }
 }

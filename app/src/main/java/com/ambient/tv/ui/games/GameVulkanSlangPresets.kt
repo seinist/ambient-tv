@@ -96,6 +96,15 @@ internal object GameVulkanSlangPresets {
                     return@runCatching null
                 System.loadLibrary("librashader_capi")
             }
+            if (RetroCoreRuntime.isolated) {
+                val path = module?.nativeDirectory?.resolve("liblibrashader_capi.so")?.absolutePath
+                    ?: "liblibrashader_capi.so"
+                val probe = com.ambient.tv.ui.player.backend.VulkanNativeProbe
+                if (!probe.available) return@runCatching null
+                val resolver = probe.sharedShaderResolver(path)
+                if (resolver == 0L) return@runCatching null
+                RetroCoreRuntime.core.bindSharedShader(resolver)
+            }
             if (module != null) {
                 val directory = File(module.assets, "games/slang")
                 val prefix = directory.canonicalPath + File.separator
