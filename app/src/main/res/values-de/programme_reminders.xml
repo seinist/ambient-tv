@@ -10,4 +10,6 @@
     <string name="programme_reminder_home">Vormerkungen auf Home anzeigen</string>
     <string name="programme_reminder_row">Vorgemerkt</string>
     <string name="programme_reminder_ready">Jetzt verfügbar</string>
+    <string name="programme_reminder_auto_play">Automatisch abspielen</string>
+    <string name="programme_reminder_auto_play_hint">Startet bei bestätigter Verfügbarkeit, sofern die App geöffnet ist. Bei mehreren fälligen Vormerkungen wird nachgefragt.</string>
 </resources>
