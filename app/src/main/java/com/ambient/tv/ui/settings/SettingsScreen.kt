@@ -339,6 +339,7 @@ fun SettingsScreen(
         val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
         val projectmAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.PROJECTM).usable
         val mpvAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.MPV).usable
+        val vlcAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.VLC).usable
         LaunchedEffect(selectedCategory) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 when (selectedCategory) {
@@ -864,6 +865,7 @@ fun SettingsScreen(
                                 onOpenDlna = onOpenDlna,
                                 projectmAvailable = projectmAvailable,
                                 mpvAvailable = mpvAvailable,
+                                vlcAvailable = vlcAvailable,
                             )
                         }
 
@@ -907,7 +909,7 @@ fun SettingsScreen(
                                         label = stringResource(R.string.settings_playback_backend),
                                         description = MediaSystem.renamedAll(stringResource(R.string.settings_playback_backend_hint)),
                                         options = buildList {
-                                        listOf("media3", "vlc", "mpv").filter { it != "mpv" || mpvAvailable }.forEach { backend ->
+                                        listOf("media3", "vlc", "mpv").filter { (it != "mpv" || mpvAvailable) && (it != "vlc" || vlcAvailable) }.forEach { backend ->
                                             val mpvUnavailable = false
                                             add(SettingsSelectOption(
                                                 text = when (backend) {
@@ -937,6 +939,9 @@ fun SettingsScreen(
                                     title = stringResource(R.string.settings_saved_profiles),
                                     onClick = { savedProfiles = viewModel.savedProfileEntries() },
                                 )
+                            }
+                            if (uiState.playbackBackendKey == "vlc" && !vlcAvailable) {
+                                item { Text(stringResource(R.string.player_vlc_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
                             if (uiState.playbackBackendKey == "mpv" && !mpvAvailable) {
                                 item { Text(stringResource(R.string.player_backend_mpv_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
