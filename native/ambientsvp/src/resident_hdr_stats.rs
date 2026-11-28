@@ -527,12 +527,21 @@ impl TwoPass{
             if fields.next().is_some()||end!=self.ends[self.results.len()]{return Err("scene cache plan mismatch".into());}
             self.results.push(SceneResult{first,end,brightest_frame,maxscl,average,percentiles,fraction});
         }
+        if self.results.iter().any(|r|{
+            let peak=*r.maxscl.iter().max().unwrap_or(&0);
+            let actual=[r.percentiles[0],r.percentiles[3],r.percentiles[4],r.percentiles[5],r.percentiles[6],r.percentiles[7],r.percentiles[8]];
+            r.percentiles[1]!=0||r.percentiles[2]!=255||actual.iter().any(|&v|v>peak)||actual.windows(2).any(|p|p[0]>p[1])
+        }){return Err("invalid cached version-1 distribution".into());}
         if self.results.len()!=self.ends.len()||!validate_scene_sequence(0,*self.ends.last().unwrap(),&self.results,&self.results){
             return Err("incomplete or invalid scene cache".into());
         }
         Ok(())
     }
-    pub(super) fn mode(&self)->u32{if self.failed{0}else{self.mode}}
+    pub(super) fn interval(&self,index:u64)->Result<(u64,u64)>{
+        if self.failed||index>=*self.ends.last().unwrap(){return Err("scene frame outside plan".into());}
+        let i=self.ends.partition_point(|&v|v<=index);
+        Ok((if i==0{0}else{self.ends[i-1]},self.ends[i]))
+    }
     pub(super) fn abort(&mut self){self.failed=true;}
     pub(super) fn capture(&mut self,index:u64,frame:SceneFrame)->Result<()>{
         if self.mode!=1||self.failed||index!=self.next||self.results.len()>=self.ends.len(){
@@ -607,6 +616,8 @@ fn two_pass_cache_identity_completeness_and_replay(){
     p.finish().unwrap();
     assert!(TwoPass::open(2,&plan,&cache,&key,"vlc:fixture",2,1).is_err());
     let mut q=TwoPass::open(2,&plan,&cache,&key,"mpv:fixture",2,1).unwrap();
+    assert_eq!(q.interval(0).unwrap(),(0,1));assert_eq!(q.interval(1).unwrap(),(1,2));
+    assert!(q.interval(2).is_err());
     assert_eq!(q.lookup(0).unwrap().average,100);
     assert_eq!(q.lookup(1).unwrap().average,101);
     q.finish().unwrap();
