@@ -1198,6 +1198,18 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_read_rectangles(pair:*const VulkanPa
         job.rectangles(unsafe{std::slice::from_raw_parts_mut(rectangles,count as usize)}).map_or(-1,|_|1)
     })).unwrap_or(-1)
 }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_read_ellipses(pair:*const VulkanPair,phase:u32,
+    ellipses:*mut [u32;3],count:u32)->i32{
+    if pair.is_null()||ellipses.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&*pair};let i=phase as usize;
+        if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
+        match unsafe{p.core.device.get_fence_status(p.fence)}{Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
+        let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        job.ellipses(unsafe{std::slice::from_raw_parts_mut(ellipses,count as usize)}).map_or(-1,|_|1)
+    })).unwrap_or(-1)
+}
 // The caller must pass the fence of the successful submission containing
 // this exact command buffer. The fence is borrowed and must not be reset
 // or destroyed before release. Never free in-flight descriptors/images.
