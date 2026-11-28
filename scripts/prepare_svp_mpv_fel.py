@@ -8,6 +8,10 @@ adapter = pathlib.Path(__file__).resolve().parents[1] / "native/ambientsvp/adapt
 for directory in ("video/filter", "video/out"):
     shutil.copyfile(adapter / "svp_mpv_fel_pair.h", source / directory / "svp_mpv_fel_pair.h")
 shutil.copyfile(adapter / "svp_mpv_fel_vo.h", source / "video/out/svp_mpv_fel_vo.h")
+shutil.copyfile(adapter / "svp_placebo_quality.h", source / "video/out/svp_placebo_quality.h")
+for name in ("ambientsvp_quality.h", "ambientsvp_vulkan.h"):
+    shutil.copyfile(adapter.parent / "include" / name, source / "video/out" / name)
+shutil.copyfile(adapter.parent / "include/ambientsvp_quality.h", source / "video/filter/ambientsvp_quality.h")
 def patch(path, edits, marker):
     p = source / path
     s = p.read_text()
