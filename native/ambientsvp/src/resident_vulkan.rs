@@ -884,9 +884,18 @@ pub unsafe extern "C" fn ambient_svp_vk_create_quality(instance:vk::Instance,phy
 pub unsafe extern "C" fn ambient_svp_vk_render_held(s:*const VulkanResident,queue:vk::Queue,family:u32,
     images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
     value:u64,phase:f32)->i32{
+    unsafe{ambient_svp_vk_render_held_hdr(s,queue,family,images,count,waits,signal,value,phase,
+        ptr::null(),ptr::null(),ptr::null(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),0)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_render_held_hdr(s:*const VulkanResident,queue:vk::Queue,family:u32,
+    images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
+    value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
+    results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],n:u32)->i32{
     if s.is_null()||queue==vk::Queue::null()||images.is_null()||waits.is_null()||
         !matches!(count,3|5)||signal==vk::Semaphore::null()||value==0||
         !phase.is_finite()||!(0.0..=1.0).contains(&phase){return -1;}
+    if n>3||n>0&&(windows.is_null()||results.is_null()||rects.is_null()||ellipses.is_null()||shifts.is_null()||n>1&&(tracks.is_null()||axes.is_null())){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
         let core=&(*s).0;
         if core.mode!=3||core.tuning.is_none()||core.lost.load(Ordering::Acquire){return -1;}
@@ -921,6 +930,11 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held(s:*const VulkanResident,queu
             if pair.is_null()||ambient_svp_vk_render(pair,phase,3,views[count as usize-1])!=0{
                 return Err("held renderer pair rejected".into());
             }
+            if n>0{
+                let rc=if n==1{ambient_svp_vk_hdr_stats(pair,0,windows,n)}
+                    else{ambient_svp_vk_hdr_stats_ellipse(pair,0,windows,tracks,axes,phase,n)};
+                if rc!=0{return Err("held HDR stats rejected".into());}
+            }
             d.end_command_buffer(cmd).map_err(err)?;
             let stages=vec![vk::PipelineStageFlags::ALL_COMMANDS;count as usize];
             let wait_values=vec![0u64;count as usize];let signals=[signal];let values=[value];let commands=[cmd];
@@ -932,6 +946,14 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held(s:*const VulkanResident,queu
             submitted=true;
             if ambient_svp_vk_seal(pair,fence)!=0{return Err("held renderer seal failed".into());}
             d.wait_for_fences(&[fence],true,u64::MAX).map_err(err)?;
+            if n>0{
+                let rc=if n==1{ambient_svp_vk_hdr_read(pair,0,results,n)}
+                    else{ambient_svp_vk_hdr_read_track(pair,0,results,shifts,n)};
+                if rc!=1||n>1&&(ambient_svp_vk_hdr_read_rectangles(pair,0,rects,n)!=1||
+                    ambient_svp_vk_hdr_read_ellipses(pair,0,ellipses,n)!=1){
+                    return Err("held HDR stats readback failed".into());
+                }
+            }
             Ok(())
         })();
         if submitted{
@@ -959,7 +981,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held(s:*const VulkanResident,queu
             d.destroy_command_pool(pool,None);
             for view in views{d.destroy_image_view(view,None);}
             d.destroy_fence(fence,None);
-            return if lost{-1}else{0};
+            return if lost{-1}else if result.is_err(){1}else{0};
         }
         d.destroy_command_pool(pool,None);
         if !submitted&&!pair.is_null(){ambient_svp_vk_cancel(pair);}
