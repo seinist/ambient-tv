@@ -85,4 +85,36 @@ class ProgrammeReminderTest {
         assertTrue(item.isRelevant(System.currentTimeMillis()))
         assertFalse(item.copy(stopEpochSeconds = now - 1).isRelevant(System.currentTimeMillis()))
     }
+
+    @Test fun delayedYoutubeKeepsReminderWithRevisedStartAndRejectsStaleProbe() {
+        val store = LiveTvReminderStore(context)
+        val item = programme("late", now - 60, true)
+        store.toggle(item)
+        val due = store.markDue(item.id)!!
+        val revised = (now + 600) * 1000
+        store.deferYoutube(due, revised)
+        val saved = LiveTvReminderStore(context).find(item.id)!!
+        assertEquals(revised / 1000, saved.startEpochSeconds)
+        assertFalse(saved.due)
+        assertFalse(saved.ready)
+        assertTrue(saved.snoozedUntilMs >= revised)
+        store.markYoutubeReady(due)
+        assertEquals(saved, store.find(item.id))
+        store.remove(item.id)
+        store.deferYoutube(due, revised)
+        assertNull(store.find(item.id))
+    }
+
+    @Test fun readyYoutubeRemainsInQueueUntilUserHandlesIt() {
+        val store = LiveTvReminderStore(context)
+        val item = programme("ready", now - 30, true)
+        store.toggle(item)
+        val due = store.markDue(item.id)!!
+        store.markYoutubeReady(due)
+        val restored = LiveTvReminderStore(context).find(item.id)!!
+        assertTrue(restored.due)
+        assertTrue(restored.ready)
+        store.snooze(item.id)
+        assertFalse(store.find(item.id)!!.ready)
+    }
 }
