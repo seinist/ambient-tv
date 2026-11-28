@@ -27,4 +27,6 @@
     <string name="schedule_conflict">Overlaps another schedule. Automatic starts will not run concurrently.</string>
     <string name="schedule_future">Choose a future time.</string>
     <string name="schedule_failed">Schedule not saved. Source or account changed, or storage is full.</string>
+    <string name="schedule_remind_end">Remind at the end of the game session</string>
+    <string name="schedule_session_end_title">Planned game time finished: %1$s</string>
 </resources>
