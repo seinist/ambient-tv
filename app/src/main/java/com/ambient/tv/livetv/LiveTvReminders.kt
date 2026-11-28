@@ -11,7 +11,6 @@ import android.net.Uri
 import com.ambient.tv.ui.MainActivity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
-import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,11 +43,15 @@ data class LiveTvReminder(
     val youtube: Boolean = false,
     val due: Boolean = false,
     val snoozedUntilMs: Long = 0L,
+    val stopEpochSeconds: Long? = null,
 ) {
     val id: String get() = if (youtube) "youtube:$eventId" else "$sourceId|$eventId"
     fun route(): String = if (youtube) Destinations.youtubePlayer(eventId)
         else Destinations.tvhPlayer("channel", channelUuid, sourceId.ifBlank { null })
-    fun isRelevant(nowMs: Long): Boolean = startEpochSeconds > nowMs / 1000 - (if (youtube) 7 * 86400L else 3600L)
+    fun isRelevant(nowMs: Long): Boolean = if (youtube) startEpochSeconds > nowMs / 1000 - 7 * 86400L
+        else (stopEpochSeconds ?: (startEpochSeconds + 3600L)) > nowMs / 1000
+    fun alarmAtMs(leadMinutes: Int, autoSwitch: Boolean): Long =
+        if (snoozedUntilMs > 0) snoozedUntilMs else startEpochSeconds * 1000 - (if (autoSwitch) 0 else leadMinutes) * 60_000L
 }
 
 /** Own preferences file, so the alarm receiver can read it without the app's object graph. */
@@ -62,7 +65,7 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
 
     private fun load(): List<LiveTvReminder> = runCatching { json.decodeFromString<List<LiveTvReminder>>(prefs.getString(KEY, "[]")!!) }
         .getOrDefault(emptyList())
-        // Started more than an hour ago: nothing left to remind of.
+        // Old records without an end time retain the previous one-hour fallback.
         .filter { it.isRelevant(System.currentTimeMillis()) }
 
     fun refresh() = synchronized(lock) { mutable.value = load() }
@@ -76,7 +79,10 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
         if (!exists && current.size >= 200) return@synchronized false
         val next = if (exists) current.filterNot { it.id == reminder.id } else (current + reminder).sortedBy { it.startEpochSeconds }
         save(next)
-        if (exists) LiveTvReminderScheduler.cancel(context, reminder) else LiveTvReminderScheduler.schedule(context, reminder)
+        if (exists) {
+            LiveTvReminderScheduler.cancel(context, reminder)
+            context.getSystemService(NotificationManager::class.java)?.cancel(reminder.id, 0)
+        } else LiveTvReminderScheduler.schedule(context, reminder)
         !exists
     }
 
@@ -89,9 +95,39 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
         save(current.filterNot { it.id == id })
     }
 
+    /** Update only known event IDs; absence from a partial guide never cancels a reminder. */
+    fun reconcileGuide(sourceId: String, events: List<LiveTvProgramme>) = synchronized(lock) {
+        val current = load()
+        val byId = events.associateBy { it.eventId }
+        val changed = mutableListOf<LiveTvReminder>()
+        val next = current.map { old ->
+            val event = byId[old.eventId]?.takeIf { !old.youtube && old.sourceId == sourceId && it.channelUuid == old.channelUuid }
+            if (event == null) old else {
+                val moved = event.startEpochSeconds != old.startEpochSeconds
+                old.copy(startEpochSeconds = event.startEpochSeconds, stopEpochSeconds = event.stopEpochSeconds,
+                    title = event.title, channelName = event.channelName,
+                    due = if (moved) false else old.due,
+                    snoozedUntilMs = if (moved) 0L else old.snoozedUntilMs).also { if (it != old) changed.add(it) }
+            }
+        }
+        if (changed.isNotEmpty()) {
+            save(next.filter { it.isRelevant(System.currentTimeMillis()) })
+            changed.forEach {
+                LiveTvReminderScheduler.cancel(context, it)
+                if (!it.due) context.getSystemService(NotificationManager::class.java)?.cancel(it.id, 0)
+                if (it.isRelevant(System.currentTimeMillis())) LiveTvReminderScheduler.schedule(context, it)
+            }
+        }
+    }
+
     fun markDue(id: String): LiveTvReminder? = synchronized(lock) {
         val current = load()
         val reminder = current.firstOrNull { it.id == id && !it.due } ?: return@synchronized null
+        // A replaced alarm can already be in the delivery queue; never fire it early.
+        if (LiveTvReminderScheduler.alarmAt(context, reminder) > System.currentTimeMillis()) {
+            LiveTvReminderScheduler.schedule(context, reminder)
+            return@synchronized null
+        }
         val updated = reminder.copy(due = true, snoozedUntilMs = 0L)
         save(current.map { if (it.id == id) updated else it })
         updated
@@ -124,23 +160,26 @@ object LiveTvReminderScheduler {
     private const val ACTION_FIRE = "com.ambient.tv.action.LIVE_REMINDER"
     const val EXTRA_ID = "com.ambient.tv.extra.REMINDER_ID"
 
-    fun autoSwitch(context: Context): Boolean =
-        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).getBoolean("auto_switch", false)
+    fun autoSwitch(context: Context, youtube: Boolean = false): Boolean =
+        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).getBoolean(if (youtube) "youtube_auto_switch" else "auto_switch", false)
 
-    fun setAutoSwitch(context: Context, enabled: Boolean) {
-        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).edit().putBoolean("auto_switch", enabled).apply()
+    fun setAutoSwitch(context: Context, enabled: Boolean, youtube: Boolean = false) {
+        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).edit().putBoolean(if (youtube) "youtube_auto_switch" else "auto_switch", enabled).apply()
         rescheduleAll(context)
     }
 
-    private fun leadMs(context: Context): Long =
-        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).getInt("lead_minutes", 2).coerceIn(0, 15) * 60_000L
+    fun leadMinutes(context: Context, youtube: Boolean = false): Int =
+        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE)
+            .getInt(if (youtube) "youtube_lead_minutes" else "lead_minutes", if (youtube) 0 else 2).coerceIn(0, 15)
 
-    fun setLeadMinutes(context: Context, minutes: Int) {
-        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).edit().putInt("lead_minutes", minutes.coerceIn(0, 15)).apply()
+    fun setLeadMinutes(context: Context, minutes: Int, youtube: Boolean = false) {
+        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).edit()
+            .putInt(if (youtube) "youtube_lead_minutes" else "lead_minutes", minutes.coerceIn(0, 15)).apply()
         rescheduleAll(context)
     }
 
-    fun leadMinutes(context: Context): Int = (leadMs(context) / 60_000L).toInt()
+    fun alarmAt(context: Context, reminder: LiveTvReminder): Long =
+        reminder.alarmAtMs(leadMinutes(context, reminder.youtube), autoSwitch(context, reminder.youtube))
 
     private fun pending(context: Context, reminder: LiveTvReminder, create: Boolean): PendingIntent? =
         PendingIntent.getBroadcast(
@@ -154,9 +193,7 @@ object LiveTvReminderScheduler {
     fun schedule(context: Context, reminder: LiveTvReminder) {
         val alarms = context.getSystemService(AlarmManager::class.java) ?: return
         if (reminder.due) return
-        val lead = if (reminder.youtube || autoSwitch(context)) 0L else leadMs(context)
-        val at = (if (reminder.snoozedUntilMs > 0) reminder.snoozedUntilMs else reminder.startEpochSeconds * 1000 - lead)
-            .coerceAtLeast(System.currentTimeMillis() + 1000)
+        val at = alarmAt(context, reminder).coerceAtLeast(System.currentTimeMillis() + 1000)
         val intent = pending(context, reminder, create = true) ?: return
         // Exact alarms need a special permission on Android 12+; a few seconds of slack are fine for TV.
         if (android.os.Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) {
@@ -168,14 +205,20 @@ object LiveTvReminderScheduler {
     }
 
     fun cancel(context: Context, reminder: LiveTvReminder) {
-        val intent = pending(context, reminder, create = false) ?: return
-        context.getSystemService(AlarmManager::class.java)?.cancel(intent)
-        intent.cancel()
+        val alarms = context.getSystemService(AlarmManager::class.java)
+        pending(context, reminder, create = false)?.let { alarms?.cancel(it); it.cancel() }
+        // Cancel old-version PendingIntents without a data URI during migration.
+        if (!reminder.youtube) PendingIntent.getBroadcast(context, reminder.id.hashCode(),
+            Intent(context, LiveTvReminderReceiver::class.java).setAction(ACTION_FIRE),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE)?.let { alarms?.cancel(it); it.cancel() }
     }
 
     /** After a reboot or a changed lead time: alarms do not survive either. */
     fun rescheduleAll(context: Context) {
-        LiveTvReminderStore(context.applicationContext).reminders.value.filterNot { it.due }.forEach { schedule(context, it) }
+        LiveTvReminderStore(context.applicationContext).reminders.value.filterNot { it.due }.forEach {
+            cancel(context, it)
+            schedule(context, it)
+        }
     }
 
     internal fun isFire(intent: Intent?) = intent?.action == ACTION_FIRE
@@ -197,10 +240,7 @@ class LiveTvReminderReceiver : BroadcastReceiver() {
         val id = intent?.getStringExtra(LiveTvReminderScheduler.EXTRA_ID) ?: return
         val store = LiveTvReminderStore(context.applicationContext)
         val reminder = store.markDue(id) ?: return
-        if (!reminder.youtube && LiveTvReminderScheduler.autoSwitch(context) && LiveTvReminderPrompt.foreground) {
-            store.remove(id)
-            LauncherIntents.post(reminder.route())
-        } else if (!LiveTvReminderPrompt.foreground) {
+        if (!LiveTvReminderPrompt.foreground) {
             notify(context, reminder)
         }
     }
@@ -241,6 +281,16 @@ fun LiveTvReminderPromptDialog() {
     val reminders by store.reminders.collectAsState()
     val reminder = reminders.filter { it.due && it.isRelevant(System.currentTimeMillis()) }
         .minByOrNull { it.startEpochSeconds } ?: return
+    // Automatic starts are serialized through the same queue and never occur from the background.
+    val automatic = LiveTvReminderScheduler.autoSwitch(context, reminder.youtube) &&
+        reminder.startEpochSeconds * 1000 <= System.currentTimeMillis()
+    if (automatic && LiveTvReminderPrompt.foreground) {
+        androidx.compose.runtime.LaunchedEffect(reminder.id) {
+            if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
+            LauncherIntents.post(reminder.route())
+        }
+        return
+    }
     AppDialog(
         onDismiss = { store.snooze(reminder.id) },
         title = stringResource(R.string.reminder_title, reminder.title),
@@ -254,5 +304,7 @@ fun LiveTvReminderPromptDialog() {
             TvActionButton(stringResource(R.string.programme_reminder_snooze), { store.snooze(reminder.id) })
             TvActionButton(stringResource(R.string.reminder_dismiss), { store.remove(reminder.id) })
         },
-    )
+    ) {
+        if (reminder.youtube) androidx.tv.material3.Text(stringResource(R.string.programme_reminder_scheduled_hint))
+    }
 }
