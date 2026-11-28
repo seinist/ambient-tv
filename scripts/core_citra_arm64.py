@@ -174,6 +174,17 @@ elseif (ARCHITECTURE_x86_64)""")
         file.write_text(source)
     path = folder + "arm_dynarmic.cpp"
     replace(root, path, "#include <dynarmic/interface/A32/context.h>", "#include <array>")
+    replace(root, folder + "arm_dynarmic.h", "    Memory::PageTable* current_page_table = nullptr;",
+            "    Memory::PageTable* current_page_table = nullptr;\n    std::map<Memory::PageTable*, uint64_t> jit_generations;")
+    replace(root, path, "    if (iter != jits.end()) {\n        jit = iter->second.get();",
+            """    const uint64_t generation = current_page_table ? current_page_table->fastmem.id() : 0;
+    if (iter != jits.end() && jit_generations[current_page_table] != generation) {
+        jits.erase(iter);
+        iter = jits.end();
+    }
+    jit_generations[current_page_table] = generation;
+    if (iter != jits.end()) {
+        jit = iter->second.get();""")
     # The current API exposes registers directly instead of A32::Context.
     # Keep FPEXC in Citra's existing interpreter-owned context.
     file = root / path

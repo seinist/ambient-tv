@@ -27,7 +27,7 @@ class CandidateTests(unittest.TestCase):
 #include <assert.h>
 #include "sh2_arm64.h"
 int main(void) {
-    uint32_t out[4];
+    uint32_t out[10];
     assert(ambient_sh2_emit(0x0009, out) == 1);
     assert(ambient_sh2_emit(0xe180, out) == 3 && out[0] == 0x12800fe1u && out[1] == 0xb9000401u);
     assert(ambient_sh2_emit(0x312c, out) == 5 && out[0] == 0xb9400401u &&
@@ -35,10 +35,62 @@ int main(void) {
     assert(ambient_sh2_emit(0xafff, out) == 0); /* BRA */
     assert(ambient_sh2_emit(0x2122, out) == 0); /* MOV.L to memory */
     assert(ambient_sh2_emit(0x000b, out) == 0); /* RTS */
-    for (unsigned op=0; op<65536; ++op) assert(ambient_sh2_emit(op, out) <= 5);
+    assert(ambient_sh2_emit(0x3120, out) == 9 && out[2] == 0x6b02003fu && out[3] == 0x1a9f17e3u);
+    assert(ambient_sh2_emit(0xc9ff, out) == 5 && out[1] == 0x52801fe2u);
+    for (unsigned op=0; op<65536; ++op) assert(ambient_sh2_emit(op, out) <= 10);
 }
 """)
             binary = path.with_suffix("")
             subprocess.run([cc, "-std=c99", "-O2", "-fsanitize=undefined",
                             "-I", str(header), str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
+    def test_citra_fastmem_shared_aliases_and_revocation(self):
+        compiler = shutil.which("c++")
+        self.assertIsNotNone(compiler)
+        header = Path(__file__).parent / "native_core_candidates"
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "test.cpp"
+            path.write_text(r"""
+#include <cassert>
+#include "citra_fastmem.h"
+int main() {
+    using namespace AmbientFastmem;
+    const size_t page = host_page();
+    assert(page);
+    std::vector<uint8_t*> pointers(AddressSpace / GuestPage, nullptr);
+    Arena arena;
+    auto first = arena.ensure(pointers);
+    assert(first);
+    auto* guest = reinterpret_cast<uint8_t*>(*first);
+    {
+        MemoryBlock memory(page * 2, 0);
+        // File-backed allocation is required for this host regression test.
+        { auto& r = registry(); std::lock_guard<std::mutex> lock(r.mutex);
+          assert(r.allocations.count(reinterpret_cast<uintptr_t>(memory.data()))); }
+        for (size_t i=0; i<page/GuestPage; ++i) {
+            pointers[i] = memory.data()+i*GuestPage;
+            pointers[page/GuestPage+i] = memory.data()+i*GuestPage;
+        }
+        arena.sync(pointers, 0, 2*page/GuestPage);
+        guest[17] = 123;
+        assert(memory[17] == 123 && guest[page+17] == 123);
+        memory[17] = 77;
+        assert(guest[17] == 77 && guest[page+17] == 77);
+        pointers[0] = nullptr;
+        arena.sync(pointers, 0, 1);
+        assert(guest[page+17] == 77);
+        pointers[0] = memory.data();
+        arena.sync(pointers, 0, 1);
+        assert(guest[17] == 77);
+    }
+    // Backing destruction revokes both aliases, even before a page table refresh.
+    auto& r = registry();
+    std::lock_guard<std::mutex> lock(r.mutex);
+    assert(r.allocations.empty());
+}
+""")
+            binary = path.with_suffix("")
+            subprocess.run([compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
+                            "-pthread", "-I", str(header), str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)

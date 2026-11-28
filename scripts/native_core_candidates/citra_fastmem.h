@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -41,7 +42,8 @@ inline int backing_fd() {
 }
 class Arena {
 public:
-    Arena() = default;
+    Arena() : generation(next_generation.fetch_add(1, std::memory_order_relaxed)) {}
+    uint64_t id() const noexcept { return generation; }
     Arena(const Arena&) = delete;
     Arena& operator=(const Arena&) = delete;
     ~Arena() {
@@ -135,6 +137,8 @@ private:
         }
     }
 
+    inline static std::atomic<uint64_t> next_generation{1};
+    const uint64_t generation;
     unsigned char* base = nullptr;
     size_t page = 0;
     bool attempted = false;

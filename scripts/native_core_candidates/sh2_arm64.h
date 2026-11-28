@@ -8,12 +8,12 @@
 #include <stddef.h>
 
 #define AMBIENT_SH2_MAX_OPS 16
-#define AMBIENT_SH2_MAX_WORDS (4 * AMBIENT_SH2_MAX_OPS + 2)
+#define AMBIENT_SH2_MAX_WORDS (10 * AMBIENT_SH2_MAX_OPS + 3)
 
 /* Emit a single side-effect-free, one-cycle SH2 instruction into AArch64.
- * x0 points at R[16]; w1/w2 are caller-saved scratch. No flags are modified
- * in the guest state, no memory access except the guest register file.
- * Branches, SR changes, delay slots and MMIO remain interpreter operations.
+ * x0 points at R[16], x7 at SR; w1..w4 are caller-saved scratch.
+ * Only the T status bit is changed by flag-setting instructions.
+ * Branches, delay slots and MMIO remain interpreter operations.
  */
 static unsigned ambient_sh2_emit(uint16_t op, uint32_t* code)
 {
@@ -46,6 +46,79 @@ static unsigned ambient_sh2_emit(uint16_t op, uint32_t* code)
         case 0x600e: code[count++] = 0x13001c41u; break; /* SXTB */
         case 0x600f: code[count++] = 0x13003c41u; break; /* SXTH */
         }
+    } else if ((op & 0xf0ff) == 0x4008 || (op & 0xf0ff) == 0x4018 ||
+               (op & 0xf0ff) == 0x4028 || (op & 0xf0ff) == 0x4009 ||
+               (op & 0xf0ff) == 0x4019 || (op & 0xf0ff) == 0x4029) {
+        const unsigned shift = ((op & 0x30) == 0 ? 2 : (op & 0x30) == 0x10 ? 8 : 16);
+        code[count++] = load_n;
+        code[count++] = (op & 1) ?
+            0x53000021u | (shift << 16) | (31u << 10) :
+            0x53000021u | ((32u-shift) << 16) | ((31u-shift) << 10);
+    } else if (key == 0x6008 || key == 0x6009 || key == 0x200d) {
+        code[count++] = load_m;
+        if (key == 0x6008) {
+            code[count++] = 0x5ac00441u; /* REV16 w1,w2 */
+            code[count++] = 0x33003c22u; /* BFI w2,w1,#0,#16 */
+            code[count++] = 0x2a0203e1u;
+        } else if (key == 0x6009) {
+            code[count++] = 0x13824041u; /* ROR w1,w2,#16 */
+        } else {
+            code[count++] = load_n;
+            code[count++] = 0x13814041u; /* EXTR w1,w2,w1,#16 */
+        }
+    } else if ((op & 0xff00) == 0xc900 || (op & 0xff00) == 0xca00 ||
+               (op & 0xff00) == 0xcb00) {
+        code[count++] = 0xb9400001u;
+        code[count++] = 0x52800002u | ((op & 255u) << 5);
+        code[count++] = (op & 0xff00) == 0xc900 ? 0x0a020021u :
+                        (op & 0xff00) == 0xca00 ? 0x4a020021u : 0x2a020021u;
+        code[count++] = 0xb9000001u;
+        return count+1;
+    } else if ((op & 0xf0ff) == 0x0029) {
+        code[count++] = 0xb94000e4u; /* LDR w4,[x7] */
+        code[count++] = 0x53000081u; /* UBFX w1,w4,#0,#1 */
+    } else if (key == 0x3000 || key == 0x3002 || key == 0x3003 ||
+               key == 0x3006 || key == 0x3007 || key == 0x2008 ||
+               (op & 0xff00) == 0xc800 || (op & 0xff00) == 0x8800 ||
+               (op & 0xf0ff) == 0x4011 || (op & 0xf0ff) == 0x4015 ||
+               (op & 0xf0ff) == 0x4010 || op == 0x0008 || op == 0x0018) {
+        uint32_t condition = 0x1a9f17e3u; /* CSET w3,EQ */
+        if (op == 0x0008 || op == 0x0018) {
+            code[count++] = op == 0x0018 ? 0x52800023u : 0x52800003u;
+        } else if ((op & 0xf0ff) == 0x4010) {
+            code[count++] = load_n;
+            code[count++] = 0x51000421u; /* SUB w1,w1,#1 */
+            code[count++] = store_n;
+            code[count++] = 0x7100003fu; /* CMP w1,#0 */
+            code[count++] = condition;
+        } else if ((op & 0xf0ff) == 0x4011 || (op & 0xf0ff) == 0x4015) {
+            code[count++] = load_n;
+            code[count++] = 0x7100003fu;
+            code[count++] = (op & 0xf0ff) == 0x4011 ? 0x1a9fb7e3u : 0x1a9fd7e3u;
+        } else if ((op & 0xff00) == 0xc800 || (op & 0xff00) == 0x8800) {
+            code[count++] = 0xb9400001u;
+            const int immediate = (op & 0xff00) == 0x8800 ? (int8_t)op : (op & 255);
+            code[count++] = immediate < 0 ? 0x12800002u | ((uint32_t)(-immediate-1) << 5) :
+                                            0x52800002u | ((uint32_t)immediate << 5);
+            code[count++] = (op & 0xff00) == 0xc800 ? 0x6a02003fu : 0x6b02003fu;
+            code[count++] = condition;
+        } else {
+            code[count++] = load_n;
+            code[count++] = load_m;
+            code[count++] = key == 0x2008 ? 0x6a02003fu : 0x6b02003fu;
+            switch (key) {
+            case 0x3002: condition = 0x1a9f37e3u; break; /* HS */
+            case 0x3003: condition = 0x1a9fb7e3u; break; /* GE */
+            case 0x3006: condition = 0x1a9f97e3u; break; /* HI */
+            case 0x3007: condition = 0x1a9fd7e3u; break; /* GT */
+            }
+            code[count++] = condition;
+        }
+        code[count++] = 0xb94000e4u;
+        code[count++] = 0x121f7884u; /* AND w4,w4,#~1 */
+        code[count++] = 0x2a030084u; /* ORR w4,w4,w3 */
+        code[count++] = 0xb90000e4u;
+        return count+1;
     } else {
         switch (key) {
         case 0x300c: alu = 0x0b020021u; break; /* ADD */
@@ -97,8 +170,9 @@ static void ambient_sh2_clear(void)
 
 static int ambient_sh2_try(SH2_struct* context, u32 budget)
 {
-    if (yabsys.sh2_cache_enabled || context->isIdle || context->isSleeping ||
-        context->delay || context->breakpointEnabled || context->cycles >= budget ||
+    if (context->model != SHMT_SH2 || yabsys.sh2_cache_enabled || context->isIdle || context->isSleeping ||
+        context->delay || context->breakpointEnabled || context->backtraceEnabled ||
+        context->stepOverOut.enabled || context->trackInfLoop.enabled || context->cycles >= budget ||
         budget - context->cycles < 4)
         return 0;
     const uint32_t pc = context->regs.PC;
@@ -117,7 +191,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         for (i = 0; i < block->count; ++i)
             if ((uint16_t)fetch(context, pc + i*2) != block->ops[i]) break;
         if (i == block->count) {
-            ((void (*)(u32*))block->code)(context->regs.R);
+            ((void (*)(u32*, u32*))block->code)(context->regs.R, &context->regs.SR.all);
             context->instruction = block->ops[block->count-1];
             context->regs.PC += block->count * 2;
             context->cycles += block->count;
@@ -133,10 +207,14 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         block->pc = pc;
     }
     if (block->hits < AMBIENT_SH2_HOT && ++block->hits < AMBIENT_SH2_HOT) return 0;
-    if (block->count == 1) return 0; /* previously rejected, avoid scanning repeatedly */
+    if (block->count == 1) {
+        if ((uint16_t)fetch(context, pc) == block->ops[0]) return 0;
+        block->count = 0;
+    }
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
     unsigned words = 0, count = 0;
     code[words++] = 0xd503245fu; /* BTI c, harmless hint on older ARM64 */
+    code[words++] = 0xaa0103e7u; /* MOV x7,x1: SR pointer survives scratch register writes */
     while (count < AMBIENT_SH2_MAX_OPS) {
         uint32_t addr = pc + count*2;
         if (((fetchfunc*)context->fetchlist)[(addr >> 20) & 255] != fetch) break;
@@ -146,7 +224,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         words += emitted-1;
         block->ops[count++] = op;
     }
-    if (count < 4) { block->count = 1; return 0; }
+    if (count < 4) { block->ops[0] = (uint16_t)fetch(context, pc); block->count = 1; return 0; }
     code[words++] = 0xd65f03c0u;
     const long page = sysconf(_SC_PAGESIZE);
     if (page <= 0 || (size_t)page < words*sizeof(uint32_t)) {
