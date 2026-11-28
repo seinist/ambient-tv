@@ -435,6 +435,10 @@ android {
         buildConfigField("String", "MPV_ANDROID_REF", quotedBuildConfigString(externalVersion("MPV_ANDROID_REF")))
         buildConfigField("String", "PROJECTM_VERSION", quotedBuildConfigString(externalVersion("PROJECTM_REF")))
         buildConfigField("String", "SPOTIFY_RUSTY_VERSION", quotedBuildConfigString(externalVersion("SPOTIFY_RUSTY_REF")))
+        buildConfigField("String", "SVP_MODULE_BINDING_SHA256", quotedBuildConfigString(
+            MessageDigest.getInstance("SHA-256").digest(rootProject.file("native/ambientsvp/include/ambientsvp.h").readBytes())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+        ))
         buildConfigField("String", "SVPFLOW_VERSION", quotedBuildConfigString(externalVersion("SVPFLOW_VERSION")))
         buildConfigField("String", "SVPFLOW_REF", quotedBuildConfigString(externalVersion("SVPFLOW_REF")))
         buildConfigField("String", "FFMPEG_VERSION", quotedBuildConfigString(externalVersion("FFMPEG_REF")))
@@ -530,7 +534,7 @@ android {
             // Retain FFmpeg and other APK-owned dependencies for local audio and MPV modules.
             if (modularPreview) excludes += setOf(
                 "**/libprojectM-4.so", "**/libambientprojectm.so",
-                "**/libmpv.so", "**/libambientmpv.so", "**/libj2v8.so",
+                "**/libmpv.so", "**/libambientmpv.so", "**/libj2v8.so", "**/libambientsvp.so",
             )
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
             if (modularPreview && vlcModuleSupported) excludes += setOf("**/libvlc.so", "**/libvlcjni.so")
