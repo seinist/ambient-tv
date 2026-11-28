@@ -23,7 +23,11 @@ android {
         ndk { abiFilters.add(auditAbi) }
     }
     packaging.jniLibs.keepDebugSymbols.add("**/libvlc*.so")
-    sourceSets.getByName("main").kotlin.directories.add(layout.buildDirectory.dir("generated/receiver").get().asFile.path)
+    sourceSets {
+        named("main") {
+            kotlin.directories.add(layout.buildDirectory.dir("generated/receiver").get().asFile.path)
+        }
+    }
 }
 tasks.named("preBuild").configure { dependsOn(syncSources) }
 dependencies {

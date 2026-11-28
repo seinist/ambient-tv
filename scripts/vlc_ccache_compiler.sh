@@ -8,6 +8,17 @@ case "${0##*/}" in
     ndk-ccache) compiler="${1:?}"; shift ;;
     *) echo "Unexpected VLC compiler wrapper name" >&2; exit 2 ;;
 esac
+# Configuration feature probes must use the exact driver semantics.
+# ccache is useful only for object compilation, not driver queries,
+# preprocessing, linking, or warning-as-error capability probes.
+compile=0
+for arg in "$@"; do
+    case "$arg" in
+        -Werror|--version|-E|-M|-MM|-fsyntax-only) exec "$compiler" "$@" ;;
+        -c) compile=1 ;;
+    esac
+done
+if [[ "$compile" == 0 ]]; then exec "$compiler" "$@"; fi
 case "$PWD/" in
     */contrib/contrib-android-*/ffmpeg/*|*/contrib/contrib-android-*/ffmpeg-*) component=ffmpeg ;;
     */contrib/contrib-android-*/libplacebo/*|*/contrib/contrib-android-*/libplacebo-*) component=libplacebo ;;

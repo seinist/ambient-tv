@@ -27,6 +27,8 @@ on:
       - 'app/src/androidTest/java/com/ambient/tv/ui/player/VlcMetadataSocketAudit.kt'
       - 'app/src/androidTest/java/com/ambient/tv/ui/player/PlaybackAuditInstrumentation.kt'
       - 'scripts/test_vlc_ahb_import.sh'
+      - 'scripts/test_vlc_contrib_toolchain.sh'
+      - 'scripts/tests/test_vlc_*.py'
       - 'scripts/prepare_vlc_ahb_experimental.sh'
       - 'scripts/build_vlc_vulkan.sh'
       - 'scripts/run_vlc_seek_e2e.sh'
@@ -112,6 +114,7 @@ jobs:
           normal_hash="$(VLC_EXPERIMENTAL_AHB=0 bash scripts/build_vlc_vulkan.sh --hash)"
           experimental_hash="$(VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh --hash)"
           [[ "$normal_hash" != "$experimental_hash" ]]
+          bash scripts/test_vlc_contrib_toolchain.sh
           bash scripts/test_vlc_ahb_import.sh
 
   ffmpeg-rpu-contract:
@@ -473,6 +476,19 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+      - name: Retain native configure diagnostics (arm64)
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-configure-diagnostics-arm64
+          path: |
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/config.log
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/meson-log.txt
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/CMakeConfigureLog.yaml
+            .native/libvlcjni-ahb-experimental/vlc/build-android-*/config.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
 
 
   linked-x86_64-aar:
@@ -623,6 +639,19 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+      - name: Retain native configure diagnostics (x86_64)
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-configure-diagnostics-x86_64
+          path: |
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/config.log
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/meson-log.txt
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/CMakeConfigureLog.yaml
+            .native/libvlcjni-ahb-experimental/vlc/build-android-*/config.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
 
 
   linked-arm32-aar:
@@ -772,6 +801,19 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+      - name: Retain native configure diagnostics (arm32)
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-configure-diagnostics-arm32
+          path: |
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/config.log
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/meson-log.txt
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/CMakeConfigureLog.yaml
+            .native/libvlcjni-ahb-experimental/vlc/build-android-*/config.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
 
   linked-x86-aar:
     name: linked-x86-aar
@@ -919,6 +961,19 @@ jobs:
             .native/libvlcjni-ahb-experimental/libvlc/jni/libs/x86/libvlcjni.so
           include-hidden-files: true
           if-no-files-found: error
+          retention-days: 7
+      - name: Retain native configure diagnostics (x86)
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-configure-diagnostics-x86
+          path: |
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/config.log
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/meson-log.txt
+            .native/libvlcjni-ahb-experimental/vlc/contrib/contrib-android-*/**/CMakeConfigureLog.yaml
+            .native/libvlcjni-ahb-experimental/vlc/build-android-*/config.log
+          include-hidden-files: true
+          if-no-files-found: warn
           retention-days: 7
 
   seek-audit-arm64-package:
