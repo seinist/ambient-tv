@@ -70,7 +70,7 @@ class LibraryViewOptionsTest {
     }
 
     @Test fun alphabetBarReflectsActualAscendingAndDescendingGridOrder() {
-        val items = listOf(item("Zulu"), item("80s"), item("Bravo"), item("alpha"), item("Älpler"))
+        val items = listOf(item("Zulu"), item("80s"), item("Bravo"), item("alpha"), item("Älpler"), item("~Title"))
         val ascending = applyLibraryViewOptions(items, SectionSort.TITLE, SectionSortOrder.ASCENDING, LibraryFilters())
         val descending = applyLibraryViewOptions(items, SectionSort.TITLE, SectionSortOrder.DESCENDING, LibraryFilters())
         assertEquals(
@@ -81,6 +81,7 @@ class LibraryViewOptionsTest {
             descending.mapNotNull { libraryIndexLetter(it.title) }.distinct(),
             libraryAlphabetLetters(descending),
         )
+        assertEquals(listOf('#', '#'), ascending.take(2).map { libraryIndexLetter(it.title) })
         assertEquals('#', libraryAlphabetLetters(ascending).first())
         assertEquals('#', libraryAlphabetLetters(descending).last())
         assertEquals(libraryAlphabetLetters(ascending).reversed(), libraryAlphabetLetters(descending))
