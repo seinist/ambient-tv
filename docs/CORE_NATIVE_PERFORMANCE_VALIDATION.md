@@ -32,9 +32,12 @@ artifact from the Core benchmark runner workflow:
 Use a connected Android device (ADB debugging) and content/BIOS that you can
 legally use. The standalone runner creates isolated temporary directories and
 never modifies Ambient TV's installed cores or saves. The runner supports
-software and GLES2/3 pbuffer contexts. Vulkan-only or unsupported environment
-interfaces fail; use the existing Ambient TV Perfetto tracing flow for those
-cores. It measures direct core-call time, not end-to-end rendering or input lag.
+software, GLES2/3 pbuffer and synchronous headless Vulkan (v1/v2 negotiation).
+Select renderer `vulkan` in the fixture or `--renderer vulkan` for a single run.
+Vulkan uses one sync slot and a fence per submitted frame, including core
+command buffers and semaphores. Cross-queue-family image handoffs and unsupported
+interfaces fail explicitly. This measures completed GPU work in a serialized
+frontend, not real presentation or pipelined input latency.
 
 Create a local fixture JSON with paths relative to that JSON:
 

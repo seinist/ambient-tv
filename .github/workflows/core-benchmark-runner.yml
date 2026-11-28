@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - scripts/native_core_candidates/core_benchmark_runner.cpp
+      - scripts/native_core_candidates/core_benchmark_vulkan.h
       - scripts/build_core_benchmark_runner.sh
       - scripts/run_core_benchmark.py
       - scripts/benchmark_core_matrix.py

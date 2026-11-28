@@ -47,7 +47,7 @@ def matrix(args):
                 system=resolve(config["system"]),input=resolve(config["input"]),
                 options=resolve(config["options"]),output=target,
                 runtime=resolve(config["runtime"]) if config.get("runtime") else None,
-                rom=config["rom"],serial=args.serial,frames=warmup+measured,training=False))
+                rom=config["rom"],serial=args.serial,frames=warmup+measured,training=False,renderer=config.get("renderer","auto")))
             meta=json.loads((target/"metadata.json").read_text())
             summary=json.loads((target/"capture-summary.json").read_text())
             build=meta["build"]
@@ -55,7 +55,7 @@ def matrix(args):
                 raise ValueError("Incorrect profile or incomplete rendered workload")
             common={key:build[key] for key in ("core","abi","commit","ndk")}
             common.update({key:meta[key] for key in ("device_fingerprint","content_sha256","input_sha256","settings_sha256")})
-            common.update({"app_commit":meta["runner_sha256"],"renderer":"gles-pbuffer" if summary["hardware"] else "software",
+            common.update({"app_commit":meta["runner_sha256"],"renderer":summary["renderer"],
                            "fps":summary["fps"]})
             fixture={"files":meta["fixture_files"],"bios":meta["bios_files"],"runner":meta["runner_sha256"]}
             if identity is None:

@@ -61,7 +61,7 @@ def run(args):
         if args.runtime:
             cmd("push",args.runtime,remote+"/libc++_shared.so")
         prefix=remote+"/capture"
-        shell("env","LD_LIBRARY_PATH="+remote,"LLVM_PROFILE_FILE="+remote+"/training-%p-%m.profraw",
+        shell("env","AMBIENT_BENCHMARK_RENDERER="+getattr(args,"renderer","auto"),"LD_LIBRARY_PATH="+remote,"LLVM_PROFILE_FILE="+remote+"/training-%p-%m.profraw",
               remote+"/runner",remote+"/core.so",remote+"/content/"+str(rom.relative_to(content)),
               remote+"/system",remote+"/save",remote+"/input.txt",remote+"/options.txt",args.frames,prefix)
         for suffix in (".csv","-thermal.csv","-summary.json"):
@@ -96,5 +96,6 @@ if __name__=="__main__":
     p.add_argument("--rom",required=True)
     p.add_argument("--serial")
     p.add_argument("--frames",type=int,required=True)
+    p.add_argument("--renderer",choices=("auto","gles","vulkan"),default="auto")
     p.add_argument("--training",action="store_true")
     run(p.parse_args())

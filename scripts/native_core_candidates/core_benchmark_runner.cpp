@@ -4,6 +4,7 @@
  * It does not claim to model Ambient TV display/input latency.
  */
 #include <libretro.h>
+#include "core_benchmark_vulkan.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
@@ -32,7 +33,9 @@ static retro_hw_render_callback hw{};
 static EGLDisplay display = EGL_NO_DISPLAY;
 static EGLContext context = EGL_NO_CONTEXT;
 static EGLSurface surface = EGL_NO_SURFACE;
-static bool hardware = false, reset_done = false;
+static bool hardware = false, reset_done = false, vulkan = false;
+static BenchmarkVulkan vk;
+static unsigned preferred_renderer=RETRO_HW_CONTEXT_OPENGLES3;
 static uint64_t video_frames = 0, audio_frames = 0;
 static unsigned width = 0, height = 0;
 static void die(const char* message) {
@@ -50,6 +53,12 @@ static retro_proc_address_t proc(const char* name) {
 }
 static bool create_context(retro_hw_render_callback* request) {
     if (hardware) return false;
+    if(request->context_type==RETRO_HW_CONTEXT_VULKAN) {
+        request->get_current_framebuffer=framebuffer;
+        request->get_proc_address=nullptr;
+        hw=*request;hardware=true;vulkan=true;
+        return true;
+    }
     int major = 0, minor = 0;
     switch (request->context_type) {
     case RETRO_HW_CONTEXT_OPENGLES2: major=2; break;
@@ -140,8 +149,19 @@ static bool env(unsigned cmd, void* data) {
             return false;
         }
         return true;
+    case RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE:
+        return vk.configure(static_cast<const retro_hw_render_context_negotiation_interface*>(data));
+    case RETRO_ENVIRONMENT_GET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_SUPPORT: {
+        auto* info=static_cast<retro_hw_render_context_negotiation_interface*>(data);
+        if(info->interface_type!=RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN)return false;
+        info->interface_version=2;return true;
+    }
+    case RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE:
+        if(!vulkan)return false;
+        *static_cast<const retro_hw_render_interface**>(data)=vk.interface();
+        return *static_cast<const retro_hw_render_interface**>(data)!=nullptr;
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
-        *static_cast<unsigned*>(data)=RETRO_HW_CONTEXT_OPENGLES3; return true;
+        *static_cast<unsigned*>(data)=preferred_renderer; return true;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
     case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
@@ -155,6 +175,7 @@ static bool env(unsigned cmd, void* data) {
     }
 }
 static void video(const void* data,unsigned w,unsigned h,size_t) {
+    if(vulkan && !vk.frame(data==RETRO_HW_FRAME_BUFFER_VALID))die("Vulkan frame submission failed");
     if(data || video_frames) {++video_frames;width=w;height=h;}
 }
 static void audio(int16_t,int16_t) {++audio_frames;}
@@ -198,6 +219,11 @@ int main(int argc,char** argv) {
         if(p==std::string::npos || !p || !overrides.emplace(line.substr(0,p),line.substr(p+1)).second)
             die("Invalid/duplicate option");
     }
+    if(const char* renderer=std::getenv("AMBIENT_BENCHMARK_RENDERER")) {
+        if(std::strcmp(renderer,"vulkan")==0)preferred_renderer=RETRO_HW_CONTEXT_VULKAN;
+        else if(std::strcmp(renderer,"gles")!=0 && std::strcmp(renderer,"auto")!=0)
+            die("Invalid benchmark renderer preference");
+    }
     void* lib=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
     if(!lib)die(dlerror());
 #define LOAD(name) auto name=symbol<decltype(&retro_##name)>(lib,"retro_" #name)
@@ -224,6 +250,7 @@ int main(int argc,char** argv) {
     }
     if(!load_game(&game) || unsupported)die("Core load failed or requires unsupported hardware context");
     for(const auto& item:overrides)if(!options.count(item.first))die("Unknown option in fixture");
+    if(vulkan && !vk.init())die("Vulkan context negotiation failed");
     if(hardware && hw.context_reset){hw.context_reset();reset_done=true;}
     set_controller_port_device(0,RETRO_DEVICE_JOYPAD);
     retro_system_av_info av{};get_system_av_info(&av);
@@ -254,9 +281,10 @@ int main(int argc,char** argv) {
         uint64_t end=now();
         std::fprintf(csv,"AmbientTV:Libretro/retro_run,%llu,%llu\n",
                      (unsigned long long)start,(unsigned long long)(end-start));
-        if(quit || unsupported)die("Core requested early termination");
+        if(quit || unsupported || (vulkan && !vk.good()))die("Core requested early termination or GPU failed");
     }
-    if(hardware)glFinish();
+    if(vulkan)vk.idle();
+    else if(hardware)glFinish();
     uint64_t state_hash=14695981039346656037ull;
     const size_t size=serialize_size();
     bool state_ok=false;
@@ -270,16 +298,17 @@ int main(int argc,char** argv) {
     unload_game();
     if(reset_done && hw.context_destroy)hw.context_destroy();
     deinit();
-    if(hardware) {
+    if(vulkan)vk.shutdown();
+    else if(hardware) {
         eglMakeCurrent(display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
         eglDestroyContext(display,context);eglDestroySurface(display,surface);eglTerminate(display);
     }
     FILE* summary=std::fopen((prefix+"-summary.json").c_str(),"w");
     if(!summary)die("Cannot write benchmark summary");
     std::fprintf(summary,"{\"frames\":%u,\"fps\":%.9g,\"video_frames\":%llu,\"audio_frames\":%llu,"
-                         "\"width\":%u,\"height\":%u,\"hardware\":%s,\"state_hash\":\"%016llx\",\"state_valid\":%s}\n",
+                         "\"width\":%u,\"height\":%u,\"hardware\":%s,\"renderer\":\"%s\",\"state_hash\":\"%016llx\",\"state_valid\":%s}\n",
                  frames,av.timing.fps,(unsigned long long)video_frames,(unsigned long long)audio_frames,
-                 width,height,hardware?"true":"false",(unsigned long long)state_hash,state_ok?"true":"false");
+                 width,height,hardware?"true":"false",vulkan?"vulkan-sync-headless":hardware?"gles-pbuffer":"software",(unsigned long long)state_hash,state_ok?"true":"false");
     if(std::fclose(summary))die("Summary output failed");
     // Deliberately keep the DSO loaded until normal process exit so the
     // compiler instrumentation runtime can emit LLVM_PROFILE_FILE.

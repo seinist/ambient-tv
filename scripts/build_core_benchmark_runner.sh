@@ -19,8 +19,9 @@ git -C "$temp" init -q
 git -C "$temp" fetch -q --depth 1 https://github.com/libretro/libretro-common.git "$pin"
 test "$(git -C "$temp" rev-parse FETCH_HEAD)" = "$pin"
 git -C "$temp" show FETCH_HEAD:include/libretro.h > "$temp/libretro.h"
+git -C "$temp" show FETCH_HEAD:include/libretro_vulkan.h > "$temp/libretro_vulkan.h"
 mkdir -p "$(dirname "$out")"
 compiler="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${triple}29-clang++"
 "$compiler" -std=c++17 -O2 -Wall -Wextra -Werror -I"$temp" \
-  "$root/scripts/native_core_candidates/core_benchmark_runner.cpp" -ldl -lEGL -lGLESv3 \
+  "$root/scripts/native_core_candidates/core_benchmark_runner.cpp" -ldl -lEGL -lGLESv3 -lvulkan \
   -static-libstdc++ -Wl,-z,max-page-size=16384 -o "$out"
