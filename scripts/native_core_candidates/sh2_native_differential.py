@@ -87,6 +87,35 @@ static void test_linked_traces(void) {
     ambient_sh2_clear();
     puts("SH2 fused BRA/BSR traces, register state, chained exits and stale-source invalidation passed");
 }
+static void test_scoped_page_invalidation(void) {
+    u16 program[64];
+    for(unsigned i=0;i<64;++i)program[i]=0x7101;
+    const u32 base=0x06000fe0u;
+    SH2_struct got;
+    setup_program(&got,program,64,base);
+    AmbientSh2Block* executed=NULL;
+    for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+        if(ambient_sh2_try_block(&got,100,NULL,&executed))abort();
+    AmbientSh2Block* trace=ambient_sh2_lookup(0,base,0);
+    if(!trace||!trace->code||trace->span_count!=2)abort();
+    uint64_t scope=ambient_sh2_new_scope(0);
+    if(!ambient_sh2_validate(trace,&got,FetchBios,scope))abort();
+    /* A write on a different physical page does not invalidate this trace. */
+    ambient_sh2_note_t2_write(0,0x4000,4);
+    if(!ambient_sh2_validate(trace,&got,FetchBios,scope))abort();
+    /* A write straddling a page boundary marks both aliases. */
+    program[16]=0xe180;
+    ambient_sh2_note_t2_write(0,0xffe,4);
+    if(ambient_sh2_validate(trace,&got,FetchBios,scope))abort();
+    program[16]=0x7101;
+    if(!ambient_sh2_validate(trace,&got,FetchBios,scope))abort();
+    /* Raw savestate/cheat-style write without a notification is caught at
+       the next scope boundary, even if all page generations are unchanged. */
+    program[3]=0xe180;
+    if(ambient_sh2_validate(trace,&got,FetchBios,ambient_sh2_new_scope(0)))abort();
+    ambient_sh2_clear();
+    puts("SH2 physical page invalidation: unrelated writes, cross-page write and bulk-write boundary passed");
+}
 static void test_associative_cache(void) {
     u16 program[8]={0x7101,0x7102,0x7103,0x7104,0x7105,0x7106,0x7107,0x7108};
     SH2_struct got;
@@ -229,6 +258,7 @@ int main(void) {
     test_linked_traces();
     test_indirect_native_exits();
     test_associative_cache();
+    test_scoped_page_invalidation();
     test_resident_cache_traces();
     benchmark_native_trace();
     unsigned legal=0, illegal=0, delayed=0;
@@ -342,7 +372,16 @@ static u16 DataArrayReadWord(SH2_struct* sh,u32 addr) {
 }
 static u32 FetchLWram(SH2_struct* sh,u32 addr){return FetchBios(sh,addr);}
 static u32 FetchHWram(SH2_struct* sh,u32 addr){return FetchBios(sh,addr);}
+static const void* test_source_view(SH2_struct* sh,fetchfunc fetch,u32 addr,unsigned count)
+{
+    (void)fetch;
+    if(!sh->program || addr<sh->program_base)return NULL;
+    const unsigned index=(addr-sh->program_base)>>1;
+    if(index>=sh->program_length || count>sh->program_length-index)return NULL;
+    return sh->program+index;
+}
 static void SH2delay(SH2_struct*,u32);
+#define AMBIENT_SH2_SOURCE_VIEW test_source_view
 #define AMBIENT_SH2_ARM64_JIT 1
 #include "sh2_arm64.h"
 """

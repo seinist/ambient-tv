@@ -10,7 +10,20 @@ def prepare(root):
     loop = "      while (context->cycles < cycles)\n      {\n         const u32 pc = context->regs.PC;"
     if source.count(marker) != 1 or source.count(loop) != 1:
         raise ValueError("Yabause interpreter layout changed")
-    source = source.replace(marker, '#include "ambient_sh2_arm64.h"\n\n' + marker +
+    source = source.replace(marker, """
+static const void* ambient_sh2_source_view(SH2_struct* context,fetchfunc fetch,u32 addr,unsigned count)
+{
+    (void)context;
+    const u8* base=fetch==FetchBios?BiosRom:fetch==FetchLWram?LowWram:
+                   fetch==FetchHWram?HighWram:NULL;
+    const u32 size=fetch==FetchBios?0x80000u:0x100000u;
+    const u32 offset=addr&(size-1);
+    return base && count<=(size-offset)/2 ? base+offset : NULL;
+}
+#define AMBIENT_SH2_SOURCE_VIEW ambient_sh2_source_view
+#include "ambient_sh2_arm64.h"
+
+""" + marker +
                             "\n   ambient_sh2_clear();")
     source = source.replace(loop, loop.replace("         const u32",
                             "         if (ambient_sh2_try(context, cycles)) continue;\n         const u32"))
@@ -33,6 +46,44 @@ def prepare(root):
                     path.with_name("ambient_sh2_control.h"))
     shutil.copyfile(Path(__file__).parent / "native_core_candidates/sh2_regcache.h",
                     path.with_name("sh2_regcache.h"))
+    # Every T2 write to physical executable memory, including the direct
+    # mapped-RAM specialization below, marks its physical source page.
+    # Bulk external writes/savestate restores still get exact entry validation.
+    memory_header = root / "yabause/src/memory.h"
+    source = memory_header.read_text()
+    anchor = "#define T2MemoryDeInit(x) (T1MemoryDeInit(x))"
+    if source.count(anchor) != 1:
+        raise ValueError("Yabause T2 memory layout changed")
+    source = source.replace(anchor, anchor + """
+
+#if defined(AMBIENT_SH2_ARM64_JIT)
+extern u8 *BiosRom, *LowWram, *HighWram;
+#ifdef __cplusplus
+extern "C" {
+#endif
+void ambient_sh2_note_t2_write(unsigned bank,u32 offset,unsigned size);
+#ifdef __cplusplus
+}
+#endif
+static INLINE void ambient_sh2_t2_written(u8* mem,u32 addr,unsigned size)
+{
+   if(mem==HighWram)ambient_sh2_note_t2_write(2,addr,size);
+   else if(mem==LowWram)ambient_sh2_note_t2_write(1,addr,size);
+   else if(mem==BiosRom)ambient_sh2_note_t2_write(0,addr,size);
+}
+#endif
+""")
+    for width, ctype, size in (("Byte","u8",1),("Word","u16",2),("Long","u32",4)):
+        anchor = f"static INLINE void T2Write{width}(u8 * mem, u32 addr, {ctype} val)\n{{"
+        if source.count(anchor) != 1:
+            raise ValueError(f"Yabause T2 writer changed: {width}")
+        end = source.index("\n}", source.index(anchor)) 
+        source = source[:end] + (
+            "\n#if defined(AMBIENT_SH2_ARM64_JIT)\n"
+            f"   ambient_sh2_t2_written(mem,addr,{size});\n"
+            "#endif"
+        ) + source[end:]
+    memory_header.write_text(source)
     # Specialize the mapped no-cache RAM handlers inside their own TU, where
     # the exact upstream table targets are visible. All other targets retain
     # the original indirect call; do not guess mappings from the address.

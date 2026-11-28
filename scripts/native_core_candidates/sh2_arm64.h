@@ -403,6 +403,24 @@ static void ambient_sh2_delay_native(SH2_struct* sh, u32 addr)
 #define AMBIENT_SH2_SLOTS (AMBIENT_SH2_SETS*AMBIENT_SH2_WAYS)
 #define AMBIENT_SH2_EDGES 4
 #define AMBIENT_SH2_HOT 4
+#define AMBIENT_SH2_PAGE_SHIFT 12
+#define AMBIENT_SH2_BANK_PAGES 256
+#define AMBIENT_SH2_PAGES (3*AMBIENT_SH2_BANK_PAGES)
+static uint32_t ambient_sh2_page_generation[AMBIENT_SH2_PAGES];
+/* Both CPUs share physical WRAM. Aliases use the same bank and page.
+ * Hooks mark metadata only: no executing RX block is ever unmapped here.
+ * Untracked bulk writes are covered by exact validation at scope entry. */
+void ambient_sh2_note_t2_write(unsigned bank,u32 offset,unsigned size)
+{
+    if(bank>=3 || !size)return;
+    const unsigned mask=bank==0?0x7ffffu:0xfffffu;
+    const unsigned first=(offset&mask)>>AMBIENT_SH2_PAGE_SHIFT;
+    const unsigned last=((offset+size-1)&mask)>>AMBIENT_SH2_PAGE_SHIFT;
+    __atomic_add_fetch(&ambient_sh2_page_generation[bank*AMBIENT_SH2_BANK_PAGES+first],1u,__ATOMIC_RELAXED);
+    if(last!=first)
+        __atomic_add_fetch(&ambient_sh2_page_generation[bank*AMBIENT_SH2_BANK_PAGES+last],1u,__ATOMIC_RELAXED);
+}
+static uint64_t ambient_sh2_scope_counter[2];
 
 typedef struct AmbientSh2Block AmbientSh2Block;
 struct AmbientSh2Block {
@@ -410,6 +428,10 @@ struct AmbientSh2Block {
     uint32_t pcs[AMBIENT_SH2_MAX_OPS];
     uint16_t ops[AMBIENT_SH2_MAX_OPS];
     unsigned count, cycles, hits;
+    unsigned span_count;
+    uint64_t validated_scope;
+    fetchfunc source_fetch;
+    struct { u32 pc,version; uint16_t first,count,page; } spans[AMBIENT_SH2_MAX_OPS+1];
     uint16_t terminal;
     unsigned has_terminal, dynamic_exit;
     AmbientMemOp memory;
@@ -440,6 +462,8 @@ static void ambient_sh2_clear(void)
     memset(ambient_sh2_cache, 0, sizeof(ambient_sh2_cache));
     memset(ambient_sh2_disabled, 0, sizeof(ambient_sh2_disabled));
     memset(ambient_sh2_victim,0,sizeof(ambient_sh2_victim));
+    memset(ambient_sh2_page_generation,0,sizeof(ambient_sh2_page_generation));
+    memset(ambient_sh2_scope_counter,0,sizeof(ambient_sh2_scope_counter));
 }
 
 static int ambient_sh2_eligible(const SH2_struct* context)
@@ -484,6 +508,90 @@ static int ambient_sh2_peek(SH2_struct* context,fetchfunc fetch,u32 addr,u16* op
     return 0;
 }
 
+/* The pinned FetchBios/FetchLWram/FetchHWram use host-endian T2 words.
+ * Coalesce sequential source addresses, never cross a physical page.
+ * A caller may provide a contiguous backing view for a single memcmp;
+ * otherwise retain per-word validation (including synthetic bus tests).
+ */
+static unsigned ambient_sh2_page(fetchfunc fetch,u32 addr)
+{
+    const unsigned bank=fetch==FetchBios?0:fetch==FetchLWram?1:2;
+    const unsigned mask=bank==0?0x7ffffu:0xfffffu;
+    return bank*AMBIENT_SH2_BANK_PAGES+((addr&mask)>>AMBIENT_SH2_PAGE_SHIFT);
+}
+static void ambient_sh2_build_spans(AmbientSh2Block* block,fetchfunc fetch)
+{
+    block->source_fetch=fetch;block->span_count=0;block->validated_scope=0;
+    const unsigned total=block->count+block->has_terminal;
+    if(block->has_terminal) {
+        block->pcs[block->count]=block->next_pc;
+        block->ops[block->count]=block->terminal;
+    }
+    for(unsigned i=0;i<total;++i) {
+        const u32 pc=block->pcs[i];
+        const unsigned page=ambient_sh2_page(fetch,pc);
+        if(block->span_count) {
+            unsigned j=block->span_count-1;
+            if(block->spans[j].page==page &&
+               pc==block->spans[j].pc+2u*block->spans[j].count) {
+                ++block->spans[j].count;continue;
+            }
+        }
+        const unsigned j=block->span_count++;
+        block->spans[j].pc=pc;block->spans[j].first=(uint16_t)i;
+        block->spans[j].count=1;block->spans[j].page=(uint16_t)page;
+        block->spans[j].version=0;
+    }
+}
+static int ambient_sh2_validate(AmbientSh2Block* block,SH2_struct* context,
+                               fetchfunc fetch,uint64_t scope)
+{
+    if(block->source_fetch!=fetch)return 0;
+    if(yabsys.sh2_cache_enabled) {
+        /* Cache contents and LRU are independent of physical RAM generations. */
+        const unsigned total=block->count+block->has_terminal;
+        for(unsigned i=0;i<total;++i) {
+            u16 current;
+            if(!ambient_sh2_peek(context,fetch,block->pcs[i],&current) ||
+               current!=block->ops[i])return 0;
+        }
+        block->validated_scope=0;return 1;
+    }
+    const int reuse=scope && block->validated_scope==scope;
+    for(unsigned j=0;j<block->span_count;++j) {
+        const u32 pc=block->spans[j].pc;
+        const unsigned count=block->spans[j].count,first=block->spans[j].first;
+        const unsigned page=block->spans[j].page;
+        const uint32_t generation=__atomic_load_n(&ambient_sh2_page_generation[page],__ATOMIC_RELAXED);
+        if(!ambient_sh2_safe_fetch(context,fetch,pc) ||
+           !ambient_sh2_safe_fetch(context,fetch,pc+2u*(count-1)))return 0;
+        if(!reuse || generation!=block->spans[j].version) {
+#ifdef AMBIENT_SH2_SOURCE_VIEW
+            const void* view=AMBIENT_SH2_SOURCE_VIEW(context,fetch,pc,count);
+            if(view) {
+                if(memcmp(view,block->ops+first,count*sizeof(u16)))return 0;
+            } else
+#endif
+            for(unsigned i=0;i<count;++i) {
+                u16 current;
+                if(!ambient_sh2_peek(context,fetch,pc+2*i,&current) ||
+                   current!=block->ops[first+i])return 0;
+            }
+            block->spans[j].version=generation;
+        }
+    }
+    block->validated_scope=scope;return 1;
+}
+static uint64_t ambient_sh2_new_scope(unsigned cpu)
+{
+    if(++ambient_sh2_scope_counter[cpu]==0) {
+        for(unsigned i=0;i<AMBIENT_SH2_SLOTS;++i)
+            ambient_sh2_cache[cpu][i].validated_scope=0;
+        ++ambient_sh2_scope_counter[cpu];
+    }
+    return ambient_sh2_scope_counter[cpu];
+}
+
 static unsigned ambient_sh2_slot(uint32_t pc)
 {
     return (pc>>1 ^ pc>>9 ^ pc>>17 ^ pc>>25)&(AMBIENT_SH2_SETS-1);
@@ -513,8 +621,8 @@ static AmbientSh2Block* ambient_sh2_lookup(unsigned cpu,u32 pc,int allocate)
     return b;
 }
 
-static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
-                                 AmbientSh2Block* linked, AmbientSh2Block** executed)
+static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
+                                 AmbientSh2Block* linked, AmbientSh2Block** executed,uint64_t scope)
 {
     if (!ambient_sh2_eligible(context) || context->cycles >= budget ||
         budget - context->cycles < 4)
@@ -537,19 +645,8 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     if (block->pc == pc && (block->code || block->has_terminal) &&
         block->cycles <= budget - context->cycles &&
         (!block->has_terminal || block->cycles < budget - context->cycles)) {
-        unsigned i;
-        /* Self-modifying code, savestate loads and RAM aliases cannot reuse
-         * a stale translation: verify every source instruction before entry. */
-        for (i = 0; i < block->count; ++i) {
-            uint32_t addr = block->pcs[i];
-            u16 current;
-            if (!ambient_sh2_peek(context,fetch,addr,&current) || current!=block->ops[i]) break;
-        }
-        const uint32_t terminal_pc = block->next_pc;
-        u16 terminal_op;
-        if (i == block->count && (!block->has_terminal ||
-            (ambient_sh2_peek(context,fetch,terminal_pc,&terminal_op) &&
-             terminal_op == block->terminal))) {
+        const uint32_t terminal_pc=block->next_pc;
+        if(ambient_sh2_validate(block,context,fetch,scope)) {
             if (block->code) {
                 /* All sources were resident, pure ALU instructions cannot
                  * evict them. Replay the real fetches in guest order to
@@ -701,6 +798,7 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     // decoded terminal-only operations without allocating executable pages.
     if (!count && block->has_terminal) {
         block->count = block->cycles = 0;
+        ambient_sh2_build_spans(block,fetch);
         return 0;
     }
     if (!block->has_terminal && !block->dynamic_exit && count < 4u) {
@@ -737,7 +835,15 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     block->bytes = (size_t)page;
     block->count = count;
     block->cycles = cycles;
+    ambient_sh2_build_spans(block,fetch);
     return 0; /* cold execution uses the native single-op path */
+}
+
+/* Direct entry (tests/debug callers) never trusts an earlier scope. */
+static inline int ambient_sh2_try_block(SH2_struct* context,u32 budget,
+                                  AmbientSh2Block* linked,AmbientSh2Block** executed)
+{
+    return ambient_sh2_try_block_scoped(context,budget,linked,executed,0);
 }
 
 /* Four cached outgoing edges per block accommodate polymorphic jumps.
@@ -748,11 +854,15 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
 static int ambient_sh2_try(SH2_struct* context,u32 budget)
 {
     AmbientSh2Block* current=NULL;
-    if(!ambient_sh2_try_block(context,budget,NULL,&current))return 0;
+    const unsigned cpu=context->isslave?1:0;
+    uint64_t scope=ambient_sh2_new_scope(cpu);
+    if(!ambient_sh2_try_block_scoped(context,budget,NULL,&current,scope))return 0;
     for(unsigned chain=1;chain<16 && ambient_sh2_eligible(context) &&
         context->cycles<budget;++chain) {
         const uint32_t pc=context->regs.PC;
-        const unsigned cpu=context->isslave?1:0;
+        /* Mapped bus/control helpers can perform untracked writes or invoke
+         * other devices. They terminate the pure validation scope. */
+        if(current->has_terminal)scope=ambient_sh2_new_scope(cpu);
         AmbientSh2Block* target=NULL;
         for(unsigned j=0;j<AMBIENT_SH2_EDGES;++j) {
             const unsigned i=(current->last_edge+j)&(AMBIENT_SH2_EDGES-1);
@@ -770,7 +880,7 @@ static int ambient_sh2_try(SH2_struct* context,u32 budget)
             current->last_edge=i;
         }
         AmbientSh2Block* completed=NULL;
-        if(!ambient_sh2_try_block(context,budget,target,&completed))break;
+        if(!ambient_sh2_try_block_scoped(context,budget,target,&completed,scope))break;
         current=completed;
     }
     return 1;

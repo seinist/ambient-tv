@@ -33,7 +33,12 @@ compiler build is not proof of correct gameplay or a performance improvement.
   block retains four polymorphic outgoing links (MRU first) to stable slots
   in a 256-entry, two-way set-associative per-CPU translation cache and can execute a
   bounded chain of 16 validated blocks without returning to the outer loop.
-  Links always recheck fetch mappings, code bytes and cycle budget. Direct
+  Links recheck mapping and cycle budget. Physical code-page generations are
+  shared between CPUs; T2 writes mark only the affected page(s), including
+  aliases and cross-page writes. Uncached code validation coalesces contiguous
+  source spans into exact host-endian comparisons. Within a pure linked scope,
+  unchanged pages can reuse validation; entry and mapped-helper boundaries
+  require exact checks again to catch raw savestate/reset/cheat writes. Direct
   BRA/BSR targets with a pure native delay slot are fused into one trace:
   guest register allocation spans the branch, slot and target; BSR updates
   PR before the slot. The native code falls through directly without host
