@@ -271,6 +271,30 @@ static inline bool ambient_svp_hdr_prepare_stats(struct svp_placebo_hdr *job,
     }
     return true;
 }
+static inline bool ambient_svp_hdr_apply_geometry(struct ambient_hdrplus *m,
+    const struct svp_placebo_hdr *job,int w,int h)
+{
+    if(job->count!=m->window_count)return false;
+    struct ambient_hdrplus updated=*m;
+    for(unsigned i=1;i<job->count;i++){
+        struct ambient_hdrplus_window *p=&updated.windows[i];
+        const AmbientSvpHdrResult *r=&job->results[i];
+        if(!r->pixels)return false;
+        {
+            struct ambient_hdrplus_geometry *g=&p->geometry;
+            const uint32_t *box=job->rects[i],*e=job->ellipses[i];
+            int x=(int)g->center_x+job->shifts[i][0],y=(int)g->center_y+job->shifts[i][1];
+            if(box[0]+1>=box[2]||box[1]+1>=box[3]||box[2]>(uint32_t)w||box[3]>(uint32_t)h||
+                x<0||y<0||x>=w||y>=h||!e[0]||e[0]>65535||!e[1]||e[1]>e[0]||e[2]>180||
+                !g->semimajor_outer||(uint64_t)(box[2]-box[0])*(box[3]-box[1])<r->pixels)return false;
+            unsigned inner=(unsigned)lround((double)g->semimajor_inner*e[0]/g->semimajor_outer);
+            if(!inner||inner>e[0])return false;
+            g->left=box[0];g->top=box[1];g->right=box[2]-1;g->bottom=box[3]-1;
+            g->center_x=x;g->center_y=y;g->semimajor_inner=inner;g->semimajor_outer=e[0];g->semiminor_outer=e[1];g->angle=e[2];
+        }
+    }
+    *m=updated;return true;
+}
 static inline bool ambient_svp_hdr_apply_stats(struct ambient_hdrplus *m,
     const struct svp_placebo_hdr *job,int w,int h)
 {
@@ -433,6 +457,14 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
                         &s->output,0.f,&pair->quality,&job,s->scene_pass,pair->scene_index))goto original;
                 *img=ambient_pl_rgb_frame(s->output,a->color);
             }else{
+                if(s->scene_version==0){
+                    struct svp_placebo_hdr job;
+                    if(!ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,&a->hdrplus,w,h)||
+                        !svp_placebo_quality_render_pass(gpu,&s->quality,a->texture,a->texture,NULL,NULL,
+                            &s->output,0.f,&pair->quality,&job,s->scene_pass,pair->scene_index)||
+                        !ambient_svp_hdr_apply_geometry(&s->metadata,&job,w,h))goto original;
+                    *img=ambient_pl_rgb_frame(s->output,a->color);
+                }
                 if(!ambient_svp_hdr_scene_replay(s,pair->scene_index))goto original;
                 vlc_video_hdr_dynamic_metadata_t global;
                 ambient_hdrplus_project_global(&global,&s->metadata);
@@ -446,7 +478,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
         a->color.transfer!=b->color.transfer||a->color.primaries!=b->color.primaries||
         a->has_hdrplus!=b->has_hdrplus||
         (a->has_hdrplus&&(!a->aligned||!b->aligned||
-            (!scene&&!ambient_svp_hdrplus_lerp(&s->metadata,&a->hdrplus,&b->hdrplus,pair->phase,
+            ((!scene||s->scene_version==0)&&!ambient_svp_hdrplus_lerp(&s->metadata,&a->hdrplus,&b->hdrplus,pair->phase,
                 a->texture->params.w,a->texture->params.h))))){
         // Keep exact source pixels/metadata on incompatible geometry,
         // window topology, or color contracts.
@@ -461,11 +493,12 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct svp_placebo_hdr job;
     bool capture=scene&&s->scene->mode==1;
     bool per_frame=s->has_metadata&&!scene;
+    bool legacy=scene&&s->scene_version==0;
     if((s->has_metadata&&(a->color.transfer!=PL_COLOR_TRC_PQ||a->color.primaries!=PL_COLOR_PRIM_BT_2020||
-            !ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,scene?&a->hdrplus:&b->hdrplus,w,h)))||
+            !ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,scene&&!legacy?&a->hdrplus:&b->hdrplus,w,h)))||
         !svp_placebo_quality_render_pass(gpu,&s->quality,a->texture,b->texture,
         extended?s->sources[2].texture:NULL,extended?s->sources[3].texture:NULL,
-        &s->output,pair->phase,&pair->quality,(capture||per_frame)?&job:NULL,capture?s->scene_pass:NULL,pair->scene_index)||
+        &s->output,pair->phase,&pair->quality,(capture||per_frame||legacy)?&job:NULL,(capture||legacy)?s->scene_pass:NULL,pair->scene_index)||
         (per_frame&&!ambient_svp_hdr_apply_stats(&s->metadata,&job,w,h))){
         // Preserve the exact reconstructed picture and its metadata
         // if the renderer cannot share the native Vulkan queue.
@@ -473,6 +506,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     }
     if(scene){
         if(!capture){
+            if(legacy&&!ambient_svp_hdr_apply_geometry(&s->metadata,&job,w,h))goto original;
             if(!ambient_svp_hdr_scene_replay(s,pair->scene_index))goto original;
         }
         if(!ambient_svp_hdr_scene_end(s,pair))goto original;
