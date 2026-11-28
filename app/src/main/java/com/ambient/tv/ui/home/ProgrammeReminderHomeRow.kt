@@ -17,7 +17,7 @@ internal fun homeProgrammeReminderId(key: String): String? =
         ?.removePrefix(HOME_PROGRAMME_REMINDER_PREFIX)?.takeIf(String::isNotBlank)
 
 internal fun programmeReminderHomeRow(context: Context, reminders: List<LiveTvReminder>): ContentRowData? {
-    val items = reminders.filter { it.isRelevant(System.currentTimeMillis()) }.sortedBy { it.startEpochSeconds }.map { reminder ->
+    val items = reminders.filter { !it.sessionEnd && it.isRelevant(System.currentTimeMillis()) }.sortedBy { it.startEpochSeconds }.map { reminder ->
         val date = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(reminder.startEpochSeconds * 1000))
         MediaItem(
             ratingKey = HOME_PROGRAMME_REMINDER_PREFIX + reminder.id,
