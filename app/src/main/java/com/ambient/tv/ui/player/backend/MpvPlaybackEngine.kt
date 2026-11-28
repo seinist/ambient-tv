@@ -1873,9 +1873,29 @@ internal class MpvPlaybackEngine(
                 kotlin.math.abs(result.plan.target-target) > 0.0001) {
                 result.cleanup(); return@launch
             }
-            hdrSceneSession = result
-            hdrSceneBaseFilter = base
-            if (!restartHdrScenePass()) cancelHdrScenePass()
+            // A second native instance renders into a drained private
+            // ImageReader, not the visible TV surface. Its cache must be
+            // complete before the current controller adopts it.
+            var adopted = false
+            try {
+                setProperty("pause", "yes")
+                val capture = base.removeSuffix(":hwresident=1") + result.mpvOptions() + ":hwresident=1"
+                val analyzed = try {
+                    HdrOffscreenAnalysis.mpv(result,capture,acceleration.hwdec,
+                        VideoAccelerationRuntime.capabilities.value.device.device)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { Timber.w(e,"MPV offscreen HDR capture unavailable"); false }
+                if (!analyzed) result.discardIncompleteCapture()
+                if (released || !attached || !fileReady || !result.valid() || !imageOptions.svp.hdrTwoPass ||
+                    activeCpuImageFilters["plex-svp"] != base) return@launch
+                hdrSceneSession = result
+                hdrSceneBaseFilter = base
+                adopted = true
+                if (!restartHdrScenePass()) cancelHdrScenePass()
+            } finally {
+                if (!adopted) result.cleanup()
+                if (!released) setProperty("pause",if(nativePlayWanted)"no" else "yes")
+            }
         }
     }
 
