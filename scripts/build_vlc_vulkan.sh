@@ -4,7 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
-    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh scripts/patch_vlc_module_loader.py native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch) | sha256sum | cut -d ' ' -f1
+    (
+        cd "$ROOT"
+        grep -E '^(FFMPEG_COMMIT|SVPFLOW_REF|PROJECTM_REF|PROJECTM_COMMIT)=' gradle/external-versions.properties
+        sha256sum scripts/build_vlc_vulkan.sh scripts/patch_vlc_module_loader.py scripts/prepare_svp_sources.sh native/ambientprojectm/native_audio_tap.h native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch
+    ) | sha256sum | cut -d ' ' -f1
     exit 0
 fi
 SOURCE_HASH="$(bash "$0" --hash)"

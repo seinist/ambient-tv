@@ -25,11 +25,18 @@ ROOTS = {
     "mpv": (".native/mpv-android/buildscripts",),
     "vlc": (".native/libvlcjni",),
     "libretrodroid": ("third_party/libretrodroid",),
-    "projectm": (".native/projectm/source",),
+    "projectm": (".native/projectm/source", ".native/projectm/assets"),
     "svp": ("native/ambientsvp",),
     "shaders": ("third_party/.librashader-src", "app/src/main/assets/games/slang"),
     "moonlight": ("third_party/moonlight-android",),
 }
+CARGO_MANIFESTS = {
+    "svp": ("native/ambientsvp/Cargo.toml",),
+    "monogram": ("third_party/monogram/native/Cargo.toml", "third_party/monogram/native/mtproto/Cargo.toml"),
+    "spotify": ("third_party/spotify/rusty-src/rust/Cargo.toml",),
+    "shaders": ("third_party/.librashader-src/Cargo.toml",),
+}
+
 # These are build outputs/caches, not corresponding source. Do not copy
 # credentials, local config, VCS metadata, native binaries or signing keys.
 EXCLUDED_DIRS = {".git", ".gradle", ".cxx", ".idea", "__pycache__", "target", "obj", "node_modules", "ambient-built"}
@@ -83,6 +90,46 @@ def add_bytes(archive, name, data):
     info.size = len(data)
     info.mode = 0o644
     archive.addfile(info, io.BytesIO(data))
+
+
+def vendor_cargo(module, destination):
+    candidates = CARGO_MANIFESTS.get(module, ())
+    if not candidates:
+        return None
+    manifests = [ROOT / path for path in candidates
+                 if (ROOT / path).is_file() and (ROOT / path).with_name("Cargo.lock").is_file()]
+    if not manifests:
+        raise ValueError(f"{module}: missing resolved Cargo workspace and lockfile")
+    destination.mkdir(parents=True, exist_ok=False)
+    config = subprocess.check_output(["cargo", "vendor", "--locked", "--versioned-dirs",
+                                      "--manifest-path", str(manifests[0]), str(destination / "vendor")],
+                                     cwd=manifests[0].parent, text=True)
+    (destination / "cargo-source-config.toml").write_text(config)
+    (destination / "Cargo.lock").write_bytes(manifests[0].with_name("Cargo.lock").read_bytes())
+    return destination
+
+
+def fetch_moonlight_source_dependencies(destination):
+    notice = ROOT / "third_party/moonlight-android/app/protocol-only-assets/moonlight-licenses/SOURCE-NOTICE.txt"
+    content = notice.read_text()
+    repositories = {"openssl/openssl": "openssl", "cgutman/moonlight-mobile-deps": "mobile-deps"}
+    destination.mkdir(parents=True, exist_ok=False)
+    for repo, name in repositories.items():
+        pins = set(re.findall(r"https://github\.com/" + re.escape(repo) + r"/tree/([a-f0-9]{40})(?![a-f0-9])", content))
+        if len(pins) != 1:
+            raise ValueError(f"Missing exact Moonlight corresponding-source pin: {repo}")
+        pin = pins.pop()
+        checkout = destination / name
+        checkout.mkdir()
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", f"https://github.com/{repo}.git"], check=True)
+        subprocess.run(["git", "-C", str(checkout), "fetch", "--depth", "1", "origin", pin], check=True)
+        subprocess.run(["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"], check=True)
+        actual = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
+        if actual != pin:
+            raise ValueError(f"Moonlight dependency checkout does not match pin: {repo}")
+        (destination / (name + "-commit.txt")).write_text(pin + "\n")
+    return destination
 
 
 def collect(module, commit, output, notices, extra_roots=()):
@@ -171,7 +218,13 @@ def main():
     parser.add_argument("--notices", type=Path, required=True)
     parser.add_argument("--extra-root", type=Path, action="append", default=[])
     args = parser.parse_args()
-    collect(args.module, args.sha, args.output, args.notices, args.extra_root)
+    extra_roots = list(args.extra_root)
+    cargo = vendor_cargo(args.module, args.output.parent / "resolved-cargo-source")
+    if cargo:
+        extra_roots.append(cargo)
+    if args.module == "moonlight":
+        extra_roots.append(fetch_moonlight_source_dependencies(args.output.parent / "pinned-moonlight-dependencies"))
+    collect(args.module, args.sha, args.output, args.notices, extra_roots)
 
 
 if __name__ == "__main__":

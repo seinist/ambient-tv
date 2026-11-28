@@ -463,6 +463,10 @@ patched upstream source trees and license notices, including resolved SVP and
 Moonlight notices where present. Reviewed additional notices can be placed under
 third_party_licenses/system_modules/<module>. The source candidate is a separate
 release asset; its SHA-256 descriptor is embedded inside every signed native ZIP.
+Resolved Cargo dependencies are vendored with the exact lockfile for SVP,
+Monogram, Spotify and librashader. Moonlight corresponding source additionally
+fetches the reviewed OpenSSL and mobile build-script commits from its pinned
+source notice. ProjectM includes the prepared preset and texture sources.
 Missing sources/notices and inconsistent provenance fail closed. The review must
 still establish completeness for transitive dependencies, generated inputs,
 prebuilt archives and required corresponding-source terms before publication.
@@ -552,6 +556,19 @@ The check mode is enforced for the Moonlight candidate and stable paired
 release; those builds fail closed until the final integration is applied.
 An actual Android load, pairing, decoder/audio and playback test remains
 necessary. The native source in #494 has not been merged or modified here.
+
+### Remaining integration and validation gates
+
+The final combined audit cannot be completed before the pending Moonlight,
+renderer and SVP branches land. The new source collection is executable
+in CI, but J2V8/V8, Maven artifacts and VLC contrib source completeness
+must be independently checked against the exact built binary inputs;
+the review flag is not an automated legal certification. Full Java/DEX
+separation of VLC and LibretroDroid still requires replacement of the
+direct Java playback and surface/frontend types in their host consumers.
+The common local-audio FFmpeg graph must remain in the base until a
+compatible alternative is tested. No release should be marked reviewed
+solely because the source-collection or APK-format tests pass.
 
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and

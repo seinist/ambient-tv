@@ -15,6 +15,10 @@ class CorrespondingSourceTest(unittest.TestCase):
             (root / "link").symlink_to(root / "LICENSE")
             self.assertEqual({"src/main.c", "LICENSE"}, {p.as_posix() for _, p in sources.source_files(root)})
 
+    def test_rust_modules_require_resolved_workspace_source(self):
+        self.assertEqual({"svp", "monogram", "spotify", "shaders"}, set(sources.CARGO_MANIFESTS))
+        self.assertIsNone(sources.vendor_cargo("vlc", Path("unused")))
+
     def test_all_modules_have_explicit_roots(self):
         self.assertEqual(10, len(sources.ROOTS))
         self.assertTrue(all(paths for paths in sources.ROOTS.values()))
