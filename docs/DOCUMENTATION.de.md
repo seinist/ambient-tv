@@ -1047,6 +1047,7 @@ Unter **App & Daten › Diagnose** (Fehlerprotokoll für Release-Builds):
 ```bash
 ./build.sh debug          # MPV (falls nötig) + Debug-APK
 ./build.sh release        # Release-APK
+./build.sh release-arm    # arm64-v8a + armeabi-v7a
 ./build.sh universal      # universal Release-APK (alle ABIs)
 ./build.sh arm64          # arm64-v8a
 ./build.sh armv7          # armeabi-v7a
@@ -1086,7 +1087,7 @@ Ein gepushter `v*`-Tag startet `.github/workflows/release.yml`: MPV wird nativ �
 Benötigte Repository-Secrets: `AMBIENT_TV_KEYSTORE_BASE64` (Release-Keystore als Base64), `AMBIENT_TV_KEYSTORE_PASSWORD`, `AMBIENT_TV_KEY_ALIAS`, `AMBIENT_TV_KEY_PASSWORD`.
 
 Die Versionierung steht in `version.properties`:
-- `VERSION_CODE` steigt bei jedem lokalen Build, der ein APK/AAB erzeugt (`assemble*`, `bundle*`, `install*`, `package*` – auch aus Android Studio und `./build.sh`), um eins. Sync, reine Tests, `clean` und CI (`CI` gesetzt) ändern ihn nicht; `-PversionCode=N` überschreibt. Die Datei wird nicht automatisch committet.
+- Lokale APK-Builds mit `./build.sh` reservieren einen `VERSION_CODE` pro Aufruf und speichern ihn (einschließlich beider README-Versionsanzeigen) erst nach erfolgreicher Fertigstellung aller angeforderten APKs und des Release-Packagings. Direkte Gradle-/Android-Studio-Artefaktbuilds behalten das bisherige Hochzählen während der Konfiguration. Sync, reine Tests, `clean` und CI (`CI` gesetzt) ändern ihn nicht; `-PversionCode=N` überschreibt. Die Datei wird nicht automatisch committet.
 - `VERSION_NAME` gilt für lokale Builds. Release-Builds nehmen den Tag ohne führendes `v` (`v1.0.0-beta` → `1.0.0-beta`) über `-PversionName` / `ORG_GRADLE_PROJECT_versionName`. Die APK-Dateinamen nutzen denselben Wert; ein Vorab-Suffix (`beta`, `alpha`, `rc`, …) bleibt am Ende, die aktuelle Build-Nummer steht davor (`1.0-beta` → `1.0.270-beta`).
 - Bei jedem gezählten Build wird die Version zwischen den Markern `<!-- version:start/end -->` und `<!-- version-badge:start/end -->` in beiden READMEs aktualisiert.
 
