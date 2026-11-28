@@ -603,11 +603,33 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     }
     s->output_format=s->mode?VK_FORMAT_R16G16B16A16_SFLOAT:VK_FORMAT_R8G8B8A8_UNORM;
     if(tuning){
-        AmbientSvpVk *(*create_config)(VkInstance,VkPhysicalDevice,VkDevice,PFN_vkGetInstanceProcAddr,
-            uint32_t,uint32_t,uint32_t,const AmbientSvpVkTuning *)=dlsym(library,"ambient_svp_vk_create_config");
-        if(!create_config)goto fail;
-        s->engine=create_config(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,
-            s->width,s->height,s->mode,tuning);
+        AmbientSvpVk *(*create_weighted)(VkInstance,VkPhysicalDevice,VkDevice,PFN_vkGetInstanceProcAddr,
+            uint32_t,uint32_t,uint32_t,const AmbientSvpVkTuning *,const AmbientSvpVkSearchWeights *)=
+            dlsym(library,"ambient_svp_vk_create_weighted");
+        if(create_weighted){
+            if(!tuning->block||tuning->overlap>=tuning->block||s->width<tuning->block||s->height<tuning->block)goto fail;
+            unsigned step=tuning->block-tuning->overlap;
+            unsigned covered_w=((s->width-tuning->overlap)/step)*step+tuning->overlap;
+            unsigned covered_h=((s->height-tuning->overlap)/step)*step+tuning->overlap;
+            unsigned levels=0;
+            while(levels<16&&(covered_w>>levels)>=tuning->block&&(covered_h>>levels)>=tuning->block)levels++;
+            if(!levels)goto fail;
+            // Pinned upstream defaults: gpu=1 forces scale.up=0,
+            // fast=0 disables the optional SAD gate.
+            AmbientSvpVkSearchWeights w={
+                .filter=0,.lambda=tuning->block*tuning->block*10000/32,
+                .lsad=tuning->block*tuning->block*250,.plevel_q16=98304,
+                .levels=levels,.level=0,.pnew=tuning->pnew,.pzero=100,
+                .pglobal=50,.pnbour=50,.preverse=0,.sad_gate=0};
+            s->engine=create_weighted(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,
+                s->width,s->height,s->mode,tuning,&w);
+        }else{
+            AmbientSvpVk *(*create_config)(VkInstance,VkPhysicalDevice,VkDevice,PFN_vkGetInstanceProcAddr,
+                uint32_t,uint32_t,uint32_t,const AmbientSvpVkTuning *)=dlsym(library,"ambient_svp_vk_create_config");
+            if(!create_config)goto fail;
+            s->engine=create_config(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,
+                s->width,s->height,s->mode,tuning);
+        }
     }else if (s->mode) {
         s->create_format=dlsym(library,"ambient_svp_vk_create_format");
         if (!s->create_format) goto fail;
