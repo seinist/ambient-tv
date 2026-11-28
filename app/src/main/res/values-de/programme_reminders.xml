@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="programme_reminder_play">Jetzt abspielen</string>
+    <string name="programme_reminder_snooze">In 5 Minuten erinnern</string>
+    <string name="programme_reminder_manage">Vormerkungen verwalten</string>
+    <string name="programme_reminder_empty">Keine Vormerkungen</string>
+    <string name="programme_reminder_status_due">Erinnerung fällig</string>
+    <string name="programme_reminder_smarttube">SmartTube-Erinnerungen</string>
+    <string name="programme_reminder_scheduled_hint">Geplanter Start erreicht; die Verfügbarkeit wird beim Abspielen geprüft.</string>
+</resources>
