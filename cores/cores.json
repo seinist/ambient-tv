@@ -299,7 +299,8 @@
       "commit": "10f50efbbfed745757ce20d34ced7c80f06c68dd",
       "build": "ndk",
       "jni": "yabause/src/libretro",
-      "extended": true
+      "extended": true,
+      "update_ref": "refs/heads/yabasanshiro"
     },
     {
       "core": "yabause",
@@ -307,7 +308,8 @@
       "commit": "8926b0c6c347f8c5c755911ddb0ac695420ffbf8",
       "build": "ndk",
       "jni": "yabause/src/libretro",
-      "extended": true
+      "extended": true,
+      "update_ref": "refs/heads/master"
     },
     {
       "core": "ymir",

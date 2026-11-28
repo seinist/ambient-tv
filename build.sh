@@ -28,8 +28,8 @@
 #   ./build.sh gen-keystore   # create keystore/release.jks
 #   ./build.sh check-deps [key]  # check Gradle Maven catalog pins (stable by default)
 #   ./build.sh update-deps [key] # update Maven pins only (no build)
-#   ./build.sh libs-check [svp|monogram|libretro]  # check managed libraries, or only one
-#   ./build.sh libs-update [svp|monogram|libretro] # update pins/assets/lockfile (no native build)
+#   ./build.sh libs-check [svp|monogram|libretro|cores]  # check managed libraries, or only one
+#   ./build.sh libs-update [svp|monogram|libretro|cores] # update pins/assets/lockfile (no native build)
 #                               # includes Monogram, LibretroDroid and cores/cores.json; lib-check / lib-update are aliases
 #
 # Environment overrides:
@@ -1339,7 +1339,7 @@ run_cores_command() {
                         selected="$1"; shift ;;
                 esac
             done
-            case "$profile" in baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths) ;; *) fail "Unknown core profile: $profile" ;; esac
+            case "$profile" in baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit) ;; *) fail "Unknown core profile: $profile" ;; esac
             if [[ -n "$selected" ]]; then inputs+=(-f "cores=$selected"); fi
             if [[ -n "$abis" ]]; then inputs+=(-f "abis=$abis"); fi
             if [[ "$profile" != baseline ]]; then inputs+=(-f "profile=$profile"); fi
@@ -1349,7 +1349,7 @@ run_cores_command() {
                 inputs+=(-f "comparison=$comparison")
             fi
             if [[ "$publish_experimental" == true ]]; then
-                [[ "$core_ref" == main && ( "$profile" == optimized || "$profile" == optimized-a57 ) && "$comparison" == none ]] || fail "Experimental release requires main, optimized or optimized-a57, and no comparison"
+                [[ "$core_ref" == main && ( "$profile" == optimized || "$profile" == optimized-a57 || "$profile" == citra-arm64-jit || "$profile" == yabause-arm64-jit ) && "$comparison" == none ]] || fail "Experimental release requires main, a supported signed profile, and no comparison"
                 inputs+=(-f publish_experimental=true)
                 if [[ "$force_rebuild" == true ]]; then inputs+=(-f force_rebuild=true); fi
             elif [[ "$force_rebuild" == true ]]; then
@@ -1385,7 +1385,7 @@ run_cores_command() {
                 if [[ "$tag" =~ ^cores-([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]+)(-[0-9]+)?$ ]]; then
                     date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
                     title="Ambient TV cores"
-                elif [[ "$tag" =~ ^core-experiments-(optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
+                elif [[ "$tag" =~ ^core-experiments-(optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
                     profile="${BASH_REMATCH[1]}"
                     date="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}"
                     title="Ambient TV cores – $profile"
@@ -1420,13 +1420,14 @@ Native: youtube-engine, spotify, clean-spotify, mpv, clean-mpv, svp,
         nnedi3-shaders, projectm, clean-projectm, monogram
 Maven: check-deps [key], update-deps [key] (stable by default; no native build)
        MAVEN_CHANNEL=prerelease, MEDIA3_CHANNEL=prerelease, MAVEN_ALLOW_MAJOR=1
-Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretro],
+Libraries: libs-check [svp|monogram|libretro|cores], libs-update [svp|monogram|libretro|cores],
            monogram-check, monogram-update, monogram-size [abi|all]
+           libs-check cores / libs-update cores: only all catalog core pins (including new cores)
 
 Libretro cores on GitHub Actions (main):
-  cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths] [--abis ABI[,ABI...]]
+  cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit] [--abis ABI[,ABI...]]
         [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch] [--publish-experimental [--force]]
-                      Build artifacts by default. --publish-experimental signs optimized or optimized-a57 on main; other profiles are diagnostic only.
+                      Build artifacts by default. --publish-experimental signs optimized, optimized-a57 or validated ARM64 JIT profiles on main.
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
   cores-release [--force]  Build/publish baseline, optimized and optimized-a57 in one run; --force rebuilds all.
@@ -1469,7 +1470,7 @@ fi
 if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-check" || "$MODE" == "libraries-check" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
-    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro]"
+    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro|cores]"
     library_args=()
     [[ $# -eq 1 ]] || library_args=(--only "$2")
     python3 "$LIB_UPDATE_SCRIPT" --check "${library_args[@]}"
@@ -1478,7 +1479,7 @@ fi
 if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "deps-update" || "$MODE" == "libraries-update" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
-    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro]"
+    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro|cores]"
     library_args=()
     [[ $# -eq 1 ]] || library_args=(--only "$2")
     python3 "$LIB_UPDATE_SCRIPT" --apply "${library_args[@]}"

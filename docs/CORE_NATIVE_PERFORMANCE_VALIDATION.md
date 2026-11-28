@@ -254,3 +254,15 @@ ELF page checking reads only the program header table, verifies file and
 memory segment bounds, rejects malformed alignments and requires congruent
 file/virtual addresses in addition to the 16 KiB minimum. Build evidence
 retains each report's exact UTF-8 representation for independent hash checks.
+
+## Core updater
+
+`./build.sh libs-check cores` checks the complete core catalog; `./build.sh
+libs-update cores` updates compatible core pins without changing LibretroDroid
+or other libraries. The existing libretro scope checks both. Yabause and
+YabaSanshiro follow explicit independent upstream branches. Native JIT updates
+must pass the production source-patch preflight on a disposable exact checkout;
+CI uses the catalog's Yabause pin for differential testing, not a stale literal.
+Incompatible candidates retain their previous pin. Use `./build.sh cores
+--profile citra-arm64-jit` or `--profile yabause-arm64-jit` for artifact builds;
+main-only experimental signing still requires the dedicated validation gate.

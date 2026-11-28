@@ -29,7 +29,8 @@ jobs:
           tmp=$(mktemp -d)
           trap 'rm -rf "$tmp"' EXIT
           git -C "$tmp" init -q
-          pin=8926b0c6c347f8c5c755911ddb0ac695420ffbf8
+          pin=$(python3 -c 'import json; c=next(x for x in json.load(open("cores/cores.json"))["cores"] if x["core"]=="yabause"); assert c["repo"]=="https://github.com/libretro/yabause"; print(c["commit"])')
+          [[ "$pin" =~ ^[0-9a-f]{40}$ ]]
           git -C "$tmp" fetch -q --depth 1 https://github.com/libretro/yabause.git "$pin"
           test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$pin"
           git -C "$tmp" show FETCH_HEAD:yabause/src/sh2int.c > "$tmp/sh2int.c"
