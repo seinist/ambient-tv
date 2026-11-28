@@ -10,6 +10,73 @@ import check_modular_preview_apk as preview
 import package_system_modules as packages
 
 
+def verify_native_graph(full, modular, abi):
+    """Check actual ELF edges as well as byte parity for shared host libraries.
+
+    The base must never link to an omitted engine via DT_NEEDED, even if a
+    module with that name could later be downloaded. Optional dlsym/JNI paths
+    are separately validated by the host and are not DT_NEEDED edges.
+    """
+    prefix = f"lib/{abi}/"
+    def libraries(archive):
+        names = [name.removeprefix(prefix) for name in archive.namelist()
+                 if name.startswith(prefix) and name.endswith(".so") and "/" not in name.removeprefix(prefix)]
+        if len(names) != len(set(names)):
+            raise ValueError(f"{abi}: duplicate native library")
+        return set(names)
+
+    full_names, modular_names = libraries(full), libraries(modular)
+    shared = set().union(*packages.HOST_LIBRARIES.values())
+    checked = {}
+    def full_deps(name):
+        if name not in checked:
+            checked[name] = packages.native_dependencies(full.read(prefix + name), name)
+        return checked[name]
+
+    # Fixed shared allowlist remains an explicit host ABI contract. Also
+    # discover the complete transitive closure from each present engine root.
+    for module, roots in packages.NATIVE_ROOTS.items():
+        present = set(roots) & full_names
+        if not present:
+            continue
+        if present != set(roots):
+            raise ValueError(f"{abi}/{module}: incomplete Full native roots")
+        seen = set()
+        def visit(name):
+            if name in packages.PLATFORM or name in seen:
+                return
+            seen.add(name)
+            if name not in roots:
+                if name not in packages.HOST_LIBRARIES[module]:
+                    raise ValueError(f"{abi}/{module}: unapproved shared dependency {name}")
+                shared.add(name)
+            if name not in full_names:
+                raise ValueError(f"{abi}/{module}: missing Full dependency {name}")
+            for dep in full_deps(name):
+                if name not in roots and dep in roots:
+                    raise ValueError(f"{abi}/{module}: host dependency links into optional engine {dep}")
+                visit(dep)
+        for root in roots:
+            visit(root)
+
+    for name in shared & (full_names | modular_names):
+        if name not in full_names or name not in modular_names or full.read(prefix + name) != modular.read(prefix + name):
+            raise ValueError(f"Different shared library bytes: {abi}/{name}")
+
+    # Inspect the actual Modular ELF, including libraries not in the module
+    # allowlist (e.g. media decoders). Compare against Full to avoid assuming
+    # every Android platform library is enumerated by the module policy.
+    for name in sorted(modular_names):
+        data = modular.read(prefix + name)
+        if name in full_names and data == full.read(prefix + name):
+            dependencies = full_deps(name)
+        else:
+            dependencies = packages.native_dependencies(data, name)
+        missing = (dependencies & full_names) - modular_names
+        if missing:
+            raise ValueError(f"{abi}/{name}: retained library links to omitted payload {sorted(missing)}")
+
+
 def verify(full, modular, aapt2, apksigner):
     manifests = []
     identities = set()
@@ -40,16 +107,9 @@ def verify(full, modular, aapt2, apksigner):
 
     # Native packages derived from Full may depend on exact host-owned bytes.
     # Require the Modular base to provide identical shared dependencies.
-    shared = set().union(*packages.HOST_LIBRARIES.values())
     for abi in updates.ABIS:
         with zipfile.ZipFile(by_variant["full"][abi]) as f, zipfile.ZipFile(by_variant["modular"][abi]) as m:
-            prefix = f"lib/{abi}/"
-            full_names, modular_names = set(f.namelist()), set(m.namelist())
-            for lib in shared:
-                path = prefix + lib
-                if path in full_names or path in modular_names:
-                    if path not in full_names or path not in modular_names or f.read(path) != m.read(path):
-                        raise ValueError(f"Different shared library bytes: {abi}/{lib}")
+            verify_native_graph(f, m, abi)
     return manifests
 
 

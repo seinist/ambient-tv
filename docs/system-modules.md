@@ -695,6 +695,14 @@ is usable marks a restart as required without changing the running engine.
 ProjectM does not attempt a bundled native load when the Modular APK has no
 selected package.
 
+The paired APK release verifier now traverses the actual Full ELF dependency
+graphs for native-only modules and checks the byte identity of their shared
+host dependencies. It also examines every retained Modular native library
+for DT_NEEDED references to libraries removed from Full. A retained local
+decoder or other base library cannot rely on a separately downloaded engine
+to satisfy a direct linker dependency. Explicit optional JNI/dlsym bridges
+still require device validation.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
