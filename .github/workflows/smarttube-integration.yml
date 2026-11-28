@@ -65,6 +65,9 @@ jobs:
         run: |
           ./gradlew :app:exportSmartTubeAdapterDex -PAPK_ABI=arm64
           test -s app/build/outputs/system-modules/smarttube-dex/classes.dex
+      - name: Validate resource-only modular SmartTube class graph
+        run: |
+          ./gradlew :app:stripReleaseSmartTubeClasses -PAPK_ABI=arm64 -PMODULE_PACKAGING=modular-preview -PMONOGRAM_NATIVE=0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
