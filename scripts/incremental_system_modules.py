@@ -19,8 +19,7 @@ def entries(manifest, module, tag):
         row = rows[0]
         if row.get("module") != module or row.get("asset") != "shaders--any--baseline.zip":
             raise ValueError("Invalid legacy shader catalog")
-        return None
-    if len(rows) != len(ABIS) or {row["abi"] for row in rows} != set(ABIS):
+    elif len(rows) != len(ABIS) or {row["abi"] for row in rows} != set(ABIS):
         raise ValueError("Incomplete native catalog")
     versions = set()
     normalized = []
@@ -43,6 +42,8 @@ def should_publish(candidate, previous):
     old_version, old_payload = previous
     if version < old_version or (version == old_version and payload != old_payload):
         raise ValueError("Stale or conflicting native module version")
+    if any(row["abi"] == "any" for row in payload) and any(row["abi"] != "any" for row in old_payload):
+        raise ValueError("Legacy shader publication cannot replace a native catalog")
     return payload != old_payload
 
 
@@ -54,12 +55,18 @@ def previous_catalog(repo, module, public_key):
     # GitHub's release list is discovery only. Never trust a comparison until
     # the exact release catalog has been authenticated against the pinned key.
     prefix = f"modules-{module}-"
+    newest = None
+    seen_versions = {}
+    seen_tags = set()
     for page in range(1, 11):
         releases = json.loads(run("gh", "api", f"repos/{repo}/releases?per_page=100&page={page}"))
         for release in releases:
             tag = release["tag_name"]
             if release["draft"] or release["prerelease"] or not tag.startswith(prefix):
                 continue
+            if tag in seen_tags:
+                continue
+            seen_tags.add(tag)
             if not re.fullmatch(r"modules-[A-Za-z0-9][A-Za-z0-9._-]{0,100}", tag):
                 raise ValueError("Invalid published module tag")
             with tempfile.TemporaryDirectory() as temp:
@@ -76,10 +83,14 @@ def previous_catalog(repo, module, public_key):
                 subprocess.run(["openssl", "dgst", "-sha256", "-verify", str(public_key),
                                 "-signature", str(sig), str(manifest)], check=True, stdout=subprocess.DEVNULL)
                 parsed = entries(json.loads(manifest.read_text()), module, tag)
-                if parsed is not None:
-                    return parsed
+                version, payload = parsed
+                if version in seen_versions and seen_versions[version] != payload:
+                    raise ValueError("Conflicting signed catalogs at the same version")
+                seen_versions[version] = payload
+                if newest is None or version > newest[0]:
+                    newest = parsed
         if len(releases) < 100:
-            return None
+            return newest
     raise ValueError("Module release history exceeds bounded search")
 
 
@@ -93,8 +104,8 @@ def main():
     args = parser.parse_args()
     manifest = json.loads(args.candidate.read_text())
     candidate = entries(manifest, args.module, manifest["tag"])
-    if candidate is None:
-        raise ValueError("Expected native candidate")
+    if any(row["abi"] == "any" for row in candidate[1]) and args.module != "shaders":
+        raise ValueError("Unexpected legacy candidate")
     previous = previous_catalog(args.repo, args.module, args.public_key)
     changed = should_publish(candidate, previous)
     # Force never overrides version conflicts or signature validation.

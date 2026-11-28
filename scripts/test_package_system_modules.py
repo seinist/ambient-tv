@@ -42,6 +42,13 @@ class SystemModulePackageTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     packages.write_package(Path(root), "shaders", "any", 1, files)
 
+    def test_path_policy_matches_runtime_roots_and_collisions(self):
+        for names in (["assets/a", "assets/A/b"], ["unknown/file"], ["code/classes1.dex"],
+                      ["lib/libnested.so/file"], ["lib/libnative.so"], ["licenses/NOTICE"]):
+            with self.assertRaises(ValueError):
+                packages.validate_package_paths(names, "any")
+        packages.validate_package_paths(["lib/libc++_shared.so", "code/classes.dex"], "arm64-v8a")
+
     def test_missing_native_abi_fails(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaises(ValueError):

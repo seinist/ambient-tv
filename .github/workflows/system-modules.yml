@@ -101,9 +101,9 @@ jobs:
       - name: Build reproducible module package
         run: |
           set -euo pipefail
-          tag="modules-shaders-v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ID}"
-          python3 scripts/package_system_modules.py --module shaders --tag "$tag" --version "$GITHUB_RUN_NUMBER" --output module-release
-          python3 scripts/package_system_modules.py --module shaders --tag "$tag" --version "$GITHUB_RUN_NUMBER" --output module-repeat
+          tag="modules-shaders-v${GITHUB_RUN_ID}"
+          python3 scripts/package_system_modules.py --module shaders --tag "$tag" --version "$GITHUB_RUN_ID" --output module-release
+          python3 scripts/package_system_modules.py --module shaders --tag "$tag" --version "$GITHUB_RUN_ID" --output module-repeat
           diff -r module-release module-repeat
           python3 -m zipfile -t module-release/shaders--any--baseline.zip
       - uses: actions/upload-artifact@v4
@@ -114,7 +114,7 @@ jobs:
 
   publish-shaders:
     needs: package-shaders
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && inputs.native_module == 'none' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && inputs.reviewed && inputs.native_module == 'none' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -138,7 +138,7 @@ jobs:
           printf '%s\n' "$SIGNING_KEY" > "$key"
           openssl pkey -in "$key" -pubout -out "$pub"
           cmp "$pub" cores/signing-public.pem
-          tag="modules-shaders-v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ID}"
+          tag="modules-shaders-v${GITHUB_RUN_ID}"
           python3 - "$tag" <<'PY'
           import hashlib, json, pathlib, sys
           root = pathlib.Path("module-release")
@@ -150,12 +150,19 @@ jobs:
           blob = (root / entry["asset"]).read_bytes()
           assert len(blob) == entry["size"] and hashlib.sha256(blob).hexdigest() == entry["sha256"]
           PY
+          result="$(python3 scripts/incremental_system_modules.py --repo "$GITHUB_REPOSITORY" --module shaders --candidate module-release/manifest.json --public-key cores/signing-public.pem)"
+          if [[ "$result" == unchanged ]]; then
+            echo "Unchanged shader assets; retaining existing release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$result" = publish
           # Never publish a stale candidate after main moves.
           git fetch origin main
           test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
           openssl dgst -sha256 -sign "$key" -out module-release/manifest.json.sig module-release/manifest.json
           openssl dgst -sha256 -verify cores/signing-public.pem -signature module-release/manifest.json.sig module-release/manifest.json
           gh release create "$tag" module-release/* --draft --title "System library: Vulkan shaders" --target "$GITHUB_SHA" --notes "Signed optional shader assets."
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           gh release edit "$tag" --draft=false --latest=false
 
   publish-native:
@@ -211,7 +218,7 @@ jobs:
           key="$(mktemp)"
           pub="$(mktemp)"
           trap 'rm -f "$key" "$pub"' EXIT
-          printf '%s\\n' "$SIGNING_KEY" > "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
           openssl pkey -in "$key" -pubout -out "$pub"
           cmp "$pub" cores/signing-public.pem
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"

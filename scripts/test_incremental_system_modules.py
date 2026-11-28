@@ -46,6 +46,47 @@ class IncrementalSystemModulesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.parse(new)
 
+    def test_legacy_shader_catalog_cannot_replace_native(self):
+        manifest = self.manifest(2)
+        manifest["tag"] = "modules-shaders-v2"
+        for row in manifest["modules"]:
+            row["module"] = "shaders"
+            row["asset"] = f"shaders--{row['abi']}--baseline.zip"
+        native = incremental.entries(manifest, "shaders", manifest["tag"])
+        legacy = deepcopy(manifest)
+        legacy["tag"] = "modules-shaders-v3"
+        legacy["modules"] = [legacy["modules"][0]]
+        legacy["modules"][0].update(abi="any", asset="shaders--any--baseline.zip", version=3)
+        with self.assertRaisesRegex(ValueError, "Legacy shader"):
+            incremental.should_publish(incremental.entries(legacy, "shaders", legacy["tag"]), native)
+        legacy["modules"][0]["version"] = 1
+        self.assertTrue(incremental.should_publish(native,
+            incremental.entries(legacy, "shaders", legacy["tag"])))
+
+    def test_history_uses_highest_authenticated_version_and_rejects_equivocation(self):
+        from pathlib import Path
+        import json
+        manifests = [self.manifest(1), self.manifest(3), self.manifest(2)]
+        def releases(rows):
+            return json.dumps([{"tag_name": m["tag"], "draft": False, "prerelease": False,
+                    "assets": [{"name": "manifest.json", "size": len(json.dumps(m))},
+                               {"name": "manifest.json.sig", "size": 1}]} for m in rows])
+        def fake_run(args, **kwargs):
+            if args[0] == "gh":
+                m = next(m for m in manifests if m["tag"] == args[3])
+                root = Path(args[args.index("--dir") + 1])
+                (root / "manifest.json").write_text(json.dumps(m))
+                (root / "manifest.json.sig").write_bytes(b"x")
+        with patch.object(incremental, "run", side_effect=lambda *a: releases(manifests)), patch.object(
+                incremental.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(incremental.previous_catalog("owner/repo", "mpv", Path("key"))[0], 3)
+            conflicting = self.manifest(3)
+            conflicting["tag"] = "modules-mpv-v3-alternate"
+            conflicting["modules"][0]["sha256"] = "c" * 64
+            manifests.append(conflicting)
+            with self.assertRaisesRegex(ValueError, "Conflicting signed"):
+                incremental.previous_catalog("owner/repo", "mpv", Path("key"))
+
     def test_invalid_signature_stops_comparison(self):
         import subprocess
         import tempfile

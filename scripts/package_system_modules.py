@@ -54,14 +54,7 @@ def digest(data):
 def write_package(out, module, abi, version, files, shared=None, binding=None):
     if not files or len(files) > 4096 or sum(map(len, files.values())) > 512 * 1024**2:
         raise ValueError("package expansion exceeds limits")
-    folded = set()
-    for name in files:
-        parts = name.split("/")
-        if (len(name) > 512 or not 2 <= len(parts) <= 12 or
-                (name != "lib/libc++_shared.so" and any(not SEGMENT.fullmatch(p) or p.endswith((".", " ")) for p in parts)) or
-                name.lower() in folded):
-            raise ValueError(f"unsafe package path: {name}")
-        folded.add(name.lower())
+    validate_package_paths(files, abi)
     asset = f"{module}--{abi}--baseline.zip"
     path = out / asset
     with zipfile.ZipFile(path, "x", compression=zipfile.ZIP_DEFLATED, allowZip64=False) as archive:
@@ -77,6 +70,38 @@ def write_package(out, module, abi, version, files, shared=None, binding=None):
     return dict(module=module, abi=abi, profile="baseline", version=version,
                 hostApi=1, minSdk=29, asset=asset, size=len(raw), sha256=digest(raw),
                 hostNativeSha256=shared or {}, **({"hostBindingSha256": binding} if binding else {}))
+
+
+def validate_package_paths(names, abi):
+    folded = set()
+    payload = False
+    for name in names:
+        parts = name.split("/")
+        if (len(name) > 512 or not 2 <= len(parts) <= 12 or
+                (name != "lib/libc++_shared.so" and any(not SEGMENT.fullmatch(p) or p.endswith((".", " ")) for p in parts)) or
+                name.lower() in folded):
+            raise ValueError(f"unsafe package path: {name}")
+        folded.add(name.lower())
+        if parts[0] == "lib":
+            if abi == "any" or len(parts) != 2 or not name.endswith(".so"):
+                raise ValueError("Invalid native module path")
+            payload = True
+        elif parts[0] == "code":
+            if len(parts) != 2 or not re.fullmatch(r"classes([2-9]|[1-9][0-9]+)?[.]dex", parts[-1]):
+                raise ValueError("Invalid DEX module path")
+            payload = True
+        elif parts[0] == "assets":
+            payload = True
+        elif parts[0] != "licenses":
+            raise ValueError("Unknown module ZIP entry root")
+    for name in folded:
+        parent = name.rpartition("/")[0]
+        while parent:
+            if parent in folded:
+                raise ValueError("Module ZIP path collision")
+            parent = parent.rpartition("/")[0]
+    if not payload:
+        raise ValueError("Module ZIP contains no payload")
 
 
 def shader_assets():

@@ -656,6 +656,17 @@ module_candidate=libretrodroid. Stable packaging remains gated until
 Android builds and device tests establish correct JNI/renderer and core
 loading behaviour, including netplay and Vulkan shaders.
 
+### Publication ordering and archive parity
+
+Publication compares the highest authenticated catalog version across the
+bounded release history, not GitHub's presentation order. Conflicting
+signed entries at the same version stop publication. Legacy shader assets
+use the same run-ID version sequence as native candidates and cannot
+replace an already published native shader catalog. Both publication
+paths require explicit review and check main again before exposing a draft.
+Package generation and candidate verification also reject invalid roots,
+file/directory collisions, and unsupported ZIP entry types.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

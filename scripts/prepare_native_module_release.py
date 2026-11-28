@@ -142,11 +142,20 @@ def verify(root, module, run_id, sha):
             names = archive.namelist()
             if len(names) != len(set(x.lower() for x in names)) or not 0 < len(names) <= 4096 or sum(x.file_size for x in archive.infolist()) > 512 * 1024**2:
                 raise ValueError("Invalid archive bounds")
+            packages.validate_package_paths(names, abi)
+            if archive.comment or any(info.is_dir() or info.flag_bits & ~0x080e or
+                    info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) or
+                    (info.external_attr >> 16) & 0xf000 not in (0, 0x8000) or
+                    info.external_attr & 0x10 for info in archive.infolist()):
+                raise ValueError("Unsupported module ZIP entry type")
             if "licenses/notices.zip" not in names:
                 raise ValueError("Missing license notices")
             import io
             with zipfile.ZipFile(io.BytesIO(archive.read("licenses/notices.zip"))) as notices:
-                if json.loads(notices.read("corresponding-source.json")) != source:
+                if len(notices.infolist()) > 32768 or sum(info.file_size for info in notices.infolist()) > 128 * 1024**2:
+                    raise ValueError("License archive exceeds review bounds")
+                descriptor = notices.getinfo("corresponding-source.json")
+                if descriptor.file_size > 512 * 1024 or json.loads(notices.read(descriptor)) != source:
                     raise ValueError("Source descriptor is not bound to the signed module payload")
             native = verify_payload(archive, module, entry)
             dex_mode = any(n.startswith("code/") for n in names)
