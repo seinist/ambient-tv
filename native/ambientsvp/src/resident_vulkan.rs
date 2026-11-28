@@ -1262,11 +1262,11 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
             }
             d.end_command_buffer(cmd).map_err(err)?;
             let stages=vec![vk::PipelineStageFlags::ALL_COMMANDS;count as usize];
-            let wait_values=vec![0u64;count as usize];let signals=[signal];let values=[value];let commands=[cmd];
+            let wait_values=vec![0u64;count as usize];let signals=[signal];let values=[value];let submit_commands=[cmd];
             let mut timeline=vk::TimelineSemaphoreSubmitInfo::default()
                 .wait_semaphore_values(&wait_values).signal_semaphore_values(&values);
             let submit=vk::SubmitInfo::default().push_next(&mut timeline).wait_semaphores(waits)
-                .wait_dst_stage_mask(&stages).command_buffers(&commands).signal_semaphores(&signals);
+                .wait_dst_stage_mask(&stages).command_buffers(&submit_commands).signal_semaphores(&signals);
             if let Err(e)=d.queue_submit(queue,&[submit],fence){
                 device_lost=e==vk::Result::ERROR_DEVICE_LOST;
                 return Err(err(e));
@@ -2421,7 +2421,7 @@ mod gpu_tests{
                 assert_eq!(ambient_svp_vk_retire_held(job,1),1);
                 assert!(!canceled.exists());
                 for sem in second{d.destroy_semaphore(sem,None);}
-                std::fs::remove_dir_all(directory).unwrap();
+                std::fs::remove_dir_all(&directory).unwrap();
                 // Live per-frame readback must consume its own ticket.
                 d.queue_submit(queue,&[vk::SubmitInfo::default().signal_semaphores(&hold)],vk::Fence::null()).unwrap();
                 let handles=[images[0].image,images[1].image,images[4].image];
