@@ -99,6 +99,30 @@ class SystemModulePackageTest(unittest.TestCase):
                         "code/classes.dex", "lib/libmonogram_mtproto.so", "lib/libjnidispatch.so", "licenses/NOTICE",
                     })
 
+    def test_smarttube_packages_dex_and_j2v8_for_each_abi(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dex = root / "dex"
+            dex.mkdir()
+            (dex / "host-binding.sha256").write_text("a" * 64)
+            (dex / "classes.dex").write_bytes(b"dex\n039\0" + bytes(104))
+            notice = root / "NOTICE"
+            notice.write_text("test")
+            apk = root / "full.apk"
+            with zipfile.ZipFile(apk, "w") as archive:
+                for abi in packages.ABIS:
+                    archive.writestr(f"lib/{abi}/libj2v8.so", abi.encode())
+            with mock.patch.object(packages, "native_dependencies", return_value={"libc.so"}):
+                entries = packages.adapter_dex(root, "smarttube", 1, dex, [apk], [notice])
+            self.assertEqual(len(entries), 4)
+            for entry in entries:
+                self.assertEqual(entry["module"], "smarttube")
+                self.assertEqual(entry["hostBindingSha256"], "a" * 64)
+                with zipfile.ZipFile(root / entry["asset"]) as archive:
+                    self.assertEqual(set(archive.namelist()), {
+                        "code/classes.dex", "lib/libj2v8.so", "licenses/NOTICE",
+                    })
+
 
 if __name__ == "__main__":
     unittest.main()
