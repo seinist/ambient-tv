@@ -59,7 +59,7 @@ internal object SystemModuleHost {
             hostLibraries = setOf("libc++_shared.so"),
             bundledOverrides = setOf("libprojectM-4.so", "libambientprojectm.so"),
         ),
-    ) + mapOf(SystemModule.MONOGRAM to monogramContract()) + smartTubeContracts() + vlcContracts()
+    ) + mapOf(SystemModule.MONOGRAM to monogramContract()) + smartTubeContracts() + vlcContracts() + libretroContracts()
 
     // During this migration the host still supplies the pinned Android resource
     // and shared-library graph. A build without those wrappers cannot load this format.
@@ -80,6 +80,16 @@ internal object SystemModuleHost {
                 hostLibraries = setOf("libc++_shared.so"),
                 bundledOverrides = setOf("libvlc.so", "libvlcjni.so"),
                 hostBindingSha256 = BuildConfig.VLC_MODULE_BINDING_SHA256,
+            )
+        ) else emptyMap()
+
+    private fun libretroContracts(): Map<SystemModule, SystemModuleRuntime.Contract> =
+        if (BuildConfig.LIBRETRODROID_MODULE_BINDING_SHA256.isNotBlank()) mapOf(
+            SystemModule.LIBRETRODROID to SystemModuleRuntime.Contract(
+                nativeRoots = setOf("liblibretrodroid.so"),
+                bundledOverrides = setOf("liblibretrodroid.so"),
+                hostLibraries = setOf("libc++_shared.so", "libadrenotools.so", "liboboe.so"),
+                hostBindingSha256 = BuildConfig.LIBRETRODROID_MODULE_BINDING_SHA256,
             )
         ) else emptyMap()
 
