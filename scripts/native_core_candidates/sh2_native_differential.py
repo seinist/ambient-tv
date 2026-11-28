@@ -215,6 +215,36 @@ static uint64_t monotonic_ns(void) {
     if(clock_gettime(CLOCK_MONOTONIC,&ts))abort();
     return (uint64_t)ts.tv_sec*UINT64_C(1000000000)+(uint64_t)ts.tv_nsec;
 }
+static void test_native_loop_budget(void) {
+    u16 program[8]={0x7101,0x312c,0x312e,0x7103,0x312a,0x0009,0xaff8,0x0018};
+    /* Branch at index six to index zero; slot writes T. */
+    const u32 base=0x06000100u;
+    SH2_struct prepared,got,want;
+    setup_program(&prepared,program,8,base);
+    prepared.regs.R[1]=0xfffffff0;prepared.regs.R[2]=0x12345678;
+    AmbientSh2Block* executed=NULL;
+    for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+        if(ambient_sh2_try_block(&prepared,1000,NULL,&executed))abort();
+    AmbientSh2Block* trace=ambient_sh2_lookup(0,base,0);
+    if(!trace||!trace->native_loop||trace->cycles!=36||trace->next_pc!=base)abort();
+    const unsigned counts[]={1,2,7,63,64,65};
+    for(unsigned i=0;i<sizeof(counts)/sizeof(counts[0]);++i) {
+        got=want=prepared;
+        const u32 budget=trace->cycles*counts[i];
+        while(want.cycles<budget)reference_step(&want);
+        while(got.cycles<budget)
+            if(!ambient_sh2_try(&got,budget))abort();
+        if(got.cycles!=want.cycles||got.instruction!=want.instruction||
+           memcmp(&got.regs,&want.regs,sizeof(got.regs)))abort();
+    }
+    got=prepared;
+    if(!ambient_sh2_try(&got,trace->cycles+3)||got.cycles!=trace->cycles)abort();
+    program[7]=0x0008;
+    got=prepared;
+    if(ambient_sh2_try(&got,1000)||got.cycles)abort();
+    ambient_sh2_clear();
+    puts("SH2 native register-resident loop: 1..65 repetitions, cycle budgets and source mutation passed");
+}
 static void benchmark_native_trace(void) {
     u16 program[32];
     for(unsigned i=0;i<30;++i)program[i]=(uint16_t)(0x7101+(i%3)*0x100);
@@ -260,6 +290,7 @@ int main(void) {
     test_associative_cache();
     test_scoped_page_invalidation();
     test_resident_cache_traces();
+    test_native_loop_budget();
     benchmark_native_trace();
     unsigned legal=0, illegal=0, delayed=0;
     u32 seed=0x6a09e667u;

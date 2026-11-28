@@ -57,8 +57,12 @@ compiler build is not proof of correct gameplay or a performance improvement.
   frequently accessed GPRs, SR and system registers in caller-saved AArch64
   registers. Flag-heavy traces load and store SR at most once per trace when
   allocated, including full SR writes and multiply accumulator transfers.
-  Dirty values
-  are written back before any helper or trace exit. Memory/control-only hot
+  Pure self-loops can execute up to 64 complete iterations in one native
+  call, limited by the actual remaining guest cycle budget. Initial loads
+  are hoisted and allocated registers stay resident across the generated
+  backward branch. Dirty values are committed once on exit. Cache-emulated
+  loops still replay each actual fetch and run one iteration at a time.
+  Dirty values are written back before any helper or trace exit. Memory/control-only hot
   blocks are cached without executable allocation;
   short ALU prefixes can now end in a native terminal. The pinned upstream
   differential harness verifies control flow, registers, cycles and delay calls.

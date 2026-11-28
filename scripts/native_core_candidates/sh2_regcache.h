@@ -6,6 +6,7 @@
 #ifndef AMBIENT_SH2_REGCACHE_H
 #define AMBIENT_SH2_REGCACHE_H
 #include <stdint.h>
+#include <stddef.h>
 #define AMBIENT_SH2_REGCACHE_HOSTS 10
 #define AMBIENT_SH2_REGCACHE_EXTRA (2*AMBIENT_SH2_REGCACHE_HOSTS)
 static inline int ambient_sh2_gpr_access(uint32_t word, unsigned* guest, unsigned* load)
@@ -44,8 +45,8 @@ static inline uint32_t ambient_sh2_state_word(unsigned guest,unsigned load,unsig
  * Allocation is based on actual generated accesses, so aliases and opcodes
  * with implicit R0 need no special decoder. No flags are modified by MOV.
  */
-static inline unsigned ambient_sh2_regcache(const uint32_t* input, unsigned words,
-                                             uint32_t* output)
+static inline unsigned ambient_sh2_regcache_split(const uint32_t* input, unsigned words,
+                                             uint32_t* output,unsigned* loop_start,unsigned* loop_end)
 {
     unsigned count[AMBIENT_SH2_STATE_KEYS]={0}, mapping[AMBIENT_SH2_STATE_KEYS]={0}, cursor=0;
     uint64_t loaded=0,dirty=0;
@@ -60,6 +61,25 @@ static inline unsigned ambient_sh2_regcache(const uint32_t* input, unsigned word
                (best==AMBIENT_SH2_STATE_KEYS || count[guest]>count[best])) best=guest;
         if(best==AMBIENT_SH2_STATE_KEYS)break;
         mapping[best]=host;
+    }
+    if(loop_start) {
+        /* The first access to each allocated register determines whether
+         * its initial guest value is needed. A first store overwrites it
+         * before any use on every iteration. Other loads can be hoisted
+         * because this region has no calls or aliased guest writes. */
+        uint64_t seen=0;
+        for(unsigned i=0;i<words;++i) {
+            unsigned guest,load;
+            if(!ambient_sh2_state_access(input[i],&guest,&load)||!mapping[guest])continue;
+            const uint64_t bit=UINT64_C(1)<<guest;
+            if(seen&bit)continue;
+            seen|=bit;
+            if(load) {
+                output[cursor++]=ambient_sh2_state_word(guest,1,mapping[guest]);
+                loaded|=bit;
+            }
+        }
+        *loop_start=cursor;
     }
     for(unsigned i=0;i<words;++i) {
         unsigned guest,load;
@@ -80,8 +100,13 @@ static inline unsigned ambient_sh2_regcache(const uint32_t* input, unsigned word
             loaded|=bit;dirty|=bit;
         }
     }
+    if(loop_end)*loop_end=cursor;
     for(unsigned guest=0;guest<AMBIENT_SH2_STATE_KEYS;++guest)
         if(dirty&(UINT64_C(1)<<guest))output[cursor++]=ambient_sh2_state_word(guest,0,mapping[guest]);
     return cursor;
+}
+static inline unsigned ambient_sh2_regcache(const uint32_t* input,unsigned words,uint32_t* output)
+{
+    return ambient_sh2_regcache_split(input,words,output,NULL,NULL);
 }
 #endif

@@ -9,7 +9,7 @@
 
 #include "sh2_regcache.h"
 #define AMBIENT_SH2_MAX_OPS 32
-#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 4 + AMBIENT_SH2_REGCACHE_EXTRA)
+#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 7 + AMBIENT_SH2_REGCACHE_EXTRA)
 
 /* Emit a single side-effect-free, one-cycle SH2 instruction into AArch64.
  * x0 points at R[16], x7 at SR; w1..w5 are caller-saved scratch.
@@ -433,7 +433,7 @@ struct AmbientSh2Block {
     fetchfunc source_fetch;
     struct { u32 pc,version; uint16_t first,count,page; } spans[AMBIENT_SH2_MAX_OPS+1];
     uint16_t terminal;
-    unsigned has_terminal, dynamic_exit;
+    unsigned has_terminal, dynamic_exit, native_loop;
     AmbientMemOp memory;
     AmbientComplexMem complex_memory;
     opcodefunc terminal_handler;
@@ -655,13 +655,20 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
                     for(unsigned j=0;j<block->count;++j)
                         (void)fetch(context,block->pcs[j]);
                 u32 next_pc=block->next_pc;
-                if(block->dynamic_exit)
+                unsigned repeat=1;
+                if(block->native_loop) {
+                    if(scope && !yabsys.sh2_cache_enabled) {
+                        repeat=(budget-context->cycles)/block->cycles;
+                        if(repeat>64)repeat=64;
+                    }
+                    ((void (*)(u32*,u32*,u32))block->code)(context->regs.R,&context->regs.SR.all,repeat);
+                } else if(block->dynamic_exit)
                     next_pc=((u32 (*)(u32*,u32*))block->code)(context->regs.R,&context->regs.SR.all);
                 else
                     ((void (*)(u32*,u32*))block->code)(context->regs.R,&context->regs.SR.all);
                 context->instruction = block->ops[block->count-1];
                 context->regs.PC = next_pc;
-                context->cycles += block->cycles;
+                context->cycles += block->cycles*repeat;
             }
             if (block->has_terminal) {
                 if(yabsys.sh2_cache_enabled)(void)fetch(context,terminal_pc);
@@ -697,7 +704,7 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
     unsigned words = 0, count = 0, cycles = 0;
     u32 addr=pc;
-    block->has_terminal = block->dynamic_exit = 0;
+    block->has_terminal = block->dynamic_exit = block->native_loop = 0;
     code[words++] = 0xd503245fu; /* BTI c, harmless hint on older ARM64 */
     code[words++] = 0xaa0103e7u; /* MOV x7,x1: SR pointer survives scratch register writes */
     while (count < AMBIENT_SH2_MAX_OPS) {
@@ -814,7 +821,21 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
     }
     uint32_t optimized[AMBIENT_SH2_MAX_WORDS];
     optimized[0]=code[0];optimized[1]=code[1];
-    words=2+ambient_sh2_regcache(code+2,words-2,optimized+2);
+    block->native_loop=!block->has_terminal&&!block->dynamic_exit&&addr==pc&&cycles;
+    if(block->native_loop) {
+        /* w6 is reserved for the bounded repetition count. Hoist initial
+         * guest loads, loop over the register-resident body, and commit
+         * dirty state once after the final iteration. No RX patching. */
+        optimized[2]=0x2a0203e6u; /* MOV w6,w2 */
+        unsigned loop_start,loop_end;
+        words=3+ambient_sh2_regcache_split(code+2,words-2,optimized+3,&loop_start,&loop_end);
+        loop_start+=3;loop_end+=3;
+        memmove(optimized+loop_end+2,optimized+loop_end,(words-loop_end)*sizeof(uint32_t));
+        optimized[loop_end]=0x710004c6u; /* SUBS w6,w6,#1 */
+        const int displacement=(int)loop_start-(int)(loop_end+1);
+        optimized[loop_end+1]=0x54000001u|(((uint32_t)displacement&0x7ffffu)<<5); /* B.NE */
+        words+=2;
+    } else words=2+ambient_sh2_regcache(code+2,words-2,optimized+2);
     if(block->dynamic_exit)optimized[words++]=0x2a0603e0u; /* MOV w0,w6, after all writebacks */
     optimized[words++]=0xd65f03c0u;
     const long page = sysconf(_SC_PAGESIZE);
@@ -857,6 +878,7 @@ static int ambient_sh2_try(SH2_struct* context,u32 budget)
     const unsigned cpu=context->isslave?1:0;
     uint64_t scope=ambient_sh2_new_scope(cpu);
     if(!ambient_sh2_try_block_scoped(context,budget,NULL,&current,scope))return 0;
+    if(current->native_loop&&!yabsys.sh2_cache_enabled)return 1;
     for(unsigned chain=1;chain<16 && ambient_sh2_eligible(context) &&
         context->cycles<budget;++chain) {
         const uint32_t pc=context->regs.PC;
@@ -882,6 +904,7 @@ static int ambient_sh2_try(SH2_struct* context,u32 budget)
         AmbientSh2Block* completed=NULL;
         if(!ambient_sh2_try_block_scoped(context,budget,target,&completed,scope))break;
         current=completed;
+        if(current->native_loop&&!yabsys.sh2_cache_enabled)break;
     }
     return 1;
 }
