@@ -163,7 +163,14 @@ internal fun SvpMainPage(
             "standard" to stringResource(R.string.svp_transport_standard),
             "resident" to stringResource(R.string.svp_transport_resident),
         )) { change(mode, o.copy(hardwareResident = it == "resident")) }
-        if (o.hardwareResident) ImageHint(stringResource(R.string.svp_transport_hint))
+        if (o.hardwareResident) {
+            ImageHint(stringResource(R.string.svp_transport_hint))
+            ImageChoice(R.string.svp_hdr_two_pass, if (o.hdrTwoPass) "on" else "off", listOf(
+                "off" to stringResource(R.string.player_off),
+                "on" to stringResource(R.string.svp_hdr_two_pass_on),
+            )) { change(mode, o.copy(hdrTwoPass = it == "on")) }
+            if (o.hdrTwoPass) ImageHint(stringResource(R.string.svp_hdr_two_pass_hint))
+        }
         SvpChoice(R.string.svp_target, o.rateDivisor, listOf(
             1 to stringResource(R.string.svp_display_rate),
             2 to stringResource(R.string.svp_half_rate),
