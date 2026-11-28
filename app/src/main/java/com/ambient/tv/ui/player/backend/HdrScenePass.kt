@@ -345,7 +345,7 @@ internal class HdrSceneSession(
                 val first = if (plan.ends.size == 1) 0L else plan.ends[plan.ends.lastIndex-1]
                 if (fields.size < 3 || fields[0].toLongOrNull() != first ||
                     fields[1].toLongOrNull() != plan.ends.last()) false
-                else if (version == 1) fields.size == 17 && fields.last().toIntOrNull()?.let { it in 1..1000 } == true
+                else if (version == 1) (fields.size == 17 || fields.size == 26) && fields[16].toIntOrNull()?.let { it in 1..1000 } == true
                 else {
                     val count = fields[2].toIntOrNull() ?: return@use false
                     if (count !in 1..3) return@use false
