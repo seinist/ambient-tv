@@ -57,10 +57,11 @@ static const void* ambient_sh2_source_view(SH2_struct* context,fetchfunc fetch,u
     source = source.replace(anchor, anchor + """
 
 #if defined(AMBIENT_SH2_ARM64_JIT)
-extern u8 *BiosRom, *LowWram, *HighWram;
+extern u8 *BiosRom, *LowWram;
 #ifdef __cplusplus
 extern "C" {
 #endif
+extern u8 *HighWram;
 void ambient_sh2_note_t2_write(unsigned bank,u32 offset,unsigned size);
 #ifdef __cplusplus
 }

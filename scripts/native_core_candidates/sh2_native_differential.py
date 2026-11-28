@@ -215,6 +215,38 @@ static uint64_t monotonic_ns(void) {
     if(clock_gettime(CLOCK_MONOTONIC,&ts))abort();
     return (uint64_t)ts.tv_sec*UINT64_C(1000000000)+(uint64_t)ts.tv_nsec;
 }
+static void test_direct_native_pair(void) {
+    u16 program[96];
+    for(unsigned i=0;i<96;++i)program[i]=(uint16_t)(0x7101+(i%3)*0x100);
+    const u32 base=0x06000100u;
+    SH2_struct prepared,got,want;
+    setup_program(&prepared,program,96,base);
+    AmbientSh2Block* executed=NULL;
+    for(unsigned block=0;block<2;++block) {
+        prepared.regs.PC=base+64*block;
+        for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+            if(ambient_sh2_try_block(&prepared,100,NULL,&executed))abort();
+    }
+    AmbientSh2Block* first=ambient_sh2_lookup(0,base,0);
+    AmbientSh2Block* second=ambient_sh2_lookup(0,base+64,0);
+    if(!first||!second||!first->native_link||!second->native_link)abort();
+    prepared.regs.PC=base;
+    got=want=prepared;
+    for(unsigned i=0;i<64;++i)reference_step(&want);
+    if(!ambient_sh2_try_block_scoped(&got,64,NULL,&executed,ambient_sh2_new_scope(0)) ||
+       executed!=second||got.cycles!=64||got.instruction!=want.instruction||
+       memcmp(&got.regs,&want.regs,sizeof(got.regs)))abort();
+    got=prepared;
+    if(!ambient_sh2_try_block_scoped(&got,63,NULL,&executed,ambient_sh2_new_scope(0))||
+       executed!=first||got.cycles!=32)abort();
+    /* A stale successor must never be reached via the machine-code branch. */
+    program[35]=0xe180;
+    got=prepared;
+    if(!ambient_sh2_try_block_scoped(&got,64,NULL,&executed,ambient_sh2_new_scope(0))||
+       executed!=first||got.cycles!=32)abort();
+    ambient_sh2_clear();
+    puts("SH2 direct ARM64 tail-linked block pair: target state, budget and stale-successor guards passed");
+}
 static void test_native_loop_budget(void) {
     u16 program[8]={0x7101,0x312c,0x312e,0x7103,0x312a,0x0009,0xaff8,0x0018};
     /* Branch at index six to index zero; slot writes T. */
@@ -290,6 +322,7 @@ int main(void) {
     test_associative_cache();
     test_scoped_page_invalidation();
     test_resident_cache_traces();
+    test_direct_native_pair();
     test_native_loop_budget();
     benchmark_native_trace();
     unsigned legal=0, illegal=0, delayed=0;

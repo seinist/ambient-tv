@@ -62,6 +62,10 @@ compiler build is not proof of correct gameplay or a performance improvement.
   are hoisted and allocated registers stay resident across the generated
   backward branch. Dirty values are committed once on exit. Cache-emulated
   loops still replay each actual fetch and run one iteration at a time.
+  Distinct pure static-exit traces may also transfer directly via an ARM64
+  tail branch to a separately validated successor. Both source ranges and
+  the combined cycle budget are checked before entry; no writable RX code,
+  unvalidated third block, cached-fetch bypass or dynamic helper is allowed.
   Dirty values are written back before any helper or trace exit. Memory/control-only hot
   blocks are cached without executable allocation;
   short ALU prefixes can now end in a native terminal. The pinned upstream
