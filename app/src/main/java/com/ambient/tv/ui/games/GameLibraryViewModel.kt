@@ -266,6 +266,24 @@ class GameLibraryViewModel @Inject constructor(
             finally { mutable.update { it.copy(removingFolders = it.removingFolders - folder.id) } }
         }
     }
+    fun changeFolderSystem(folder: GameLibraryFolder, systemId: String) {
+        if (scan?.isCompleted == false || folder.id in mutable.value.removingFolders ||
+            folder.systemId == systemId) return
+        scan = viewModelScope.launch {
+            resetMetadataFailures()
+            mutable.update { it.copy(busy = true, scanning = true, activeScanFolderId = folder.id,
+                scanPhase = GameLibraryScanPhase.FILES, error = null, message = null) }
+            try {
+                metadata.cancelFolder(folder.id)
+                val updated = withContext(Dispatchers.IO) { library.changeFolderSystem(folder.id, systemId) }
+                scanAndEnrich(updated, scanFiles = true)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { showError(error, R.string.game_error_update) }
+            finally { mutable.update { it.copy(busy = false, scanning = false,
+                activeScanFolderId = null, enriching = false) } }
+        }
+    }
+
     fun setAlsoShowInFiles(folder: GameLibraryFolder, show: Boolean) =
         library.setAlsoShowInFiles(folder.id, show)
 
@@ -525,22 +543,23 @@ class GameLibraryViewModel @Inject constructor(
             scanProcessed = 0, scanDiscovered = 0, enriching = !scanFiles) }
         if (scanFiles) {
             val assigned = systemId ?: folder.systemId.takeUnless { it == "auto" }
-            // Assigned folders already know their platform: download the catalog before
-            // opening any ROM, so exact checksum identification works in the first scan.
-            if (assigned != null) metadata.prepareNameCatalogs(listOf(assigned), automatic = true)
+            // A remote catalog download must never delay the first raster.
+            val remote = files.sources().firstOrNull { it.id == folder.sourceId }?.kind != "local"
+            if (assigned != null && !remote) metadata.prepareNameCatalogs(listOf(assigned), automatic = true)
             library.scan(folder.id, systemId = systemId) { processed, known ->
                 mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
             }
-            if (assigned == null && library.folders().any { it.id == folder.id }) {
-                // Auto folders discover their platforms from file types. Only newly loaded
-                // checksum catalogs need a targeted second pass, within the same operation.
-                val detected = library.indexedSystems().filter { folder.id in library.foldersWithSystem(it) }
+            if ((assigned == null || remote) && library.folders().any { it.id == folder.id }) {
+                val detected = assigned?.let(::listOf)
+                    ?: library.indexedSystems().filter { folder.id in library.foldersWithSystem(it) }
                 val loaded = metadata.prepareNameCatalogs(detected, automatic = true)
-                for (id in loaded.filter(com.ambient.tv.games.metadata.GameNameDatabases::usesChecksums)) {
-                    if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) break
+                // Import already resolves cached archive CRCs. Local folders may need one
+                // additional pass; remote folders use DAT filename matching without relisting.
+                if (!remote && loaded.any(com.ambient.tv.games.metadata.GameNameDatabases::usesChecksums) &&
+                    folder.id !in mutable.value.removingFolders && library.folders().any { it.id == folder.id }) {
                     mutable.update { it.copy(scanPhase = GameLibraryScanPhase.MATCHING_NAMES,
                         scanProcessed = 0, scanDiscovered = 0) }
-                    library.scan(folder.id, systemId = id) { processed, known ->
+                    library.scan(folder.id, systemId = systemId) { processed, known ->
                         mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
                     }
                 }

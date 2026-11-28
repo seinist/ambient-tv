@@ -287,15 +287,16 @@ class GameMetadataRepository @Inject constructor(
         // Manual matches still get their dedicated recovery path.
         val initialProvider = old?.takeIf { it.matchLocked }?.provider ?: GameMetadataPlatforms.automaticProvider(
             GameMetadataQuery(current.systemId, current.title, current.filename), options.provider, providers.availableProviders())
-        val initialQuery = gameMetadataQuery(current, old?.takeIf { it.provider == initialProvider },
+        val initialKnown = old?.takeIf { it.provider == initialProvider }
+        val initialQuery = gameMetadataQuery(current, initialKnown,
             settings.language(), options.region, ticket.crc32, provider = initialProvider)
         val initialFingerprint = gameMetadataLookupFingerprint(initialProvider, gameMetadataFingerprint(current, initialQuery))
         if (!force && old?.matchLocked != true) {
             when (library.lookupStatus(current.fileId, initialProvider, initialFingerprint)) {
                 "not_found", "ambiguous" -> return@withGame false
-                "found" -> if (old != null && old.provider == initialProvider &&
-                    gameMetadataMatchesQueryIdentity(old, initialQuery)) {
-                    ensureStoredArtwork(current, old, GameArtworkKind.COVER, force = false)
+                "found" -> if (initialKnown != null &&
+                    gameMetadataMatchesQueryIdentity(initialKnown, initialQuery)) {
+                    ensureStoredArtwork(current, initialKnown, GameArtworkKind.COVER, force = false)
                     return@withGame true
                 }
             }

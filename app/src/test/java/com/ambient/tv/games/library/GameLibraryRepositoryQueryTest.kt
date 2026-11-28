@@ -147,6 +147,21 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(listOf(root, child), library.folders())
     }
 
+    @Test fun folderSystemChangePreservesIdentityAndRejectsAnOldMetadataTicket() {
+        seed("one", favorite = true, played = 42, manual = "My game")
+        val library = repository()
+        val before = library.folders().first { it.id == "snes" }
+        val ticket = library.metadataTicket("one")!!
+        val changed = library.changeFolderSystem(before.id, "auto")
+        assertEquals(before.copy(systemId = "auto"), changed)
+        assertFalse(library.saveMetadata(ticket, GameMetadata(title = "Stale")))
+        val game = library.game("one")!!
+        assertEquals("My game", game.title)
+        assertTrue(game.favorite)
+        assertEquals(42L, game.lastPlayed)
+        assertEquals(changed, repository().folders().first { it.id == before.id })
+    }
+
     @Test fun folderLimitExplainsThatAnAssignmentMustBeRemoved() {
         preferences.gameLibraryFolders = (0 until 200).map { index ->
             root.copy(id = "folder-$index", path = "Games/$index")
