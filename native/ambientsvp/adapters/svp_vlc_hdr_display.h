@@ -33,6 +33,7 @@ struct ambient_svp_hdr_display {
     struct ambient_svp_scene_config *scene;
     AmbientSvpHdrPass *scene_pass;
     void *scene_lib;
+    int (*scene_interval)(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
     int (*scene_lookup)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
     int (*scene_finish)(AmbientSvpHdrPass *);
     void (*scene_destroy)(AmbientSvpHdrPass *);
@@ -70,10 +71,11 @@ static inline bool ambient_svp_hdr_scene_open(pl_gpu gpu,struct ambient_svp_hdr_
         if(!s->scene_lib)goto fail;
         AmbientSvpHdrPass *(*open)(uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t)=
             dlsym(s->scene_lib,"ambient_svp_hdr_pass_open");
+        s->scene_interval=dlsym(s->scene_lib,"ambient_svp_hdr_pass_interval");
         s->scene_lookup=dlsym(s->scene_lib,"ambient_svp_hdr_pass_lookup");
         s->scene_finish=dlsym(s->scene_lib,"ambient_svp_hdr_pass_finish");
         s->scene_destroy=dlsym(s->scene_lib,"ambient_svp_hdr_pass_destroy");
-        if(!open||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)goto fail;
+        if(!open||!s->scene_interval||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)goto fail;
         s->scene_pass=open(s->scene->mode,s->scene->plan,s->scene->cache,s->scene->key,profile,w,h);
         if(!s->scene_pass)goto fail;
     }
@@ -362,6 +364,12 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     int w=a->texture->params.w,h=a->texture->params.h;
     bool scene=pair->scene!=NULL;
     if(!ambient_svp_hdr_scene_open(gpu,s,pair,w,h))goto original;
+    if(scene){
+        uint64_t boundary;
+        if(s->scene_interval(s->scene_pass,pair->scene_index,&boundary)!=1||
+            pair->scene_pair_end<=pair->scene_index||pair->scene_pair_end>boundary)goto original;
+        if(pair->scene_pair_end==boundary)same=true;
+    }
     if(scene&&(!s->has_metadata||!a->aligned||dovi||a->color.transfer!=PL_COLOR_TRC_PQ||
         a->color.primaries!=PL_COLOR_PRIM_BT_2020||!ambient_svp_hdr_scene_compatible(&a->hdrplus)||
         (!same&&!ambient_svp_hdr_scene_compatible(&b->hdrplus))))goto original;
@@ -390,8 +398,8 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
         a->color.transfer!=b->color.transfer||a->color.primaries!=b->color.primaries||
         a->has_hdrplus!=b->has_hdrplus||
         (a->has_hdrplus&&(!a->aligned||!b->aligned||
-            !ambient_svp_hdrplus_lerp(&s->metadata,&a->hdrplus,&b->hdrplus,pair->phase,
-                a->texture->params.w,a->texture->params.h)))){
+            (!scene&&!ambient_svp_hdrplus_lerp(&s->metadata,&a->hdrplus,&b->hdrplus,pair->phase,
+                a->texture->params.w,a->texture->params.h))))){
         // Keep exact source pixels/metadata on incompatible geometry,
         // window topology, or color contracts.
         goto original;
