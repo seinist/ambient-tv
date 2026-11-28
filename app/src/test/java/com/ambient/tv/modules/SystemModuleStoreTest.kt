@@ -92,6 +92,18 @@ class SystemModuleStoreTest {
         assertEquals(2L, install(manager, 2, two)?.build?.version)
     }
 
+    @Test fun sameVersionReplacementIsRejectedEvenAfterRemove() {
+        val manager = store()
+        val one = zip("lib/libone.so")
+        val other = zip("lib/libother.so")
+        install(manager, 1, one)
+        reject { install(manager, 1, other, onOpen = { fail("Conflicting download opened") }) }
+        manager.remove(module)
+        reject { install(store(), 1, other, onOpen = { fail("Version identity lost") }) }
+        assertNotNull(install(store(), 1, one))
+        assertNotNull(install(manager, 2, other))
+    }
+
     @Test fun invalidPathsAreRejectedEvenWithValidSignatureAndHash() {
         val manager = store()
         for (names in listOf(

@@ -38,12 +38,21 @@ class ModuleDexOwnershipTest {
             "com.liskovsoft.sharedutils.prefs.GlobalPreferences",
             "com.liskovsoft.youtubeapi.lounge.LoungeService",
             "com.eclipsesource.v8.V8",
+            "com.jayway.jsonpath.JsonPath",
+            "net.minidev.json.JSONValue",
+            "com.grack.nanojson.JsonParser",
+            "com.florianingerl.util.regex.Pattern",
+            "com.jakewharton.disklrucache.DiskLruCache",
         )
         assertTrue(ownership.accepts(required))
         assertTrue(ownership.owns("com.liskovsoft.googlecommon.service.oauth.YouTubeAccount"))
         assertFalse(ownership.owns("com.liskovsoft.youtubeapi.R"))
         assertFalse(ownership.owns("com.liskovsoft.youtubeapi.R\$raw"))
         assertFalse(ownership.owns("okhttp3.OkHttpClient"))
+        assertFalse(ownership.owns("org.xbill.DNS.Name"))
+        assertFalse(ownership.owns("io.reactivex.Observable"))
+        assertTrue(ownership.owns("com.jayway.jsonpath.JsonPath"))
+        assertFalse(ownership.accepts(required - "com.grack.nanojson.JsonParser"))
         assertFalse(ownership.owns("com.ambient.tv.youtube.SmartTubeEngine"))
         assertFalse(ownership.accepts(required + "com.liskovsoft.youtubeapi.R"))
         assertFalse(ownership.accepts(required - "com.eclipsesource.v8.V8"))

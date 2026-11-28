@@ -200,6 +200,8 @@ val smartTubeAdapterInputs = fileTree("src/main/java/com/ambient/tv/youtube") { 
     fileTree(rootProject.file("smarttube_wrappers")) { include("**/*.gradle.kts", "**/*.pro") }.files + setOf(
         rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/external-versions.properties"),
         rootProject.file("scripts/patch_smarttube_compat.py"),
+        rootProject.file("scripts/export_monogram_adapter.py"),
+        rootProject.file("scripts/strip_smarttube_classes.py"),
         file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
         file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
     )

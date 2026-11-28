@@ -39,6 +39,15 @@ class StripSmartTubeTest(unittest.TestCase):
                     "okhttp3/OkHttpClient.class",
                 })
 
+    def test_host_reference_to_private_library_blocks_stripping(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = self.source(root, {"host/Bad.class": b"\xca\xfe\xba\xbeLcom/grack/nanojson/JsonParser;"})
+            output = root / "stripped.jar"
+            with self.assertRaisesRegex(ValueError, "host class references private"):
+                strip([source], output)
+            self.assertFalse(output.exists())
+
     def test_incomplete_graph_does_not_replace_existing_output(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

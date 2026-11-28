@@ -22,7 +22,13 @@ internal class ModuleDexOwnership(
 
     companion object {
         val SMARTTUBE = ModuleDexOwnership(
-            setOf("com.liskovsoft.", "com.eclipsesource.v8."),
+            setOf("com.liskovsoft.", "com.eclipsesource.v8.",
+                "com.jayway.jsonpath.",
+                "net.minidev.",
+                "com.grack.nanojson.",
+                "com.florianingerl.util.regex.",
+                "com.jakewharton.disklrucache.",
+            ),
             setOf("com.ambient.tv.youtube.SmartTubeModuleAdapter"),
             required = setOf(
                 "com.ambient.tv.youtube.SmartTubeModuleAdapter",
@@ -30,6 +36,11 @@ internal class ModuleDexOwnership(
                 "com.liskovsoft.sharedutils.prefs.GlobalPreferences",
                 "com.liskovsoft.youtubeapi.lounge.LoungeService",
                 "com.eclipsesource.v8.V8",
+                "com.jayway.jsonpath.JsonPath",
+                "net.minidev.json.JSONValue",
+                "com.grack.nanojson.JsonParser",
+                "com.florianingerl.util.regex.Pattern",
+                "com.jakewharton.disklrucache.DiskLruCache",
             ),
             hostResourceClasses = true,
         )

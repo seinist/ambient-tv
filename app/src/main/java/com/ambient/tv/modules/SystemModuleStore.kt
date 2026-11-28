@@ -35,6 +35,7 @@ internal class SystemModuleStore(
         val current: Pointer? = null,
         val previous: Pointer? = null,
         val highWater: Long = 0,
+        val highWaterBuilds: Map<String, SystemModuleBuild> = emptyMap(),
     )
     data class Package(val archive: File, val build: SystemModuleBuild)
 
@@ -62,6 +63,11 @@ internal class SystemModuleStore(
         val build = SystemModuleChannel.select(
             manifest, module, processAbi, hostApi, sdk, profile, maxOf(1, state.highWater), compatible,
         ) ?: return@locked null
+        val identity = "${build.abi}/${build.profile}"
+        val remembered = state.highWaterBuilds + listOfNotNull(state.current, state.previous)
+            .filter { it.build.version == state.highWater }.associate { "${it.build.abi}/${it.build.profile}" to it.build }
+        if (build.version == state.highWater && remembered[identity]?.let { it != build } == true)
+            throw SystemModuleTrustException("Conflicting module payload at existing version")
         var currentVerified = false
         state.current?.let {
             val verified = try { verify(directory, module, it) } catch (_: IOException) { null }
@@ -92,7 +98,9 @@ internal class SystemModuleStore(
             // sync fails after rename. Never delete a possibly referenced package.
             beforePublish()
             publicationStarted = true
-            writeState(directory, State(pointer, if (currentVerified) state.current else state.previous, maxOf(state.highWater, build.version)))
+            val floorBuilds = if (build.version == state.highWater) remembered + (identity to build)
+                else mapOf(identity to build)
+            writeState(directory, State(pointer, if (currentVerified) state.current else state.previous, maxOf(state.highWater, build.version), floorBuilds))
             result
         } finally {
             if (!publicationStarted) packageDir.deleteRecursively()
@@ -126,7 +134,9 @@ internal class SystemModuleStore(
      */
     fun remove(module: SystemModule) = locked(module) { directory ->
         val state = readState(directory)
-        writeState(directory, State(highWater = state.highWater))
+        val remembered = state.highWaterBuilds + listOfNotNull(state.current, state.previous)
+            .filter { it.build.version == state.highWater }.associate { "${it.build.abi}/${it.build.profile}" to it.build }
+        writeState(directory, State(highWater = state.highWater, highWaterBuilds = remembered))
     }
 
     /** Only call under the exclusive cross-process runtime lease. */
@@ -169,7 +179,8 @@ internal class SystemModuleStore(
         } catch (_: IllegalArgumentException) {
             throw SystemModuleTrustException("Invalid module state")
         }
-        if (state.highWater < 0 ||
+        if (state.highWater < 0 || state.highWaterBuilds.size > 15 ||
+            state.highWaterBuilds.any { (key, build) -> key != "${build.abi}/${build.profile}" || build.version != state.highWater } ||
             listOfNotNull(state.current, state.previous).any {
                 !idPattern.matches(it.id) || it.build.version !in 1..state.highWater
             } || (state.current != null && state.current.id == state.previous?.id)) {

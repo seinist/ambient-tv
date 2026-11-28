@@ -18,7 +18,9 @@ REQUIRED = (ENTRY, CLASSES[1] + ".class", CLASSES[3] + ".class", "com/sun/jna/Na
             "org/monogram/mtproto/MtprotoNativeLoader.class")
 
 
-SMARTTUBE_PREFIXES = ("com/liskovsoft/", "com/eclipsesource/v8/")
+# Leaf libraries used by SmartTube, not shared with the host's public API.
+SMARTTUBE_PRIVATE_PREFIXES = ("com/jayway/jsonpath/", "net/minidev/", "com/grack/nanojson/", "com/florianingerl/util/regex/", "com/jakewharton/disklrucache/")
+SMARTTUBE_PREFIXES = ("com/liskovsoft/", "com/eclipsesource/v8/") + SMARTTUBE_PRIVATE_PREFIXES
 SMARTTUBE_ENTRY = "com/ambient/tv/youtube/SmartTubeModuleAdapter"
 SMARTTUBE_REQUIRED = (
     SMARTTUBE_ENTRY + ".class",
@@ -26,6 +28,11 @@ SMARTTUBE_REQUIRED = (
     "com/liskovsoft/sharedutils/prefs/GlobalPreferences.class",
     "com/liskovsoft/youtubeapi/lounge/LoungeService.class",
     "com/eclipsesource/v8/V8.class",
+    "com/jayway/jsonpath/JsonPath.class",
+    "net/minidev/json/JSONValue.class",
+    "com/grack/nanojson/JsonParser.class",
+    "com/florianingerl/util/regex/Pattern.class",
+    "com/jakewharton/disklrucache/DiskLruCache.class",
 )
 
 
@@ -45,6 +52,19 @@ def owns(path):
         return False
     name = path[:-6]
     return name.startswith(PREFIXES) or any(name == c or name.startswith(c + "$") for c in CLASSES)
+
+
+def validate_private_boundary(name, data):
+    # Fail the build rather than strip a class that the host still links.
+    # JVM class names/descriptors are stored verbatim in the constant pool.
+    # Scan only actual class files (test fixtures use opaque dummy bytes).
+    if not data.startswith(b"\xca\xfe\xba\xbe"):
+        return
+    for prefix in SMARTTUBE_PRIVATE_PREFIXES:
+        internal = prefix.encode()
+        dotted = prefix.replace("/", ".").encode()
+        if internal in data or dotted in data:
+            raise ValueError(f"host class references private SmartTube dependency: {name}: {prefix}")
 
 
 def read_classes(path):
@@ -80,6 +100,8 @@ def split(inputs, program, classpath, module='monogram'):
                     p.writestr(name, data)
                     owned.add(name)
                 else:
+                    if module == 'smarttube':
+                        validate_private_boundary(name, data)
                     h.writestr(name, data)
     if not set(required) <= owned:
         raise ValueError(f"missing adapter classes: {set(required) - owned}")

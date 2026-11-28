@@ -57,6 +57,10 @@ internal class SystemModuleRuntime(
     private val active = mutableMapOf<SystemModule, Loaded>()
     private val failed = mutableSetOf<SystemModule>()
     private val nativeOwners = mutableMapOf<String, SystemModule>()
+    // APK-owned libraries are immutable for this installed app process. Cache
+    // their verified fingerprints and only explicitly load each SONAME once.
+    private val verifiedHostHashes = mutableMapOf<String, String>()
+    private val loadedHostLibraries = mutableSetOf<String>()
     private var loading = false
 
     /** Call on a background worker; all initialization is serialized. */
@@ -126,6 +130,7 @@ internal class SystemModuleRuntime(
      * is an incompatible release, not evidence that the signed payload is corrupt.
      * I/O failures remain errors rather than silently selecting an older release.
      */
+    @Synchronized
     fun matchesHost(module: SystemModule, build: SystemModuleBuild): Boolean {
         val contract = contractFor(module, build)
         if (build.module != module.id || build.hostBindingSha256 != contract.hostBindingSha256 ||
@@ -139,6 +144,7 @@ internal class SystemModuleRuntime(
     }
 
     /** Validate without initializing classes or invoking the linker. */
+    @Synchronized
     fun validateCandidate(module: SystemModule, pkg: SystemModuleStore.Package) {
         val contract = contractFor(module, pkg.build)
         if (pkg.build.module != module.id ||
@@ -174,7 +180,7 @@ internal class SystemModuleRuntime(
                     throw SystemModuleTrustException("Module DEX defines foreign classes or lacks its entrypoint")
             }
             contract.nativeRoots.isNotEmpty() -> {
-                if (files.dex.isNotEmpty() || !files.native.keys.containsAll(contract.nativeRoots))
+                if (files.dex.isNotEmpty() || files.native.keys != contract.nativeRoots)
                     throw SystemModuleTrustException("Native-only package does not match host contract")
                 val bundled = hostLoader as? BaseDexClassLoader
                 if (files.native.keys.any { name ->
@@ -198,7 +204,7 @@ internal class SystemModuleRuntime(
         }
     }
 
-    private fun hostLibraryHash(location: String): String {
+    private fun hostLibraryHash(location: String): String = verifiedHostHashes.getOrPut(location) {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         fun read(input: java.io.InputStream) {
             var total = 0L
@@ -219,7 +225,7 @@ internal class SystemModuleRuntime(
                 ?: throw SystemModuleTrustException("Host APK native library missing")
             zip.getInputStream(entry).use(::read)
         }
-        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+        digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
     }
 
     private fun activate(files: SystemModuleMaterializer.Materialized, contract: Contract): Loaded {
@@ -244,7 +250,10 @@ internal class SystemModuleRuntime(
         }
         if (contract.nativeRoots.isNotEmpty()) {
             for (name in files.build.hostNativeSha256.keys.sorted()) {
-                System.loadLibrary(name.removePrefix("lib").removeSuffix(".so"))
+                if (name !in loadedHostLibraries) {
+                    System.loadLibrary(name.removePrefix("lib").removeSuffix(".so"))
+                    loadedHostLibraries += name
+                }
             }
             for (name in nativeOrder(files.native, contract.nativeRoots)) {
                 System.load(files.library(name).absolutePath)

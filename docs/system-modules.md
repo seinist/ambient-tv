@@ -520,6 +520,24 @@ manifest; absence produces the existing no-manifest error. The paired release ve
 all four ABIs and exact shared native bytes across both variants. Both update
 manifests and all eight APKs are uploaded to one reviewable release draft. No account data is intentionally reset by package replacement.
 
+### Additional Java ownership and runtime audit
+
+SmartTube's private JSONPath/json-smart, nanojson, regex and disk cache
+implementations are exported with the adapter rather than left in the
+Modular base. The ownership table, required classes, export, strip and
+APK audit share the same explicit allowlist. The build refuses a retained
+host class that references the private packages. RxJava, Retrofit, DNSJava
+and shared Android libraries remain host-owned pending an API/SPI boundary
+review. VLC and LibretroDroid Java bindings still need a separate typed
+host-interface refactor; their native-only isolation is unchanged.
+
+The runtime rejects extra native roots, memoizes verified host-library
+fingerprints for the installed APK process and explicitly loads each
+shared SONAME at most once. The persisted version floor also records the
+signed identity per ABI/profile, preventing a conflicting same-version
+replacement even after removal. FFmpeg dependencies needed for local audio
+remain in the base until a separate local decoder migration is validated.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

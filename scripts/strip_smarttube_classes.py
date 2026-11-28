@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 import zipfile
 
-from export_monogram_adapter import owns_smarttube, read_classes, SMARTTUBE_REQUIRED
+from export_monogram_adapter import owns_smarttube, read_classes, SMARTTUBE_REQUIRED, validate_private_boundary
 
 
 def strip(inputs, output):
@@ -31,6 +31,7 @@ def strip(inputs, output):
                     if owns_smarttube(name):
                         removed.add(name)
                     else:
+                        validate_private_boundary(name, data)
                         info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
                         info.compress_type = zipfile.ZIP_DEFLATED
                         jar.writestr(info, data)
