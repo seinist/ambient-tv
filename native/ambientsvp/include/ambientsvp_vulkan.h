@@ -98,8 +98,8 @@ int ambient_svp_vk_render_held(const AmbientSvpVk *,VkQueue,uint32_t,const VkIma
  * Keep all images, waits and signal alive until ticket retirement.
  * The queue is serialized by the caller for submit only; retire requires
  * no queue lock. 1 consumes ticket, 0 pending, -1 unresolved.
- * wait=1 waits for completion or confirmed device loss. Return 3
- * consumes the ticket on confirmed device loss (not successful output). */
+ * wait=1 waits for completion or confirmed device loss. Use the
+ * extended status API below to distinguish loss from completion. */
 typedef struct HeldSubmission AmbientSvpVkHeld;
 int ambient_svp_vk_submit_held(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
     const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **);
@@ -211,13 +211,15 @@ int ambient_svp_hdr_pass_lookup(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneR
 int ambient_svp_hdr_pass_finish(AmbientSvpHdrPass *);
 void ambient_svp_hdr_pass_destroy(AmbientSvpHdrPass *);
 /* Retire capture tickets in index order before destroying the pass.
- * 2 consumes a failed capture ticket; 0 pending; -1 unresolved. */
+ * 2 consumes a failed capture ticket; 3 consumes on device loss;
+ * 0 pending; -1 unresolved. wait=2 permits bounded polling. */
 int ambient_svp_vk_submit_held_capture(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
     const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
     const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
 int ambient_svp_vk_retire_held_capture(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
 /* Split live HDR/legacy replay submit and metadata collection. Collection
- * consumes the ticket on 1 (valid metadata) or 2 (failed metadata). */
+ * consumes the ticket on 1 (valid metadata), 2 (failed metadata) or 3
+ * (device loss). wait=2 permits bounded polling. */
 int ambient_svp_vk_submit_held_stats(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
     const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
     const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);

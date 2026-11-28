@@ -1812,3 +1812,5 @@ thermal steady state or real-video performance. No Android hardware
 measurements have been recorded yet.
 
 Audit benchmark extension: translated nonuniform FP16 source textures, four outstanding native tickets, same-phase final output comparison, algorithm 23 four-picture inputs, and UHD workload. Physical-device execution remains required.
+
+Audit hardening: up to three ordered field snapshots; copy only final vectors, scene flags, SADs and optional extended vectors. Bounded render-side fence polling does not abandon GPU-owned resources. The final texture/device destruction still requires proof of retirement or confirmed device loss. Same-handle source overwrite and new generation are exercised on both benchmark algorithms.

@@ -49,6 +49,7 @@ struct svp_placebo_quality {
     int (*submit_cached)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **,uint64_t);
     uint64_t generation;
+    bool generation_exhausted;
     int (*submit_capture)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
         const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
@@ -96,8 +97,9 @@ static inline void svp_placebo_quality_source_changed(pl_gpu gpu,struct svp_plac
 {
     if(texture)svp_placebo_quality_retire_texture(gpu,s,texture);
     // Zero disables cache after theoretical generation wrap.
+    if(s->generation_exhausted)return;
     if(s->generation!=UINT64_MAX)++s->generation;
-    else s->submit_cached=NULL;
+    else{s->generation=0;s->generation_exhausted=true;}
 }
 static inline void svp_placebo_quality_destroy(pl_gpu gpu,struct svp_placebo_quality *s)
 {

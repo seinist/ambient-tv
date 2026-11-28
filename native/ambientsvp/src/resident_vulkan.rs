@@ -520,7 +520,14 @@ impl HeldField{
         unsafe{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER|vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::TRANSFER,vk::DependencyFlags::empty(),&[],&before,&[]);
-            d.cmd_copy_buffer(cmd,src,dst,&[vk::BufferCopy::default().size(p.core.field_size)]);
+            // The final vectors/cut flag and selected SADs are immutable.
+            // Coarse predictors, scatter and phase masks are scratch; never
+            // copy them between phases. Extended vectors/cuts are optional.
+            let n=u64::from(p.core.gw)*u64::from(p.core.gh);
+            let range=|offset:u64,words:u64|vk::BufferCopy::default().src_offset(offset*16).dst_offset(offset*16).size(words*16);
+            let regions=[range(0,2*n+1),range(4*n+3,2*n),range(8*n+3,2*n+2)];
+            let extended=if restore{self.extended}else{p.extended.len()==2};
+            d.cmd_copy_buffer(cmd,src,dst,&regions[..if extended{3}else{2}]);
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER|vk::PipelineStageFlags::TRANSFER,
                 vk::DependencyFlags::empty(),&[],&after,&[]);
         }
@@ -1175,7 +1182,7 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
             let picture=|i:usize|VulkanPicture{y:views[i],u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0};
             let a=picture(0);let b=picture(if count==2{0}else{1});
-            let cached=slot.map(|i|&mut cache[i]);
+            let cached=match slot{Some(i)=>Some(&mut cache[i]),None=>None};
             if let Some(x)=cached.as_ref().filter(|x|x.key==Some(key)){
                 let mut p=VulkanPair::new(core.clone(),cmd,a,b)?;
                 p.cached_extended=x.extended;
@@ -2162,6 +2169,35 @@ mod gpu_tests{
             assert_eq!(&data[..b],&data[b..2*b]);assert_eq!(&data[..b],&data[2*b..]);
             d.unmap_memory(memory);d.destroy_buffer(buf,None);d.free_memory(memory,None);
             println!("SVP_PARITY exact");
+            if (w,h)==(66,34){
+                d.reset_fences(&[fence]).unwrap();d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+                d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()).unwrap();
+                for img in &images[2..5]{
+                    transition(&d,cmd,img.image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,vk::ImageLayout::GENERAL,
+                        vk::AccessFlags::TRANSFER_READ,vk::AccessFlags::SHADER_WRITE,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+                }
+                transition(&d,cmd,images[0].image,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::SHADER_READ,vk::AccessFlags::TRANSFER_WRITE,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+                d.cmd_clear_color_image(cmd,images[0].image,vk::ImageLayout::GENERAL,
+                    &vk::ClearColorValue{float32:[0.5,0.5,0.5,1.0]},&[range()]);
+                transition(&d,cmd,images[0].image,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::TRANSFER_WRITE,vk::AccessFlags::SHADER_READ,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+                d.end_command_buffer(cmd).unwrap();
+                d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+                d.wait_for_fences(&[fence],true,u64::MAX).unwrap();
+                let before=(&(*engine).0).held_hits.load(Ordering::Relaxed);
+                for (i,generation) in [2u64,2,3,3].into_iter().enumerate(){
+                    let waits=&pipeline_holds[0][..count];
+                    d.queue_submit(queue,&[vk::SubmitInfo::default().signal_semaphores(waits)],vk::Fence::null()).unwrap();
+                    let handles=if algorithm==23{[images[0].image,images[1].image,images[5].image,images[6].image,images[2].image]}
+                        else{[images[0].image,images[1].image,images[2].image,vk::Image::null(),vk::Image::null()]};
+                    value+=1;
+                    let mut job=ptr::null_mut();
+                    assert_eq!(ambient_svp_vk_submit_held_cached(engine,queue,family,handles.as_ptr(),count as u32,waits.as_ptr(),done,value,0.5,&mut job,generation),0);
+                    assert_eq!(ambient_svp_vk_retire_held(job,1),1);
+                    assert_eq!((&(*engine).0).held_hits.load(Ordering::Relaxed),before+(i as u32+1)/2);
+                }
+            }
             // Exercise the new capture/readback ABI on the small CI fixture
             // outside the measured workload. Two captures may be submitted
             // before either readback, but the cache must publish in tick order.
@@ -2175,15 +2211,6 @@ mod gpu_tests{
                 let schema=[1,5,10,25,50,75,90,95,99];
                 let mut window=HdrWindow{rect:[0,0,w,h],count:9,percentages:[0;15]};
                 window.percentages[..9].copy_from_slice(&schema);
-                d.reset_fences(&[fence]).unwrap();d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
-                d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()).unwrap();
-                for img in &images[2..5]{
-                    transition(&d,cmd,img.image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,vk::ImageLayout::GENERAL,
-                        vk::AccessFlags::TRANSFER_READ,vk::AccessFlags::SHADER_WRITE,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
-                }
-                d.end_command_buffer(cmd).unwrap();
-                d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
-                d.wait_for_fences(&[fence],true,u64::MAX).unwrap();
                 let mut capture=TwoPass::open(1,&plan,&cache,&key,"held-test",w,h).unwrap();
                 let second=std::array::from_fn::<_,3,_>(|_|d.create_semaphore(&vk::SemaphoreCreateInfo::default(),None).unwrap());
                 let mut jobs=[ptr::null_mut();2];
@@ -2192,7 +2219,7 @@ mod gpu_tests{
                     let handles=[images[0].image,images[1].image,images[2+i].image];
                     value+=1;
                     assert_eq!(ambient_svp_vk_submit_held_capture(engine,queue,family,handles.as_ptr(),3,waits.as_ptr(),
-                        done,value,0.5,&window,ptr::null(),ptr::null(),1,&mut capture,i as u64,&mut jobs[i],1),0);
+                        done,value,0.5,&window,ptr::null(),ptr::null(),1,&mut capture,i as u64,&mut jobs[i],3),0);
                     assert!(!jobs[i].is_null());
                 }
                 assert!(!cache.exists());
@@ -2210,7 +2237,7 @@ mod gpu_tests{
                 value+=1;
                 let mut job=ptr::null_mut();
                 assert_eq!(ambient_svp_vk_submit_held_stats(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),
-                    done,value,0.5,&window,ptr::null(),ptr::null(),1,ptr::null_mut(),0,&mut job,2),0);
+                    done,value,0.5,&window,ptr::null(),ptr::null(),1,ptr::null_mut(),0,&mut job,3),0);
                 assert!(!job.is_null());
                 let mut result=HdrResult::default();let mut rect=[[0u32;4]];let mut ellipse=[[0u32;3]];let mut shift=[[0i32;2]];
                 assert_eq!(ambient_svp_vk_collect_held_stats(job,1,&mut result,rect.as_mut_ptr(),ellipse.as_mut_ptr(),
