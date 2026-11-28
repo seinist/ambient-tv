@@ -11,7 +11,26 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
  
  #include "../vulkan/platform.h"
  #include "instance.h"
-@@ -81,14 +84,39 @@
+@@ -40,11 +43,13 @@
+     pl_vulkan vulkan;
+ };
+ 
+-static void CloseInstance(vlc_placebo_t *pl);
+-static const struct vlc_placebo_operations instance_opts =
+-{
+-    .close = CloseInstance,
+-};
++static void CloseInstance(vlc_placebo_t *pl);
++static void CloseGpu(vlc_placebo_t *pl);
++static const struct vlc_placebo_operations instance_opts =
++{
++    .close = CloseInstance,
++    .ambient_close_gpu = CloseGpu,
++};
+ 
+ static int InitInstance(vlc_placebo_t *pl, const vout_display_cfg_t *cfg)
+ {
+@@ -81,14 +86,39 @@
  
      // Create vulkan device
      char *device_name = var_InheritString(pl, "vk-device");
@@ -54,7 +73,65 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
      });
      free(device_name);
      if (!sys->vulkan)
-@@ -196,6 +224,27 @@
+@@ -114,29 +144,34 @@
+     return VLC_EGENERIC;
+ }
+ 
+-static void CloseInstance(vlc_placebo_t *pl)
+-{
+-    vlc_placebo_system_t *sys = pl->sys;
+-
+-    pl_swapchain_destroy(&pl->swapchain);
+-
+-    if (sys->surface) {
+-        vlc_vk_instance_t inst = {
+-            .instance = sys->instance->instance,
+-            .get_proc_address = sys->instance->get_proc_addr,
+-        };
+-        vlc_vk_DestroySurface(&inst, sys->surface);
+-    }
+-
+-    pl_vulkan_destroy(&sys->vulkan);
+-    pl_vk_inst_destroy(&sys->instance);
+-
+-    if (sys->platform != NULL)
+-        vlc_vk_platform_Release(sys->platform);
+-
+-    vlc_obj_free(VLC_OBJECT(pl), sys);
+-    pl->sys = NULL;
+-}
++/* GPU-only teardown can run on a terminal worker. The independently
++ * retained platform/window is released on the original VLC owner thread. */
++static void CloseGpu(vlc_placebo_t *pl)
++{
++    vlc_placebo_system_t *sys = pl->sys;
++    pl_swapchain_destroy(&pl->swapchain);
++    if (sys->surface) {
++        vlc_vk_instance_t inst = {
++            .instance = sys->instance->instance,
++            .get_proc_address = sys->instance->get_proc_addr,
++        };
++        vlc_vk_DestroySurface(&inst, sys->surface);
++        sys->surface = VK_NULL_HANDLE;
++    }
++    pl_vulkan_destroy(&sys->vulkan);
++    pl_vk_inst_destroy(&sys->instance);
++    pl->gpu = NULL;
++}
++
++static void CloseInstance(vlc_placebo_t *pl)
++{
++    vlc_placebo_system_t *sys = pl->sys;
++    CloseGpu(pl);
++    if (sys->platform != NULL)
++        vlc_vk_platform_Release(sys->platform);
++    vlc_obj_free(VLC_OBJECT(pl), sys);
++    pl->sys = NULL;
++}
+ 
+ #define PROVIDER_TEXT N_("Vulkan platform module")
+ #define PROVIDER_LONGTEXT N_( \
+@@ -196,6 +231,27 @@
              ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
  
      set_section("Performance tuning", NULL)
@@ -82,3 +159,17 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
      add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
              ASYNC_XFER_TEXT, ASYNC_XFER_LONGTEXT)
      add_bool("vk-async-comp", pl_vulkan_default_params.async_compute,
+diff --git a/modules/video_output/libplacebo/instance.h b/modules/video_output/libplacebo/instance.h
+--- a/modules/video_output/libplacebo/instance.h
++++ b/modules/video_output/libplacebo/instance.h
+@@ -31,7 +31,9 @@
+ struct vlc_placebo_t;
+ struct vlc_placebo_operations
+ {
+-    void (*close)(struct vlc_placebo_t *);
++    void (*close)(struct vlc_placebo_t *);
++    // Optional Vulkan-only GPU destruction; never touches the VLC window.
++    void (*ambient_close_gpu)(struct vlc_placebo_t *);
+ 
+     // For acquiring/releasing the context on the current thread. (Optional)
+     int (*make_current)(struct vlc_placebo_t *);
