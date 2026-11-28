@@ -42,6 +42,9 @@ compiler build is not proof of correct gameplay or a performance improvement.
   blocks are cached without executable allocation;
   short ALU prefixes can now end in a native terminal. The pinned upstream
   differential harness verifies control flow, registers, cycles and delay calls.
+  A second AArch64 harness executes the actual native single-op dispatcher
+  for every legal encoding, including real delay-slot ALU, memory and system
+  operations against the original handlers and a deterministic mapped bus.
   The mapped no-cache bus directly specializes
   aligned High/Low WRAM loads/stores only when the exact original table target
   matches. MMIO, debug tracing, cache-enabled and unusual accesses retain

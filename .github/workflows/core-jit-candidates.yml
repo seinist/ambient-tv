@@ -34,6 +34,7 @@ jobs:
           test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$pin"
           git -C "$tmp" show FETCH_HEAD:yabause/src/sh2int.c > "$tmp/sh2int.c"
           python3 scripts/native_core_candidates/sh2_memory_differential.py --upstream "$tmp/sh2int.c"
+          python3 scripts/native_core_candidates/sh2_native_differential.py --upstream "$tmp/sh2int.c"
   candidates:
     strategy:
       fail-fast: false
