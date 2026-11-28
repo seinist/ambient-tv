@@ -886,6 +886,51 @@ PATCHES = {
       "libs/ymir-core/src/ymir/hw/vdp/renderer/vdp_renderer_sw.cpp",
       "_mm_or_si128(_mm_and_si128(color2_x4, blend2_x4), _mm_andnot_si128(mask_x4, color2_x4))",
       "_mm_or_si128(_mm_and_si128(mask_x4, blend2_x4), _mm_andnot_si128(mask_x4, color2_x4))"
+    ],
+    [
+      "libs/ymir-core/include/ymir/hw/scsp/scsp.hpp",
+      "#include <array>",
+      "#include <array>\n#include <vector>"
+    ],
+    [
+      "libs/ymir-core/include/ymir/hw/scsp/scsp.hpp",
+      "    void SetSampleCallback(CBOutputSample callback) {\n        m_cbOutputSample = callback;\n    }",
+      "    void SetSampleCallback(CBOutputSample callback) {\n        SyncSCSPThread();\n        m_bufferedSampleOutput = nullptr;\n        m_cbOutputSample = callback;\n    }\n\n    // Libretro consumes a whole frame at a time. The caller must synchronize\n    // SCSP before reading/clearing this buffer and keep it alive until teardown.\n    void SetBufferedSampleOutput(std::vector<sint16>& buffer) {\n        SyncSCSPThread();\n        m_bufferedSampleOutput = &buffer;\n    }"
+    ],
+    [
+      "libs/ymir-core/include/ymir/hw/scsp/scsp.hpp",
+      "    CBOutputSample m_cbOutputSample;",
+      "    CBOutputSample m_cbOutputSample;\n    std::vector<sint16>* m_bufferedSampleOutput = nullptr;"
+    ],
+    [
+      "libs/ymir-core/src/ymir/hw/scsp/scsp.cpp",
+      "        m_cbOutputSample(m_out[0], m_out[1]);\n        m_out.fill(0);",
+      "        if (m_bufferedSampleOutput) {\n            m_bufferedSampleOutput->push_back(static_cast<sint16>(m_out[0]));\n            m_bufferedSampleOutput->push_back(static_cast<sint16>(m_out[1]));\n        } else {\n            m_cbOutputSample(m_out[0], m_out[1]);\n        }\n        m_out.fill(0);"
+    ],
+    [
+      "apps/ymir-libretro/src/libretro.cpp",
+      "static void on_audio_sample(sint16 left, sint16 right, void *) {\n    core.audio_buffer.push_back(left);\n    core.audio_buffer.push_back(right);\n}\n",
+      ""
+    ],
+    [
+      "apps/ymir-libretro/src/libretro.cpp",
+      "    core.audio_buffer.reserve(882 * 2); // PAL worst case per frame",
+      "    core.audio_buffer.reserve(2048 * 2); // Reserve headroom for PAL frames and scheduler jitter"
+    ],
+    [
+      "apps/ymir-libretro/src/libretro.cpp",
+      "    core.saturn->SCSP.SetSampleCallback({on_audio_sample});",
+      "    core.saturn->SCSP.SetBufferedSampleOutput(core.audio_buffer);"
+    ],
+    [
+      "apps/ymir-libretro/src/libretro.cpp",
+      "    // Clear per-frame state\n    core.frame_ready = false;\n    core.audio_buffer.clear();",
+      "    // No SCSP worker may still write while the frontend clears its buffer.\n    core.saturn->SCSP.SyncSCSPThreadPublic();\n    // Clear per-frame state\n    core.frame_ready = false;\n    core.audio_buffer.clear();"
+    ],
+    [
+      "apps/ymir-libretro/src/libretro.cpp",
+      "    // Run one frame\n    core.saturn->RunFrame();",
+      "    // Run one frame and publish all audio before handing the buffer to libretro.\n    core.saturn->RunFrame();\n    core.saturn->SCSP.SyncSCSPThreadPublic();"
     ]
   ],
   "a5200": [
