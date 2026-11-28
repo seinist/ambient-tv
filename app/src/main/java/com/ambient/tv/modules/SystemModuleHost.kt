@@ -25,6 +25,12 @@ internal object SystemModuleHost {
     // Only engines with a migrated first-load path are exposed. More contracts
     // are added as their actual adapter/build/release pipeline is migrated.
     private val contracts = mapOf(
+        SystemModule.SMARTTUBE to SystemModuleRuntime.Contract(
+            entryClass = "com.ambient.tv.youtube.SmartTubeModuleAdapter",
+            hostBindingSha256 = BuildConfig.SMARTTUBE_ADAPTER_SHA256,
+            dexOwnership = ModuleDexOwnership.SMARTTUBE,
+            dexNativeRoots = setOf("libj2v8.so"),
+        ),
         SystemModule.SHADERS to SystemModuleRuntime.Contract(assetOnly = true),
         SystemModule.SPOTIFY to SystemModuleRuntime.Contract(
             nativeRoots = setOf("libspotify_receiver_core.so"),
