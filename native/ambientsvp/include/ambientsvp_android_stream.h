@@ -18,7 +18,11 @@ AmbientSvpAndroidStream *ambient_svp_android_stream_create(uint32_t,uint32_t);
  * Fixed stream format; output structs and fence/lease ABI unchanged.
  * Caller sets full-range BT2020 PQ/HLG and static metadata on ASC. */
 AmbientSvpAndroidStream *ambient_svp_android_stream_create_format(uint32_t,uint32_t,uint32_t);
-/* Configured stream uses the same weighted motion/synthesis kernel as MPV. */
+/* Configured stream uses the same weighted motion/synthesis kernel as MPV.
+ * For algorithm 23 (including preset 3 automatic), the FIRST TWO pushes
+ * have count=0; subsequent pushes synthesize the earlier queued pair,
+ * using the new input as future lookahead. On EOF, reset and present
+ * the two caller-owned delayed originals in order instead of drain. */
 AmbientSvpAndroidStream *ambient_svp_android_stream_create_quality(uint32_t,uint32_t,uint32_t,const AmbientSvpQuality *);
 /* Borrow the existing decoder buffer; acquire_fd remains caller-owned.
  * Transfer an ADDITIONAL source-picture token to the callback, even on
