@@ -1314,6 +1314,13 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_open(mode:u32,plan:*const std::ffi
     })).unwrap_or(ptr::null_mut())
 }
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_interval(pass:*const TwoPass,index:u64,end:*mut u64)->i32{
+    if pass.is_null()||end.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let Ok((_,boundary))=(&*pass).interval(index)else{return -1;};*end=boundary;1
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_hdr_pass_capture(pass:*mut TwoPass,pair:*const VulkanPair,phase:u32,index:u64)->i32{
     if pass.is_null()||pair.is_null(){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
