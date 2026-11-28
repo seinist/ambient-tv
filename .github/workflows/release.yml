@@ -509,6 +509,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PAIRED_RELEASE: ${{ inputs.paired_release }}
         run: |
+          set -euo pipefail
           # Derive the tag from build.sh output, including its stable/pre-release build number.
           shopt -s nullglob
           apks=(dist/ambient-tv-arm64-*.apk)
@@ -530,4 +531,12 @@ jobs:
             assets+=(dist/modular/*.apk dist/modular/update-modular.json)
             test "${#assets[@]}" = 10
           fi
+          # Paired candidates must still target the reviewed main commit.
+          if [[ "${PAIRED_RELEASE:-false}" == true ]]; then
+            test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+            python3 scripts/verify_paired_apk_release.py --full dist --modular dist/modular --aapt2 "$ANDROID_HOME/build-tools/37.0.0/aapt2" --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner"
+          fi
           gh release create "$tag" "${assets[@]}" "${args[@]}"
+          verify_args=()
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then verify_args+=(--target "$GITHUB_SHA"); fi
+          python3 scripts/verify_release_draft.py --repo "$GITHUB_REPOSITORY" --tag "$tag" "${verify_args[@]}" "${assets[@]}"

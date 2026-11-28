@@ -755,6 +755,14 @@ the same bounds, fields, fingerprints and dependency identities before
 comparing historical releases. Explicit schema defaults and omitted optional
 fields are treated identically; duplicate catalog assets are rejected.
 
+All native, shader and APK release drafts are checked after upload against
+the exact local asset names, lengths and SHA-256 digests returned by GitHub.
+The draft state and explicit commit target must also agree. Missing remote
+digest evidence fails closed; native/shader drafts remain unpublished on
+failure, and APK drafts remain subject to manual review. Paired APK releases
+also revalidate the signed APK pair and current main immediately before
+draft creation. This does not substitute for device or license review.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

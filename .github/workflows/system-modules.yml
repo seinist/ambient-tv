@@ -13,6 +13,8 @@ on:
       - 'scripts/test_native_cache_keys.py'
       - 'scripts/verify_paired_apk_release.py'
       - 'scripts/test_verify_paired_apk_release.py'
+      - 'scripts/verify_release_draft.py'
+      - 'scripts/test_verify_release_draft.py'
       - 'scripts/generate_update_manifest.py'
       - 'scripts/test_update_manifest.py'
       - 'scripts/incremental_system_modules.py'
@@ -87,6 +89,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_module_corresponding_source.py
           python3 -m unittest discover -s scripts -p test_native_cache_keys.py
           python3 -m unittest discover -s scripts -p test_verify_paired_apk_release.py
+          python3 -m unittest discover -s scripts -p test_verify_release_draft.py
           python3 -m unittest discover -s scripts -p test_update_manifest.py
           python3 -m unittest discover -s scripts -p test_incremental_system_modules.py
           python3 -m unittest discover -s scripts -p test_check_modular_preview_apk.py
@@ -162,6 +165,7 @@ jobs:
           openssl dgst -sha256 -sign "$key" -out module-release/manifest.json.sig module-release/manifest.json
           openssl dgst -sha256 -verify cores/signing-public.pem -signature module-release/manifest.json.sig module-release/manifest.json
           gh release create "$tag" module-release/* --draft --title "System library: Vulkan shaders" --target "$GITHUB_SHA" --notes "Signed optional shader assets."
+          python3 scripts/verify_release_draft.py --repo "$GITHUB_REPOSITORY" --tag "$tag" --target "$GITHUB_SHA" module-release/*
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           gh release edit "$tag" --draft=false --latest=false
 
@@ -225,5 +229,6 @@ jobs:
           openssl dgst -sha256 -sign "$key" -out module-release/manifest.json.sig module-release/manifest.json
           openssl dgst -sha256 -verify cores/signing-public.pem -signature module-release/manifest.json.sig module-release/manifest.json
           gh release create "$tag" module-release/* --draft --target "$GITHUB_SHA" --title "System library: $MODULE" --notes "Reviewed optional native module. Full APK build run: $CANDIDATE_RUN."
+          python3 scripts/verify_release_draft.py --repo "$GITHUB_REPOSITORY" --tag "$tag" --target "$GITHUB_SHA" module-release/*
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           gh release edit "$tag" --draft=false --latest=false
