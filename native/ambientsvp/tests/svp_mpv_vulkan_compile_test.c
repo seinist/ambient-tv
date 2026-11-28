@@ -15,6 +15,7 @@ enum { PL_COLOR_SYSTEM_BT_601=1,PL_COLOR_SYSTEM_BT_709,PL_COLOR_SYSTEM_RGB,PL_CO
 enum { PL_COLOR_LEVELS_LIMITED=1,PL_COLOR_LEVELS_FULL };
 enum { PL_CHROMA_UNKNOWN=0,PL_CHROMA_LEFT,PL_CHROMA_CENTER,PL_CHROMA_TOP_LEFT };
 enum { PL_COLOR_TRC_UNKNOWN=0,PL_COLOR_TRC_PQ,PL_COLOR_TRC_HLG };
+enum { PL_COLOR_PRIM_BT_2020=1 };
 enum { PL_ALPHA_NONE=3 };
 struct pl_bit_encoding { int sample_depth,color_depth,bit_shift; };
 struct mp_ff_side_data { int type; AVBufferRef *buf; };
