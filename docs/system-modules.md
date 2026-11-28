@@ -797,6 +797,12 @@ and requires byte-identical notices across all ABI packages. Reviewed
 supplemental notices remain subject to human license review. The exact
 native J2V8/V8 source correspondence is still not established.
 
+Source archive verification now requires an explicit resolved Cargo
+vendor root for Rust modules and checks workspace inventory, original
+lockfile digests, copied lockfiles, reusable source configuration and
+presence of vendored sources before module signing. This catches omitted
+workspaces and changed lockfiles; it is not proof of an offline rebuild.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

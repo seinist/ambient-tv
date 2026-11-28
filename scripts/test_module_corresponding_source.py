@@ -37,6 +37,7 @@ class CorrespondingSourceTest(unittest.TestCase):
                 self.assertIn("--locked", command)
                 self.assertEqual(command[-1], "vendor")
                 (cwd / "vendor").mkdir()
+                (cwd / "vendor" / "source.rs").write_text("source")
                 return f'directory = "{cwd / "vendor"}"\n'
             with mock.patch.object(sources, "ROOT", root), mock.patch.object(
                     sources.subprocess, "check_output", side_effect=vendor) as run:
@@ -51,8 +52,8 @@ class CorrespondingSourceTest(unittest.TestCase):
 
     def source_fixture(self, directory, files, counts=(2, 1)):
         path = directory / "corresponding-source.tar.gz"
-        inventory = {"schema": 1, "module": "svp", "commit": "a" * 40,
-                     "roots": [{"root": "native/ambientsvp", "files": counts[0], "notices": counts[1]}],
+        inventory = {"schema": 1, "module": "libretrodroid", "commit": "a" * 40,
+                     "roots": [{"root": "third_party/libretrodroid", "files": counts[0], "notices": counts[1]}],
                      "reviewRequired": True}
         with tarfile.open(path, "w:gz") as archive:
             sources.add_bytes(archive, "ambient-tv-source.tar", b"host source")
@@ -64,23 +65,40 @@ class CorrespondingSourceTest(unittest.TestCase):
     def test_source_archive_checks_declared_roots_and_counts(self):
         with tempfile.TemporaryDirectory() as temp:
             path, descriptor = self.source_fixture(Path(temp), [
-                "upstream/native/ambientsvp/src/lib.rs", "upstream/native/ambientsvp/LICENSE"])
+                "upstream/third_party/libretrodroid/src/lib.rs", "upstream/third_party/libretrodroid/LICENSE"])
             notices = {}
             sources.validate_source_archive(path, descriptor, notices)
             self.assertEqual(notices, {"source-0/LICENSE": (6, sources.hashlib.sha256(b"source").hexdigest())})
             path, descriptor = self.source_fixture(Path(temp), [
-                "upstream/native/ambientsvp/src/lib.rs"])
+                "upstream/third_party/libretrodroid/src/lib.rs"])
             with self.assertRaisesRegex(ValueError, "count mismatch"):
                 sources.validate_source_archive(path, descriptor)
 
     def test_source_archive_rejects_duplicate_and_unsafe_members(self):
         with tempfile.TemporaryDirectory() as temp:
-            for names in (["upstream/native/ambientsvp/LICENSE"] * 2,
-                          ["upstream/native/ambientsvp/../LICENSE", "upstream/native/ambientsvp/LICENSE"],
-                          ["unexpected/source", "upstream/native/ambientsvp/LICENSE"]):
+            for names in (["upstream/third_party/libretrodroid/LICENSE"] * 2,
+                          ["upstream/third_party/libretrodroid/../LICENSE", "upstream/third_party/libretrodroid/LICENSE"],
+                          ["unexpected/source", "upstream/third_party/libretrodroid/LICENSE"]):
                 path, descriptor = self.source_fixture(Path(temp), names)
                 with self.assertRaises(ValueError):
                     sources.validate_source_archive(path, descriptor)
+
+    def test_cargo_inventory_matches_all_original_lockfiles(self):
+        manifest = sources.CARGO_MANIFESTS["svp"][0]
+        lock = str(Path(manifest).with_name("Cargo.lock"))
+        original = {lock: "a" * 64}
+        rows = [{"workspace": "workspace-0", "manifest": manifest, "lockSha256": "a" * 64}]
+        files = {"workspace-0/Cargo.lock": "a" * 64,
+                 "workspace-0/cargo-source-config.toml": "b" * 64,
+                 "workspace-0/vendor/crate/src/lib.rs": None}
+        sources.validate_cargo_inventory("svp", rows, files, original)
+        for invalid in ({**files, "workspace-0/Cargo.lock": "c" * 64},
+                        {key: value for key, value in files.items() if "/vendor/" not in key},
+                        {**files, "workspace-9/vendor/crate/lib.rs": None}):
+            with self.assertRaises(ValueError):
+                sources.validate_cargo_inventory("svp", rows, invalid, original)
+        with self.assertRaises(ValueError):
+            sources.validate_cargo_inventory("svp", [], files, original)
 
     def maven_fixture(self, directory, identities):
         for identity in identities:

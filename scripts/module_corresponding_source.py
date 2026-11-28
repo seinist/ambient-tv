@@ -102,6 +102,14 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     if any(other.startswith(name + "/") for name in expected for other in expected if name != other):
         raise ValueError("Overlapping source roots")
     root_indices = {name: index for index, name in enumerate(expected)}
+    cargo_roots = [name for name in expected if name.rsplit("/", 1)[-1] == "resolved-cargo-source"]
+    if module in CARGO_MANIFESTS and len(cargo_roots) != 1:
+        raise ValueError("Missing or ambiguous resolved Cargo source root")
+    cargo_root = cargo_roots[0] if cargo_roots else None
+    cargo_inventory = None
+    cargo_files = {}
+    original_locks = {str(Path(manifest).with_name("Cargo.lock")): None
+                      for manifest in CARGO_MANIFESTS.get(module, ())}
     if not path.is_file() or path.is_symlink() or path.name != descriptor.get("asset") or type(descriptor.get("size")) is not int or not 0 < path.stat().st_size <= MAX_SOURCE_BYTES or path.stat().st_size != descriptor["size"] or digest(path) != descriptor.get("sha256"):
         raise ValueError("Corresponding-source hash or size mismatch")
 
@@ -136,6 +144,23 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                 if root is None:
                     raise ValueError("Unexpected source archive member")
                 actual[root][0] += 1
+                relative = name.removeprefix(f"upstream/{root}/")
+                workspace_path = f"{root}/{relative}"
+                if workspace_path in original_locks:
+                    original_locks[workspace_path] = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
+                if root == cargo_root:
+                    if relative == "workspaces.json":
+                        if not 0 < member.size <= MAX_INVENTORY_BYTES:
+                            raise ValueError("Invalid Cargo workspace inventory")
+                        cargo_inventory = json.load(archive.extractfile(member))
+                    elif re.fullmatch(r"workspace-[0-9]+/(Cargo.lock|cargo-source-config.toml)", relative):
+                        if not 0 < member.size <= 16 * 1024**2:
+                            raise ValueError("Invalid vendored Cargo metadata")
+                        cargo_files[relative] = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
+                    elif re.match(r"^workspace-[0-9]+/vendor/", relative):
+                        cargo_files[relative] = None
+                    else:
+                        raise ValueError("Unexpected vendored Cargo member")
                 if module == "smarttube" and root.endswith("/resolved-j2v8-provenance") and name == f"upstream/{root}/j2v8-provenance.json":
                     if j2v8 is not None or not 0 < member.size <= MAX_INVENTORY_BYTES:
                         raise ValueError("Invalid J2V8 provenance member")
@@ -165,6 +190,8 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
         raise ValueError("Source archive inventory mismatch")
     if any(tuple(actual[name]) != expected[name] for name in expected):
         raise ValueError("Source root file or notice count mismatch")
+    if module in CARGO_MANIFESTS:
+        validate_cargo_inventory(module, cargo_inventory, cargo_files, original_locks)
     if module == "smarttube":
         from package_system_modules import ABIS
         if not isinstance(j2v8, dict) or j2v8.get("schema") != 1 or j2v8.get("nativeSourceCorrespondence") != "unverified":
@@ -189,6 +216,35 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                 row["file"].startswith("libplacebo-") and row.get("recipeVerification") == "sha512" for row in rows):
             raise ValueError("Missing pinned VLC contrib source evidence")
     return j2v8
+
+
+def validate_cargo_inventory(module, inventory, files, original_locks):
+    """Match every archived resolved workspace to its original Cargo.lock."""
+    if not isinstance(inventory, list) or not inventory:
+        raise ValueError("Missing Cargo workspace inventory")
+    expected_manifests = {manifest for manifest in CARGO_MANIFESTS[module]
+                          if original_locks.get(str(Path(manifest).with_name("Cargo.lock"))) is not None}
+    seen = set()
+    prefixes = set()
+    for index, row in enumerate(inventory):
+        if not isinstance(row, dict) or set(row) != {"workspace", "manifest", "lockSha256"}:
+            raise ValueError("Invalid Cargo workspace inventory")
+        prefix = f"workspace-{index}"
+        manifest = row["manifest"]
+        if row["workspace"] != prefix or manifest not in expected_manifests or manifest in seen:
+            raise ValueError("Unexpected Cargo workspace")
+        seen.add(manifest)
+        prefixes.add(prefix)
+        lock_hash = original_locks[str(Path(manifest).with_name("Cargo.lock"))]
+        if row["lockSha256"] != lock_hash or files.get(f"{prefix}/Cargo.lock") != lock_hash:
+            raise ValueError("Vendored Cargo lockfile differs from original")
+        if not files.get(f"{prefix}/cargo-source-config.toml"):
+            raise ValueError("Missing reusable Cargo source configuration")
+        vendor = f"{prefix}/vendor/"
+        if not any(path.startswith(vendor) for path in files):
+            raise ValueError("Missing vendored Cargo sources")
+    if seen != expected_manifests or any(path.split("/", 1)[0] not in prefixes for path in files):
+        raise ValueError("Incomplete Cargo workspace inventory")
 
 
 def safe_archive_name(name):
@@ -238,7 +294,7 @@ def vendor_cargo(module, destination):
                                          cwd=workspace, text=True)
         if lock.read_bytes() != original_lock:
             raise ValueError(f"{module}: Cargo.lock changed during source collection")
-        if not (workspace / "vendor").is_dir():
+        if not (workspace / "vendor").is_dir() or not any((workspace / "vendor").iterdir()):
             raise ValueError(f"{module}: missing vendored source")
         # No build-runner absolute path in the reusable Cargo configuration.
         config = config.replace(str((workspace / "vendor").resolve()), "vendor")
