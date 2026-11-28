@@ -1,0 +1,159 @@
+package com.ambient.tv.ui.player.backend
+
+import android.graphics.ImageFormat
+import android.media.Image
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import java.io.File
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlin.math.abs
+
+/** Decode without a display or playback clock. Only compact spatial luma
+ * signatures are retained, never decoded pictures. This estimates editorial
+ * cuts; it is not a substitute for measuring the synthesized HDR frames. */
+internal object HdrContentSceneDetector {
+    const val CELLS = 16 * 9
+    internal data class Signature(val pts: Long, val luma: ByteArray)
+
+    internal fun distance(a: ByteArray, b: ByteArray): Pair<Double, Double> {
+        require(a.size == CELLS && b.size == CELLS)
+        val ah = IntArray(16)
+        val bh = IntArray(16)
+        var spatial = 0L
+        for (i in a.indices) {
+            val x = a[i].toInt() and 255
+            val y = b[i].toInt() and 255
+            spatial += abs(x-y)
+            ah[x ushr 4]++
+            bh[y ushr 4]++
+        }
+        val hist = ah.indices.sumOf { abs(ah[it]-bh[it]) }.toDouble() / (2*CELLS)
+        return spatial.toDouble() / (255*CELLS) to hist
+    }
+
+    private fun isCut(a: ByteArray, b: ByteArray): Boolean {
+        val (spatial,hist) = distance(a,b)
+        return spatial >= .36 || spatial >= .20 && hist >= .38
+    }
+
+    internal fun cuts(frames: List<Signature>): Set<Long>? {
+        if (frames.size < 2) return null
+        val sorted = frames.sortedBy { it.pts }
+        if (sorted.zipWithNext().any { (a,b) -> a.pts >= b.pts }) return null
+        val result = HashSet<Long>()
+        var i = 1
+        while (i < sorted.size) {
+            if (isCut(sorted[i-1].luma,sorted[i].luma)) {
+                // A one-frame flash with a return to the same image is not
+                // two scene cuts. Do not remove a genuine consecutive cut.
+                if (i+1 < sorted.size && isCut(sorted[i].luma,sorted[i+1].luma)) {
+                    val (d,h) = distance(sorted[i-1].luma,sorted[i+1].luma)
+                    if (d < .08 && h < .12) { i += 2; continue }
+                }
+                result += sorted[i].pts
+            }
+            i++
+        }
+        return result
+    }
+
+    private fun signature(image: Image): ByteArray? {
+        val p = image.planes.firstOrNull() ?: return null
+        val rect = image.cropRect
+        if (rect.width() < 16 || rect.height() < 9 || p.rowStride <= 0 || p.pixelStride <= 0) return null
+        val tenBit = image.format == ImageFormat.YCBCR_P010
+        if (!tenBit && image.format != ImageFormat.YUV_420_888) return null
+        val buffer = p.buffer.duplicate()
+        val base = buffer.position()
+        val out = ByteArray(CELLS)
+        // 4x4 samples in each cell reduce aliasing while bounding CPU work.
+        for (cy in 0 until 9) for (cx in 0 until 16) {
+            var sum = 0
+            for (sy in 0 until 4) for (sx in 0 until 4) {
+                val x = rect.left + ((cx*8+sx*2+1).toLong()*rect.width()/128).toInt()
+                val y = rect.top + ((cy*8+sy*2+1).toLong()*rect.height()/72).toInt()
+                val offset = base.toLong()+y.toLong()*p.rowStride+x.toLong()*p.pixelStride
+                if (offset < base || offset+(if(tenBit)1 else 0) >= buffer.limit()) return null
+                val lo = buffer.get(offset.toInt()).toInt() and 255
+                sum += if(tenBit) ((lo or ((buffer.get(offset.toInt()+1).toInt() and 255) shl 8)) ushr 8) else lo
+            }
+            out[cy*16+cx] = ((sum+8)/16).toByte()
+        }
+        return out
+    }
+
+    suspend fun analyze(file: File, expectedPts: Set<Long>): Set<Long>? {
+        if (expectedPts.size !in 2..1_000_000) return null
+        val ex = MediaExtractor()
+        var codec: MediaCodec? = null
+        var started = false
+        try {
+            ex.setDataSource(file.path)
+            val index = (0 until ex.trackCount).singleOrNull {
+                ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME) == "video/hevc"
+            } ?: return null
+            val format = ex.getTrackFormat(index)
+            val mime = format.getString(MediaFormat.KEY_MIME) ?: return null
+            format.setInteger(MediaFormat.KEY_COLOR_FORMAT,MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
+            ex.selectTrack(index)
+            val decoder = MediaCodec.createDecoderByType(mime)
+            codec = decoder
+            decoder.configure(format,null,null,0)
+            decoder.start()
+            started = true
+            val info = MediaCodec.BufferInfo()
+            val frames = ArrayList<Signature>()
+            val seen = HashSet<Long>()
+            var inputEnded = false
+            var outputEnded = false
+            var lastProgress = android.os.SystemClock.elapsedRealtime()
+            while (!outputEnded) {
+                currentCoroutineContext().ensureActive()
+                var progress = false
+                if (!inputEnded) {
+                    val id = decoder.dequeueInputBuffer(0)
+                    if (id >= 0) {
+                        val input = decoder.getInputBuffer(id) ?: return null
+                        input.clear()
+                        val size = ex.readSampleData(input,0)
+                        if (size < 0) {
+                            decoder.queueInputBuffer(id,0,0,0,MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputEnded = true
+                        } else {
+                            if (size > input.capacity() || size == 0) return null
+                            decoder.queueInputBuffer(id,0,size,ex.sampleTime,0)
+                            ex.advance()
+                        }
+                        progress = true
+                    }
+                }
+                val id = decoder.dequeueOutputBuffer(info,10_000)
+                if (id >= 0) {
+                    try {
+                        if (info.size > 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                            if (info.presentationTimeUs !in expectedPts || !seen.add(info.presentationTimeUs)) return null
+                            val image = decoder.getOutputImage(id) ?: return null
+                            val sig = image.use { signature(it) } ?: return null
+                            frames += Signature(info.presentationTimeUs,sig)
+                        }
+                        outputEnded = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                    } finally { decoder.releaseOutputBuffer(id,false) }
+                    progress = true
+                } else if (id == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    progress = true
+                }
+                if (progress) lastProgress = android.os.SystemClock.elapsedRealtime()
+                else if (android.os.SystemClock.elapsedRealtime()-lastProgress > 15_000) return null
+            }
+            if (seen != expectedPts) return null
+            return cuts(frames)
+        } finally {
+            if (started) runCatching { codec?.stop() }
+            runCatching { codec?.release() }
+            ex.release()
+        }
+    }
+}
