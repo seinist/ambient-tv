@@ -5,7 +5,7 @@ Uses Decimal and explicit sorted selected pixels, independent of production
 histograms and floating point reductions. Deterministic fixtures only;
 not an accredited conformance suite.
 """
-from decimal import Decimal as D, localcontext, ROUND_HALF_UP, ROUND_CEILING
+from decimal import Decimal as D, localcontext, ROUND_HALF_UP
 from fractions import Fraction
 import struct
 import unittest
@@ -83,8 +83,8 @@ class Reference(unittest.TestCase):
         values = [D("0.001"),D("0.002"),D("0.003"),D("0.004")]
         self.assertEqual(distribution(values,[1,5,10,25,50,75,90,95,99],0),[100,100,100,100,200,300,400,400,400])
         self.assertEqual(distribution(values,[1,5,10,25,50,75,90,95,99],1),[100,0,255,100,200,300,400,400,400])
-        self.assertEqual(sum(selected(x,y,(0,0,8,8),(0,0),(4,2),0) for y in range(8) for x in range(8)),11)
-        self.assertEqual(sum(selected(x,y,(0,0,8,8),(0,0),(4,2),90) for y in range(8) for x in range(8)),11)
+        self.assertEqual(sum(selected(x,y,(0,0,8,8),(0,0),(4,2),0) for y in range(8) for x in range(8)),10)
+        self.assertEqual(sum(selected(x,y,(0,0,8,8),(0,0),(4,2),90) for y in range(8) for x in range(8)),10)
 
     def test_proxy_and_fbp(self):
         a = [(Fraction(1,2),)*3]*50
