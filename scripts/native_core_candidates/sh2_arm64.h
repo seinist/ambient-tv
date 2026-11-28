@@ -307,14 +307,93 @@ static inline unsigned ambient_sh2_branch(uint16_t op, uint32_t* pc, uint32_t sr
 #include <sys/mman.h>
 #include <unistd.h>
 #include <string.h>
+static void ambient_sh2_delay_native(SH2_struct* context, u32 addr);
+#define AMBIENT_SH2_DELAY ambient_sh2_delay_native
 #include "ambient_sh2_memory.h"
 #include "ambient_sh2_control.h"
+#undef AMBIENT_SH2_DELAY
 #define AMBIENT_REG_OFFSET(field) (offsetof(SH2_struct, regs.field)-offsetof(SH2_struct, regs.R))
 static const AmbientSh2Layout ambient_sh2_layout = {
     AMBIENT_REG_OFFSET(MACH), AMBIENT_REG_OFFSET(MACL), AMBIENT_REG_OFFSET(GBR),
     AMBIENT_REG_OFFSET(VBR), AMBIENT_REG_OFFSET(PR)
 };
 #undef AMBIENT_REG_OFFSET
+#define AMBIENT_SH2_SINGLE_STRIDE 19
+#define AMBIENT_SH2_SINGLE_COUNT 256
+typedef struct {
+    uint32_t* code;
+    size_t bytes;
+    uint8_t cycles[AMBIENT_SH2_SINGLE_COUNT];
+    unsigned failed;
+} AmbientSh2SinglePage;
+/* A single immutable W^X slab serves 256 encodings; no executable mapping
+ * per delay slot or cold PC, and no code-cache dependence on guest addresses. */
+static AmbientSh2SinglePage ambient_sh2_single[256];
+
+static int ambient_sh2_single_emit(SH2_struct* sh, uint16_t op)
+{
+    AmbientSh2SinglePage* page=&ambient_sh2_single[op>>8];
+    const unsigned index=op&255u;
+    if(page->failed)return 0;
+    if(!page->code) {
+        uint32_t scratch[16];
+        unsigned cost;
+        if(!ambient_sh2_emit_extended(op,scratch,ambient_sh2_layout,&cost))return 0;
+        const long granule=sysconf(_SC_PAGESIZE);
+        if(granule<=0){page->failed=1;return 0;}
+        const size_t raw=AMBIENT_SH2_SINGLE_COUNT*AMBIENT_SH2_SINGLE_STRIDE*sizeof(uint32_t);
+        const size_t bytes=(raw+(size_t)granule-1)/(size_t)granule*(size_t)granule;
+        uint32_t* mapped=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        if(mapped==MAP_FAILED){page->failed=1;return 0;}
+        for(unsigned i=0;i<AMBIENT_SH2_SINGLE_COUNT;++i) {
+            uint32_t* code=mapped+i*AMBIENT_SH2_SINGLE_STRIDE;
+            const unsigned n=ambient_sh2_emit_extended((op&0xff00u)|i,code+2,
+                                                        ambient_sh2_layout,&cost);
+            if(!n)continue;
+            code[0]=0xd503245fu;code[1]=0xaa0103e7u;
+            code[n+1]=0xd65f03c0u;
+            page->cycles[i]=(uint8_t)cost;
+        }
+        __builtin___clear_cache((char*)mapped,(char*)mapped+raw);
+        if(mprotect(mapped,bytes,PROT_READ|PROT_EXEC)!=0) {
+            munmap(mapped,bytes);page->failed=1;return 0;
+        }
+        page->code=mapped;page->bytes=bytes;
+    }
+    const unsigned cost=page->cycles[index];
+    if(!cost)return 0;
+    ((void(*)(u32*,u32*))(page->code+index*AMBIENT_SH2_SINGLE_STRIDE))(sh->regs.R,&sh->regs.SR.all);
+    sh->regs.PC+=2;
+    sh->cycles+=cost;
+    return 1;
+}
+
+static int ambient_sh2_native_one(SH2_struct* sh, uint16_t op)
+{
+    unsigned cost=ambient_sh2_branch(op,&sh->regs.PC,sh->regs.SR.all);
+    if(cost){sh->cycles+=cost;return 1;}
+    const AmbientMemOp memory=ambient_mem_decode(op);
+    if(memory.mode){ambient_mem_execute(sh,memory);return 1;}
+    const AmbientComplexMem complex=ambient_complex_decode(op);
+    if(complex.mode){ambient_complex_execute(sh,complex);return 1;}
+    if(ambient_sh2_control(sh,op))return 1;
+    return ambient_sh2_single_emit(sh,op);
+}
+
+static void ambient_sh2_delay_native(SH2_struct* sh, u32 addr)
+{
+    /* Match upstream's target-PC convention exactly. In particular PC-relative
+     * loads see the already selected target, not the delay instruction address. */
+#ifdef SH2_TRACE
+    SH2delay(sh,addr);
+    return;
+#endif
+    if(yabsys.sh2_cache_enabled) {SH2delay(sh,addr);return;}
+    sh->instruction=((fetchfunc*)sh->fetchlist)[(addr>>20)&255u](sh,addr);
+    if(!ambient_sh2_native_one(sh,sh->instruction))
+        ((opcodefunc*)sh->opcodes)[sh->instruction](sh); /* illegal opcode or W^X failure */
+    sh->regs.PC-=2;
+}
 #define AMBIENT_SH2_SLOTS 64
 #define AMBIENT_SH2_HOT 4
 
@@ -341,15 +420,28 @@ static void ambient_sh2_clear(void)
             if (b->code) munmap(b->code, b->bytes);
         }
     }
+    for(unsigned i=0;i<256;++i)
+        if(ambient_sh2_single[i].code)munmap(ambient_sh2_single[i].code,ambient_sh2_single[i].bytes);
+    memset(ambient_sh2_single,0,sizeof(ambient_sh2_single));
     memset(ambient_sh2_cache, 0, sizeof(ambient_sh2_cache));
     memset(ambient_sh2_disabled, 0, sizeof(ambient_sh2_disabled));
 }
 
+static int ambient_sh2_eligible(const SH2_struct* context)
+{
+#ifdef SH2_TRACE
+    (void)context;return 0;
+#else
+    return context->model == SHMT_SH2 && !yabsys.sh2_cache_enabled &&
+        !context->isIdle && !context->isSleeping && !context->delay &&
+        !context->breakpointEnabled && !context->backtraceEnabled &&
+        !context->stepOverOut.enabled && !context->trackInfLoop.enabled;
+#endif
+}
+
 static int ambient_sh2_try(SH2_struct* context, u32 budget)
 {
-    if (context->model != SHMT_SH2 || yabsys.sh2_cache_enabled || context->isIdle || context->isSleeping ||
-        context->delay || context->breakpointEnabled || context->backtraceEnabled ||
-        context->stepOverOut.enabled || context->trackInfLoop.enabled || context->cycles >= budget ||
+    if (!ambient_sh2_eligible(context) || context->cycles >= budget ||
         budget - context->cycles < 4)
         return 0;
     const uint32_t pc = context->regs.PC;
@@ -389,13 +481,8 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
                 if (cost) context->cycles += cost;
                 else if (block->memory.mode) ambient_mem_execute(context, block->memory);
                 else if (block->complex_memory.mode) ambient_complex_execute(context, block->complex_memory);
-                else if (ambient_sh2_control(context, block->terminal)) { /* native terminal */ }
-                else {
-                    // Delay-slot, MMIO, bus-wait and self-modifying store
-                    // semantics remain in the exact existing opcode handler.
-                    // End the block immediately after the potentially mutating access.
-                    block->terminal_handler(context);
-                }
+                else if (!ambient_sh2_native_one(context,block->terminal))
+                    block->terminal_handler(context); /* illegal opcode or W^X failure */
             }
             return 1;
         }

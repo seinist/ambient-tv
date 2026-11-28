@@ -12,8 +12,18 @@ def prepare(root):
         raise ValueError("Yabause interpreter layout changed")
     source = source.replace(marker, '#include "ambient_sh2_arm64.h"\n\n' + marker +
                             "\n   ambient_sh2_clear();")
-    source = source.replace(loop, loop.replace("         const u32", 
+    source = source.replace(loop, loop.replace("         const u32",
                             "         if (ambient_sh2_try(context, cycles)) continue;\n         const u32"))
+    dispatch = "         ((opcodefunc *)context->opcodes)[context->instruction](context);"
+    if source.count(dispatch) < 1:
+        raise ValueError("Yabause SH2 dispatch changed")
+    start = source.index("         if (ambient_sh2_try(context, cycles)) continue;")
+    end = source.index(dispatch, start)
+    source = source[:end] + (
+        "         if (!ambient_sh2_eligible(context) ||\n"
+        "             !ambient_sh2_native_one(context, context->instruction))\n"
+        "   " + dispatch
+    ) + source[end+len(dispatch):]
     path.write_text(source)
     shutil.copyfile(Path(__file__).parent / "native_core_candidates/sh2_arm64.h",
                     path.with_name("ambient_sh2_arm64.h"))

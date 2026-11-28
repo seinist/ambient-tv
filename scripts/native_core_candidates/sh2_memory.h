@@ -5,6 +5,9 @@
  */
 #ifndef AMBIENT_SH2_MEMORY_H
 #define AMBIENT_SH2_MEMORY_H
+#ifndef AMBIENT_SH2_DELAY
+#define AMBIENT_SH2_DELAY SH2delay
+#endif
 #include <stdint.h>
 enum AmbientMemMode { AM_NONE, AM_REG, AM_INDEX, AM_DISP, AM_GBR, AM_PC, AM_PRE, AM_POST };
 typedef struct {
@@ -171,7 +174,7 @@ static inline void ambient_complex_execute(SH2_struct* sh,AmbientComplexMem a) {
         const u32 pc=sh->regs.PC;
         sh->regs.PC=sh->MappedMemoryReadLong(sh,sh->regs.R[15]);sh->regs.R[15]+=4;
         sh->regs.SR.all=sh->MappedMemoryReadLong(sh,sh->regs.R[15])&0x3f3u;sh->regs.R[15]+=4;
-        sh->cycles+=4;SH2delay(sh,pc+2);return;
+        sh->cycles+=4;AMBIENT_SH2_DELAY(sh,pc+2);return;
     }
     default:return;
     }

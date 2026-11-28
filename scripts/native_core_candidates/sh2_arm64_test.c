@@ -226,6 +226,8 @@ int main(void)
         for(unsigned i=0;i<optimized;++i)after+=ambient_sh2_gpr_access(output[i],&guest,&load);
         assert(before==48 && after==3);
     }
+    // Every legal guest instruction is covered by either the native emitter
+    // or a specialized terminal. The pinned decoder parity is checked separately.
     // Test concatenated blocks, not just independent opcodes: flags and
     // register outputs must survive across each emitted operation.
     for (unsigned block=0; block<4096; ++block) {

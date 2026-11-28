@@ -25,7 +25,12 @@ compiler build is not proof of correct gameplay or a performance improvement.
   16- and 32-bit multiplication, 64-bit products, system-register transfers,
   CLRMAC and DIV0U with independent guest cycle accounting. Native terminal
   control handles BRA/BSR, register jumps/returns, delayed conditional branches,
-  MOVA, DIV0S, DIV1 and SLEEP while delegating delay-slot execution to upstream.
+  MOVA, DIV0S, DIV1 and SLEEP. Delay slots now fetch at the original execution
+  point and use the native single-op path (including PC-relative loads and
+  mapped bus helpers). Cold ALU instructions use lazily generated immutable
+  W^X slabs indexed by opcode; no mapping is allocated for memory/control
+  operations. Illegal opcodes, cache-enabled/debug execution and executable
+  mapping failure retain upstream fallbacks.
   Pure ALU traces now span up to 32 guest instructions and retain up to ten
   frequently accessed GPRs in caller-saved AArch64 registers. Dirty values
   are written back before any helper or trace exit. Memory/control-only hot

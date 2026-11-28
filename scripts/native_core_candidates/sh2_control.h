@@ -4,6 +4,9 @@
  */
 #ifndef AMBIENT_SH2_CONTROL_H
 #define AMBIENT_SH2_CONTROL_H
+#ifndef AMBIENT_SH2_DELAY
+#define AMBIENT_SH2_DELAY SH2delay
+#endif
 static inline int ambient_sh2_control_supported(uint16_t op)
 {
     const unsigned single = op & 0xf0ff, top = op & 0xf000;
@@ -63,7 +66,7 @@ static inline int ambient_sh2_control(SH2_struct* sh, uint16_t op)
     }
     sh->regs.PC = target;
     sh->cycles += 2;
-    SH2delay(sh, pc+2);
+    AMBIENT_SH2_DELAY(sh, pc+2);
     return 1;
 }
 #endif
