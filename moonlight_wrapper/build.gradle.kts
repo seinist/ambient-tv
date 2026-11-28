@@ -44,19 +44,21 @@ for (abi in abis) {
 val opusRoot = nativeRoot.resolve("moonlight-core/opus")
 val opusScript = rootProject.file("scripts/build_moonlight_opus.sh")
 val opusOutputs = abis.map { opusRoot.resolve("ambient-built/$it/libopus.a") }
+val opusSdk = androidComponents.sdkComponents.sdkDirectory
+val opusProjectDir = rootProject.projectDir
 val buildPinnedOpus = tasks.register("buildPinnedMoonlightOpus") {
     inputs.file(opusScript)
     inputs.dir(opusRoot.resolve("source"))
     inputs.property("abis", abis)
     inputs.property("ndk", "30.0.16248370")
     outputs.files(opusOutputs)
-    val sdk = androidComponents.sdkComponents.sdkDirectory
+    inputs.file(opusSdk.map { it.file("ndk/30.0.16248370/source.properties") })
     doLast {
-        val ndk = sdk.get().asFile.resolve("ndk/30.0.16248370")
+        val ndk = opusSdk.get().asFile.resolve("ndk/30.0.16248370")
         abis.forEach { abi ->
             val process = ProcessBuilder("bash", opusScript.absolutePath,
                 opusRoot.absolutePath, ndk.absolutePath, abi)
-                .directory(rootProject.projectDir).inheritIO().start()
+                .directory(opusProjectDir).inheritIO().start()
             check(process.waitFor() == 0) { "Pinned Opus build failed for $abi" }
         }
     }

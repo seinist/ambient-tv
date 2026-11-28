@@ -54,7 +54,24 @@ static void exercise(int ds, int ps, int size, int custom, uint32_t seed) {
         }
     }
 
-    // Multiple erasures use the existing general elimination path.
+    // Check double-erasure solver with every parity pair on small layouts.
+    if (ds <= 12 && ps >= 2) {
+        for (int x = 0; x < ds; x++) for (int y = x + 1; y < ds; y++) {
+            for (int p = 0; p < ps; p++) for (int q = p + 1; q < ps; q++) {
+                memset(marks, 0, sizeof(marks));
+                memset(marks + ds, 1, ps);
+                marks[ds + p] = marks[ds + q] = 0;
+                marks[x] = marks[y] = 1;
+                memset(shards[x], 0xA5, size);
+                memset(shards[y], 0x5A, size);
+                assert(reed_solomon_decode(rs, shards, marks, ds + ps, size) == 0);
+                assert(!memcmp(shards[x], original[x], size));
+                assert(!memcmp(shards[y], original[y], size));
+            }
+        }
+    }
+
+    // Three or more erasures continue to use general elimination.
     memset(marks, 0, sizeof(marks));
     int losses = ds < ps ? ds : ps;
     for (int i = 0; i < losses; i++) {

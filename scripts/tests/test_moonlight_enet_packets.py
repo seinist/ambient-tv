@@ -3,7 +3,8 @@
 import os
 from pathlib import Path
 import subprocess
-import sys
+import argparse
+import shutil
 import tempfile
 
 HARNESS = r"""
@@ -29,7 +30,40 @@ static void onFree(ENetPacket *p) {
     assert(p != NULL);
     callbacks++;
 }
+static uint32_t referenceCrc(const ENetBuffer *parts, size_t count) {
+    uint32_t crc = 0xffffffffu;
+    for (size_t i = 0; i < count; i++) {
+        const unsigned char *p = parts[i].data;
+        for (size_t j = 0; j < parts[i].dataLength; j++) {
+            crc ^= p[j];
+            for (int bit = 0; bit < 8; bit++)
+                crc = (crc >> 1) ^ ((0u - (crc & 1u)) & 0xedb88320u);
+        }
+    }
+    return ENET_HOST_TO_NET_32(~crc);
+}
+static void testCrc(void) {
+    ENetBuffer known = { .data = (void*)"123456789", .dataLength = 9 };
+    assert(enet_crc32(&known, 1) == ENET_HOST_TO_NET_32(0xcbf43926u));
+    assert(enet_crc32(NULL, 0) == 0);
+    unsigned char bytes[2050];
+    uint32_t rng = 9;
+    for (size_t i = 0; i < sizeof(bytes); i++) {
+        rng = rng * 1664525u + 1013904223u;
+        bytes[i] = (unsigned char)(rng >> 24);
+    }
+    for (size_t length = 0; length < 2048; length++) {
+        size_t split = length / 3;
+        ENetBuffer parts[] = {
+            { .data = bytes + 1, .dataLength = split },
+            { .data = bytes + 1 + split, .dataLength = 0 },
+            { .data = bytes + 1 + split, .dataLength = length - split }
+        };
+        assert(enet_crc32(parts, 3) == referenceCrc(parts, 3));
+    }
+}
 int main(void) {
+    testCrc();
     unsigned char data[64];
     memset(data, 0x5a, sizeof(data));
     ENetPacket *p = enet_packet_create(data, sizeof(data), 0);
@@ -69,16 +103,28 @@ int main(void) {
 """
 
 def main():
-    enet = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('enet', type=Path)
+    parser.add_argument('--arm64', action='store_true')
+    args = parser.parse_args()
+    enet = args.enet.resolve()
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         source = root / "packet_test.c"
         source.write_text(HARNESS)
         exe = root / "packet_test"
-        subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-O2",
-                        "-DHAS_SOCKLEN_T=1", "-I", str(enet / "include"),
-                        str(source), str(enet / "packet.c"), "-o", str(exe)], check=True)
+        common = ["-std=gnu11", "-O2", "-DHAS_SOCKLEN_T=1", "-I", str(enet / "include"),
+                  str(source), str(enet / "packet.c"), "-o", str(exe)]
+        subprocess.run([os.environ.get("CC", "cc"), *common], check=True)
         subprocess.run([str(exe)], check=True, timeout=30)
+        if args.arm64:
+            compiler = shutil.which("aarch64-linux-gnu-gcc")
+            emulator = shutil.which("qemu-aarch64")
+            assert compiler and emulator
+            subprocess.run([compiler, "-march=armv8-a", "-static", *common], check=True)
+            # Cortex-A53 has the CRC extension; Cortex-A57 is the Shield class.
+            subprocess.run([emulator, "-cpu", "cortex-a53", str(exe)], check=True, timeout=30)
+            subprocess.run([emulator, "-cpu", "max", str(exe)], check=True, timeout=30)
     print("ENet owned/external packet allocation, resize and teardown passed")
 
 if __name__ == "__main__":

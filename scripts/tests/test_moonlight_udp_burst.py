@@ -29,7 +29,25 @@ static void prepare(struct mmsghdr *messages, struct iovec *iov, char buffers[4]
         messages[i].msg_hdr.msg_iovlen = 1;
     }
 }
+static void testAdaptiveBatch(void) {
+    unsigned int full = 0, sparse = 0, target = 2;
+    for (int i = 0; i < 2; i++) target = nextVideoBatch(target, target, &full, &sparse);
+    assert(target == 2);
+    target = nextVideoBatch(target, target, &full, &sparse);
+    assert(target == 4);
+    for (int i = 0; i < 3; i++) target = nextVideoBatch(target, target, &full, &sparse);
+    assert(target == 8);
+    for (int i = 0; i < 100; i++) target = nextVideoBatch(target, target, &full, &sparse);
+    assert(target == 8);
+    for (int i = 0; i < 11; i++) target = nextVideoBatch(target, 1, &full, &sparse);
+    assert(target == 8);
+    target = nextVideoBatch(target, 1, &full, &sparse);
+    assert(target == 4);
+    for (int i = 0; i < 24; i++) target = nextVideoBatch(target, 0, &full, &sparse);
+    assert(target == 1);
+}
 int main(void) {
+    testAdaptiveBatch();
     int rx = socket(AF_INET, SOCK_DGRAM, 0);
     int tx = socket(AF_INET, SOCK_DGRAM, 0);
     assert(rx >= 0 && tx >= 0);
@@ -81,8 +99,8 @@ int main(void) {
 
 def main():
     source = Path(sys.argv[1]).read_text()
-    start = source.index("static int receiveVideoDatagrams(")
-    end = source.index("\n}", start) + 2
+    start = source.index("#define VIDEO_UDP_BATCH ")
+    end = source.index("\n}", source.index("static int receiveVideoDatagrams(")) + 2
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp)
         (path / "udp.c").write_text(HARNESS + source[start:end] + "\n" + TEST)

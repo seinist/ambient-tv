@@ -102,7 +102,7 @@ Sunshine, and the current-game check and remote quit are separate host requests.
   before the JNI short-array copy. ARM64 uses NEON for four frames per iteration,
   including saturation; other ABIs and remaining frames use the scalar
   implementation. Native allocation failure retains the Kotlin fallback.
-  The Opus archive and its corresponding-source pins are unchanged.
+  The Opus source pin is unchanged; the archive is now built locally.
 - The session-local network policy samples ENet RTT variance, observed frame
   gaps and network status once per second. After two pressure samples it may
   increase the audio reordering reserve (4–30 ms, in addition to the FEC
@@ -130,6 +130,21 @@ Sunshine, and the current-game check and remote quit are separate host requests.
   Multi-erasure reconstruction remains on the general solver. A regression
   harness checks unaligned buffers, odd lengths, every single erasure/parity
   row, multiple erasures, insufficient parity and concurrent initialization.
+
+- Opus 1.6.1 is fetched from the reviewed full commit and built from source
+  with the consuming NDK 30 toolchain for every requested ABI. Static PIC,
+  -O3, ThinLTO, upstream runtime SIMD selection and ARM64 Cortex-A57 tuning
+  are enabled. Fast-math is disabled; the original verified archive hashes
+  remain provenance records, not the linked library. CMake and Ninja are
+  required on the build host.
+- ENet selects an optional ARM64 IEEE CRC32 implementation through HWCAP;
+  generic builds keep the byte-table implementation. CRC32C is not used.
+  The tests compare the actual implementation to a polynomial reference.
+- NanoRS uses direct one- and two-erasure reconstruction and restricts general
+  elimination to the active matrix columns. The video receive owner adapts
+  recvmmsg batch width between 1 and 8 without waiting to fill a batch.
+  Queue-depth telemetry uses relaxed atomic loads; ownership, shutdown and
+  condition-variable behavior remain protected by the queue mutex.
 
 ## Release and device acceptance gates
 
