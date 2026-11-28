@@ -644,7 +644,6 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       VLC_EXPERIMENTAL_AHB: '1'
       VLC_VULKAN_ABIS: armeabi-v7a
-      VLC_SEEK_AUDIT_ABI: armeabi-v7a
       VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
       VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
       AMBIENT_VLC_CCACHE_ROOT: ${{ github.workspace }}/.native/vlc-ccache
@@ -793,7 +792,6 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       VLC_EXPERIMENTAL_AHB: '1'
       VLC_VULKAN_ABIS: x86
-      VLC_SEEK_AUDIT_ABI: x86
       VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
       VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
       AMBIENT_VLC_CCACHE_ROOT: ${{ github.workspace }}/.native/vlc-ccache

@@ -12,7 +12,7 @@ def require(condition, message):
 
 
 abi, source_hash, toolchain_hash = sys.argv[1:]
-require(abi in ("arm64-v8a", "x86_64"), "unsupported ABI")
+require(abi in ("arm64-v8a", "armeabi-v7a", "x86", "x86_64"), "unsupported ABI")
 root = pathlib.Path("native/vlc-aar/build/experimental")
 receipt = root / "native-link-receipt.txt"
 lines = receipt.read_text().splitlines()
@@ -28,8 +28,20 @@ with zipfile.ZipFile(aar_path) as aar:
     require(aar.testzip() is None, "corrupt ZIP member")
     require(len(aar.namelist()) == len(set(aar.namelist())), "duplicate ZIP members")
     require(aar.read("assets/ambient-vlc-extended-v1") == b"AHB DOVI FEL HDR10PLUS\n", "capability mismatch")
+    # The receipt is single-ABI. Check actual ELF class and machine, not
+    # only ZIP paths and hashes (a mislabeled binary could match its receipt).
+    elf_class, elf_machine = {
+        "armeabi-v7a": (1, 40), "arm64-v8a": (2, 183),
+        "x86": (1, 3), "x86_64": (2, 62),
+    }[abi]
     for name in ("libvlc.so", "libvlcjni.so"):
-        require(hashlib.sha256(aar.read(f"jni/{abi}/{name}")).hexdigest() == expected[name], name + " digest mismatch")
+        data = aar.read(f"jni/{abi}/{name}")
+        require(hashlib.sha256(data).hexdigest() == expected[name], name + " digest mismatch")
+        require(len(data) >= (52 if elf_class == 1 else 64) and data[:4] == b"\x7fELF"
+                and data[4] == elf_class and data[5:7] == b"\x01\x01"
+                and int.from_bytes(data[16:18], "little") == 3
+                and int.from_bytes(data[18:20], "little") == elf_machine,
+                name + " ELF ABI mismatch")
 head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 origin = next(x.split("=", 1)[1] for x in lines if x.startswith("ambient_head="))
 lines = [x for x in lines if not x.startswith(("ambient_head=", "cached_from_head="))]
