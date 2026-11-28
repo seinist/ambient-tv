@@ -313,22 +313,45 @@ fn bright_reduce(@builtin(local_invocation_index) lane:u32){
 var<workgroup> linear_values:array<u32,64>;
 @compute @workgroup_size(8,8)
 fn scene_linear_sum(@builtin(global_invocation_id) id:vec3u,@builtin(local_invocation_index) lane:u32){
-    var value=0u;
-    if all(id.xy<params.xy){
+    let valid=all(id.xy<params.xy);
+    var linear=0u;
+    if valid{
         let rgb=clamp(pq(textureLoad(source,vec2i(id.xy),0).rgb),vec3f(0.0),vec3f(1.0));
-        value=u32(round(max(rgb.x,max(rgb.y,rgb.z))*1000000000.0));
+        linear=u32(round(max(rgb.x,max(rgb.y,rgb.z))*1000000000.0));
     }
-    linear_values[lane]=value;
-    workgroupBarrier();
-    if lane==0u{
-        var lo=0u;var hi=0u;
-        for(var i=0u;i<64u;i++){
-            let v=linear_values[i];
-            if lo>0xffffffffu-v{hi+=1u;}
-            lo+=v;
+    for(var w=0u;w<params.z;w++){
+        let o=w*STRIDE;
+        let lo=vec2u(atomicLoad(&words[o]),atomicLoad(&words[o+1u]));
+        let hi=vec2u(atomicLoad(&words[o+2u]),atomicLoad(&words[o+3u]));
+        var value=0u;
+        if valid{
+        var inside=true;
+        if atomicLoad(&words[o+67u])==1u{
+            let center=vec2f(f32(atomicLoad(&words[o+52u])),f32(atomicLoad(&words[o+53u])))+
+                vec2f(f32(bitcast<i32>(atomicLoad(&words[o+41u]))),f32(bitcast<i32>(atomicLoad(&words[o+42u]))));
+            let axes=vec2f(f32(atomicLoad(&words[o+68u])),f32(atomicLoad(&words[o+69u])));
+            let rotation=f32(atomicLoad(&words[o+70u]))*0.017453292519943295;
+            let delta=vec2f(id.xy)-center;
+            let q=vec2f(dot(delta,vec2f(cos(rotation),sin(rotation)))/axes.x,
+                dot(delta,vec2f(-sin(rotation),cos(rotation)))/axes.y);
+            inside=dot(q,q)<=1.0;
         }
-        let old=atomicAdd(&words[56u],lo);
-        let carry=select(0u,1u,old>0xffffffffu-lo);
-        atomicAdd(&words[57u],hi+carry);
+        if inside&&all(id.xy>=lo)&&all(id.xy<hi){value=linear;}
+
+        }
+        linear_values[lane]=value;
+        workgroupBarrier();
+        if lane==0u{
+            var low=0u;var high=0u;
+            for(var i=0u;i<64u;i++){
+                let v=linear_values[i];
+                if low>0xffffffffu-v{high+=1u;}
+                low+=v;
+            }
+            let old=atomicAdd(&words[o+56u],low);
+            let carry=select(0u,1u,old>0xffffffffu-low);
+            atomicAdd(&words[o+57u],high+carry);
+        }
+        workgroupBarrier();
     }
 }
