@@ -63,7 +63,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                 outputChannels = count
                 scratch = if (count != inputChannels) ShortArray(samplesPerFrame * count) else ShortArray(0)
                 pending = ShortArray(samplesPerFrame * count)
-                minimumFrames = candidate.bufferSizeInFrames
+                minimumFrames = minimumBufferFrames(count, sampleRate, samplesPerFrame, candidate)
                 pendingLength = 0
                 resetQueue()
                 publishSnapshot(candidate)
@@ -71,6 +71,19 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
             }
             -1
         }
+
+    private fun minimumBufferFrames(channels: Int, sampleRate: Int, samplesPerFrame: Int, t: AudioTrack): Int {
+        val mask = when (channels) {
+            6 -> AudioFormat.CHANNEL_OUT_5POINT1
+            8 -> AudioFormat.CHANNEL_OUT_7POINT1_SURROUND
+            else -> AudioFormat.CHANNEL_OUT_STEREO
+        }
+        val minimumBytes = AudioTrack.getMinBufferSize(sampleRate, mask, AudioFormat.ENCODING_PCM_16BIT)
+        if (minimumBytes <= 0) return t.bufferSizeInFrames
+        val frameBytes = channels * 2
+        return max(samplesPerFrame, (minimumBytes + frameBytes - 1) / frameBytes)
+            .coerceAtMost(t.bufferSizeInFrames)
+    }
 
     private fun createTrack(channels: Int, sampleRate: Int, samplesPerFrame: Int): AudioTrack? {
         val channelMask = when (channels) {
@@ -101,6 +114,16 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
             }
             val packets = when (pacing) { "latency" -> 2; "smooth" -> 4; else -> 3 }
             runCatching { candidate.setBufferSizeInFrames(max(minimum / (channels * 2), samplesPerFrame * packets)) }
+            // Android 12+ permits playback to begin before the entire ring buffer fills.
+            // Retain the default threshold for smooth mode and surround fallback devices.
+            if (android.os.Build.VERSION.SDK_INT >= 31 && channels == 2 && lowLatency && pacing != "smooth" &&
+                candidate.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) {
+                val startPackets = if (pacing == "latency") 1 else 2
+                runCatching {
+                    candidate.setStartThresholdInFrames(
+                        (samplesPerFrame * startPackets).coerceIn(1, candidate.bufferSizeInFrames))
+                }
+            }
             return candidate
         }
         return null
@@ -268,7 +291,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     if (!released) track = old // preserve failed release for explicit teardown
                     else if (rebuilt != null) {
                         track = rebuilt
-                        minimumFrames = rebuilt.bufferSizeInFrames
+                        minimumFrames = minimumBufferFrames(outputChannels, rate, frameSamples, rebuilt)
                         resetQueue()
                         lastUnderruns = 0
                         stableIntervals = 0
