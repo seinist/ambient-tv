@@ -1117,7 +1117,21 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats(pair:*mut VulkanPair,phase:u32
         if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,None,None)else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,None,None,false)else{return -1;};
+        unsafe{job.record(p.command,p.core.width,p.core.height);}
+        p.hdr_jobs[i]=Some(job);0
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_scene(pair:*mut VulkanPair,phase:u32,
+    windows:*const HdrWindow,count:u32)->i32{
+    if pair.is_null()||windows.is_null()||count!=1{return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&mut *pair};let i=phase as usize;
+        if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
+            p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
+        let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,None,None,true)else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
@@ -1147,7 +1161,7 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_track(pair:*mut VulkanPair,pha
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
         let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,false)),None)else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,false)),None,false)else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
@@ -1162,7 +1176,7 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_affine(pair:*mut VulkanPair,ph
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
         let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,true)),None)else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,true)),None,false)else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
@@ -1177,7 +1191,7 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_ellipse(pair:*mut VulkanPair,p
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
         let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,true)),Some(unsafe{std::slice::from_raw_parts(ellipses,count as usize)}))else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,true)),Some(unsafe{std::slice::from_raw_parts(ellipses,count as usize)}),false)else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
