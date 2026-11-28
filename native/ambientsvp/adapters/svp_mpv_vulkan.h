@@ -50,6 +50,7 @@ struct svp_vk_mpv {
     int (*hdr_read_affine)(const AmbientSvpVkPair *,uint32_t,float (*)[4],uint32_t);
     int (*hdr_stats_ellipse)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],float,uint32_t);
     int (*hdr_stats_affine)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,float,uint32_t);
+    int (*hdr_read_ellipses)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[3],uint32_t);
     int (*hdr_read_rectangles)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
     int (*seal)(AmbientSvpVkPair *,VkFence);
     int (*release)(AmbientSvpVkPair *);
@@ -434,7 +435,7 @@ static void svp_vk_hdrplus_affine(AVHDRPlusColorTransformParams *p,const float g
     p->semimajor_axis_internal_ellipse=(uint16_t)inner;
 }
 static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResult results[3],
-    const int32_t (*shifts)[2],const float (*gradients)[4],const uint32_t (*rectangles)[4],bool elliptic,float phase,uint32_t count)
+    const int32_t (*shifts)[2],const float (*gradients)[4],const uint32_t (*rectangles)[4],const uint32_t (*ellipses)[3],bool elliptic,float phase,uint32_t count)
 {
     for(int i=0;i<img->num_ff_side_data;i++){
         if(img->ff_side_data[i].type!=AV_FRAME_DATA_DYNAMIC_HDR_PLUS)continue;
@@ -457,7 +458,16 @@ static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResu
                 p->window_lower_right_corner_x=(AVRational){box[2]-1,img->w-1};
                 p->window_lower_right_corner_y=(AVRational){box[3]-1,img->h-1};
             }
-            if(w&&gradients)svp_vk_hdrplus_affine(p,gradients[w],phase);
+            if(w&&ellipses){
+                const uint32_t *e=ellipses[w];
+                if(!e[0]||e[0]>65535||!e[1]||e[1]>e[0]||e[2]>180||!p->semimajor_axis_external_ellipse)return false;
+                uint32_t inner=(uint32_t)lround((double)p->semimajor_axis_internal_ellipse*e[0]/p->semimajor_axis_external_ellipse);
+                if(!inner||inner>e[0])return false;
+                p->semimajor_axis_internal_ellipse=inner;
+                p->semimajor_axis_external_ellipse=e[0];
+                p->semiminor_axis_external_ellipse=e[1];
+                p->rotation_angle=e[2];
+            }else if(w&&gradients)svp_vk_hdrplus_affine(p,gradients[w],phase);
             if(!r->pixels||r->brightest>r->pixels||r->average>100000||p->num_distribution_maxrgb_percentiles>15)return false;
             for(unsigned c=0;c<3;c++){
                 if(r->maxscl[c]>100000)return false;
@@ -617,6 +627,7 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     s->hdr_read_affine=dlsym(library,"ambient_svp_vk_hdr_read_affine");
     s->hdr_stats_ellipse=dlsym(library,"ambient_svp_vk_hdr_stats_ellipse");
     s->hdr_stats_affine=dlsym(library,"ambient_svp_vk_hdr_stats_affine");
+    s->hdr_read_ellipses=dlsym(library,"ambient_svp_vk_hdr_read_ellipses");
     s->hdr_read_rectangles=dlsym(library,"ambient_svp_vk_hdr_read_rectangles");
 #undef LOAD_API
     AVHWFramesContext *fc=(AVHWFramesContext *)img->hwctx->data;
@@ -914,7 +925,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
                 AmbientSvpHdrTrack tracks[3];
                 affine[i]=s->hdr_stats_affine&&s->hdr_read_rectangles&&s->hdr_read_affine;
                 if(!svp_vk_hdrplus_tracks(a,b,outputs[i],tracks,hdr_counts[i]))goto fail;
-                elliptic[i]=affine[i]&&s->hdr_stats_ellipse;
+                elliptic[i]=affine[i]&&s->hdr_stats_ellipse&&s->hdr_read_ellipses;
                 if(elliptic[i]){
                     const AVBufferRef *ref=svp_vk_hdr10plus(outputs[i]);
                     if(!ref||ref->size!=sizeof(AVDynamicHDRPlus))goto fail;
@@ -974,7 +985,9 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
             if(tracked[i]&&s->hdr_read_affine&&s->hdr_read_affine(j->pair,i,gradients,hdr_counts[i])!=1)goto submitted_fail;
             uint32_t rectangles[3][4]={{0}};
             if(affine[i]&&s->hdr_read_rectangles(j->pair,i,rectangles,hdr_counts[i])!=1)goto submitted_fail;
-            if(!svp_vk_hdrplus_measured(outputs[i],results,tracked[i]?shifts:NULL,gradients,affine[i]?rectangles:NULL,elliptic[i],phases[i],hdr_counts[i]))goto submitted_fail;
+            uint32_t ellipses[3][3]={{0}};
+            if(elliptic[i]&&s->hdr_read_ellipses(j->pair,i,ellipses,hdr_counts[i])!=1)goto submitted_fail;
+            if(!svp_vk_hdrplus_measured(outputs[i],results,tracked[i]?shifts:NULL,gradients,affine[i]?rectangles:NULL,elliptic[i]?ellipses:NULL,elliptic[i],phases[i],hdr_counts[i]))goto submitted_fail;
         }
     }
     return true;
