@@ -128,3 +128,8 @@ nits, neutral and in-gamut colored BT.709/BT.1886 SDR, and actual packed
 the production renderer, with deterministic dithering disabled for numeric
 comparison. Wide-gamut SDR compression remains renderer policy, not an
 independent normative reference.
+
+The lightweight native seek-audit APK now compiles and runs the actual app
+`VlcMetadataSocketAudit.kt` instrumentation source before the real JNI
+seek sequence. This avoids divergence between the app and audit receiver
+contracts and tests positive and terminal-negative ACKs on Android.

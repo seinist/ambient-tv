@@ -8,6 +8,9 @@ val syncSources = tasks.register<Sync>("syncProductionReceiver") {
     from(repo.resolve("app/src/main/java/com/ambient/tv/ui/player/backend")) {
         include("VlcTimedMetadata.kt", "VlcTimedMetadataReceiver.kt")
     }
+    from(repo.resolve("app/src/androidTest/java/com/ambient/tv/ui/player")) {
+        include("VlcMetadataSocketAudit.kt")
+    }
     into(layout.buildDirectory.dir("generated/receiver"))
 }
 android {

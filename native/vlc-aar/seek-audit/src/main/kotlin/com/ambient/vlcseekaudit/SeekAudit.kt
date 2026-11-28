@@ -5,6 +5,7 @@ import android.app.Instrumentation
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import com.ambient.tv.ui.player.auditVlcMetadataSocket
 import com.ambient.tv.ui.player.backend.VlcTimedMetadataInbox
 import com.ambient.tv.ui.player.backend.VlcTimedMetadataPacket
 import com.ambient.tv.ui.player.backend.VlcTimedMetadataReceiver
@@ -68,12 +69,16 @@ class SeekAudit : Instrumentation() {
                 finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "VLC DISPLAY FAILURE RECOVERY PASSED\n") })
                 return
             }
+            // Run the exact app instrumentation socket test against the real
+            // Android LocalServerSocket, not a separately maintained copy.
+            auditVlcMetadataSocket { android.util.Log.i("VlcSeekAudit", it) }
             val inbox = VlcTimedMetadataInbox()
             val session = inbox.beginSession()
             val received = LinkedBlockingQueue<VlcTimedMetadataPacket.Message.Epoch>()
             checkNotNull(VlcTimedMetadataReceiver.open {
-                inbox.offer(session, it)
-                if (it is VlcTimedMetadataPacket.Message.Epoch) received.offer(it)
+                val accepted = inbox.offer(session, it)
+                if (accepted && it is VlcTimedMetadataPacket.Message.Epoch) received.offer(it)
+                accepted
             }).use { receiver ->
                 val lib = LibVLC(targetContext, arrayListOf("--window=wdummy", "--vout=dummy", "--codec=avcodec", "--avcodec-hw=none", "--no-audio", "--verbose=2"))
                 try {
