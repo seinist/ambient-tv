@@ -163,10 +163,25 @@ fn collect(@builtin(global_invocation_id) id:vec3u){
             let gy=vec2f(bitcast<f32>(atomicLoad(&words[o+58u])),bitcast<f32>(atomicLoad(&words[o+59u])));
             let a=vec2f(1.0,0.0)+weight*gx;
             let b=vec2f(0.0,1.0)+weight*gy;
-            let det=a.x*b.y-a.y*b.x;
-            let original=vec2f(b.y*delta.x-b.x*delta.y,-a.y*delta.x+a.x*delta.y)/max(det,0.00001);
-            let q=vec2f(dot(original,vec2f(cos(angle),sin(angle)))/u,
-                dot(original,vec2f(-sin(angle),cos(angle)))/v);
+            let x=u*(a*cos(angle)+b*sin(angle));
+            let y=v*(-a*sin(angle)+b*cos(angle));
+            let xx=x.x*x.x+y.x*y.x;
+            let yy=x.y*x.y+y.y*y.y;
+            let xy=x.x*x.y+y.x*y.y;
+            let disc=length(vec2f(xx-yy,2.0*xy));
+            let major=sqrt(max(0.0,(xx+yy+disc)*0.5));
+            let minor=sqrt(max(0.0,(xx+yy-disc)*0.5));
+            var axes=vec2f(u,v);
+            var rotation=angle;
+            if major<=65535.0&&minor>=1.0&&weight>0.0&&any(vec4f(gx,gy)!=vec4f(0.0)){
+                axes=floor(vec2f(major,minor)+vec2f(0.5));
+                if disc>0.00000001{
+                    let degrees=atan2(2.0*xy,xx-yy)*28.64788975654116;
+                    rotation=sign(degrees)*floor(abs(degrees)+0.5)*0.017453292519943295;
+                }
+            }
+            let q=vec2f(dot(delta,vec2f(cos(rotation),sin(rotation)))/axes.x,
+                dot(delta,vec2f(-sin(rotation),cos(rotation)))/axes.y);
             inside=dot(q,q)<=1.0;
         }
         if inside&&all(id.xy>=lo)&&all(id.xy<hi){
