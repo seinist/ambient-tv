@@ -2348,11 +2348,26 @@ mod gpu_tests{
             d.queue_submit(queue,&[producer],fence).unwrap();
             let handles=held.each_ref().map(|img|img.image);
             let mut job=ptr::null_mut();
-            assert_eq!(ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,1,0.5,&mut job),0);
-            assert!(!job.is_null());
-            assert_eq!(ambient_svp_vk_retire_held(job,0),0);
-            assert_eq!(d.get_semaphore_counter_value(done).unwrap(),0);
-            d.signal_semaphore(&vk::SemaphoreSignalInfo::default().semaphore(gate).value(1)).unwrap();
+            // The producer gate is opened by a watchdog even if a future
+            // regression blocks the submit call, turning a hang into a failure.
+            std::thread::scope(|scope|{
+                let (release,blocked)=std::sync::mpsc::channel::<()>();
+                let dev=&d;
+                let watchdog=scope.spawn(move||{
+                    let early=blocked.recv_timeout(std::time::Duration::from_secs(30)).is_ok();
+                    unsafe{dev.signal_semaphore(&vk::SemaphoreSignalInfo::default().semaphore(gate).value(1))}.unwrap();
+                    early
+                });
+                let rc=ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,1,0.5,&mut job);
+                let pending=if job.is_null(){-1}else{ambient_svp_vk_retire_held(job,0)};
+                let counter=d.get_semaphore_counter_value(done).unwrap();
+                let _=release.send(());
+                assert!(watchdog.join().unwrap(),"held submit blocked on the GPU producer");
+                assert_eq!(rc,0);
+                assert!(!job.is_null());
+                assert_eq!(pending,0);
+                assert_eq!(counter,0);
+            });
             d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
             d.reset_fences(&[fence]).unwrap();
             d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();

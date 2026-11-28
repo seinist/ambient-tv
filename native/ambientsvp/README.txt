@@ -1456,10 +1456,17 @@ actual RGBA16F images, obtains libplacebo holds with binary
 semaphores, calls the common native Vulkan kernel on the same
 device, and releases the images with a timeline semaphore value.
 No CPU pixel copies. Only a common unprotected graphics/compute
-queue family is accepted. A native fence is waited synchronously
-before releasing the images; this is a correctness-first bridge
-and does not yet cache analysis across renderer phases or pipeline
-the submissions asynchronously. Unsupported devices/formats
+queue family is accepted. The optional submit_held/retire_held ABI
+submits metadata-free phases without waiting for the GPU on the
+CPU. Libplacebo receives the queued timeline value immediately,
+while native jobs own image views, motion fields and command/fence
+resources until verified retirement. The bridge retains binary
+hold semaphores, polls completed jobs, bounds pending work to four
+and drains before texture replacement/destruction or engine
+reconfiguration. Fence waits occur outside the queue mutex during
+async retirement. Older libraries retain the synchronous ABI.
+HDR statistics and scene pass readback still wait for completion;
+analysis is not yet cached across renderer phases. Unsupported devices/formats
 retain the original reconstructed source or normal FEL mapping.
 The generated RGB frame never reapplies RPU/EL metadata.
 
@@ -1479,7 +1486,8 @@ output lease/fence handling are retained.
 
 Build staging and fingerprints include the common quality ABI
 and libplacebo bridge. Added preset resolution regression tests,
-a Mesa binary-hold/timeline-release held-image execution fixture,
+a Mesa binary-hold/timeline-release held-image execution fixture
+with a host-gated producer and nonblocking submission assertion,
 a pinned libplacebo public-header syntax check and a configured
 Android physical-device preflight test. Full linked MPV/VLC builds,
 actual Android/FEL playback, synchronization validation on physical
