@@ -49,11 +49,11 @@ fn family_median(a:vec4f,b:vec4f,c:vec4f)->vec4f{
 fn family_blend(f:vec4f,b:vec4f,f0:vec4f,b0:vec4f,ff:vec4f,bb:vec4f,
     m:FamilyMotion,algo:u32)->vec4f{
     if m.cut{return select(f0,b0,m.time>=0.5);}
-    let sad_blend=AREA_BLEND;
+    let sad_blend=select(m.time*AREA_BLEND,1.0-AREA_BLEND*(1.0-m.time),m.time*256.0>126.0);
     var result=mix(f,b,m.time);
     switch algo{
         case 1u:{result=b;}
-        case 2u:{result=f;}
+        case 2u:{result=select(f,b,m.time>0.5-1.0/256.0);}
         case 11u:{}
         case 13u:{result=family_median(f,b,mix(f0,b0,sad_blend));}
         case 21u:{result=mix(mix(f,b,m.mask.y),mix(b,f,m.mask.z),m.time);}
@@ -63,7 +63,7 @@ fn family_blend(f:vec4f,b:vec4f,f0:vec4f,b0:vec4f,ff:vec4f,bb:vec4f,
         default:{}
     }
     if algo==1u{return mix(result,b0,m.mask.x);}
-    if algo==2u{return mix(result,f0,m.mask.w);}
+    if algo==2u{return select(mix(result,f0,m.mask.w),mix(result,b0,m.mask.x),m.time>0.5-1.0/256.0);}
     return mix(result,mix(f0,b0,sad_blend),max(m.mask.x,m.mask.w));
 }
 fn family_plane(a:texture_2d<f32>,b:texture_2d<f32>,p:vec2f,m:FamilyMotion,
