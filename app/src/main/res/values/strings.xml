@@ -2493,6 +2493,8 @@
     <string name="game_library_scanning">Scanning games…</string>
     <string name="game_library_scan_progress">Checked %1$d of %2$d discovered files</string>
     <string name="game_library_scan_cancel">Cancel scan</string>
+    <string name="game_library_change_system">Change system assignment</string>
+    <string name="game_library_change_system_hint">Keep ROMs and personal library choices; identify games for the new system.</string>
     <string name="vlc_experiment_title">Enable experimental VLC features</string>
     <string name="vlc_experiment_hint">When using Vulkan, tries new methods for smoother playback and better HDR10+ and Dolby Vision images. May be unstable. Applies from the next playback.</string>
     <string name="settings_vlc_hdr_gpu">Process HDR using GPU</string>

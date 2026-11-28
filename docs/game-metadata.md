@@ -12,7 +12,7 @@ Choose the provider, automatic matching, metadata language and preferred artwork
 
 | Source | What it provides | Setup |
 | --- | --- | --- |
-| Libretro name databases | Exact No-Intro names by ROM checksum (the DATs RetroArch loads with *Update Databases*), loaded on request under **Manage game folders and sources**, for all consoles in the library or single ones; the folders they affect are scanned again. Exact names are also used to look up available Libretro artwork | No account; cartridge systems only (disc images are not hashed) |
+| Libretro name databases | Automatic No-Intro, Redump and other verified catalog imports for supported systems during the first enabled scan; checksum identification for cartridges and exact release-title search for discs. Manual update remains available. | No account; full disc images are not hashed |
 | Local files | Curated text from `gamelist.xml`, plus cover/background files inside the assigned ROM folder | Read during an explicit file scan; no account |
 | Libretro | Cover art, screenshots and title screens using the system's thumbnail namespace and canonical game name | Default; no API key |
 | ScreenScraper | Game descriptions, release year, genres, developer/publisher, players and regional artwork when supplied by the service | Application developer ID/password; optional personal account |
@@ -22,7 +22,7 @@ Choose the provider, automatic matching, metadata language and preferred artwork
 Local curated values and explicit edits are protected by field locks. Provider identity and
 canonical title are separate from the displayed title, so renaming a game does not change its
 online match. Automatic matching uses existing catalog CRC data where available; it does not
-read a large disc image just to obtain a hash. A provider's unambiguous exact result can be
+read a large disc image just to obtain a hash. Nintendo DS and 3DS cartridge checksums support up to 512 MiB and 4 GiB respectively using bounded streaming reads; large cartridges on a NAS can therefore take longer on their first checksum scan. PSP ISO and supported CSO/ZSO images use bounded filesystem metadata reads. A provider's unambiguous exact result can be
 applied automatically. Other matches can be selected in the editor. Libretro artwork uses a
 static image collection. The identification editor also searches downloaded DAT names locally,
 including partial titles and regional editions. A catalog name can be selected without a cover;
@@ -34,7 +34,7 @@ Libretro artwork first uses the thumbnail server. If an image is missing there o
 returns an unusable image response, the downloader tries the same image in the official
 `libretro-thumbnails` GitHub repository for that exact system. The fallback keeps the same
 game name, image kind and provider; it does not guess another ROM or switch metadata services.
-Both paths use HTTPS and the same image size/format checks. A rejected image can also fall
+Both paths use HTTPS and the same image size/format checks. If the selected metadata provider has no platform mapping, an already configured compatible provider may be used for automatic identification. Manually locked matches are never switched. C128 has TheGamesDB coverage but no confirmed Libretro catalog; CBM-II has no confirmed upstream catalog or artwork namespace. Local sidecars and manual metadata remain usable for these systems. A rejected image can also fall
 back to the game's other artwork kinds or compatible system namespaces.
 
 Loading or importing a DAT immediately applies already cached checksums to existing games,
@@ -129,7 +129,7 @@ image download failures do not undo an accepted text match.
 Each assigned ROM folder has its own actions:
 
 - **Scan:** read that folder's playable files, reconcile removed ROM entries, import supported
-  local metadata/artwork, then enrich online if automatic matching is enabled.
+  local metadata/artwork, automatically prepare missing name catalogs, then enrich online if automatic matching is enabled. Auto-detected folders get a targeted checksum pass for newly discovered cartridge catalogs within the same scan.
 - **Metadata/artwork:** enrich its already indexed games without repeating the ROM scan or
   rereading ROM data. This explicit action works with automatic matching disabled, provided
   an online provider is selected.

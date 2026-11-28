@@ -26,6 +26,14 @@ class GameLibraryDatCacheTest {
         assertFalse(reuseDatLookup(game(checked = true, modified = 0), "snes", 42, 0))
     }
 
+    @Test fun completedNegativeChecksumAttemptsAreReusedUntilTheCatalogChanges() {
+        val missing = game(checked = true).copy(datVersion = 2)
+        assertTrue(reuseScanChecksums(missing, 2))
+        assertFalse(reuseScanChecksums(missing, 3))
+        assertTrue(reuseScanChecksums(missing.copy(archiveCrc = "DEADBEEF"), 3))
+        assertFalse(reuseScanChecksums(null, 2))
+    }
+
     @Test fun loadingADatRetriesAPreviouslyBoundedSevenZipProbeWithoutRepeatedHashing() {
         val bounded = game(checked = false).copy(filename = "game.7z", archiveCrc = null, datVersion = 0)
         assertFalse(needsArchiveDatChecksum("game.7z", bounded, 0))

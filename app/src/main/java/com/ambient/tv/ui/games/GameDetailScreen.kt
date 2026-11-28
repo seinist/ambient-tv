@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
@@ -78,6 +79,7 @@ fun GameDetailScreen(
 ) {
     val state by model.state.collectAsState()
     var editing by remember { mutableStateOf(false) }
+    var choosingSystem by remember { mutableStateOf(false) }
     var confirmFresh by remember { mutableStateOf(false) }
     var restoreEditFocus by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
@@ -85,7 +87,7 @@ fun GameDetailScreen(
     val editFocus = remember { FocusRequester() }
     val handheld = LocalHandheldUi.current
     val listState = rememberLazyListState()
-    BackHandler(enabled = !editing && !settingsOpen && !confirmFresh, onBack = onBack)
+    BackHandler(enabled = !editing && !settingsOpen && !confirmFresh && !choosingSystem, onBack = onBack)
     LaunchedEffect(state.game?.fileId, handheld) {
         if (handheld || state.game == null) return@LaunchedEffect
         repeat(4) {
@@ -164,6 +166,7 @@ fun GameDetailScreen(
                                     onPlay = { onPlay(game) }, onPlayFresh = { confirmFresh = true },
                                     onFavorite = model::favorite,
                                     onEdit = { editing = true }, onRefresh = model::refresh,
+                                     onChangeSystem = if (state.systemChoices.isNotEmpty()) ({ choosingSystem = true }) else null,
                                     primaryFocus = primaryFocus, editFocus = editFocus)
                             }
                             if (compact) Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -209,6 +212,25 @@ fun GameDetailScreen(
     }
     if (editing && state.game != null) GameMetadataEditor(
         game = state.game!!, state = state, model = model, onDismiss = closeEditor)
+    if (choosingSystem) com.ambient.tv.ui.common.AppDialog(
+        onDismiss = { choosingSystem = false },
+        title = stringResource(R.string.game_library_change_system),
+        fillHeight = true, scrollable = false,
+    ) {
+        TvLazyColumn(modifier = Modifier.fillMaxSize()) {
+            item {
+                com.ambient.tv.ui.common.SettingsNavigationRow(
+                    title = stringResource(R.string.game_library_auto), onClick = {
+                        choosingSystem = false
+                        model.changeSystem(null)
+                    })
+            }
+            items(state.systemChoices, key = { it.id }) { system ->
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = system.name,
+                    onClick = { choosingSystem = false; model.changeSystem(system.id) })
+            }
+        }
+    }
     if (confirmFresh) state.game?.let { game ->
         com.ambient.tv.ui.common.AppDialog(
             onDismiss = { confirmFresh = false },
@@ -240,6 +262,7 @@ private fun GameDetailInformation(
     onFavorite: () -> Unit,
     onEdit: () -> Unit,
     onRefresh: () -> Unit,
+    onChangeSystem: (() -> Unit)?,
     primaryFocus: FocusRequester,
     editFocus: FocusRequester,
 ) {
@@ -268,6 +291,10 @@ private fun GameDetailInformation(
         DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             TvActionButton(stringResource(R.string.game_detail_refresh), onClick = onRefresh,
                 enabled = !busy, icon = Icons.Filled.Refresh)
+            onChangeSystem?.let { change ->
+                TvActionButton(stringResource(R.string.game_library_change_system), onClick = change,
+                    enabled = !busy, icon = Icons.Filled.Edit)
+            }
         }
     }
 }
