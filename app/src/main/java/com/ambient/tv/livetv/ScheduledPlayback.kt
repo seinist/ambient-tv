@@ -76,7 +76,7 @@ internal fun LiveTvReminder.nextOccurrence(nowMs: Long): LiveTvReminder? {
     val zone = runCatching { ZoneId.of(p.zoneId) }.getOrElse { ZoneId.systemDefault() }
     var next = Instant.ofEpochSecond(startEpochSeconds).atZone(zone).plusWeeks(1)
     while (next.toInstant().toEpochMilli() <= nowMs) next = next.plusWeeks(1)
-    return copy(startEpochSeconds = next.toEpochSecond(), due = false, snoozedUntilMs = 0L, ready = false, probeAttempts = 0)
+    return copy(startEpochSeconds = next.toEpochSecond(), due = false, snoozedUntilMs = 0L, ready = false, probeAttempts = 0, automaticAttempted = false)
 }
 
 internal fun LiveTvReminder.overlaps(other: LiveTvReminder): Boolean {
