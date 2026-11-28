@@ -67,10 +67,51 @@ class UpdateManifestTest {
         ).forEach { assertFalse(trustedReleaseAsset(it)) }
     }
 
+    @Test fun updateAssetsAreBoundToOneReleaseAndFilename() {
+        val valid = "https://github.com/seinist/ambient-tv/releases/download/v1/app.apk"
+        assertTrue(trustedReleaseAsset(valid, "v1", "app.apk"))
+        assertFalse(trustedReleaseAsset(valid, "v2", "app.apk"))
+        assertFalse(trustedReleaseAsset(valid, "v1", "other.apk"))
+        assertFalse(trustedReleaseAsset(valid.replace("app.apk", "%61pp.apk")))
+        assertFalse(trustedReleaseAsset(valid.replace("v1", "modules-vlc-v1")))
+    }
+
+    @Test fun findsModularReleaseWhenLatestOnlyContainsFullAndDoesNotMixAssets() {
+        fun release(tag: String, variant: UpdateVariant) = org.json.JSONObject()
+            .put("tag_name", tag).put("draft", false).put("prerelease", false)
+            .put("assets", org.json.JSONArray().put(org.json.JSONObject()
+                .put("name", variant.manifestAsset)
+                .put("browser_download_url", "https://github.com/seinist/ambient-tv/releases/download/$tag/${variant.manifestAsset}")))
+        val full = release("v3", UpdateVariant.FULL)
+        val modular = release("v2", UpdateVariant.MODULAR)
+        val candidate = requireNotNull(UpdateReleaseDiscovery.find(UpdateVariant.MODULAR, {
+            assertTrue(it.endsWith("page=1"))
+            org.json.JSONArray().put(full).put(modular).toString()
+        }, full.toString()))
+        assertEquals("v2", org.json.JSONObject(candidate.release).getString("tag_name"))
+        assertTrue(candidate.manifestUrl.endsWith("/v2/update-modular.json"))
+        val bad = release("v4", UpdateVariant.MODULAR)
+        bad.getJSONArray("assets").getJSONObject(0).put("browser_download_url", candidate.manifestUrl)
+        assertTrue(runCatching {
+            UpdateReleaseDiscovery.find(UpdateVariant.MODULAR, { error("must not fall back") }, bad.toString())
+        }.isFailure)
+    }
+
+    @Test fun updateRedirectsCannotLeaveApprovedGithubOrigins() {
+        val initial = okhttp3.HttpUrl.Builder().scheme("https").host("github.com")
+            .addPathSegments("seinist/ambient-tv/releases/download/v1/app.apk").build()
+        val cdn = okhttp3.HttpUrl.Builder().scheme("https").host("release-assets.githubusercontent.com")
+            .addPathSegment("asset").addQueryParameter("token", "example").build()
+        assertTrue(trustedUpdateRedirect(initial, cdn))
+        assertFalse(trustedUpdateRedirect(initial, cdn.newBuilder().host("evil.example").build()))
+        assertFalse(trustedUpdateRedirect(initial, cdn.newBuilder().scheme("http").port(80).build()))
+        assertFalse(trustedUpdateRedirect(initial, initial.newBuilder().addPathSegment("other").build()))
+    }
+
     private fun cachedUpdater(code: Long = com.ambient.tv.BuildConfig.VERSION_CODE.toLong() + 1,
                               automatic: Boolean = false, wrongSize: Boolean = false): AppUpdater {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
-        val release = org.json.JSONObject().put("draft", false).put("prerelease", false).put("body", "Release notes")
+        val release = org.json.JSONObject().put("draft", false).put("prerelease", false).put("tag_name", "v1").put("body", "Release notes")
         val assets = org.json.JSONArray()
         listOf("arm.apk" to 500, "arm64.apk" to 600, "all.apk" to 700).forEach { (name, size) ->
             assets.put(org.json.JSONObject().put("name", name).put("size", if (wrongSize) 1 else size)

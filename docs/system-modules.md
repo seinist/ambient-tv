@@ -667,6 +667,16 @@ paths require explicit review and check main again before exposing a draft.
 Package generation and candidate verification also reject invalid roots,
 file/directory collisions, and unsupported ZIP entry types.
 
+### APK variant discovery and transport
+
+If the latest stable APK release lacks the requested variant, the updater
+searches at most ten pages of ten published releases for the first
+matching variant. A malformed matching manifest or asset stops discovery;
+it cannot silently select another release. Both manifest and APK URLs are
+bound to the exact release tag and filename, redirects are limited to
+known HTTPS GitHub asset hosts, and the installer still checks the signed
+APK identity and rejects downgrades. No automatic switch to Full occurs.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

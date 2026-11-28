@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.update
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 
 internal data class UpdateOffer(val manifest: UpdateManifest, val apk: UpdateApk, val url: String, val notes: String) {
@@ -52,7 +54,7 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
     internal val installedVariant = UpdateVariant.fromId(BuildConfig.MODULE_PACKAGING)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS).followSslRedirects(false).build()
+        .readTimeout(30, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
     private val directory get() = File(context.filesDir, "updates").apply { mkdirs() }
     private val mutable = MutableStateFlow(UpdateState(
         automatic = prefs.getBoolean("automatic", false), skipped = prefs.getLong("skipped", 0),
@@ -127,17 +129,16 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
         work = scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    val release = fetchJson("https://api.github.com/repos/$UPDATE_REPOSITORY/releases/latest")
-                    val json = JSONObject(release)
-                    require(!json.getBoolean("draft") && !json.getBoolean("prerelease"))
-                    val assets = json.getJSONArray("assets")
-                    val manifestAssets = (0 until assets.length()).map { assets.getJSONObject(it) }
-                        .filter { it.optString("name") == target.manifestAsset }
-                    if (manifestAssets.size != 1) throw UpdateFailure(R.string.update_manifest_missing)
-                    val manifestUrl = manifestAssets.single().getString("browser_download_url")
-                    require(trustedReleaseAsset(manifestUrl))
-                    val manifest = fetchJson(manifestUrl)
-                    Triple(release, manifest, parseOffer(release, manifest, target))
+                    val latest = try {
+                        fetchJson("${UpdateReleaseDiscovery.API}/latest")
+                    } catch (failure: UpdateFailure) {
+                        if (failure.resource != R.string.update_manifest_missing) throw failure
+                        null
+                    }
+                    val candidate = UpdateReleaseDiscovery.find(target, ::fetchJson, latest)
+                        ?: throw UpdateFailure(R.string.update_manifest_missing)
+                    val manifest = fetchJson(candidate.manifestUrl)
+                    Triple(candidate.release, manifest, parseOffer(candidate.release, manifest, target))
                 }
                 prefs.edit().putString("release", result.first).putString("manifest", result.second).apply()
                 mutable.update { it.copy(offer = result.third, checked = true,
@@ -167,15 +168,35 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
         require(matches.size == 1)
         val asset = matches.single()
         val url = asset.getString("browser_download_url")
-        require(trustedReleaseAsset(url) && asset.getLong("size") == apk.size)
+        require(trustedReleaseAsset(url, json.getString("tag_name"), apk.name) && asset.getLong("size") == apk.size)
         return UpdateOffer(manifest, apk, url, json.optString("body").take(12_000))
     }
 
+    private fun openTrusted(url: String, downloading: Boolean = false): Response {
+        val initial = url.toHttpUrl()
+        require(initial.host == "api.github.com" && initial.isHttps && initial.port == 443 &&
+            initial.username.isEmpty() && initial.password.isEmpty() ||
+            trustedReleaseAsset(url))
+        var next = initial
+        repeat(6) {
+            require(trustedUpdateRedirect(initial, next))
+            val request = Request.Builder().url(next)
+                .header("Accept", if (downloading) "application/octet-stream" else "application/vnd.github+json")
+                .header("Accept-Encoding", "identity")
+                .header("User-Agent", "AmbientTV/${BuildConfig.VERSION_NAME}").build()
+            val call = client.newCall(request)
+            if (downloading) downloadCall = call else call.timeout().timeout(45, TimeUnit.SECONDS)
+            val response = call.execute()
+            if (response.code !in setOf(301, 302, 303, 307, 308)) return response
+            response.use {
+                next = it.header("Location")?.let(next::resolve) ?: throw IOException("Invalid update redirect")
+            }
+        }
+        throw IOException("Too many update redirects")
+    }
+
     private fun fetchJson(url: String): String {
-        val request = Request.Builder().url(url).header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "AmbientTV/${BuildConfig.VERSION_NAME}").build()
-        val call = client.newCall(request).apply { timeout().timeout(45, TimeUnit.SECONDS) }
-        call.execute().use { response ->
+        openTrusted(url).use { response ->
             if (response.code == 403 || response.code == 429) throw UpdateFailure(R.string.update_rate_limited)
             if (response.code == 404) throw UpdateFailure(R.string.update_manifest_missing)
             if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
@@ -208,11 +229,12 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
                     if (directory.usableSpace < offer.apk.size * 2 + 32_000_000) throw UpdateFailure(R.string.update_no_space)
                     val part = File(directory, "download.part.apk")
                     try {
-                        val call = client.newCall(Request.Builder().url(offer.url).build())
-                        downloadCall = call
-                        call.execute().use { response ->
+                        openTrusted(offer.url, downloading = true).use { response ->
                             if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
                             val body = response.body
+                            if (response.header("Content-Encoding")?.equals("identity", true) == false ||
+                                (body.contentLength() >= 0 && body.contentLength() != offer.apk.size))
+                                throw UpdateFailure(R.string.update_invalid_apk)
                             val digest = MessageDigest.getInstance("SHA-256")
                             var count = 0L
                             body.byteStream().use { input ->
