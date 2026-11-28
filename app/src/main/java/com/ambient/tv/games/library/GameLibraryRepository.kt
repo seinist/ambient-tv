@@ -1361,6 +1361,9 @@ class GameLibraryRepository @Inject constructor(
                         try {
                             for (entry in queue) {
                                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                // Blocking ROM reads and checksum loops must receive thread interruption
+                                // when the user cancels this scan, not only between ROM files.
+                                kotlinx.coroutines.runInterruptible {
                                 // Cached ROMs need no file open and no extra login; create
                                 // the worker's session only on the first actual metadata read.
                                 val ext = GameSystems.extension(entry.name)
@@ -1368,7 +1371,10 @@ class GameLibraryRepository @Inject constructor(
                                     val refs = runCatching {
                                         val text = reader().readText(entry.path, 256 * 1024)
                                         GameDiscGrouping.referenced(entry.path, text)
-                                    }.getOrDefault(emptySet())
+                                    }.getOrElse { error ->
+                                        if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error
+                                        emptySet()
+                                    }
                                     if (refs.isNotEmpty()) descriptors[entry.path] = refs
                                 }
                                 val last = previous[entry.id]
@@ -1393,6 +1399,7 @@ class GameLibraryRepository @Inject constructor(
                                         // Network/decoder errors must NOT silently delete a
                                         // previously indexed title and commit a truncated DB.
                                         probed.getOrElse { problem ->
+                                            if (problem is InterruptedException || problem is kotlinx.coroutines.CancellationException) throw problem
                                             throw IOException(
                                                 "Archive metadata read failed: ${entry.name}",
                                                 problem,
@@ -1433,6 +1440,7 @@ class GameLibraryRepository @Inject constructor(
                                         last?.favorite ?: false, last?.lastPlayed ?: 0L,
                                         last?.customTitle, verified, probeVersion(system.id), version,
                                         checksums.crc32, checksums.datCrc32)
+                                }
                                 }
                                 val count = processed.incrementAndGet()
                                 if (count % 16 == 0 || count == discovered.get())

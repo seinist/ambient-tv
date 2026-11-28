@@ -22,6 +22,19 @@ class GameMetadataPolicyTest {
         assertEquals("1942 - Joint Strike", gameCatalogFilename("psp", "1942 - Joint Strike.iso"))
     }
 
+    @Test fun releaseAnnotationsBeforeAndAfterTitleAreSearchOnly() {
+        for (system in listOf("snes", "nds", "psp", "n64", "psx", "saturn", "gba", "c64")) {
+            val name = gameCatalogFilename(system, "[Release] (Europe) Ridge Racer [!] (Rev 1).zip")
+            assertEquals("Ridge Racer", gameMetadataSearchName(name))
+            assertEquals(listOf("Ridge Racer (Europe)"), matchingGameCatalogTitles(name,
+                listOf("Ridge Racer (Europe)", "Ridge Racer (USA)", "Ridge Racer 2 (Europe)")))
+        }
+        assertEquals("Game (Part II) - Adventure", gameMetadataSearchName("Game (Part II) - Adventure (USA)"))
+        assertEquals("[!]", gameMetadataSearchName("[!]"))
+        assertEquals(listOf("Game (Part II)"), matchingGameCatalogTitles("Game (Part II)",
+            listOf("Game (Part I)", "Game (Part II)")))
+    }
+
     @Test fun manualRenameNeverBecomesAutomaticSearchOrCoverIdentity() {
         val query = gameMetadataQuery(game(), null, "de", "eu", "0123ABCD")
         assertEquals("Original (Europe)", query.title)

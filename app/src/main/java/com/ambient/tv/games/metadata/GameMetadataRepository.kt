@@ -138,7 +138,10 @@ class GameMetadataRepository @Inject constructor(
             if (request.title.isBlank()) emptyList()
             else {
                 val candidates = if (provider == GameMetadataProviderIds.LIBRETRO) {
-                    val titles = library.searchDatTitles(current.systemId, request.title)
+                    val clean = gameMetadataSearchName(request.title)
+                    val titles = library.searchDatTitles(current.systemId, request.title).ifEmpty {
+                        if (clean != request.title) library.searchDatTitles(current.systemId, clean) else emptyList()
+                    }
                     GameMetadataPlatforms.libretroCandidates(request, titles).let { choices ->
                         // Catalog search is local and usable even if the artwork server is offline.
                         // Only fall back to probing guessed image names when the catalog has no hit.
@@ -321,9 +324,9 @@ class GameMetadataRepository @Inject constructor(
                         val hints = listOfNotNull(filename.takeIf(String::isNotBlank),
                             current.internalTitle?.takeIf(String::isNotBlank)).distinct()
                         hints.firstNotNullOfOrNull { hint ->
-                            val clean = com.ambient.tv.games.library.gameDisplayTitle(hint)
-                            val titles = library.searchDatTitles(current.systemId, hint) +
-                                if (clean != hint) library.searchDatTitles(current.systemId, clean) else emptyList()
+                            val queries = listOf(hint, com.ambient.tv.games.library.gameDisplayTitle(hint),
+                                gameMetadataSearchName(hint)).distinct()
+                            val titles = queries.flatMap { library.searchDatTitles(current.systemId, it) }.distinct()
                             matchingGameCatalogTitles(hint, titles).takeIf { it.isNotEmpty() }
                         }.orEmpty()
                     }

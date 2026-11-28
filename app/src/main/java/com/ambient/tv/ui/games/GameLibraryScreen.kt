@@ -93,6 +93,20 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/** Use a dedicated touch target on handheld; keep TV chip focus/navigation on television. */
+@Composable
+internal fun GameScanCancelButton(onCancel: () -> Unit) {
+    val label = stringResource(R.string.game_library_scan_cancel)
+    if (LocalHandheldUi.current) {
+        androidx.compose.material3.IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
+            androidx.compose.material3.Icon(Icons.Filled.Close, contentDescription = label,
+                tint = MaterialTheme.colorScheme.onSurface)
+        }
+    } else {
+        TvChip(text = label, icon = Icons.Filled.Close, iconOnly = true, onClick = onCancel)
+    }
+}
+
 /** The folder manager keeps one destination visible at a time; neither ROMs nor OSD are altered. */
 internal enum class GameLibraryManagerPage { HOME, ADD, SOURCES, FOLDER }
 
@@ -233,11 +247,10 @@ fun GameLibraryScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TvChip(text = stringResource(R.string.game_library_scan_cancel),
-                        icon = Icons.Filled.Close, iconOnly = true, onClick = {
-                            model.cancelScan()
-                            if (!handheld) runCatching { controls.refreshFocus.requestFocus() }
-                        })
+                    GameScanCancelButton {
+                        model.cancelScan()
+                        if (!handheld) runCatching { controls.refreshFocus.requestFocus() }
+                    }
                 }
             }
             if (showSearch) TvTextField(searchText, { searchText = it },
@@ -278,8 +291,7 @@ fun GameLibraryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(gameLibraryProgressMessage(androidx.compose.ui.platform.LocalContext.current, state),
                             modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                        TvChip(text = stringResource(R.string.game_library_scan_cancel), icon = Icons.Filled.Close,
-                            iconOnly = true, onClick = { model.cancelScan() })
+                        GameScanCancelButton(onCancel = model::cancelScan)
                     }
                 }
                 if (choosingDatSystem) {

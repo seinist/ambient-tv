@@ -200,7 +200,7 @@ class GameMetadataProviders @Inject constructor(
                 !query.serial.isNullOrBlank() -> builder.addQueryParameter("serialnum", query.serial.take(128))
                 hasIdentity -> builder.addQueryParameter("crc", crc).addQueryParameter("romtaille", query.size.toString())
                     .addQueryParameter("romnom", query.filename.take(512)).addQueryParameter("romtype", "rom")
-                else -> builder.addQueryParameter("recherche", query.title.take(256))
+                else -> builder.addQueryParameter("recherche", gameMetadataSearchName(query.title).take(256))
             }
             val payload = getJson(GameMetadataProviderIds.SCREENSCRAPER, builder.build(), missingIsEmpty = true) ?: continue
             results += parseScreenScraper(payload, query, platformIds.toSet(), hasIdentity, artworkKind)
@@ -229,7 +229,7 @@ class GameMetadataProviders @Inject constructor(
             .addQueryParameter("include", "boxart").addQueryParameter("filter[platform]", ids.joinToString(","))
         when { pinned != null -> builder.addQueryParameter("id", pinned)
             crc != null -> builder.addQueryParameter("hash", crc).addQueryParameter("filter[type]", "crc")
-            else -> builder.addQueryParameter("name", query.title.take(256)) }
+            else -> builder.addQueryParameter("name", gameMetadataSearchName(query.title).take(256)) }
         val payload = getJson(GameMetadataProviderIds.THEGAMESDB, builder.build(), missingIsEmpty = true)
             ?: return if (crc != null && pinned == null) theGamesDb(query.copy(crc32 = null), artworkKind) else emptyList()
         val gamesElement = payload.obj("data")["games"]

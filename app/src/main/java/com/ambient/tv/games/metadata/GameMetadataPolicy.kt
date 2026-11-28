@@ -49,6 +49,27 @@ internal fun gameCatalogFilename(systemId: String, filename: String): String {
         .replace('_', ' ').trim()
 }
 
+/** Search-only fallback: strip edge release annotations without altering the ROM, DAT name
+ * or pinned provider identity. Preserve parentheses inside the actual title. */
+internal fun gameMetadataSearchName(value: String): String {
+    var name = value.trim()
+    val prefix = Regex("""^(?:\([^()\[\]]*\)|\[[^()\[\]]*\])\s*[-_.]?\s*""")
+    val suffix = Regex("""\s*(?:\([^()\[\]]*\)|\[[^()\[\]]*\])$""")
+    while (true) {
+        val next = name.replace(prefix, "").replace(suffix, "").trim()
+        if (next == name) break
+        name = next
+    }
+    return name.ifBlank { value.trim() }
+}
+
+/** Retain locale information even for tags before the name. */
+private fun gameSearchLocaleTags(value: String): String {
+    val tags = Regex("""\([^()\[\]]*\)|\[[^()\[\]]*\]""").findAll(value)
+        .joinToString(" ") { it.value }
+    return "ROM $tags"
+}
+
 /** Filename/catalog agreement is not a checksum match. Restrict fallback to exact normalized
  * names, preserving explicit region/language tags and never selecting a partial title. */
 internal fun matchingGameCatalogTitles(hint: String, candidates: List<String>): List<String> {
@@ -57,13 +78,19 @@ internal fun matchingGameCatalogTitles(hint: String, candidates: List<String>): 
     val full = candidates.filter { gameDatSearchKey(it) == exact }.distinct()
     if (full.isNotEmpty()) return full
     val base = gameDatSearchKey(gameDisplayTitle(hint))
-    val region = gameTitleRegionLabel(hint)?.let(::gameDatSearchKey)
-    val language = gameTitleLanguageLabel(hint)?.let(::gameDatSearchKey)
-    return candidates.filter {
-        gameDatSearchKey(gameDisplayTitle(it)) == base &&
-            (region == null || gameTitleRegionLabel(it)?.let(::gameDatSearchKey) == region) &&
-            (language == null || gameTitleLanguageLabel(it)?.let(::gameDatSearchKey) == language)
+    val region = gameTitleRegionLabel(gameSearchLocaleTags(hint))?.let(::gameDatSearchKey)
+    val language = gameTitleLanguageLabel(gameSearchLocaleTags(hint))?.let(::gameDatSearchKey)
+    val compatible = candidates.filter {
+        (region == null || gameTitleRegionLabel(gameSearchLocaleTags(it))?.let(::gameDatSearchKey) == region) &&
+            (language == null || gameTitleLanguageLabel(gameSearchLocaleTags(it))?.let(::gameDatSearchKey) == language)
     }.distinct()
+    val normal = compatible.filter { gameDatSearchKey(gameDisplayTitle(it)) == base }
+    if (normal.isNotEmpty()) return normal
+    val clean = gameDatSearchKey(gameMetadataSearchName(hint))
+    if (clean.isBlank()) return emptyList()
+    // Prefer a real catalog title over another annotated guess. Do not equate different
+    // meaningful parenthetical subtitles merely because their stripped stems coincide.
+    return compatible.filter { gameDatSearchKey(gameDisplayTitle(it)) == clean }
 }
 
 /** Includes file version and locale so a previous miss cannot suppress a new ROM/region. */
@@ -78,8 +105,7 @@ internal fun gameMetadataDigest(value: String): String = MessageDigest.getInstan
 
 /** Old primary-only Libretro misses must not hide images now available from its mirror. */
 internal fun gameMetadataLookupFingerprint(provider: String, fingerprint: String): String =
-    if (provider == GameMetadataProviderIds.LIBRETRO) gameMetadataDigest("libretro-thumbnails:v3:$fingerprint")
-    else fingerprint
+    gameMetadataDigest("rom-search:v4:$provider:$fingerprint")
 
 /** A cached success for a query is usable only while its saved identity still answers it. */
 internal fun gameMetadataMatchesQueryIdentity(metadata: GameMetadata, query: GameMetadataQuery): Boolean =

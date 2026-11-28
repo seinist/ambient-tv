@@ -260,7 +260,7 @@ internal fun gameMetadataSearchTitle(
     game: LibraryGame,
     metadata: GameMetadata,
     provider: String = metadata.provider.ifBlank { com.ambient.tv.games.metadata.GameMetadataProviderIds.LIBRETRO },
-): String = gameDisplayTitle(
+): String = com.ambient.tv.games.metadata.gameMetadataSearchName(
     com.ambient.tv.games.metadata.gameMetadataQuery(game, metadata, "", "", null, provider = provider).title)
 
 /** Provider changes may replace a suggested query, but never text the user entered. */
