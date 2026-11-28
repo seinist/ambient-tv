@@ -56,8 +56,14 @@ internal fun matchingGameCatalogTitles(hint: String, candidates: List<String>): 
     if (exact.isEmpty()) return emptyList()
     val full = candidates.filter { gameDatSearchKey(it) == exact }.distinct()
     if (full.isNotEmpty()) return full
-    if (gameTitleRegionLabel(hint) != null || gameTitleLanguageLabel(hint) != null) return emptyList()
-    return candidates.filter { gameDatSearchKey(gameDisplayTitle(it)) == exact }.distinct()
+    val base = gameDatSearchKey(gameDisplayTitle(hint))
+    val region = gameTitleRegionLabel(hint)?.let(::gameDatSearchKey)
+    val language = gameTitleLanguageLabel(hint)?.let(::gameDatSearchKey)
+    return candidates.filter {
+        gameDatSearchKey(gameDisplayTitle(it)) == base &&
+            (region == null || gameTitleRegionLabel(it)?.let(::gameDatSearchKey) == region) &&
+            (language == null || gameTitleLanguageLabel(it)?.let(::gameDatSearchKey) == language)
+    }.distinct()
 }
 
 /** Includes file version and locale so a previous miss cannot suppress a new ROM/region. */
