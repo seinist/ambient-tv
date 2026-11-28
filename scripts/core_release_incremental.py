@@ -240,6 +240,49 @@ def select(matrix, records, latest_keys, profile, ndk, force=False, root=ROOT):
             "total": len(desired), "rebuilt": len(build)}
 
 
+def verify_build_artifacts(matrix, directory, ndk):
+    """Match the exact downloaded bytes to the successful build's evidence."""
+    from core_build_policy import verify_elf_abi, REQUIRED_EXPORTS, ALLOWED_NEEDED
+    from check_elf_pages import load_alignments, MIN_ALIGN
+
+    jobs = matrix["include"]
+    if len({key(job) for job in jobs}) != len(jobs):
+        raise ValueError("Duplicate planned artifact")
+    evidence = {}
+    for job in jobs:
+        core, abi = key(job)
+        artifact = job["artifact"]
+        expected_name = ("core" if job["profile"] == "baseline" else "candidate-" + job["profile"]) + f"-{core}-{abi}"
+        if artifact != expected_name or Path(artifact).name != artifact:
+            raise ValueError("Unexpected planned artifact identity")
+        folder = directory / artifact
+        binary = folder / f"{core}_libretro_android.so"
+        report_path = folder / "build.json"
+        if not binary.is_file() or not report_path.is_file():
+            raise ValueError(f"{core}/{abi}: missing binary or build report")
+        report_bytes = report_path.read_bytes()
+        report = json.loads(report_bytes)
+        expected = {field: job[field] for field in ("core", "abi", "commit", "profile", "fingerprint")}
+        expected["ndk"] = ndk
+        if not HEX.fullmatch(job["fingerprint"]) or any(report.get(k) != val for k, val in expected.items()):
+            raise ValueError(f"{core}/{abi}: build report recipe mismatch")
+        with binary.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if report.get("binary_sha256") != actual or report.get("binary_bytes") != binary.stat().st_size:
+            raise ValueError(f"{core}/{abi}: build report binary hash/size mismatch")
+        identity = verify_elf_abi(binary, abi)
+        aligns = load_alignments(binary)
+        if not aligns or any(a < MIN_ALIGN for a in aligns) or any(report.get(k) != val for k, val in identity.items()):
+            raise ValueError(f"{core}/{abi}: ELF identity or alignment mismatch")
+        if (report.get("export_count", 0) < len(REQUIRED_EXPORTS) or
+                report.get("linked_compile_commands", 0) < 1 or report.get("unresolved_local_inputs") != [] or
+                not isinstance(report.get("needed_libraries"), list) or
+                not set(report["needed_libraries"]) <= ALLOWED_NEEDED):
+            raise ValueError(f"{core}/{abi}: incomplete native verification evidence")
+        evidence[artifact] = {"binary_sha256": actual, "build_report_sha256": digest(report_bytes), "report": report}
+    return evidence
+
+
 def stage_reuse(repo, reuse, destination):
     destination.mkdir(parents=True, exist_ok=True)
     entries = []
@@ -279,11 +322,19 @@ def main():
     p.add_argument("--profile", required=True, choices=("baseline", "optimized", "optimized-a57", "citra-arm64-jit", "yabause-arm64-jit"))
     p.add_argument("--ndk", required=True)
     p.add_argument("--current-root", type=Path, required=True)
+    p = sub.add_parser("verify-artifacts")
+    p.add_argument("--matrix", required=True)
+    p.add_argument("--directory", type=Path, required=True)
+    p.add_argument("--ndk", required=True)
     p = sub.add_parser("reuse")
     p.add_argument("--repo", required=True)
     p.add_argument("--records", required=True)
     p.add_argument("--destination", type=Path, required=True)
     args = parser.parse_args()
+    if args.action == "verify-artifacts":
+        print(json.dumps(verify_build_artifacts(json.loads(args.matrix), args.directory, args.ndk),
+                         separators=(",", ":"), sort_keys=True))
+        return
     if args.action == "cache-key":
         job = json.loads(args.job)
         fp = fingerprint(job, args.ndk)

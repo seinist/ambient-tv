@@ -1,12 +1,14 @@
 import json
 import shutil
+import hashlib
+import struct
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from core_build_policy import plan
-from core_release_incremental import fingerprint, key, select, stage_reuse, signed_history, assert_current_recipe
+from core_release_incremental import fingerprint, key, select, stage_reuse, signed_history, assert_current_recipe, verify_build_artifacts
 
 
 class IncrementalCoreReleaseTest(unittest.TestCase):
@@ -232,6 +234,49 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         self.assertNotIn("format('candidate-{0}-*'", single)
         self.assertIn("force_rebuild: ${{ inputs.force_rebuild || false }}", all_profiles)
         self.assertFalse((root / "cores-experimental.yml").exists())
+
+    def test_publication_rechecks_downloaded_binary_and_report(self):
+        from core_build_policy import REQUIRED_EXPORTS
+        job = next(j for j in self.matrix["include"] if j["abi"] == "arm64-v8a")
+        job = dict(job, fingerprint=fingerprint(job, self.ndk))
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            folder = directory / job["artifact"]
+            folder.mkdir()
+            binary = folder / (job["core"] + "_libretro_android.so")
+            # Minimal synthetic ELF header with a 16 KiB PT_LOAD. Exports
+            # and link evidence are normally supplied by the actual build.
+            elf = bytearray(120)
+            elf[:7] = b"\x7fELF\x02\x01\x01"
+            struct.pack_into("<HHI", elf, 16, 3, 183, 1)
+            struct.pack_into("<Q", elf, 32, 64)
+            struct.pack_into("<HH", elf, 54, 56, 1)
+            struct.pack_into("<I", elf, 64, 1)
+            struct.pack_into("<Q", elf, 112, 16384)
+            binary.write_bytes(elf)
+            report = {k: job[k] for k in ("core", "abi", "commit", "profile", "fingerprint")}
+            report.update(ndk=self.ndk, elf_class=64, elf_machine=183,
+                          binary_sha256=hashlib.sha256(elf).hexdigest(),
+                          binary_bytes=len(elf), export_count=len(REQUIRED_EXPORTS),
+                          linked_compile_commands=1, unresolved_local_inputs=[], needed_libraries=["libc.so"])
+            path = folder / "build.json"
+            path.write_text(json.dumps(report))
+            matrix = {"include": [job]}
+            result = verify_build_artifacts(matrix, directory, self.ndk)
+            self.assertEqual(result[job["artifact"]]["binary_sha256"], report["binary_sha256"])
+            for changed in (dict(profile="optimized"), dict(fingerprint="0"*64),
+                            dict(unresolved_local_inputs=["bad.o"]), dict(needed_libraries=["unknown.so"])):
+                path.write_text(json.dumps({**report, **changed}))
+                with self.assertRaises(ValueError):
+                    verify_build_artifacts(matrix, directory, self.ndk)
+            path.write_text(json.dumps(report))
+            binary.write_bytes(elf + b"bad")
+            with self.assertRaisesRegex(ValueError, "hash/size"):
+                verify_build_artifacts(matrix, directory, self.ndk)
+            binary.write_bytes(elf)
+            path.unlink()
+            with self.assertRaisesRegex(ValueError, "missing binary or build report"):
+                verify_build_artifacts(matrix, directory, self.ndk)
 
     def test_reuse_rejects_tampered_asset(self):
         record = {"tag": "cores-1", "entry": {"core": "mgba", "abi": "arm64-v8a",

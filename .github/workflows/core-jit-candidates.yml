@@ -35,6 +35,14 @@ jobs:
           git -C "$tmp" show FETCH_HEAD:yabause/src/sh2int.c > "$tmp/sh2int.c"
           python3 scripts/native_core_candidates/sh2_memory_differential.py --upstream "$tmp/sh2int.c"
           python3 scripts/native_core_candidates/sh2_native_differential.py --upstream "$tmp/sh2int.c"
+          # The differential harness uses the original pinned handlers, not
+          # the production source patcher. Verify both together explicitly.
+          git -C "$tmp" checkout -q --detach FETCH_HEAD
+          python3 scripts/core_build_policy.py prepare-hotpaths --root "$tmp" --core yabause --profile yabause-arm64-jit
+          python3 scripts/core_yabause_arm64.py --root "$tmp"
+          grep -F 'ambient_sh2_try_in_scope(context, cycles, &ambient_scope)' "$tmp/yabause/src/sh2int.c"
+          grep -F 'ambient_sh2_note_bulk_write();' "$tmp/yabause/src/sh2core.c"
+          grep -F 'ambient_sh2_t2_written(mem,addr,4);' "$tmp/yabause/src/memory.h"
   candidates:
     strategy:
       fail-fast: false

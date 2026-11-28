@@ -331,6 +331,7 @@ jobs:
           LDFLAGS_EXTRA: ${{ matrix.ldflags }}
           MAKEVARS: ${{ matrix.makevars }}
           PGO_SHA256: ${{ inputs.pgo_sha256 }}
+          CORE_FINGERPRINT: ${{ matrix.fingerprint }}
         run: |
           set -euo pipefail
           mkdir -p out reports
@@ -420,13 +421,21 @@ jobs:
           python3 scripts/core_build_policy.py report --nm "$bin/llvm-nm" --readelf "$bin/llvm-readelf" --binary "$target" --linked-library "$lib" \
             --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
             --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --source-recipe "$source_recipe" --build-cwd "$build_cwd" --output reports/build.json
+          if [[ -n "$CORE_FINGERPRINT" ]]; then
+            [[ "$CORE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+            jq --arg fp "$CORE_FINGERPRINT" '.fingerprint=$fp' reports/build.json > out/build.json
+            mv out/build.json reports/build.json
+          fi
+          cp reports/build.json out/build.json
           cat reports/build.json
           if [ -n "${CORE_CCACHE:-}" ]; then ccache --show-stats || true; fi
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: out/*.so
+          path: |
+            out/*.so
+            out/build.json
           if-no-files-found: error
           retention-days: 14
 
@@ -526,6 +535,12 @@ jobs:
             echo "::error::Expected ${#expected[@]} core builds, got $actual"
             exit 1
           }
+          # Recheck the downloaded binary rather than trusting its filename.
+          # The evidence bundle remains available even after CI artifacts expire.
+          python3 scripts/core_release_incremental.py verify-artifacts --matrix "$EXPECTED_MATRIX" \
+            --directory artifacts --ndk "$NDK_VERSION" > "$RUNNER_TEMP/core-build-evidence.json"
+          jq -n --slurpfile builds "$RUNNER_TEMP/core-build-evidence.json" --argjson reuse "$REUSE" \
+            '{version:1, builds:$builds[0], reused:[$reuse[] | {tag,entry}]}' > release/build-evidence.json
           entries=$(python3 scripts/core_release_incremental.py reuse --repo "$GITHUB_REPOSITORY" --records "$REUSE" --destination release)
           for dir in artifacts/"$prefix"*; do
             name=${dir#artifacts/"$prefix"}
@@ -537,8 +552,11 @@ jobs:
             (cd "$dir" && zip -q -X "../../release/$asset" "${core}_libretro_android.so")
             entries=$(jq -c --arg core "$core" --arg abi "$abi" --arg asset "$asset" \
               --arg sha "$(sha256sum "release/$asset" | cut -d' ' -f1)" --argjson size "$(stat -c %s "release/$asset")" \
-              --argjson matrix "$EXPECTED_MATRIX" \
+              --argjson matrix "$EXPECTED_MATRIX" --arg build "${dir#artifacts/}" \
+              --slurpfile evidence "$RUNNER_TEMP/core-build-evidence.json" \
               '. + [{ core: $core, abi: $abi, asset: $asset, sha256: $sha, size: $size,
+                      binary_sha256: $evidence[0][$build].binary_sha256,
+                      build_report_sha256: $evidence[0][$build].build_report_sha256,
                       commit: ($matrix.include[] | select(.core == $core and .abi == $abi) | .commit),
                       repo: ($matrix.include[] | select(.core == $core and .abi == $abi) | .repo),
                       fingerprint: ($matrix.include[] | select(.core == $core and .abi == $abi) | .fingerprint) }]' <<< "$entries")
@@ -546,7 +564,8 @@ jobs:
           count="$TOTAL"
           jq -e --argjson count "$count" 'length == $count and ([.[] | [.core,.abi]] | unique | length) == $count and all(.[]; .fingerprint | test("^[0-9a-f]{64}$"))' <<< "$entries" >/dev/null
           jq -n --arg tag "$tag" --arg profile "$PROFILE" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
-            '{ version: 1, tag: $tag, profile: $profile, created: $created, cores: $cores }' > release/manifest.json
+            --arg evidence "$(sha256sum release/build-evidence.json | cut -d' ' -f1)" \
+            '{ version: 1, tag: $tag, profile: $profile, created: $created, cores: $cores, build_evidence_sha256: $evidence }' > release/manifest.json
           key="$RUNNER_TEMP/ambient-cores-release-key.pem"
           trap 'rm -f "$key"' EXIT
           umask 077

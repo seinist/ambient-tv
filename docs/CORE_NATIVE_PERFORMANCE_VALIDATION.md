@@ -240,3 +240,12 @@ catalog entry. PGO-use keys also include the exact trained profile digest.
 Fallback cache restoration is restricted to the same core, ABI, profile
 and NDK; ccache checks compiler content, flags and included source files.
 A cache hit is never substituted for ELF or link-evidence verification.
+
+Signed core releases now recheck every downloaded binary against its exact
+planned core/ABI/pin/profile/NDK/fingerprint, report SHA-256, byte count,
+ELF architecture and PT_LOAD alignment before packaging. The build report
+must attest complete exports, linked objects and allowed dependencies.
+The signed manifest binds a persistent build-evidence.json asset, containing
+new build reports and the originating signed entries of reused binaries.
+The ARM64 differential gate also applies the production Yabause hotpath and
+JIT source patchers to the actual pinned checkout before approving a candidate.
