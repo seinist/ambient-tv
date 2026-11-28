@@ -4,7 +4,6 @@ import android.content.Context
 import com.ambient.tv.modules.SystemModule
 import com.ambient.tv.modules.SystemModuleAvailability
 import com.ambient.tv.modules.SystemModuleHost
-import org.videolan.libvlc.LibVLC
 
 /** Cold-start selection shared by every LibVLC constructor and capability probe. */
 object VlcBackendAvailability {
@@ -32,7 +31,7 @@ object VlcBackendAvailability {
                 if (!SystemModuleAvailability.bundled(SystemModule.VLC)) return false
                 System.clearProperty("ambient.vlc.native.directory")
             }
-            val instance = LibVLC(context.applicationContext, arrayListOf("--verbose=0"))
+            val instance = VlcEngineRuntime.engine.createLibrary(context.applicationContext, arrayListOf("--verbose=0"))
             instance.release()
             ready = true
             return true

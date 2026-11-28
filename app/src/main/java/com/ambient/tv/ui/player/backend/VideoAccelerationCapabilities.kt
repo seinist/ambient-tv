@@ -13,7 +13,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import org.videolan.libvlc.LibVLC
 import timber.log.Timber
 
 internal object VulkanNativeProbe {
@@ -63,7 +62,7 @@ object VideoAccelerationRuntime {
                 } else 0
                 val vlcReady = VlcBackendAvailability.probe(context)
                 val vlc = if (vlcReady && VulkanNativeProbe.available) runCatching {
-                    val instance = LibVLC(context.applicationContext, arrayListOf("--verbose=0"))
+                    val instance = VlcEngineRuntime.engine.createLibrary(context.applicationContext, arrayListOf("--verbose=0"))
                     try { VulkanNativeProbe.vlcModules() } finally { instance.release() }
                 }.getOrDefault(false) else false
                 val eglPq = MpvEglHdrProbe.hdr10Pq()

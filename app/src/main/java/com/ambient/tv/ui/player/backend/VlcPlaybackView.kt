@@ -33,10 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
-import org.videolan.libvlc.interfaces.IVLCVout
-import org.videolan.libvlc.LibVLC
-import org.videolan.libvlc.Media
-import org.videolan.libvlc.MediaPlayer
 import timber.log.Timber
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.LocalPlaybackMetadata
@@ -76,9 +72,9 @@ internal class VlcFrameDropSampleState {
         discontinuity()
     }
 
-    fun onEvent(type: Int, bufferPercent: Float = 100f) {
+    fun onEvent(type: VlcEventKind, bufferPercent: Float = 100f) {
         when (type) {
-            MediaPlayer.Event.Buffering -> {
+            VlcEventKind.Buffering -> {
                 if (!bufferPercent.isFinite() || bufferPercent !in 0f..100f) return
                 val active = bufferPercent < 100f
                 if (active != buffering) {
@@ -86,9 +82,10 @@ internal class VlcFrameDropSampleState {
                     discontinuity()
                 }
             }
-            MediaPlayer.Event.Opening, MediaPlayer.Event.Playing, MediaPlayer.Event.Paused,
-            MediaPlayer.Event.Stopped, MediaPlayer.Event.EndReached, MediaPlayer.Event.EncounteredError ->
+            VlcEventKind.Opening, VlcEventKind.Playing, VlcEventKind.Paused,
+            VlcEventKind.Stopped, VlcEventKind.EndReached, VlcEventKind.EncounteredError ->
                 discontinuity()
+            else -> Unit
         }
     }
 }
@@ -190,11 +187,12 @@ class VlcPlaybackController(
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
     /** An option this LibVLC build does not know fails the whole instance: retry without the subtitle look. */
-    private fun createLibVlc(): LibVLC = runCatching { createLibVlc(subtitleLook = true) }.getOrElse { error ->
+    private val engine = VlcEngineRuntime.engine
+    private fun createLibVlc(): VlcLibraryPort = runCatching { createLibVlc(subtitleLook = true) }.getOrElse { error ->
         timber.log.Timber.w(error, "VLC rejected the subtitle look options; using its defaults")
         createLibVlc(subtitleLook = false)
     }
-    private fun createLibVlc(subtitleLook: Boolean) = LibVLC(
+    private fun createLibVlc(subtitleLook: Boolean) = engine.createLibrary(
         context,
         arrayListOf(
             "--network-caching=1200",
@@ -226,11 +224,9 @@ class VlcPlaybackController(
     )
     private var libVlc = createLibVlc()
     /** A DV-surface swap retires a player asynchronously; its LibVLC must outlive it. */
-    private val libVlcRelease = VlcLibraryReleaseGate<LibVLC> { it.release() }
-    var player = MediaPlayer(libVlc)
-        private set
-    internal var trackAccess = VlcTrackAccess(player)
-        private set
+    private val libVlcRelease = VlcLibraryReleaseGate<VlcLibraryPort> { it.release() }
+    private var player = libVlc.createPlayer()
+    private val trackAccess = engine.createTracks(player)
     // libVLC has no option for HTTP credentials (`:http-user`/`:http-pwd` are silently ignored)
     // and writes every MRL to its log, so they must never reach it. An authenticated TVHeadend
     // stream is opened through a loopback relay that adds the header inside the app instead.
@@ -249,7 +245,7 @@ class VlcPlaybackController(
         disconnect = { if (!released) player.vlcVout.detachViews() },
         routeInput = { surface ->
             if (!released) {
-                player.vlcVout.setVideoSurface(surface, null)
+                player.vlcVout.setVideoSurface(surface)
                 player.vlcVout.attachViews()
             }
         },
@@ -459,11 +455,11 @@ class VlcPlaybackController(
             filter != null -> setDeinterlace(deinterlaceMode, filter)
         }
     }
-    private val surfaceCallback = object : IVLCVout.Callback {
-        override fun onSurfacesCreated(vout: IVLCVout) {
+    private val surfaceCallback = object : VlcOutputPort.Callback {
+        override fun onSurfacesCreated() {
             attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
         }
-        override fun onSurfacesDestroyed(vout: IVLCVout) {
+        override fun onSurfacesDestroyed() {
             attachedView?.let { view -> videoRestoreTask?.let(view::removeCallbacks) }
             videoRestoreTask = null
         }
@@ -544,9 +540,9 @@ class VlcPlaybackController(
         player.vlcVout.addCallback(surfaceCallback)
         player.setEventListener { event ->
             frameDropSamples.onEvent(event.type,
-                if (event.type == MediaPlayer.Event.Buffering) event.buffering else 100f)
+                if (event.type == VlcEventKind.Buffering) event.buffering else 100f)
             when (event.type) {
-                MediaPlayer.Event.EncounteredError -> {
+                VlcEventKind.EncounteredError -> {
                     com.ambient.tv.diagnostics.DiagnosticLog.error("playback", "VLC error ${com.ambient.tv.diagnostics.diagnosticUrl(url)}")
                     if (fallbackVulkan("playback_error")) {
                         // prepare() reopens this media with VLC's normal Android output.
@@ -582,10 +578,10 @@ class VlcPlaybackController(
                 }
                 // VLC 4 reuses EndReached's number for Stopping. Only the final
                 // Stopped event can finish that session; explicit restarts are guarded.
-                MediaPlayer.Event.EndReached -> if (!trackAccess.modern && !openingOrRestarting && pendingRestorePositionMs == null) ended = true
-                MediaPlayer.Event.Stopped -> if (trackAccess.modern && !openingOrRestarting && pendingRestorePositionMs == null) ended = true
-                MediaPlayer.Event.ESAdded -> attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
-                MediaPlayer.Event.TimeChanged -> {
+                VlcEventKind.EndReached -> if (!trackAccess.modern && !openingOrRestarting && pendingRestorePositionMs == null) ended = true
+                VlcEventKind.Stopped -> if (trackAccess.modern && !openingOrRestarting && pendingRestorePositionMs == null) ended = true
+                VlcEventKind.ESAdded -> attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
+                VlcEventKind.TimeChanged -> {
                     if (!openingOrRestarting && pendingRestorePositionMs == null && player.time >= 0L) {
                         lastPlaybackTimeMs = player.time
                         lastPlaybackSeekable = player.isSeekable
@@ -598,7 +594,7 @@ class VlcPlaybackController(
                     }
                     observePendingSeek()
                 }
-                MediaPlayer.Event.Playing -> {
+                VlcEventKind.Playing -> {
                     if (!startupPlayingReported) {
                         startupPlayingReported = true
                         com.ambient.tv.ui.player.logPlaybackStartup("vlc", "playing_event", startupOpenedAt)
@@ -755,15 +751,14 @@ class VlcPlaybackController(
         if (!player.setAudioDelay(raw.delayMs * 1000L)) errors.add("audio delay")
         val reserve = if (!plan.encoded && appliedAudioDevice == "stereo")
             vlcDownmixHeadroomDb(audioSession.sourceChannels) else 0f
-        val eq = if (o.eqEnabled || o.dialogue > 0 || reserve > 0f) MediaPlayer.Equalizer.create().apply {
+        val eq = if (o.eqEnabled || o.dialogue > 0 || reserve > 0f) run {
             val gains = List(10) { i ->
                 (if (o.eqEnabled) o.eqDb[i] else 0) + (if (i == 4 || i == 5) o.dialogue else 0)
             }
             // Reserve headroom for boosts even when the optional Android limiter is off.
             val preamp = (if (o.eqEnabled) o.preampDb else 0) - (gains.maxOrNull() ?: 0).coerceAtLeast(0) - reserve
             val excess = (-20f - preamp).coerceAtLeast(0f)
-            setPreAmp(preamp.coerceAtLeast(-20f))
-            repeat(minOf(10, MediaPlayer.Equalizer.getBandCount())) { setAmp(it, (gains[it] - excess).coerceAtLeast(-20f)) }
+            VlcEqualizer(preamp.coerceAtLeast(-20f), gains.map { (it - excess).coerceAtLeast(-20f) })
         } else null
         if (!player.setEqualizer(eq)) errors.add("equalizer")
         audioSession.warning = errors.takeIf { it.isNotEmpty() }?.joinToString()
@@ -788,7 +783,7 @@ class VlcPlaybackController(
             val retiringVolume = pausedSeekVolume ?: retiring.volume.takeIf { it >= 0 } ?: 100
             retiring.setEventListener(null)
             retiring.vlcVout.removeCallback(surfaceCallback)
-            player = MediaPlayer(libVlc)
+            player = libVlc.createPlayer()
             // A newly created VLC audio output can report an unset volume (-1).
             // Carry the intended volume into priming instead of reading that sentinel.
             player.setVolume(retiringVolume)
@@ -1005,7 +1000,7 @@ class VlcPlaybackController(
             configuredSvpRate = targetRate
             configuredDeinterlaceMode = effectiveDeinterlaceMode
             configuredDeinterlaceFilter = effectiveDeinterlace
-            libVlc = createLibVlc(); player = MediaPlayer(libVlc)
+            libVlc = createLibVlc(); player = libVlc.createPlayer()
             trackAccess.rebind(player); configurePlayer()
             view
         } else null
@@ -1017,7 +1012,7 @@ class VlcPlaybackController(
         val keepTimeshiftMs = pendingTimeshiftKeepMs.also { pendingTimeshiftKeepMs = null }
         val playbackUrl = keepTimeshiftMs?.let { com.ambient.tv.livetv.LiveTimeshift.playbackUrlKeepingPosition(url, it, "vlc-audio")?.first }
             ?: com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, reopening || reopeningTimeshift)
-        val media = Media(libVlc, Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
+        val media = libVlc.createMedia(Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
         if (!preferOriginalAudio) media.addOption(":audio-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
             videoImagePreferences(context).playbackAudioLanguage).joinToString(","))
         media.addOption(":sub-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
@@ -1028,7 +1023,7 @@ class VlcPlaybackController(
             // paired audio can run seconds ahead and reset the shared clock.
             // avformat demuxes packets and keeps the slave aligned with video.
             media.addOption(":demux=avformat")
-            media.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Audio, 4, it))
+            media.addAudioSlave(it)
         }
         // Seek on Playing instead of :start-time. VLC 4 treats start-time as a
         // clipped timeline, which otherwise shifts both duration and later seeks.
@@ -1071,7 +1066,7 @@ class VlcPlaybackController(
             // Global network buffer; the timeshift loopback keeps its own caching from above.
             media.addOption(":network-caching=${com.ambient.tv.ui.player.vlcNetworkCachingMs(videoImagePreferences(context).networkBufferKey)}")
         }
-        player.media = media
+        player.setMedia(media)
         media.release()
         prepared = true
         if (dvResumeWorkaround && (pendingRestorePositionMs ?: 0) > 0) beginDvPrime()
@@ -1110,7 +1105,7 @@ class VlcPlaybackController(
                 player.release()
                 libVlcRelease.releaseWhenIdle(libVlc)
                 libVlc = createLibVlc()
-                player = MediaPlayer(libVlc)
+                player = libVlc.createPlayer()
                 trackAccess.rebind(player)
                 configurePlayer()
                 prepared = false
@@ -1203,7 +1198,7 @@ class VlcPlaybackController(
         renderCheckHandler.postDelayed(task, 1_000L)
     }
 
-    private fun applyDeinterlaceOptions(media: Media) {
+    private fun applyDeinterlaceOptions(media: VlcMediaPort) {
         val mode = when (if (preserveHdrSource) "off" else deinterlaceMode) {
             "auto" -> -1
             "on" -> 1
@@ -1529,7 +1524,7 @@ class VlcPlaybackController(
 
     fun preferredAudioTrack(language: String?): Pair<Int, String>? {
         if (released) return null
-        val metadata = trackAccess.mediaTracks(org.videolan.libvlc.interfaces.IMedia.Track.Type.Audio).associateBy { it.id }
+        val metadata = trackAccess.mediaTracks(VlcTrackType.Audio).associateBy { it.id }
         return com.ambient.tv.ui.player.choosePreferredAudioTrack(
             audioTracks().filter { it.first >= 0 }, language, audioSession.settings.tracks,
         ) {
@@ -1539,7 +1534,7 @@ class VlcPlaybackController(
     }
 
     override fun chapters(): List<com.ambient.tv.domain.model.VideoChapter> =
-        if (released) emptyList() else player.getChapters(player.title.coerceAtLeast(0))?.map { chapter ->
+        if (released) emptyList() else player.getChapters(player.title.coerceAtLeast(0)).map { chapter ->
             com.ambient.tv.domain.model.VideoChapter(chapter.timeOffset, chapter.name,
                 endMs = (chapter.timeOffset + chapter.duration).takeIf { chapter.duration > 0 })
         }.orEmpty()
@@ -1597,7 +1592,7 @@ class VlcPlaybackController(
         subtitleIdsBeforeAdd = subtitleTracks().map { it.first }.toSet()
         subtitleAddStarted = android.os.SystemClock.elapsedRealtime()
         pendingExternalSubtitle = track
-        if (!player.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, Uri.parse(url), false)) pendingExternalSubtitle = null
+        if (!player.addSubtitle(Uri.parse(url))) pendingExternalSubtitle = null
     }
 
     fun selectExternalSubtitle(track: com.ambient.tv.domain.model.MediaTrack) {
@@ -1622,8 +1617,8 @@ class VlcPlaybackController(
         handler.post(poll)
     }
 
-    fun subtitleTrackLanguages(): Map<Int, String?> = mediaTrackLanguages(org.videolan.libvlc.interfaces.IMedia.Track.Type.Text)
-    fun audioTrackLanguage(): String? = mediaTrackLanguages(org.videolan.libvlc.interfaces.IMedia.Track.Type.Audio)[currentAudioTrackId()]
+    fun subtitleTrackLanguages(): Map<Int, String?> = mediaTrackLanguages(VlcTrackType.Text)
+    fun audioTrackLanguage(): String? = mediaTrackLanguages(VlcTrackType.Audio)[currentAudioTrackId()]
         ?: com.ambient.tv.ui.player.PlaybackLanguagePolicy.inferLanguageFromLabel(audioTracks().firstOrNull { it.first == currentAudioTrackId() }?.second)
 
     private fun mediaTrackLanguages(type: Int): Map<Int, String?> {
@@ -1775,22 +1770,17 @@ class VlcPlaybackController(
         // Compose polling can outlive session release until its disposal is applied.
         // LibVLC's Media.getStats JNI dereferences the native handle even after release.
         if (released) return@runCatching null
-        fun member(instance: Any, name: String): Any? = ReflectiveMembers.value(instance, name)
-
         var result = VlcRuntimeStats()
         var hasAnyValue = false
 
         val currentVideoTrack = trackAccess.currentVideoTrack
         if (currentVideoTrack != null) {
-            val width = (member(currentVideoTrack, "width") as? Number)?.toInt()?.takeIf { it > 0 }
-            val height = (member(currentVideoTrack, "height") as? Number)?.toInt()?.takeIf { it > 0 }
-            val frameRateNum = (member(currentVideoTrack, "frameRateNum") as? Number)?.toLong()
-            val frameRateDen = (member(currentVideoTrack, "frameRateDen") as? Number)?.toLong()
-            val fps = if (frameRateNum != null && frameRateDen != null && frameRateNum > 0L && frameRateDen > 0L) {
-                frameRateNum.toDouble() / frameRateDen.toDouble()
-            } else null
-            val bitrate = (member(currentVideoTrack, "bitrate") as? Number)?.toLong()?.takeIf { it > 0L }
-            val codec = vlcTrackCodec(currentVideoTrack)
+            val width = currentVideoTrack.width.takeIf { it > 0 }
+            val height = currentVideoTrack.height.takeIf { it > 0 }
+            val fps = currentVideoTrack.takeIf { it.frameRateNum > 0 && it.frameRateDen > 0 }
+                ?.let { it.frameRateNum.toDouble() / it.frameRateDen }
+            val bitrate = currentVideoTrack.bitrate.takeIf { it > 0L }
+            val codec = currentVideoTrack.codec
             result = result.copy(
                 videoWidth = width,
                 videoHeight = height,
@@ -1803,41 +1793,27 @@ class VlcPlaybackController(
 
         trackAccess.currentAudioTrack?.let { audio ->
             result = result.copy(
-                audioCodec = vlcTrackCodec(audio),
+                audioCodec = audio.codec,
                 audioChannels = audio.channels.takeIf { it > 0 },
                 audioSampleRate = audio.rate.takeIf { it > 0 },
                 audioBitrateBitsPerSecond = audio.bitrate.toLong().takeIf { it > 0 },
             )
             hasAnyValue = hasAnyValue || result.audioCodec != null || result.audioChannels != null || result.audioSampleRate != null
         }
-        val media = if (includeCounters) ReflectiveMembers.call(player, "getMedia") else null
-        if (media != null) {
-            try {
-                val statsObject = ReflectiveMembers.call(media, "getStats")
-                if (statsObject != null) {
-                    fun number(name: String): Number? = member(statsObject, name) as? Number
-                    result = result.copy(
-                        readBytes = number("readBytes")?.toLong(),
-                        demuxReadBytes = number("demuxReadBytes")?.toLong(),
-                        demuxCorrupted = number("demuxCorrupted")?.toInt(),
-                        demuxDiscontinuity = number("demuxDiscontinuity")?.toInt(),
-                        decodedVideo = number("decodedVideo")?.toInt(),
-                        decodedAudio = number("decodedAudio")?.toInt(),
-                        displayedPictures = number("displayedPictures")?.toInt(),
-                        lostPictures = number("lostPictures")?.toInt(),
-                        playedAudioBuffers = number("playedAbuffers")?.toInt(),
-                        lostAudioBuffers = number("lostAbuffers")?.toInt(),
-                    )
-                    hasAnyValue = hasAnyValue || listOf(
-                        result.readBytes, result.demuxReadBytes, result.demuxCorrupted,
-                        result.demuxDiscontinuity, result.decodedVideo, result.decodedAudio,
-                        result.displayedPictures, result.lostPictures, result.playedAudioBuffers,
-                        result.lostAudioBuffers,
-                    ).any { it != null }
-                }
-            } finally {
-                ReflectiveMembers.call(media, "release")
-            }
+        if (includeCounters) player.counters()?.let { counters ->
+            result = result.copy(
+                readBytes = counters.readBytes, demuxReadBytes = counters.demuxReadBytes,
+                demuxCorrupted = counters.demuxCorrupted, demuxDiscontinuity = counters.demuxDiscontinuity,
+                decodedVideo = counters.decodedVideo, decodedAudio = counters.decodedAudio,
+                displayedPictures = counters.displayedPictures, lostPictures = counters.lostPictures,
+                playedAudioBuffers = counters.playedAudioBuffers, lostAudioBuffers = counters.lostAudioBuffers,
+            )
+            hasAnyValue = hasAnyValue || listOf(
+                counters.readBytes, counters.demuxReadBytes, counters.demuxCorrupted,
+                counters.demuxDiscontinuity, counters.decodedVideo, counters.decodedAudio,
+                counters.displayedPictures, counters.lostPictures, counters.playedAudioBuffers,
+                counters.lostAudioBuffers,
+            ).any { it != null }
         }
 
         result.takeIf { hasAnyValue }

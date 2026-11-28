@@ -575,6 +575,16 @@ The common local-audio FFmpeg graph must remain in the base until a
 compatible alternative is tested. No release should be marked reviewed
 solely because the source-collection or APK-format tests pass.
 
+### VLC host ABI extraction
+
+The production controller, startup and Vulkan capability probe now depend on
+host-owned VlcEnginePort, VlcLibraryPort, VlcPlayerPort, VlcMediaPort,
+VlcOutputPort and VlcTracksPort. Events, chapters, equalizer settings, tracks
+and media statistics use neutral DTOs. The concrete bundled implementation
+retains the same LibVLC constructors, callbacks, track-ID handling and release
+ordering. JNI namespace and dependency closure still need verification before
+the concrete implementation and vendor classes may be removed from Modular.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
