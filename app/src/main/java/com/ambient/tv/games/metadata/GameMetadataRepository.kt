@@ -402,6 +402,25 @@ class GameMetadataRepository @Inject constructor(
             } finally { staging.deleteRecursively() }
         } }
 
+    /** Prepare catalogs before the first checksum scan; isolate unavailable upstream systems.
+     * Automatic metadata being disabled remains a user choice, including during folder scans. */
+    suspend fun prepareNameCatalogs(systems: Collection<String>, automatic: Boolean): Set<String> =
+        withContext(Dispatchers.IO) {
+            val options = settings.options()
+            if (!options.enabled || automatic && !options.automatic) return@withContext emptySet()
+            val loaded = linkedSetOf<String>()
+            for (system in systems.distinct().filter { GameNameDatabases.files(it).isNotEmpty() }) {
+                currentCoroutineContext().ensureActive()
+                try { loaded += loadNameDatabases(listOf(system), onlyMissing = true).systemIds }
+                catch (error: IOException) {
+                    timber.log.Timber.w(error, "Game name catalog unavailable for %s", system)
+                } catch (error: IllegalArgumentException) {
+                    timber.log.Timber.w(error, "Invalid game name catalog for %s", system)
+                }
+            }
+            loaded
+        }
+
     /** Explicit folder work feeds this bounded queue; visible cards only reorder an active batch. */
     suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
                              prioritizedFileIds: () -> List<String> = SharedGameArtworkPriority::prioritizedFileIds,
@@ -421,21 +440,9 @@ class GameMetadataRepository @Inject constructor(
                         return@coroutineScope
                     }
                     if (automatic && !options.automatic) return@coroutineScope
-                    // Libretro image filenames contain canonical release tags. Fetch a missing
-                    // local catalog once for the systems actually present in this folder, even
-                    // if the ROM itself cannot be hashed (for example a PSP CSO or PS2 CHD).
-                    if (options.provider == GameMetadataProviderIds.LIBRETRO) {
-                        val systems = (systemId?.let(::listOf) ?: library.indexedSystems())
-                            .filter { GameNameDatabases.files(it).isNotEmpty() && folderId in library.foldersWithSystem(it) }
-                        if (systems.isNotEmpty()) {
-                            try { loadNameDatabases(systems, onlyMissing = true) }
-                            catch (error: IOException) {
-                                // A catalog transport failure must not block already-known
-                                // names, direct artwork URLs or later individual retries.
-                                timber.log.Timber.w(error, "Game name catalog unavailable; trying existing metadata")
-                            }
-                        }
-                    }
+                    val systems = (systemId?.let(::listOf) ?: library.indexedSystems())
+                        .filter { folderId in library.foldersWithSystem(it) }
+                    prepareNameCatalogs(systems, automatic)
                     val total = library.folderGameCount(folderId, systemId)
                     var completed = 0
                     var failed = 0
