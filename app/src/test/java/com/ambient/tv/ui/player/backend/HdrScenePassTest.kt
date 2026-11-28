@@ -42,6 +42,16 @@ class HdrScenePassTest {
         assertFalse(HdrSceneReuse.copyIn(reuse,"$key.stats",java.io.File(run,"missing"),1024L))
     }
 
+    @Test fun rangeIdentityRejectsWeakValidatorsAndChangedRepresentations() {
+        assertTrue(HdrRangeSource.strongTag("\"version-1\""))
+        assertFalse(HdrRangeSource.strongTag("W/\"version-1\""))
+        assertFalse(HdrRangeSource.strongTag("\"invalid tag\""))
+        assertTrue(HdrRangeSource.matchesRange("bytes 5-9/10",5,9,10))
+        assertFalse(HdrRangeSource.matchesRange("bytes 5-9/11",5,9,10))
+        assertFalse(HdrRangeSource.matchesRange("bytes 0-9/10",5,9,10))
+        assertFalse(HdrRangeSource.matchesRange("bytes 5-9/*",5,9,10))
+    }
+
     private fun sei(version: Int = 1, value: Int = 19): ByteArray =
         byteArrayOf(0x4e, 1, 4, 8, 0xb5.toByte(), 0, 0x3c, 0, 1, 4, version.toByte(), value.toByte(), 0x80.toByte())
 

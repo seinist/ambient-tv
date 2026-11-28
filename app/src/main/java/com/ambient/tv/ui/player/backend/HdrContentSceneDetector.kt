@@ -106,20 +106,20 @@ internal object HdrContentSceneDetector {
         return result?.takeIf { seen == expectedPts }
     }
 
-    suspend fun scan(file: File, onSample: (Long, ByteArray) -> Boolean): Set<Long>? =
-        scanInternal(file) { pts, input ->
+    suspend fun scan(file: File, range: HdrRangeSource? = null, onSample: (Long, ByteArray) -> Boolean): Set<Long>? =
+        scanInternal(file,range) { pts, input ->
             val bytes = ByteArray(input.remaining())
             input.get(bytes)
             onSample(pts,bytes)
         }
 
-    private suspend fun scanInternal(file: File, onSample: (Long, java.nio.ByteBuffer) -> Boolean): Set<Long>? {
+    private suspend fun scanInternal(file: File, range: HdrRangeSource? = null, onSample: (Long, java.nio.ByteBuffer) -> Boolean): Set<Long>? {
         val expectedPts = HashSet<Long>()
         val ex = MediaExtractor()
         var codec: MediaCodec? = null
         var started = false
         try {
-            ex.setDataSource(file.path)
+            if(range!=null) ex.setDataSource(range.fd,0,range.length) else ex.setDataSource(file.path)
             val index = (0 until ex.trackCount).singleOrNull {
                 ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
             } ?: return null

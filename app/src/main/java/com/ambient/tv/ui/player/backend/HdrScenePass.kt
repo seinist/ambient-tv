@@ -301,21 +301,28 @@ internal object HdrScenePlanner {
     suspend fun scan(context: Context, url: String, headers: Map<String,String>, source: Double, target: Double, vlc: Boolean, directory: File): HdrSceneSession? {
         var created: File? = null
         var delivered = false
+        var range: HdrRangeSource? = null
         try {
             val result = withContext(Dispatchers.IO) {
-                scanLocal(context,url,headers,source,target,vlc,directory) { created = it }
+                range = HdrRangeSource.open(context,url,headers)
+                val direct = range?.let { scanLocal(context,url,headers,source,target,vlc,directory,it) { created = it } }
+                if (direct != null) direct else {
+                    range?.close();range=null;created?.deleteRecursively();created=null
+                    currentCoroutineContext().ensureActive()
+                    scanLocal(context,url,headers,source,target,vlc,directory,null) { created = it }
+                }
             }
             delivered = result != null
             return result
         } finally {
             // withContext may discard a result if cancellation races dispatch
             // back to the player thread. Never strand the private run directory.
-            if (!delivered) created?.deleteRecursively()
+            if (!delivered) { range?.close();created?.deleteRecursively() }
         }
     }
 
     private suspend fun scanLocal(context: Context, url: String, headers: Map<String,String>, source: Double, target: Double, vlc: Boolean,
-        directory: File, created: (File) -> Unit): HdrSceneSession? {
+        directory: File, range: HdrRangeSource?, created: (File) -> Unit): HdrSceneSession? {
         if (!source.isFinite() || !target.isFinite() || source !in 5.0..120.0 || target <= source || target > 120 || target/source > 5) return null
         if (!directory.exists() && !directory.mkdirs()) return null
         val run = java.nio.file.Files.createTempDirectory(directory.toPath(),"hdr-").toFile()
@@ -323,9 +330,10 @@ internal object HdrScenePlanner {
         if (run.path.any { it in ":,{}%\"\\\n\r" }) return null
         val local = localFile(url)
         val digest = MessageDigest.getInstance("SHA-256")
-        val file = local ?: snapshot(context,url,headers,run,digest) ?: return null
-        val length = file.length()
-        val modified = file.lastModified()
+        val file = local ?: range?.file ?: snapshot(context,url,headers,run,digest) ?: return null
+        val length = range?.length ?: file.length()
+        val modified = if(range!=null) 0L else file.lastModified()
+        fun unchanged() = range?.valid() ?: (file.length()==length && file.lastModified()==modified)
         // Network/content snapshots are hashed during the copy. Local media
         // still needs a whole-file digest to bind both native passes.
         if (local != null) file.inputStream().buffered().use { input ->
@@ -337,7 +345,7 @@ internal object HdrScenePlanner {
                 digest.update(buffer,0,count)
             }
         }
-        val key = hex(digest.digest())
+        val key = range?.key ?: hex(digest.digest())
         val reuse = File(context.cacheDir,"hdr-scene-analysis-v2")
         val apk = File(context.applicationInfo.sourceDir)
         val reuseKey = HdrSceneReuse.key("plan-v2|$key|${source.toBits()}|${target.toBits()}|$vlc|${android.os.Build.FINGERPRINT}|${apk.length()}|${apk.lastModified()}")
@@ -357,18 +365,18 @@ internal object HdrScenePlanner {
         } else null
         if (reused != null) {
             currentCoroutineContext().ensureActive()
-            if (file.length()!=length||file.lastModified()!=modified) return null
+            if (!unchanged()) return null
             val manifest=File(run,"plan")
             manifest.writeText(buildString {
                 appendLine("AMBIENTSVP_SCENE_PLAN_1");appendLine(key);reused.second.ends.forEach { appendLine(it) }
             })
-            return HdrSceneSession(file,length,modified,key,reused.second,manifest,File(run,"cache"),local==null,reused.first,reuse,reuseKey)
+            return HdrSceneSession(file,length,modified,key,reused.second,manifest,File(run,"cache"),local==null,reused.first,reuse,reuseKey,range)
         }
         val samples = ArrayList<Sample>()
         val known = HashMap<String,String>()
         // Parse compressed HDR metadata from the same extractor samples
         // already being fed to the content-cut decoder. No second demux pass.
-        val cuts = HdrContentSceneDetector.scan(file) { pts, bytes ->
+        val cuts = HdrContentSceneDetector.scan(file,range) { pts, bytes ->
             if (samples.size >= MAX_FRAMES || bytes.size !in 3 until MAX_SAMPLE) return@scan false
             val hdr = metadata(bytes) ?: return@scan false
             if (hdr !in known && known.size >= MAX_SCENES) return@scan false
@@ -380,7 +388,7 @@ internal object HdrScenePlanner {
         val plan = plan(samples,source,target,vlc,cuts) ?: return null
         if (version == "0" && plan.ends.last() > 1_000_000L) return null
         currentCoroutineContext().ensureActive()
-        if (file.length() != length || file.lastModified() != modified) return null
+        if (!unchanged()) return null
         return try {
             val manifest = File(run,"plan")
             manifest.writeText(buildString {
@@ -392,7 +400,7 @@ internal object HdrScenePlanner {
             })
             HdrSceneReuse.store(reuse,"$reuseKey.plan",planCopy,2_000_000L)
             planCopy.delete()
-            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null,version.toInt(),reuse,reuseKey)
+            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null,version.toInt(),reuse,reuseKey,range)
         } catch (e: Exception) { run.deleteRecursively();throw e }
     }
 }
@@ -409,6 +417,7 @@ internal class HdrSceneSession(
     private val version: Int = 1,
     private val reuseDirectory: File? = null,
     private val reuseKey: String? = null,
+    private val range: HdrRangeSource? = null,
 ) {
     @Volatile var mode: Int = 1
         private set
@@ -427,7 +436,7 @@ internal class HdrSceneSession(
     fun analysisPath(): String = sourceFile.path
     fun discardIncompleteCapture() { if (mode == 1) cache.delete() }
     fun playbackPath(): String? = sourceFile.path.takeIf { staged && valid() }
-    fun valid() = mode != 0 && sourceFile.length() == sourceLength && sourceFile.lastModified() == sourceModified
+    fun valid() = mode != 0 && (range?.valid() ?: (sourceFile.length() == sourceLength && sourceFile.lastModified() == sourceModified))
     fun advance(): Boolean {
         if (mode != 1 || !valid() || !cache.isFile || cache.length() !in 1L..32_000_000L) return false
         val matching = runCatching {
@@ -472,5 +481,5 @@ internal class HdrSceneSession(
     fun mpvOptions(): String = ":hdr-pass=$mode:hdr-plan=${manifest.path}:hdr-cache=${cache.path}:hdr-key=$key"
     fun vlcOptions(): List<String> = listOf("hdr-pass=$mode","hdr-plan=${manifest.path}","hdr-cache=${cache.path}","hdr-key=$key")
     fun abort() { mode = 0 }
-    fun cleanup() { abort(); manifest.parentFile?.deleteRecursively() }
+    fun cleanup() { abort();range?.close();manifest.parentFile?.deleteRecursively() }
 }
