@@ -178,11 +178,59 @@ static void test_resident_cache_traces(void) {
     ambient_sh2_clear();yabsys.sh2_cache_enabled=0;
     puts("SH2 cache-resident fused traces: exact fetch order, LRU, stale RAM and miss guards passed");
 }
+/* Diagnostic microbenchmark, not a device acceptance gate. Both paths use
+ * the identical fixture and exact guest cycle budget. The baseline uses
+ * predecoded upstream opcode pointers, not the slower decoder itself. */
+static uint64_t monotonic_ns(void) {
+    struct timespec ts;
+    if(clock_gettime(CLOCK_MONOTONIC,&ts))abort();
+    return (uint64_t)ts.tv_sec*UINT64_C(1000000000)+(uint64_t)ts.tv_nsec;
+}
+static void benchmark_native_trace(void) {
+    u16 program[32];
+    for(unsigned i=0;i<30;++i)program[i]=(uint16_t)(0x7101+(i%3)*0x100);
+    program[30]=0xafe0;program[31]=0x0009; /* loop to index zero */
+    const u32 base=0x06000100u,budget=33u*100000u;
+    SH2_struct prepared;
+    setup_program(&prepared,program,32,base);
+    AmbientSh2Block* executed=NULL;
+    for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+        if(ambient_sh2_try_block(&prepared,budget,NULL,&executed))abort();
+    AmbientSh2Block* trace=ambient_sh2_lookup(0,base,0);
+    if(!trace||!trace->code||trace->cycles!=33||trace->next_pc!=base)abort();
+    for(unsigned round=0;round<3;++round) {
+        SH2_struct states[2]={prepared,prepared};
+        uint64_t elapsed[2]={0};
+        for(unsigned order=0;order<2;++order) {
+            unsigned native=(order+round)&1;
+            SH2_struct* sh=&states[native];
+            const uint64_t start=monotonic_ns();
+            if(native) {
+                while(sh->cycles<budget) {
+                    if(!ambient_sh2_try(sh,budget))abort();
+                }
+            } else {
+                while(sh->cycles<budget) {
+                    sh->instruction=FetchBios(sh,sh->regs.PC);
+                    ((opcodefunc*)sh->opcodes)[sh->instruction](sh);
+                }
+            }
+            elapsed[native]=monotonic_ns()-start;
+        }
+        if(states[0].cycles!=budget || states[1].cycles!=budget ||
+           states[0].instruction!=states[1].instruction ||
+           memcmp(&states[0].regs,&states[1].regs,sizeof(states[0].regs)))abort();
+        printf("SH2 synthetic ALU-loop benchmark round %u: guest_cycles=%u upstream_ns=%llu native_ns=%llu\n",
+               round+1,budget,(unsigned long long)elapsed[0],(unsigned long long)elapsed[1]);
+    }
+    ambient_sh2_clear();
+}
 int main(void) {
     test_linked_traces();
     test_indirect_native_exits();
     test_associative_cache();
     test_resident_cache_traces();
+    benchmark_native_trace();
     unsigned legal=0, illegal=0, delayed=0;
     u32 seed=0x6a09e667u;
     const uint16_t slots[]={0xe180,0x9101,0xd102,0x6122,0x2122,0x3124,0x400e,0x312d};
@@ -266,6 +314,7 @@ struct SH2_struct {""")
     void** opcodes;
     u16* program;u32 program_base,program_length;""")
     prelude+=r"""
+#include <time.h>
 typedef u32(*fetchfunc)(SH2_struct*,u32);
 static struct { int sh2_cache_enabled; } yabsys;
 static u32 FetchBios(SH2_struct* sh,u32 addr){

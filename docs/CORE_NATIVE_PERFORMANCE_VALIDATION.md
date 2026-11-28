@@ -83,6 +83,16 @@ compiler build is not proof of correct gameplay or a performance improvement.
   with the same entrypoint; update only the instruction callback on an
   entrypoint change. Collision, accuracy-mode and eviction tests remain.
 
+## Synthetic AArch64 diagnostic
+
+The native SH2 differential harness additionally runs three paired, alternating
+rounds of a deterministic 32-opcode ALU/branch loop (3.3 million guest cycles
+per path and round). It measures the upstream predecoded interpreter and the
+actual warmed native translation/linked dispatcher using monotonic elapsed
+time, and asserts identical architectural state and cycle counts. These
+numbers are host microbenchmarks with a mocked fetch/bus, not Shield/Android
+frame-time or game performance; no timing threshold is imposed on shared CI.
+
 ## Reproducible benchmark execution
 
 Build the runner with the project's NDK, or download its corresponding ABI
