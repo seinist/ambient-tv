@@ -7,4 +7,6 @@
     <string name="programme_reminder_status_due">Reminder due</string>
     <string name="programme_reminder_smarttube">SmartTube reminders</string>
     <string name="programme_reminder_scheduled_hint">Scheduled start reached; availability is checked when playback is requested.</string>
+    <string name="programme_reminder_home">Show reminders on Home</string>
+    <string name="programme_reminder_row">Reminders</string>
 </resources>
