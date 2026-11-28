@@ -54,7 +54,9 @@ struct svp_vk_mpv {
     int (*hdr_read_ellipses)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[3],uint32_t);
     int (*hdr_read_rectangles)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
     AmbientSvpHdrPass *scene_pass;
-    unsigned scene_mode;
+    unsigned scene_mode,scene_version;
+    int (*scene_stats_legacy)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],uint32_t);
+    int (*scene_lookup_legacy)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
     int (*scene_stats)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,uint32_t);
     int (*scene_interval)(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
     int (*scene_capture)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
@@ -485,11 +487,61 @@ static bool svp_vk_scene_compatible(const struct mp_image *img)
     if(!ref||!ref->data||ref->size!=sizeof(AVDynamicHDRPlus)||img->dovi||
         img->params.color.transfer!=PL_COLOR_TRC_PQ||img->params.color.primaries!=PL_COLOR_PRIM_BT_2020)return false;
     const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)ref->data;
-    if(m->application_version!=1||m->num_windows!=1||m->params[0].num_distribution_maxrgb_percentiles!=9)return false;
     AVDynamicHDRPlus checked;
     if(!svp_hdrplus_lerp(&checked,ref,ref,0,img->w,img->h))return false;
+    if(m->application_version==0)return true;
+    if(m->application_version!=1||m->num_windows!=1||m->params[0].num_distribution_maxrgb_percentiles!=9)return false;
     for(unsigned j=0;j<9;j++)if(m->params[0].distribution_maxrgb[j].percentage!=percentages[j])return false;
     return true;
+}
+static bool svp_vk_scene_version(const struct mp_image *img,unsigned version)
+{
+    if(!svp_vk_scene_compatible(img))return false;
+    return ((const AVDynamicHDRPlus *)svp_vk_hdr10plus(img)->data)->application_version==version;
+}
+static bool svp_vk_scene_legacy_metadata(struct mp_image *img,const AmbientSvpHdrLegacyScene *r)
+{
+    if(!r||!svp_vk_scene_version(img,0))return false;
+    for(int i=0;i<img->num_ff_side_data;i++){
+        if(img->ff_side_data[i].type!=AV_FRAME_DATA_DYNAMIC_HDR_PLUS)continue;
+        AVBufferRef *ref=img->ff_side_data[i].buf;
+        if(!av_buffer_is_writable(ref))return false;
+        AVDynamicHDRPlus *m=(AVDynamicHDRPlus *)ref->data;
+        if(r->count!=m->num_windows||r->count<1||r->count>3)return false;
+        AVDynamicHDRPlus updated=*m;
+        for(unsigned w=0;w<r->count;w++){
+            AVHDRPlusColorTransformParams *p=&updated.params[w];
+            const AmbientSvpHdrLegacyWindow *v=&r->windows[w];
+            if(v->count>15||v->count!=p->num_distribution_maxrgb_percentiles||v->fraction)return false;
+            uint32_t peak=0,last=0;
+            for(unsigned c=0;c<3;c++){
+                if(v->maxscl[c]>100000)return false;
+                if(v->maxscl[c]>peak)peak=v->maxscl[c];
+                p->maxscl[c]=(AVRational){v->maxscl[c],100000};
+            }
+            if(v->average>peak)return false;
+            p->average_maxrgb=(AVRational){v->average,100000};p->fraction_bright_pixels=(AVRational){0,1000};
+            for(unsigned j=0;j<v->count;j++){
+                if(v->percentages[j]!=p->distribution_maxrgb[j].percentage||v->percentiles[j]<last||v->percentiles[j]>peak)return false;
+                last=v->percentiles[j];p->distribution_maxrgb[j].percentile=(AVRational){last,100000};
+            }
+            // Keep authored optional grids and saturation, but avoid
+            // publishing a curve derived from incomplete old statistics.
+            SvpHdrCurve curve={0};AVRational target=updated.targeted_system_display_maximum_luminance;
+            if(target.den<=0||target.num<0||(target.num&&!svp_hdr_curve(peak,v->average,v->count?last:peak,(double)target.num/target.den,&curve)))return false;
+            p->tone_mapping_flag=curve.count!=0;p->num_bezier_curve_anchors=curve.count;
+            p->knee_point_x=(AVRational){curve.knee_x,4095};p->knee_point_y=(AVRational){curve.knee_y,4095};
+            memset(p->bezier_curve_anchors,0,sizeof(p->bezier_curve_anchors));
+            for(unsigned j=0;j<curve.count;j++)p->bezier_curve_anchors[j]=(AVRational){curve.anchors[j],1023};
+        }
+        *m=updated;
+        struct pl_hdr_metadata *hdr=&img->params.color.hdr;
+        memset(hdr->scene_max,0,sizeof(hdr->scene_max));hdr->scene_avg=hdr->max_pq_y=hdr->avg_pq_y=0;
+        memset(&hdr->ootf,0,sizeof(hdr->ootf));
+        pl_map_hdr_metadata(hdr,&(struct pl_av_hdr_metadata){.dhp=m});
+        img->ambient_svp_hdr_generated=true;return true;
+    }
+    return false;
 }
 static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResult results[3],
     const int32_t (*shifts)[2],const float (*gradients)[4],const uint32_t (*rectangles)[4],const uint32_t (*ellipses)[3],bool elliptic,float phase,uint32_t count)
@@ -780,15 +832,19 @@ static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_ima
 {
     if(!s||!lib||!img||!q||!mode||!plan||!cache||!key||s->mode<1||s->mode>=4||
        img->params.color.transfer!=PL_COLOR_TRC_PQ||img->params.color.primaries!=PL_COLOR_PRIM_BT_2020)return false;
-    AmbientSvpHdrPass *(*open)(uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t)=
-        dlsym(lib,"ambient_svp_hdr_pass_open");
+    if(!svp_vk_scene_compatible(img))return false;
+    s->scene_version=((const AVDynamicHDRPlus *)svp_vk_hdr10plus(img)->data)->application_version;
+    AmbientSvpHdrPass *(*open)(uint32_t,uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t)=
+        dlsym(lib,"ambient_svp_hdr_pass_open_version");
+    s->scene_stats_legacy=dlsym(lib,"ambient_svp_vk_hdr_stats_scene_legacy");
+    s->scene_lookup_legacy=dlsym(lib,"ambient_svp_hdr_pass_lookup_legacy");
     s->scene_stats=dlsym(lib,"ambient_svp_vk_hdr_stats_scene");
     s->scene_interval=dlsym(lib,"ambient_svp_hdr_pass_interval");
     s->scene_capture=dlsym(lib,"ambient_svp_hdr_pass_capture");
     s->scene_lookup=dlsym(lib,"ambient_svp_hdr_pass_lookup");
     s->scene_finish=dlsym(lib,"ambient_svp_hdr_pass_finish");
     s->scene_destroy=dlsym(lib,"ambient_svp_hdr_pass_destroy");
-    if(!open||!s->scene_stats||!s->scene_interval||!s->scene_capture||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)return false;
+    if(!open||!s->scene_stats_legacy||!s->scene_lookup_legacy||!s->scene_stats||!s->scene_interval||!s->scene_capture||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)return false;
     PFN_vkGetPhysicalDeviceProperties props=(PFN_vkGetPhysicalDeviceProperties)s->vkdev->get_proc_addr(s->vkdev->inst,"vkGetPhysicalDeviceProperties");
     if(!props)return false;
     VkPhysicalDeviceProperties device;props(s->vkdev->phys_dev,&device);
@@ -798,7 +854,7 @@ static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_ima
         (long long)llround(s->source_rate*1000000.0),(long long)llround(s->target_rate*1000000.0),
         (long long)llround(img->pts*1000000.0),q->preset,q->block,q->overlap,q->pel,q->search,q->artifacts,q->scene,q->algorithm);
     if(n<=0||(size_t)n>=sizeof(profile))return false;
-    s->scene_pass=open(mode,plan,cache,key,profile,s->width,s->height);
+    s->scene_pass=open(mode,s->scene_version,plan,cache,key,profile,s->width,s->height);
     s->scene_mode=s->scene_pass?mode:0;return s->scene_pass!=NULL;
 }
 static bool svp_vk_matches(struct svp_vk_mpv *s,struct mp_image *img)
@@ -872,9 +928,9 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         || svp_vk_matrix(a)!=svp_vk_matrix(b) || a->params.color.transfer!=b->params.color.transfer
         || a->params.color.primaries!=b->params.color.primaries) return false;
     if (s->mode>=4 && a->params.chroma_location!=b->params.chroma_location) return false;
-    bool dynamic=s->mode>0 && s->mode<4 && (s->scene_pass?svp_vk_scene_compatible(a)&&svp_vk_scene_compatible(b):svp_vk_hdrplus_pair(a,b));
+    bool dynamic=s->mode>0 && s->mode<4 && (s->scene_pass?svp_vk_scene_version(a,s->scene_version)&&svp_vk_scene_version(b,s->scene_version):svp_vk_hdrplus_pair(a,b));
     if(dynamic && (!s->hdr_stats||!s->hdr_read))return false;
-    if(s->scene_pass&&(!dynamic||!svp_vk_scene_compatible(a)||!svp_vk_scene_compatible(b)))return false;
+    if(s->scene_pass&&(!dynamic||!svp_vk_scene_version(a,s->scene_version)||!svp_vk_scene_version(b,s->scene_version)))return false;
     uint32_t hdr_counts[SVP_VK_PHASES]={0};
     bool tracked[SVP_VK_PHASES]={0},affine[SVP_VK_PHASES]={0},elliptic[SVP_VK_PHASES]={0};
     if (s->mode && (s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
@@ -1016,7 +1072,18 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         if (rc) goto fail;
         if(s->scene_pass&&s->scene_mode==1){
             AmbientSvpHdrWindow windows[3];uint32_t n;
-            if(!svp_vk_hdrplus_windows(outputs[i],windows,&n)||n!=1||s->scene_stats(j->pair,i,windows,1))goto fail;
+            if(!svp_vk_hdrplus_windows(outputs[i],windows,&n))goto fail;
+            if(s->scene_version==0){
+                AmbientSvpHdrTrack tracks[3];uint32_t axes[3][3]={{0}};
+                if(!svp_vk_hdrplus_tracks(outputs[i],outputs[i],outputs[i],tracks,n))goto fail;
+                const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)svp_vk_hdr10plus(outputs[i])->data;
+                for(unsigned w=1;w<n;w++){
+                    axes[w][0]=m->params[w].semimajor_axis_external_ellipse;
+                    axes[w][1]=m->params[w].semiminor_axis_external_ellipse;
+                    axes[w][2]=m->params[w].rotation_angle;
+                }
+                if(s->scene_stats_legacy(j->pair,i,windows,tracks,axes,n))goto fail;
+            }else if(n!=1||s->scene_stats(j->pair,i,windows,1))goto fail;
         }else if(!s->scene_pass&&dynamic && phases[i]>0.0f){
             AmbientSvpHdrWindow windows[3];
             if(!svp_vk_hdrplus_windows(outputs[i],windows,&hdr_counts[i]))goto fail;
@@ -1078,7 +1145,11 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
             for(unsigned i=0;i<count;i++){
                 AmbientSvpHdrSceneResult result;
                 if(s->scene_mode==1){if(s->scene_capture(s->scene_pass,j->pair,i,s->tick+i)!=1)goto submitted_fail;}
-                else if(s->scene_lookup(s->scene_pass,s->tick+i,&result)!=1||!svp_vk_scene_metadata(outputs[i],&result))goto submitted_fail;
+                else if(s->scene_version==0){
+                    AmbientSvpHdrLegacyScene legacy;
+                    if(s->scene_lookup_legacy(s->scene_pass,s->tick+i,&legacy)!=1||
+                        !svp_vk_scene_legacy_metadata(outputs[i],&legacy))goto submitted_fail;
+                }else if(s->scene_lookup(s->scene_pass,s->tick+i,&result)!=1||!svp_vk_scene_metadata(outputs[i],&result))goto submitted_fail;
             }
         }
         for(unsigned i=0;i<count;i++)if(hdr_counts[i]){
@@ -1150,7 +1221,7 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
         svp_vk_matrix(s->previous)==svp_vk_matrix(next);
     bool has_hdrplus=svp_vk_hdr10plus(a)||svp_vk_hdr10plus(next);
     bool measured_hdrplus=s->mode>0 && s->mode<4 && s->hdr_stats && s->hdr_read &&
-        (s->scene_pass?svp_vk_scene_compatible(a)&&svp_vk_scene_compatible(next):svp_vk_hdrplus_pair(a,next));
+        (s->scene_pass?svp_vk_scene_version(a,s->scene_version)&&svp_vk_scene_version(next,s->scene_version):svp_vk_hdrplus_pair(a,next));
     if (s->mode && hdr && compatible && ((has_hdrplus && !measured_hdrplus) ||
         (!svp_vk_hdr_metadata_same(a,next) && !measured_hdrplus) ||
         (s->mode>=4 && a->params.chroma_location!=next->params.chroma_location))) {
