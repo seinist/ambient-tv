@@ -9,4 +9,5 @@
     <string name="programme_reminder_scheduled_hint">Scheduled start reached; availability is checked when playback is requested.</string>
     <string name="programme_reminder_home">Show reminders on Home</string>
     <string name="programme_reminder_row">Reminders</string>
+    <string name="programme_reminder_ready">Ready to play</string>
 </resources>
