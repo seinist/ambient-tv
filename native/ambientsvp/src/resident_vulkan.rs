@@ -331,6 +331,14 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     if any(id.xy>=visible)||any(id.xy>=textureDimensions(dst)){return;}
     let grid=(visible+vec2u(SVP_STEP-1u))/SVP_STEP;
     let phase=bitcast<f32>(params.x);
+    // Dynamic capture holds the preceding source through a GPU-detected
+    // cut, exactly matching the known-boundary replay path.
+    if (params.y&8192u)!=0u&&fields[2u*grid.x*grid.y].x!=0{
+        let p=vec2f(id.xy);
+        let value=sample_warp(Warp(p,p,0.0),visible);
+        textureStore(dst,vec2i(id.xy),vec4f(select(rgb(value),value,(params.y&64u)!=0u),1.0));
+        return;
+    }
     let algo=(params.y>>8u)&31u;
     if algo!=0u{
         let p=vec2f(id.xy);
@@ -587,6 +595,7 @@ pub struct VulkanPair{
     phases:usize,
     extended:Vec<VulkanPair>,auxiliary:bool,cached_extended:bool,
     adjacent_publish:Option<[(usize,[u64;2]);3]>,
+    dynamic_scene:bool,
     rgb_outputs:[vk::ImageView;MAX_PHASES],
     hdr_jobs:[Option<StatsJob>;MAX_PHASES],
     fence:vk::Fence,
@@ -622,7 +631,7 @@ impl VulkanPair{
         counter.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<max).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
-            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),auxiliary,cached_extended:false,adjacent_publish:None,
+            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),auxiliary,cached_extended:false,adjacent_publish:None,dynamic_scene:false,
             rgb_outputs:[vk::ImageView::null();MAX_PHASES],hdr_jobs:std::array::from_fn(|_|None),fence:vk::Fence::null(),
             #[cfg(target_os="android")]
             ahb_inputs:None};
@@ -791,7 +800,8 @@ impl VulkanPair{
         let phase=if c.algorithm.load(Ordering::Acquire)!=0{(phase*256.0).round()/256.0}else{phase};
         let flags=if self.a.rgb(){64}else{self.a.nv12|(self.b.nv12<<1)|(self.a.chroma_location<<2)|(self.b.chroma_location<<4)};
         let algo=unsafe{self.prepare_masks(phase)};
-        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),flags|algo,matrix,c.width|(c.height<<16)],
+        let scene=if self.dynamic_scene{8192}else{0};
+        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),flags|algo|scene,matrix,c.width|(c.height<<16)],
             c.width.div_ceil(8),c.height.div_ceil(8));}
         self.rgb_outputs[self.phases]=output;
         self.phases+=1;
@@ -1022,6 +1032,11 @@ pub unsafe extern "C" fn ambient_svp_vk_retire_held_status(job:*mut HeldSubmissi
     unsafe{retire_held_impl(job,wait,ptr::null_mut(),0)}
 }
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_retire_held_capture_group(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64,end:u64)->i32{
+    if job.is_null()||pass.is_null()||wait>2{return -1;}
+    unsafe{retire_held_with(job,wait,|p|ambient_svp_hdr_pass_capture_group(pass,p,0,index,end)==1)}
+}
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_retire_held_capture(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64)->i32{
     if pass.is_null(){return -1;}
     unsafe{retire_held_impl(job,wait,pass,index)}
@@ -1231,6 +1246,9 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                         }
                     }
                 }
+            }
+            if !pair.is_null()&&!pass.is_null()&&(&*pass).dynamic()&&(&*pass).mode()==1{
+                if ambient_svp_vk_enable_dynamic_scene(pair)!=0{return Err("dynamic HDR requires tuned synthesis".into());}
             }
             if pair.is_null()||ambient_svp_vk_render(pair,phase,3,views[count as usize-1])!=0{
                 return Err("held renderer pair rejected".into());
@@ -1482,6 +1500,13 @@ pub(crate) unsafe fn begin_ahb_extended(s:*const VulkanResident,command:vk::Comm
     pair
 }
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_enable_dynamic_scene(pair:*mut VulkanPair)->i32{
+    if pair.is_null(){return -1;}
+    let p=unsafe{&mut *pair};
+    if p.phases!=0||p.core.tuning.is_none()||p.core.mode==0||p.core.mode>=4||p.fence!=vk::Fence::null(){return -1;}
+    p.dynamic_scene=true;0
+}
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_render(pair:*mut VulkanPair,phase:f32,matrix:u32,output:vk::ImageView)->i32{
     if pair.is_null(){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{(&mut *pair).render(phase,matrix,output)}.map_or(-1,|_|0))).unwrap_or(-1)
@@ -1518,7 +1543,10 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_scene(pair:*mut VulkanPair,pha
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
         let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,None,None,true)else{return -1;};
-        unsafe{job.record(p.command,p.core.width,p.core.height);}
+        unsafe{
+            job.record(p.command,p.core.width,p.core.height);
+            if p.dynamic_scene{job.record_cut(p.command,p.field,2*u64::from(p.core.gw)*u64::from(p.core.gh)*16);}
+        }
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
 }
@@ -1740,6 +1768,15 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_interval(pass:*const TwoPass,index
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_hdr_pass_capture(pass:*mut TwoPass,pair:*const VulkanPair,phase:u32,index:u64)->i32{
+    unsafe{ambient_svp_hdr_pass_capture_group(pass,pair,phase,index,0)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_is_dynamic(pass:*const TwoPass)->i32{
+    if pass.is_null(){return 0;}
+    i32::from(unsafe{(&*pass).dynamic()})
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_capture_group(pass:*mut TwoPass,pair:*const VulkanPair,phase:u32,index:u64,group_end:u64)->i32{
     if pass.is_null()||pair.is_null(){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
         let p=&*pair;let i=phase as usize;
@@ -1755,6 +1792,11 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_capture(pass:*mut TwoPass,pair:*co
         if frames.len()!=1||frames[0].count!=9{return -1;}
         let frame=frames.remove(0);
         let schema:[u32;9]=frame.percentages[..9].try_into().unwrap();
+        if (&*pass).dynamic(){
+            if !p.dynamic_scene||group_end<=index{(&mut *pass).abort();return -1;}
+            let Ok(cut)=job.cut_flag()else{(&mut *pass).abort();return -1;};
+            if (&mut *pass).discover_cut(index,group_end,cut).is_err(){(&mut *pass).abort();return -1;}
+        }
         (&mut *pass).capture_v1(index,frame.frame,schema).map_or(-1,|_|1)
     })).unwrap_or(-1)
 }

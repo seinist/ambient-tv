@@ -100,6 +100,7 @@ AmbientSvpVk *ambient_svp_vk_create_quality(VkInstance,VkPhysicalDevice,VkDevice
  * No host pixel transfer; completes synchronously. */
 int ambient_svp_vk_render_held(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
     const VkSemaphore *,VkSemaphore,uint64_t,float);
+int ambient_svp_vk_enable_dynamic_scene(AmbientSvpVkPair *);
 /* Optional asynchronous variant, no CPU metadata readback. On success
  * with a non-NULL ticket the timeline signal is queued, not completed.
  * Keep all images, waits and signal alive until ticket retirement.
@@ -214,6 +215,8 @@ int ambient_svp_hdr_pass_verify_geometry(AmbientSvpHdrPass *,const AmbientSvpVkP
 int ambient_svp_hdr_pass_lookup_legacy(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
 int ambient_svp_hdr_pass_interval(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
 int ambient_svp_hdr_pass_capture(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
+int ambient_svp_hdr_pass_capture_group(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t,uint64_t);
+int ambient_svp_hdr_pass_is_dynamic(const AmbientSvpHdrPass *);
 int ambient_svp_hdr_pass_lookup(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
 int ambient_svp_hdr_pass_finish(AmbientSvpHdrPass *);
 void ambient_svp_hdr_pass_destroy(AmbientSvpHdrPass *);
@@ -224,6 +227,7 @@ int ambient_svp_vk_submit_held_capture(const AmbientSvpVk *,VkQueue,uint32_t,con
     const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
     const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
 int ambient_svp_vk_retire_held_capture(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
+int ambient_svp_vk_retire_held_capture_group(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t,uint64_t);
 /* Split live HDR/legacy replay submit and metadata collection. Collection
  * consumes the ticket on 1 (valid metadata), 2 (failed metadata) or 3
  * (device loss). wait=2 permits bounded polling. */

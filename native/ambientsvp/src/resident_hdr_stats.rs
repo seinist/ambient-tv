@@ -202,7 +202,7 @@ impl StatsJob{
                 vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
             let scene_hist=if scene{Some(Buffer::new(core,scene_size,vk::BufferUsageFlags::TRANSFER_DST,
                 vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?)}else{None};
-            let summary=Buffer::new(core,summary_size,vk::BufferUsageFlags::STORAGE_BUFFER,
+            let summary=Buffer::new(core,summary_size,vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST,
                 vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
             Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
                 pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),
@@ -303,6 +303,26 @@ impl StatsJob{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::HOST,
                 vk::DependencyFlags::empty(),&after,&[],&[]);
         }
+    }
+    pub(super) unsafe fn record_cut(&self,cmd:vk::CommandBuffer,field:vk::Buffer,offset:u64){
+        let d=&self.device;
+        unsafe{
+            let before=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE|vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ|vk::AccessFlags::TRANSFER_WRITE)];
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER|vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER,vk::DependencyFlags::empty(),&before,&[],&[]);
+            d.cmd_copy_buffer(cmd,field,self.summary.buffer,&[vk::BufferCopy::default().src_offset(offset).dst_offset(74*4).size(4)]);
+            let host=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ)];
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),&host,&[],&[]);
+        }
+    }
+    pub(super) fn cut_flag(&self)->Result<bool>{
+        let p=self.summary.map()?;
+        let flag=unsafe{*p.add(74)};
+        unsafe{self.device.unmap_memory(self.summary.memory);}
+        if flag>1{return Err("invalid GPU cut flag".into());}
+        Ok(flag==1)
     }
     pub(super) fn scene_frame(&self)->Result<SceneFrame>{
         if self.windows.len()!=1{return Err("expected one global scene window".into());}
@@ -834,7 +854,7 @@ fn valid_v1_values(r:&SceneResult,p:&[u32;9])->bool{
 }
 const MAX_SCENES:usize=100_000;
 pub(super) struct TwoPass{
-    mode:u32,version:u32,key:String,profile:String,width:u32,height:u32,ends:Vec<u64>,
+    mode:u32,version:u32,key:String,profile:String,width:u32,height:u32,ends:Vec<u64>,dynamic:bool,
     path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,legacy_results:Vec<LegacySceneResult>,legacy_current:Option<LegacyScene>,geometry:Vec<u64>,geometry_verified:Option<u64>,schemas:Vec<[u32;9]>,current_schema:Option<[u32;9]>,failed:bool,
 }
 fn read_bounded(path:&std::path::Path,max:u64)->Result<String>{
@@ -862,9 +882,12 @@ impl TwoPass{
         }
         let manifest=read_bounded(plan,2_000_000)?;
         let mut lines=manifest.lines();
-        if lines.next()!=Some("AMBIENTSVP_SCENE_PLAN_1")||lines.next()!=Some(key){
-            return Err("scene plan identity mismatch".into());
-        }
+        let dynamic=match lines.next(){
+            Some("AMBIENTSVP_SCENE_PLAN_1")=>false,
+            Some("AMBIENTSVP_SCENE_PLAN_2") if version==1=>true,
+            _=>return Err("unsupported scene plan format".into()),
+        };
+        if lines.next()!=Some(key){return Err("scene plan identity mismatch".into());}
         let mut ends=Vec::new();let mut first=0;
         for l in lines{
             let end:u64=parse_num(Some(l))?;
@@ -873,7 +896,7 @@ impl TwoPass{
         }
         if ends.is_empty(){return Err("empty scene plan".into());}
         if version==0&&*ends.last().unwrap()>1_000_000{return Err("legacy geometry cache frame limit".into());}
-        let mut s=Self{mode,version,key:key.into(),profile:profile.into(),width:w,height:h,ends,path:cache.into(),
+        let mut s=Self{mode,version,key:key.into(),profile:profile.into(),width:w,height:h,ends,dynamic,path:cache.into(),
             next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,geometry:Vec::new(),geometry_verified:None,schemas:Vec::new(),current_schema:None,failed:false};
         if mode==2{s.read_cache()?;}
         else if cache.exists(){return Err("scene cache already exists".into());}
@@ -918,8 +941,10 @@ impl TwoPass{
             if self.legacy_results.len()!=self.ends.len(){return Err("incomplete legacy cache".into());}
             return Ok(());
         }
+        let planned=self.ends.clone();
+        let mut discovered=Vec::new();
         for l in body.lines(){
-            if self.results.len()>=self.ends.len(){return Err("extra scene result".into());}
+            if self.results.len()>=MAX_SCENES||!self.dynamic&&self.results.len()>=self.ends.len(){return Err("extra scene result".into());}
             let mut fields=l.split_ascii_whitespace();
             let first=parse_num(fields.next())?;let end=parse_num(fields.next())?;
             let brightest_frame=parse_num(fields.next())?;
@@ -932,9 +957,19 @@ impl TwoPass{
                 schema[0]=parse_num(Some(first))?;
                 for v in &mut schema[1..]{*v=parse_num(fields.next())?;}
             }
-            if fields.next().is_some()||end!=self.ends[self.results.len()]||!valid_v1_schema(&schema){return Err("scene cache plan mismatch".into());}
+            if fields.next().is_some()||!self.dynamic&&end!=self.ends[self.results.len()]||!valid_v1_schema(&schema){return Err("scene cache plan mismatch".into());}
+            if self.dynamic{
+                if end<=discovered.last().copied().unwrap_or(0)||end>*planned.last().unwrap(){return Err("invalid discovered scene boundary".into());}
+                discovered.push(end);
+            }
             self.schemas.push(schema);
             self.results.push(SceneResult{first,end,brightest_frame,maxscl,average,percentiles,fraction});
+        }
+        if self.dynamic{
+            if discovered.last()!=planned.last()||planned.iter().any(|e|discovered.binary_search(e).is_err()){
+                return Err("dynamic cache lost a required boundary".into());
+            }
+            self.ends=discovered;
         }
         if self.results.iter().zip(&self.schemas).any(|(r,p)|!valid_v1_values(r,p)){
             return Err("invalid cached version-1 distribution".into());
@@ -950,6 +985,21 @@ impl TwoPass{
         Ok((if i==0{0}else{self.ends[i-1]},self.ends[i]))
     }
     pub(super) fn version(&self)->u32{self.version}
+    pub(super) fn dynamic(&self)->bool{self.dynamic}
+    // Only the last tick of a submitted source group may introduce an
+    // earlier boundary. Capture jobs are retired in presentation order.
+    pub(super) fn discover_cut(&mut self,index:u64,group_end:u64,cut:bool)->Result<()>{
+        if !self.dynamic||!cut||index.checked_add(1)!=Some(group_end){return Ok(());}
+        if self.mode!=1||self.version!=1||self.failed||self.next!=index{return Err("invalid dynamic scene order".into());}
+        let pos=self.results.len();
+        let end=*self.ends.get(pos).ok_or("dynamic scene beyond plan")?;
+        if group_end>end||self.ends.len()>=MAX_SCENES&&group_end!=end{return Err("dynamic scene boundary exceeds plan".into());}
+        if group_end<end{
+            self.ends.insert(pos,group_end);
+            if let Some(scene)=self.current.as_mut(){scene.end=group_end;}
+        }
+        Ok(())
+    }
     pub(super) fn mode(&self)->u32{self.mode}
     pub(super) fn abort(&mut self){self.failed=true;}
     #[cfg(test)]
