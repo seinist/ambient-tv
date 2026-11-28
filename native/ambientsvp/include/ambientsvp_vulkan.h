@@ -5,6 +5,7 @@
 #ifndef AMBIENTSVP_VULKAN_H
 #define AMBIENTSVP_VULKAN_H
 #include <stdint.h>
+#include "ambientsvp_quality.h"
 #include <vulkan/vulkan.h>
 #ifdef __cplusplus
 extern "C" {
@@ -84,6 +85,8 @@ int ambient_svp_vk_set_synthesis(const AmbientSvpVk *,uint32_t algorithm);
 AmbientSvpVkPair *ambient_svp_vk_begin_extended(const AmbientSvpVk *,VkCommandBuffer,
     const AmbientSvpVkPicture *previous,const AmbientSvpVkPicture *a,
     const AmbientSvpVkPicture *b,const AmbientSvpVkPicture *next);
+AmbientSvpVk *ambient_svp_vk_create_quality(VkInstance,VkPhysicalDevice,VkDevice,
+    PFN_vkGetInstanceProcAddr,uint32_t,uint32_t,uint32_t,const AmbientSvpQuality *);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
 /* Record motion analysis into an already-recording command buffer
  * outside a render pass; no submit. Pair retains its private resources.
