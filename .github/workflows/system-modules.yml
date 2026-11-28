@@ -7,6 +7,8 @@ on:
       - 'app/src/main/assets/games/slang/**'
       - 'scripts/package_system_modules.py'
       - 'scripts/prepare_native_module_release.py'
+      - 'scripts/incremental_system_modules.py'
+      - 'scripts/test_incremental_system_modules.py'
       - 'scripts/test_prepare_native_module_release.py'
       - '.github/workflows/release.yml'
       - 'scripts/export_monogram_adapter.py'
@@ -38,6 +40,10 @@ on:
         description: Successful Build release run ID for the reviewed native candidate
         type: string
         default: ''
+      force_publish:
+        description: Publish a new version even if the native payload is unchanged
+        type: boolean
+        default: false
       reviewed:
         description: Confirm device validation and corresponding source/license distribution review
         type: boolean
@@ -63,6 +69,7 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p test_package_system_modules.py
           python3 -m unittest discover -s scripts -p test_prepare_native_module_release.py
+          python3 -m unittest discover -s scripts -p test_incremental_system_modules.py
           python3 -m unittest discover -s scripts -p test_check_modular_preview_apk.py
           python3 -m unittest discover -s scripts -p test_export_monogram_adapter.py
           python3 -m unittest discover -s scripts -p test_strip_smarttube_classes.py
@@ -155,7 +162,23 @@ jobs:
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
           path: module-release
+      - name: Compare verified native candidate with published catalog
+        id: incremental
+        env:
+          FORCE_PUBLISH: ${{ inputs.force_publish }}
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_native_module_release.py verify --module "$MODULE" --run-id "$CANDIDATE_RUN" --sha "$GITHUB_SHA" --output module-release
+          args=()
+          if [[ "$FORCE_PUBLISH" == true ]]; then args+=(--force); fi
+          result="$(python3 scripts/incremental_system_modules.py --repo "$GITHUB_REPOSITORY" --module "$MODULE" --candidate module-release/manifest.json --public-key cores/signing-public.pem "${args[@]}")"
+          case "$result" in
+            publish|unchanged) echo "result=$result" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
+          if [[ "$result" == unchanged ]]; then echo "Unchanged native module; retaining previous signed release." >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Verify and sign reviewed native candidate
+        if: steps.incremental.outputs.result == 'publish'
         env:
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
         run: |

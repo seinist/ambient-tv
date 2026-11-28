@@ -472,6 +472,25 @@ asset-only publishing mode is retained separately. No native release has been
 published or device-tested by this change; remaining notice/source preparation
 and incremental builds are separate tasks.
 
+### Incremental release and native build reuse
+
+Publication compares the candidate against the most recent authenticated
+native catalog of the same module. Only the version number and release tag
+are ignored in the payload comparison: ABI, ZIP digest/size, profile, host
+API, SDK, dependency and host fingerprint metadata remain significant.
+Unchanged payloads retain the existing release; force_publish can request a
+newer version but cannot bypass signatures or downgrade/conflict checks.
+An invalid historical catalog is an error, not permission to publish.
+The legacy shader asset-only catalog is not treated as a native candidate.
+
+Main-only Full builds restore an exact native output cache keyed by the native
+source/build inputs and observed compiler/toolchain identity. Existing engine
+stamp/ABI checks still run and missing outputs are rebuilt. No fallback cache
+keys or PR caches are used. This is intentionally conservative: unrelated UI
+changes can reuse native outputs, but shared build recipe changes invalidate
+the group. Per-engine independent cross-run caches remain a later optimization.
+The candidate packaging/validation still uses the actual signed Full APK bytes.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

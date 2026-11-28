@@ -120,6 +120,32 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Exact-match caches only. The existing per-engine stamp/ABI checks still
+      # run in build.sh. Never restore caches created by PR builds.
+      - name: Resolve native toolchain cache identity
+        id: native-tools
+        run: |
+          set -euo pipefail
+          fingerprint="$({ rustc -Vv; cargo -V; cargo ndk --version; java -version; gcc --version; cmake --version; "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version; echo "${ImageVersion:-unknown}"; echo "$NDK_VERSION"; echo "${SPOTIFY_NATIVE:-0}"; } 2>&1 | sha256sum | cut -d' ' -f1)"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Restore native build outputs
+        id: native-cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            app/src/main/jniLibs
+            app/libs/libvlc-vulkan.aar
+            app/libs/.vlc-source-*
+            app/libs/.projectm-pcm-vlc-*
+            app/libs/.svp-vlc-*
+            app/libs/monogram-mtproto.aar
+            app/libs/.monogram-native-version
+            app/src/main/assets/projectm
+            app/src/main/assets/licenses/open-svpflow
+          key: ambient-native-main-v1-${{ steps.native-tools.outputs.fingerprint }}-${{ hashFiles('build.sh', 'scripts/**', 'native/**', 'gradle/**', 'app/build.gradle.kts', 'app/src/main/jniLibs/**', 'app/src/main/assets/projectm/**', 'app/libs/**', 'third_party/**', 'libretrodroid_wrapper/**', '.github/workflows/release.yml') }}
+
       - name: Check build scripts
         run: |
           bash -n build.sh
@@ -139,6 +165,22 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$AMBIENT_TV_KEYSTORE_FILE"
           bash build.sh release
           test -s dist/update.json
+
+      - name: Save validated native build outputs
+        if: github.ref == 'refs/heads/main' && steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/src/main/jniLibs
+            app/libs/libvlc-vulkan.aar
+            app/libs/.vlc-source-*
+            app/libs/.projectm-pcm-vlc-*
+            app/libs/.svp-vlc-*
+            app/libs/monogram-mtproto.aar
+            app/libs/.monogram-native-version
+            app/src/main/assets/projectm
+            app/src/main/assets/licenses/open-svpflow
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v5
