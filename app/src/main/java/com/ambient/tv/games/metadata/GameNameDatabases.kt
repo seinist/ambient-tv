@@ -17,7 +17,7 @@ internal object GameNameDatabases {
         "gb" to listOf(NO_INTRO + "Nintendo - Game Boy", NO_INTRO + "Nintendo - Game Boy Color"),
         "gba" to listOf(NO_INTRO + "Nintendo - Game Boy Advance"),
         "n64" to listOf(NO_INTRO + "Nintendo - Nintendo 64"),
-        "nds" to listOf(NO_INTRO + "Nintendo - Nintendo DS"),
+        "nds" to listOf(NO_INTRO + "Nintendo - Nintendo DS", NO_INTRO + "Nintendo - Nintendo DSi"),
         "n3ds" to listOf(NO_INTRO + "Nintendo - Nintendo 3DS", NO_INTRO + "Nintendo - New Nintendo 3DS"),
         "vb" to listOf(NO_INTRO + "Nintendo - Virtual Boy"),
         "megadrive" to listOf(NO_INTRO + "Sega - Mega Drive - Genesis", NO_INTRO + "Sega - Master System - Mark III",
