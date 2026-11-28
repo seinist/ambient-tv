@@ -159,7 +159,7 @@ unsigned x = 0;
             path = Path(directory) / "extended.cpp"
             output = path.with_suffix(".o")
             path.write_text(source)
-            for target, flags in (("aarch64-none-elf", []), ("armv7a-none-eabi", ["-mfpu=neon"])):
+            for target, flags in (("aarch64-none-elf", []), ("armv7a-none-eabi", ["-mfpu=neon", "-mfloat-abi=softfp"])):
                 subprocess.run([clang, "--target=" + target, *flags, "-ffreestanding", "-std=c++11",
                                 "-O3", "-c", str(path), "-o", str(output)], check=True)
                 self.assertGreater(output.stat().st_size, 0)
