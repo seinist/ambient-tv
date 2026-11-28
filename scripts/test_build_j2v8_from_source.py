@@ -26,8 +26,11 @@ class SourceBuildTest(unittest.TestCase):
 
     def test_arm64_page_alignment_preserves_host_default(self):
         old = 'ldflags += [ "-Wl,-z,max-page-size=4096" ]'
-        self.assertIn('is_android ? "-Wl,-z,max-page-size=16384" : "-Wl,-z,max-page-size=4096"',
-                      build.patch_android_page_alignment(old))
+        patched = build.patch_android_page_alignment(old)
+        self.assertIn('if (is_android) {', patched)
+        self.assertIn('ldflags += [ "-Wl,-z,max-page-size=16384" ]', patched)
+        self.assertIn('} else {', patched)
+        self.assertIn(old, patched)
         with self.assertRaises(ValueError):
             build.patch_android_page_alignment("changed")
         self.assertIn("hide_all_but_jni", build.BRIDGE)

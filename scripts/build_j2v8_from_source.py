@@ -91,7 +91,11 @@ def patch_android_page_alignment(source):
     # The Chromium compiler config appends a 4096-byte arm64 max-page-size
     # AFTER target-local flags. Preserve the host setting, override Android.
     old = 'ldflags += [ "-Wl,-z,max-page-size=4096" ]'
-    new = 'ldflags += [ is_android ? "-Wl,-z,max-page-size=16384" : "-Wl,-z,max-page-size=4096" ]'
+    new = ('if (is_android) {\n'
+           '        ldflags += [ "-Wl,-z,max-page-size=16384" ]\n'
+           '      } else {\n'
+           '        ldflags += [ "-Wl,-z,max-page-size=4096" ]\n'
+           '      }')
     if source.count(old) != 1:
         raise ValueError("Unexpected pinned arm64 linker page-size config")
     return source.replace(old, new)
