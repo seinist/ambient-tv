@@ -89,6 +89,13 @@ internal object GameVulkanSlangPresets {
         val result = runCatching {
             val module = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.SHADERS)
             external = module != null
+            // Native code opens this SONAME in the host linker namespace. A
+            // complete package has already loaded it before any preset is used.
+            if (module?.nativeDirectory == null) {
+                if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.SHADERS))
+                    return@runCatching null
+                System.loadLibrary("librashader_capi")
+            }
             val directory = File(context.noBackupFilesDir, "games/vulkan-slang/$VERSION")
             if (!directory.isDirectory && !directory.mkdirs())
                 error("Cannot prepare Vulkan shader storage")
