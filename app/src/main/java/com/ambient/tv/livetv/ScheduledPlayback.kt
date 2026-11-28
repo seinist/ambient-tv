@@ -38,7 +38,7 @@ data class ScheduledPlayback(
 }
 
 internal fun scheduledMediaProvider(id: String, type: String): String? =
-    mediaProvider(id).takeIf { it in setOf("plex", "jellyfin", "emby") && type in setOf("movie", "episode") && id.isNotBlank() }
+    mediaProvider(id).takeIf { it in setOf("plex", "jellyfin", "emby") && type in setOf("movie", "episode") && id.isNotBlank() && (it != "plex" || id.all(Char::isDigit)) }
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -53,12 +53,12 @@ internal fun scheduledPlaybackIdentity(context: Context, provider: String, targe
     val entry = EntryPointAccessors.fromApplication(context.applicationContext, ScheduledPlaybackEntryPoint::class.java)
     val raw = when (provider) {
         "plex", "jellyfin", "emby" -> {
-            if (mediaProvider(targetId) != provider) return null
+            if (scheduledMediaProvider(targetId, "movie") != provider) return null
             val prefs = entry.appPreferences()
             val enabled = when (provider) {
-                "plex" -> prefs.isConfigured
-                "jellyfin" -> prefs.isJellyfinConfigured
-                else -> prefs.isEmbyConfigured
+                "plex" -> prefs.isConfigured && prefs.plexEnabled
+                "jellyfin" -> prefs.isJellyfinConfigured && prefs.jellyfinEnabled
+                else -> prefs.isEmbyConfigured && prefs.embyEnabled
             }
             if (!enabled) return null
             entry.playbackAvailability().mediaIdentity(targetId)
@@ -102,6 +102,7 @@ internal object ScheduledPlaybackRuntime {
 
     fun gameStarted(context: Context, fileId: String) {
         val expected = pending.value ?: return
-        if (expected.plan?.game == true && expected.plan.targetId == fileId) confirm(context, expected)
+        val plan = expected.plan ?: return
+        if (plan.game && plan.targetId == fileId) confirm(context, expected)
     }
 }
