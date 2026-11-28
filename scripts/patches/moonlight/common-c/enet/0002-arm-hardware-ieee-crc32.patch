@@ -1,0 +1,71 @@
+diff --git a/packet.c b/packet.c
+--- a/packet.c
++++ b/packet.c
+@@ -2,7 +2,12 @@
+  @file  packet.c
+  @brief ENet packet management functions
+ */
+-#include <string.h>
++#include <string.h>
++#if defined(__aarch64__) && defined(__linux__)
++#include <arm_acle.h>
++#include <sys/auxv.h>
++#include <asm/hwcap.h>
++#endif
+ #define ENET_BUILDING_LIB 1
+ #include "enet/enet.h"
+ 
+@@ -135,9 +140,50 @@
+     0xB3667A2E, 0xC4614AB8, 0x5D681B02, 0x2A6F2B94, 0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D
+ };
+ 
+-enet_uint32
+-enet_crc32 (const ENetBuffer * buffers, size_t bufferCount)
+-{
++#if defined(__aarch64__) && defined(__linux__) && defined(HWCAP_CRC32)
++// ENet uses IEEE CRC32, not Castagnoli CRC32C. ARM supplies both; use
++// __crc32* exclusively. Never require the optional extension globally.
++__attribute__((target("+crc")))
++static enet_uint32 enet_crc32_arm(const ENetBuffer *buffers, size_t bufferCount)
++{
++    enet_uint32 crc = 0xFFFFFFFF;
++    while (bufferCount-- > 0) {
++        const enet_uint8 *data = buffers->data;
++        size_t remaining = buffers->dataLength;
++        while (remaining >= 8) {
++            uint64_t word;
++            memcpy(&word, data, sizeof(word));
++#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++            word = __builtin_bswap64(word);
++#endif
++            crc = __crc32d(crc, word);
++            data += 8;
++            remaining -= 8;
++        }
++        while (remaining-- > 0) crc = __crc32b(crc, *data++);
++        buffers++;
++    }
++    return ENET_HOST_TO_NET_32(~crc);
++}
++
++static int enet_has_arm_crc(void)
++{
++    static int cached;
++    int value = __atomic_load_n(&cached, __ATOMIC_RELAXED);
++    if (value == 0) {
++        value = (getauxval(AT_HWCAP) & HWCAP_CRC32) ? 2 : 1;
++        __atomic_store_n(&cached, value, __ATOMIC_RELAXED);
++    }
++    return value == 2;
++}
++#endif
++
++enet_uint32
++enet_crc32 (const ENetBuffer * buffers, size_t bufferCount)
++{
++#if defined(__aarch64__) && defined(__linux__) && defined(HWCAP_CRC32)
++    if (enet_has_arm_crc()) return enet_crc32_arm(buffers, bufferCount);
++#endif
+     enet_uint32 crc = 0xFFFFFFFF;
+ 
+     while (bufferCount -- > 0)
