@@ -101,11 +101,29 @@ def vendor_cargo(module, destination):
     if not manifests:
         raise ValueError(f"{module}: missing resolved Cargo workspace and lockfile")
     destination.mkdir(parents=True, exist_ok=False)
-    config = subprocess.check_output(["cargo", "vendor", "--locked", "--versioned-dirs",
-                                      "--manifest-path", str(manifests[0]), str(destination / "vendor")],
-                                     cwd=manifests[0].parent, text=True)
-    (destination / "cargo-source-config.toml").write_text(config)
-    (destination / "Cargo.lock").write_bytes(manifests[0].with_name("Cargo.lock").read_bytes())
+    # A module can contain several separately resolved Cargo workspaces.
+    # Preserve each lockfile, not just the first one encountered.
+    inventory = []
+    for index, manifest in enumerate(manifests):
+        workspace = destination / f"workspace-{index}"
+        workspace.mkdir()
+        lock = manifest.with_name("Cargo.lock")
+        original_lock = lock.read_bytes()
+        config = subprocess.check_output(["cargo", "vendor", "--locked", "--versioned-dirs",
+                                          "--manifest-path", str(manifest.resolve()), "vendor"],
+                                         cwd=workspace, text=True)
+        if lock.read_bytes() != original_lock:
+            raise ValueError(f"{module}: Cargo.lock changed during source collection")
+        if not (workspace / "vendor").is_dir():
+            raise ValueError(f"{module}: missing vendored source")
+        # No build-runner absolute path in the reusable Cargo configuration.
+        config = config.replace(str((workspace / "vendor").resolve()), "vendor")
+        (workspace / "cargo-source-config.toml").write_text(config)
+        (workspace / "Cargo.lock").write_bytes(original_lock)
+        inventory.append({"workspace": workspace.name,
+                          "manifest": manifest.relative_to(ROOT).as_posix(),
+                          "lockSha256": hashlib.sha256(original_lock).hexdigest()})
+    (destination / "workspaces.json").write_text(json.dumps(inventory, sort_keys=True) + "\n")
     return destination
 
 

@@ -175,7 +175,7 @@ jobs:
         id: native-tools
         run: |
           set -euo pipefail
-          fingerprint="$({ rustc -Vv; cargo -V; cargo ndk --version; java -version; gcc --version; cmake --version; "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version; echo "${ImageVersion:-unknown}"; echo "$NDK_VERSION"; } 2>&1 | sha256sum | cut -d' ' -f1)"
+          fingerprint="$({ rustc -Vv; cargo -V; cargo ndk --version; java -version; gcc --version; cmake --version; meson --version; ninja --version; python3 --version; "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version; echo "${ImageVersion:-unknown}"; echo "$NDK_VERSION"; } 2>&1 | sha256sum | cut -d' ' -f1)"
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
 
       - name: Resolve individual library input keys

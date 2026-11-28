@@ -119,7 +119,7 @@ GROUPS = {
   }
 }
 COMMON = ("build.sh", "build.gradle.kts", "settings.gradle.kts", "gradle.properties",
-          "gradle/**", "gradlew", "scripts/native_cache_keys.py", ".github/workflows/release.yml")
+          "gradle/**", "gradlew", "app/build.gradle.kts", "scripts/native_cache_keys.py", ".github/workflows/release.yml")
 PINS = "gradle/external-versions.properties"
 
 

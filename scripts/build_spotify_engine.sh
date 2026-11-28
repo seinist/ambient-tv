@@ -85,7 +85,7 @@ export CARGO_TARGET_DIR="${SPOTIFY_CARGO_TARGET_DIR:-$ROOT/third_party/spotify/c
 mkdir -p "$CARGO_TARGET_DIR"
 (
   cd "$WORK/rust"
-  cargo ndk -t armeabi-v7a -t arm64-v8a -t x86 -t x86_64 --platform 26 -o "$OUT" build --release
+  cargo ndk -t armeabi-v7a -t arm64-v8a -t x86 -t x86_64 --platform 26 -o "$OUT" build --release --locked
 )
 
 # Rusty >= 2.7 no longer needs libc++_shared itself, but other native components in the APK
