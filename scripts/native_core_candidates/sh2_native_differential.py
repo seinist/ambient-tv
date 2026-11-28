@@ -18,7 +18,76 @@ static void SH2delay(SH2_struct* sh,u32 addr) {
     handler(sh);
     sh->regs.PC-=2;
 }
+static void reference_step(SH2_struct* sh) {
+    sh->instruction=FetchBios(sh,sh->regs.PC);
+    opcodefunc handler=decode(SHMT_SH2,sh->instruction);
+    if(!handler)abort();
+    handler(sh);
+}
+static void setup_program(SH2_struct* sh,u16* program,unsigned length,u32 base) {
+    memset(sh,0,sizeof(*sh));
+    sh->model=SHMT_SH2;
+    sh->program=program;sh->program_base=base;sh->program_length=length;
+    sh->regs.PC=base;
+    sh->MappedMemoryReadByte=read1;sh->MappedMemoryReadWord=read2;sh->MappedMemoryReadLong=read4;
+    sh->MappedMemoryWriteByte=write1;sh->MappedMemoryWriteWord=write2;sh->MappedMemoryWriteLong=write4;
+    static void* opcode_table[65536];
+    for(unsigned i=0;i<65536;++i)opcode_table[i]=(void*)decode(SHMT_SH2,i);
+    sh->opcodes=opcode_table;
+    for(unsigned i=0;i<256;++i)sh->fetchlist[i]=(void*)FetchBios;
+}
+static void test_linked_traces(void) {
+    u16 program[128];
+    for(unsigned i=0;i<128;++i)program[i]=0x0009;
+    program[0]=0xe101;program[1]=0x7101;
+    program[2]=0xb004;program[3]=0x7103; /* BSR to 8, add in slot */
+    program[8]=0x022a;program[9]=0x7102; /* STS PR,R2 */
+    program[10]=0xa004;program[11]=0x7104; /* BRA to 16 */
+    program[16]=0x7105;program[17]=0xafee;program[18]=0x7106; /* BRA to 1 */
+    SH2_struct got,want;
+    const u32 base=0x06000100u;
+    setup_program(&got,program,128,base);
+    AmbientSh2Block* executed=NULL;
+    for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+        if(ambient_sh2_try_block(&got,100,NULL,&executed))abort();
+    AmbientSh2Block* trace=&ambient_sh2_cache[0][ambient_sh2_slot(base)];
+    if(!trace->code || trace->count!=AMBIENT_SH2_MAX_OPS || trace->pcs[4]!=base+16)abort();
+    want=got;
+    while(want.cycles<trace->cycles)reference_step(&want);
+    if(!ambient_sh2_try_block(&got,100,NULL,&executed)||executed!=trace ||
+       got.cycles!=want.cycles || got.instruction!=want.instruction ||
+       memcmp(&got.regs,&want.regs,sizeof(got.regs)))abort();
+    /* Mutate a non-contiguous delay slot: the old trace must be invalidated
+       before any register or cycle changes, not merely at its entry PC. */
+    setup_program(&got,program,128,base);
+    program[11]=0x7107;
+    if(ambient_sh2_try_block(&got,100,NULL,&executed)||got.cycles||trace->code)abort();
+    ambient_sh2_clear();
+
+    /* Two decoded memory-only blocks: execute a linked edge, then replace
+       the successor instruction and ensure the old link is rejected. */
+    program[0]=0x2112;program[1]=0x6212;program[2]=0x0009;
+    setup_program(&got,program,128,base);
+    for(unsigned j=0;j<2;++j) {
+        got.regs.PC=base+2*j;
+        for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+            if(ambient_sh2_try_block(&got,20,NULL,&executed))abort();
+    }
+    got.regs.PC=base;got.regs.R[1]=0x1234;got.seed=1234;
+    want=got;reference_step(&want);reference_step(&want);
+    if(!ambient_sh2_try(&got,20)||got.cycles!=want.cycles ||
+       got.count!=want.count || memcmp(&got.regs,&want.regs,sizeof(got.regs)) ||
+       memcmp(got.events,want.events,sizeof(got.events)))abort();
+    trace=&ambient_sh2_cache[0][ambient_sh2_slot(base)];
+    if(!trace->edges[0].target)abort();
+    setup_program(&got,program,128,base);
+    program[1]=0xe180;
+    if(!ambient_sh2_try(&got,20)||got.cycles!=1||got.regs.PC!=base+2)abort();
+    ambient_sh2_clear();
+    puts("SH2 fused BRA/BSR traces, register state, chained exits and stale-source invalidation passed");
+}
 int main(void) {
+    test_linked_traces();
     unsigned legal=0, illegal=0, delayed=0;
     u32 seed=0x6a09e667u;
     const uint16_t slots[]={0xe180,0x9101,0xd102,0x6122,0x2122,0x3124,0x400e,0x312d};
@@ -89,11 +158,18 @@ def run(upstream: Path):
     enum SHMODELTYPE model;
     struct { unsigned enabled; } stepOverOut,trackInfLoop;
     void* fetchlist[256];
-    void* opcodes[1];""")
+    void** opcodes;
+    u16* program;u32 program_base,program_length;""")
     prelude+=r"""
 typedef u32(*fetchfunc)(SH2_struct*,u32);
 static struct { int sh2_cache_enabled; } yabsys;
-static u32 FetchBios(SH2_struct* sh,u32 addr){event(sh,16,addr,sh->slot);return sh->slot;}
+static u32 FetchBios(SH2_struct* sh,u32 addr){
+    if(sh->program) {
+        const u32 index=(addr-sh->program_base)>>1;
+        return index<sh->program_length?sh->program[index]:0x0009;
+    }
+    event(sh,16,addr,sh->slot);return sh->slot;
+}
 static u32 FetchLWram(SH2_struct* sh,u32 addr){return FetchBios(sh,addr);}
 static u32 FetchHWram(SH2_struct* sh,u32 addr){return FetchBios(sh,addr);}
 static void SH2delay(SH2_struct*,u32);

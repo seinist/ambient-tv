@@ -32,9 +32,12 @@ compiler build is not proof of correct gameplay or a performance improvement.
   operations. The two SH2 CPUs own independent single-op slabs. Each cached
   block retains two outgoing links to stable cache slots and can execute a
   bounded chain of 16 validated blocks without returning to the outer loop.
-  Links always recheck fetch mappings, code bytes and cycle budget; registers
-  are committed at helper/trace boundaries rather than kept live across
-  indirect calls. Illegal opcodes, cache-enabled/debug execution and executable
+  Links always recheck fetch mappings, code bytes and cycle budget. Direct
+  BRA/BSR targets with a pure native delay slot are fused into one trace:
+  guest register allocation spans the branch, slot and target; BSR updates
+  PR before the slot. The native code falls through directly without host
+  dispatch. Every non-contiguous source address is checked before execution.
+  Registers are committed at mapped-bus/helper and dynamic-exit boundaries. Illegal opcodes, cache-enabled/debug execution and executable
   mapping failure retain upstream fallbacks.
   Pure ALU traces now span up to 32 guest instructions and retain up to ten
   frequently accessed GPRs in caller-saved AArch64 registers. Dirty values

@@ -399,7 +399,8 @@ static void ambient_sh2_delay_native(SH2_struct* sh, u32 addr)
 
 typedef struct AmbientSh2Block AmbientSh2Block;
 struct AmbientSh2Block {
-    uint32_t pc;
+    uint32_t pc, next_pc;
+    uint32_t pcs[AMBIENT_SH2_MAX_OPS];
     uint16_t ops[AMBIENT_SH2_MAX_OPS];
     unsigned count, cycles, hits;
     uint16_t terminal;
@@ -444,6 +445,12 @@ static int ambient_sh2_eligible(const SH2_struct* context)
 #endif
 }
 
+static int ambient_sh2_safe_fetch(SH2_struct* context,fetchfunc fetch,u32 addr)
+{
+    return !(addr&1u) && (addr&0xc0000000u)!=0xc0000000u &&
+        ((fetchfunc*)context->fetchlist)[(addr>>20)&255u]==fetch;
+}
+
 static unsigned ambient_sh2_slot(uint32_t pc)
 {
     return (pc>>1 ^ pc>>9)&(AMBIENT_SH2_SLOTS-1);
@@ -474,18 +481,18 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
         /* Self-modifying code, savestate loads and RAM aliases cannot reuse
          * a stale translation: verify every source instruction before entry. */
         for (i = 0; i < block->count; ++i) {
-            uint32_t addr = pc + i*2;
-            if (((fetchfunc*)context->fetchlist)[(addr >> 20) & 255] != fetch ||
+            uint32_t addr = block->pcs[i];
+            if (!ambient_sh2_safe_fetch(context,fetch,addr) ||
                 (uint16_t)fetch(context, addr) != block->ops[i]) break;
         }
-        const uint32_t terminal_pc = pc + block->count*2;
+        const uint32_t terminal_pc = block->next_pc;
         if (i == block->count && (!block->has_terminal ||
-            (((fetchfunc*)context->fetchlist)[(terminal_pc >> 20) & 255] == fetch &&
+            (ambient_sh2_safe_fetch(context,fetch,terminal_pc) &&
              (uint16_t)fetch(context, terminal_pc) == block->terminal))) {
             if (block->code) {
                 ((void (*)(u32*, u32*))block->code)(context->regs.R, &context->regs.SR.all);
                 context->instruction = block->ops[block->count-1];
-                context->regs.PC += block->count * 2;
+                context->regs.PC = block->next_pc;
                 context->cycles += block->cycles;
             }
             if (block->has_terminal) {
@@ -518,14 +525,46 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     }
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
     unsigned words = 0, count = 0, cycles = 0;
+    u32 addr=pc;
     block->has_terminal = 0;
     code[words++] = 0xd503245fu; /* BTI c, harmless hint on older ARM64 */
     code[words++] = 0xaa0103e7u; /* MOV x7,x1: SR pointer survives scratch register writes */
     while (count < AMBIENT_SH2_MAX_OPS) {
-        uint32_t addr = pc + count*2;
-        if (((fetchfunc*)context->fetchlist)[(addr >> 20) & 255] != fetch) break;
+        if (!ambient_sh2_safe_fetch(context,fetch,addr)) break;
         uint16_t op = (uint16_t)fetch(context, addr);
         unsigned cost;
+        /* Statically known BRA/BSR targets can be fused into a native trace
+         * when the delay instruction is pure emitted code. Host execution
+         * falls straight through into the target: no lookup, call, spill or
+         * reload at this internal guest block boundary. All non-contiguous
+         * source addresses are revalidated before the entire trace runs.
+         * Never fuse a branch whose slot could mutate code, bus or control. */
+        const unsigned top=op&0xf000u;
+        if((top==0xa000u || top==0xb000u) && count+2<=AMBIENT_SH2_MAX_OPS &&
+           addr<=UINT32_MAX-2 && ambient_sh2_safe_fetch(context,fetch,addr+2)) {
+            const int disp=(op&0x800u)?(int)(op&0xfffu)-4096:(int)(op&0xfffu);
+            const u32 target=addr+4+(u32)(disp*2);
+            if(ambient_sh2_safe_fetch(context,fetch,target)) {
+                const uint16_t slot=(uint16_t)fetch(context,addr+2);
+                uint32_t slot_code[16];
+                unsigned slot_cycles;
+                const unsigned n=ambient_sh2_emit_extended(slot,slot_code,ambient_sh2_layout,&slot_cycles);
+                if(n) {
+                    if(top==0xb000u) {
+                        const u32 pr=addr+4;
+                        code[words++]=0x52800001u|((pr&0xffffu)<<5);
+                        code[words++]=0x72a00001u|((pr>>16)<<5);
+                        code[words++]=0xb9000001u|(ambient_sh2_layout.pr<<8);
+                    }
+                    memcpy(code+words,slot_code,(n-1)*sizeof(uint32_t));
+                    words+=n-1;cycles+=2+slot_cycles;
+                    block->pcs[count]=addr;block->ops[count++]=op;
+                    block->pcs[count]=addr+2;block->ops[count++]=slot;
+                    addr=target;
+                    continue;
+                }
+            }
+        }
         unsigned emitted = ambient_sh2_emit_extended(op, code + words, ambient_sh2_layout, &cost);
         if (!emitted) {
             // One terminal instruction may reuse the verified fetch. Never
@@ -544,8 +583,11 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
         }
         words += emitted-1;
         cycles += cost;
+        block->pcs[count]=addr;
         block->ops[count++] = op;
+        addr+=2;
     }
+    block->next_pc=addr;
     // Memory/control-heavy loops need not contain an ALU prefix. Cache
     // decoded terminal-only operations without allocating executable pages.
     if (!count && block->has_terminal) {
