@@ -89,6 +89,36 @@ the shared priority scheduler and certificate-scoped cache. The native feature
 is still opt-in. Cancellation cannot undo a host launch already accepted by
 Sunshine, and the current-game check and remote quit are separate host requests.
 
+## Native latency and adaptive buffering
+
+- The opt-in MediaCodec renderer copies picture fragments synchronously from
+  the active native decode unit directly into the codec's writable input
+  buffer. JNI validates the direct address, exact byte count and capacity.
+  The unit is thread-local and cleared before native packet ownership ends.
+  Codec-configuration NALs retain the separate byte-array path, and the base
+  renderer keeps its legacy callback. This is one CPU copy, not end-to-end
+  hardware zero-copy.
+- If a surround stream falls back to stereo, Opus PCM is downmixed natively
+  before the JNI short-array copy. ARM64 uses NEON for four frames per iteration,
+  including saturation; other ABIs and remaining frames use the scalar
+  implementation. Native allocation failure retains the Kotlin fallback.
+  The Opus archive and its corresponding-source pins are unchanged.
+- The session-local network policy samples ENet RTT variance, observed frame
+  gaps and network status once per second. After two pressure samples it may
+  increase the audio reordering reserve (4–30 ms, in addition to the FEC
+  block's negotiated duration) and the video UDP receive-capacity tier.
+  After ten consecutive stable samples the reserve falls by 3 ms, down to
+  the latency/balanced/smooth floor (4/6/10 ms), and video capacity falls one
+  tier. Missing RTT telemetry cannot trigger shrinkage. Video receive capacity
+  preserves the upstream 2048-packet floor and caps at 4096 packet-equivalents;
+  the OS may clamp or reject changes. This is a kernel capacity, not an
+  intentional video playout delay. Only the receive thread calls setsockopt.
+- Android CI runs source-level native regression harnesses for JNI copy bounds,
+  thread ownership, scalar/ARM64 NEON downmix parity (via QEMU) and socket
+  capacity limits. The Kotlin policy has deterministic hysteresis tests.
+  These do not replace device measurements of actual decoding, presentation,
+  network jitter, underruns or input-to-photon latency.
+
 ## Release and device acceptance gates
 
 - All four native ABIs must compile, pass alignment checks, and appear in the

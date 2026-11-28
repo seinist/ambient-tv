@@ -34,7 +34,7 @@ typedef struct LENTRY {
     int length;
     int bufferType;
 } *PLENTRY;
-typedef struct { PLENTRY bufferList; } *PDECODE_UNIT;
+typedef struct { PLENTRY bufferList; } DECODE_UNIT, *PDECODE_UNIT;
 typedef struct { unsigned char *address; jlong capacity; } Buffer;
 typedef struct JNITable {
     void *(*GetDirectBufferAddress)(const struct JNITable **env, jobject obj);
@@ -55,16 +55,19 @@ static void testCopy(void) {
     struct LENTRY second = { NULL, "de", 2, BUFFER_TYPE_PICDATA };
     struct LENTRY config = { &second, "config", 6, 1 };
     struct LENTRY first = { &config, "abc", 3, BUFFER_TYPE_PICDATA };
-    struct { PLENTRY bufferList; } unitStorage = { &first };
+    DECODE_UNIT unitStorage = { &first };
     unsigned char output[8] = {0};
     Buffer target = { output, sizeof(output) };
     assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(&mock, NULL, &target, 5));
-    activePictureUnit = (PDECODE_UNIT)&unitStorage;
+    activePictureUnit = &unitStorage;
     activePictureLength = 5;
     assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(&mock, NULL, &target, 4));
     target.capacity = 4;
     assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(&mock, NULL, &target, 5));
     target.capacity = sizeof(output);
+    target.address = NULL;
+    assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(&mock, NULL, &target, 5));
+    target.address = output;
     pthread_t thread;
     assert(!pthread_create(&thread, NULL, otherThread, &target));
     assert(!pthread_join(thread, NULL));
