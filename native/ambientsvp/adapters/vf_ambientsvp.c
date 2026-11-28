@@ -254,7 +254,10 @@ static void process(struct mp_filter *f) {
     if(p->opts->hwresident&&!p->bypass&&p->api.lib&&p->api.enabled()&&
         svp_fel_eligible(img)&&!(p->vk&&p->vk->previous)){
         if(p->engine)reset(f);
-        if(svp_fel_push(&p->fel,img,p->opts->source,p->opts->fps)){
+        AmbientSvpQuality quality={.preset=p->opts->preset,.block=p->opts->block,.overlap=p->opts->overlap,
+            .pel=p->opts->pel,.search=p->opts->search,.artifacts=p->opts->artifacts,.scene=p->opts->scene,
+            .algorithm=p->opts->algo};
+        if(svp_fel_push(&p->fel,img,p->opts->source,p->opts->fps,&quality)){
             p->passthrough=PASS_NONE;
             mp_filter_internal_mark_progress(f);return;
         }
