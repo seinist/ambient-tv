@@ -7,7 +7,17 @@ import java.util.Locale
 /** All persisted URLs are public identities. Provider credentials exist only in request builders. */
 internal fun sanitizedGameMetadataUrl(input: String?): String? {
     val value = input?.takeIf { it.length in 1..4096 && it.none(Char::isISOControl) }?.trim() ?: return null
-    val uri = runCatching { URI(value) }.getOrNull() ?: return null
+    // OkHttp leaves literal square brackets in path segments (ROM release tags).
+    // Escape only the path, never the authority (including IPv6) or query.
+    val authorityStart = value.indexOf("://").takeIf { it >= 0 }?.plus(3) ?: return null
+    val authorityEnd = value.indexOfAny(charArrayOf('/', '?', '#'), authorityStart)
+    val normalized = if (authorityEnd >= 0 && value[authorityEnd] == '/') {
+        val pathEnd = value.indexOfAny(charArrayOf('?', '#'), authorityEnd).let { if (it < 0) value.length else it }
+        value.substring(0, authorityEnd) +
+            value.substring(authorityEnd, pathEnd).replace("[", "%5B").replace("]", "%5D") +
+            value.substring(pathEnd)
+    } else value
+    val uri = runCatching { URI(normalized) }.getOrNull() ?: return null
     val scheme = uri.scheme?.lowercase(Locale.ROOT)?.takeIf { it == "https" || it == "http" } ?: return null
     // A URL containing HTTP user-info is an account URL, not a public source/artwork identity.
     if (uri.rawUserInfo != null || uri.host.isNullOrBlank() || uri.port !in -1..65535 || uri.port == 0) return null

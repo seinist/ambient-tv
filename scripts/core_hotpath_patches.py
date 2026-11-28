@@ -1,7 +1,7 @@
 """Pin-checked, opt-in source-level improvements for individual Libretro cores."""
 from pathlib import Path
 import re
-from core_hotpath_remaining import PATCHES, prepare_remaining
+from core_hotpath_remaining import PATCHES, prepare_remaining, noods_compatibility_patch
 
 
 SUPPORTED = {"bsnes", "mesen", "sameboy", "mednafen_pce_fast", "mednafen_supergrafx", "mednafen_ngp",
@@ -311,6 +311,42 @@ def prepare_fixed_states(root, core):
     state.write_bytes((source + FIXED_SAVE).encode("utf-8"))
     header.write_bytes(declarations.encode("utf-8"))
     entry.write_bytes(frontend.encode("utf-8"))
+
+
+def patched_sources(core, abi, profile):
+    """Files that must participate in the selected linked core, including headers.
+    Build recipe changes are checked by the separate effective-macro audit.
+    """
+    full = profile in {"core-hotpaths", "optimized", "optimized-a57", "pgo-generate",
+                       "pgo-use", "citra-arm64-jit", "yabause-arm64-jit",
+                       "picodrive-sh2", "snes9x2010-threaded"}
+    if core in PATCHES:
+        files = {path for path, old, _ in PATCHES[core]
+                 if full or (core == "noods" and noods_compatibility_patch(path, old))}
+        if core == "picodrive" and not (abi == "armeabi-v7a" or
+                (abi == "arm64-v8a" and profile in {"picodrive-sh2", "optimized",
+                                                    "optimized-a57", "pgo-generate", "pgo-use"})):
+            # Upstream Android recipe deliberately uses the SH2 interpreter here.
+            files.discard("cpu/sh2/compiler.c")
+        return {p for p in files if not p.endswith((".mk", ".cmake"))}
+    if not full:
+        return set()
+    if core == "bsnes":
+        result = {"bsnes/target-libretro/libretro.cpp", "bsnes/target-libretro/program.cpp"}
+        if abi == "armeabi-v7a":
+            result.add("libco/arm.c")
+        return result
+    if core == "mesen":
+        return {"Libretro/libretro.cpp"}
+    if core == "sameboy":
+        return {"libretro/libretro.c"}
+    if core in {"mednafen_pce_fast", "mednafen_supergrafx"}:
+        return {"libretro.c" if core == "mednafen_pce_fast" else "libretro.cpp"}
+    if core in {"mednafen_ngp", "mednafen_wswan", "mednafen_vb", "mednafen_lynx"}:
+        return {"mednafen/state.h",
+                "mednafen/state.cpp" if core == "mednafen_lynx" else "mednafen/state.c",
+                "libretro.cpp" if core in {"mednafen_vb", "mednafen_lynx"} else "libretro.c"}
+    raise ValueError(f"No source evidence recipe for {core}")
 
 
 def prepare_hotpaths(root, core):

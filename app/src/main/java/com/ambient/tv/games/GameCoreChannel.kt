@@ -30,6 +30,8 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     BUILDBOT("buildbot"),
     OPTIMIZED("experiment-optimized", "optimized"),
     OPTIMIZED_A57("experiment-optimized-a57", "optimized-a57"),
+    CITRA_ARM64_JIT("experiment-citra-arm64-jit", "citra-arm64-jit"),
+    YABAUSE_ARM64_JIT("experiment-yabause-arm64-jit", "yabause-arm64-jit"),
     // Legacy profiles remain addressable for legacy saved routes.
     HOTPATHS("experiment-hotpaths", "core-hotpaths"),
     O3("experiment-o3", "o3"),
@@ -41,8 +43,8 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     ;
 
     companion object {
-        val regular = listOf(AUTO, AMBIENT, BUILDBOT, OPTIMIZED, OPTIMIZED_A57)
-        val publicExperiments = listOf(OPTIMIZED, OPTIMIZED_A57)
+        val regular = listOf(AUTO, AMBIENT, BUILDBOT, OPTIMIZED, OPTIMIZED_A57, CITRA_ARM64_JIT, YABAUSE_ARM64_JIT)
+        val publicExperiments = listOf(OPTIMIZED, OPTIMIZED_A57, CITRA_ARM64_JIT, YABAUSE_ARM64_JIT)
 
         fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: AUTO
     }
@@ -52,6 +54,7 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
         val candidates = when (this) {
             OPTIMIZED_A57 -> listOf(OPTIMIZED_A57, OPTIMIZED, AMBIENT)
             OPTIMIZED -> listOf(OPTIMIZED, AMBIENT)
+            CITRA_ARM64_JIT, YABAUSE_ARM64_JIT -> listOf(this, OPTIMIZED, AMBIENT)
             else -> listOf(this)
         }
         val signed = candidates.filter { it.experimentalProfile == null || it.supportsExperiment(core, abi) }
@@ -64,6 +67,8 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
             SNES_THREADED -> core.id == "snes9x2010"
             TUNE_A57, OPTIMIZED_A57 -> abi == "arm64-v8a"
             OPTIMIZED -> true
+            CITRA_ARM64_JIT -> core.id == "citra2018" && abi == "arm64-v8a"
+            YABAUSE_ARM64_JIT -> core.id == "yabause" && abi == "arm64-v8a"
             HOTPATHS, O3, THINLTO, O3_THINLTO -> true
             AUTO, AMBIENT, BUILDBOT -> false
         }

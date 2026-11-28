@@ -6,6 +6,19 @@ name: Cores (manual single profile)
 # public half is in cores/signing-public.pem (secret CORES_SIGNING_KEY, PEM, EC P-256).
 
 on:
+  pull_request:
+    paths:
+      - cores/cores.json
+      - app/src/main/java/com/ambient/tv/games/GameSystems.kt
+      - scripts/core_*.py
+      - scripts/test_core_*.py
+      - scripts/native_core_candidates/**
+      - scripts/check_core_policy.sh
+      - scripts/check_elf_pages.py
+      - scripts/test_game_rewind.py
+      - scripts/native_rewind/**
+      - .github/workflows/core-policy-validation.yml
+      - .github/workflows/cores.yml
   workflow_call:
     inputs:
       publish:
@@ -29,6 +42,10 @@ on:
       comparison:
         type: string
         default: none
+      shared_policy_validated:
+        description: Caller has a successful same-run core-policy gate; artifact-only builds may reuse it
+        type: boolean
+        default: false
     secrets:
       CORES_SIGNING_KEY:
         required: true
@@ -55,16 +72,22 @@ on:
       profile:
         description: Compiler profile (optimized and optimized-a57 are public; other candidates are diagnostic)
         type: choice
-        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
+        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths, pgo-generate, pgo-use, citra-arm64-jit, yabause-arm64-jit]
         default: baseline
+      pgo_run_id:
+        description: Trusted same-repository artifact run ID (pgo-use only)
+        default: ""
+      pgo_sha256:
+        description: SHA-256 of the trained ambient.profdata (pgo-use only)
+        default: ""
       comparison:
-        description: Paired full-catalog builds (artifact-only; baseline profile required)
+        description: Paired builds (artifact-only; select an ABI or core subset for the expanded catalog)
         type: choice
         options: [none, baseline-thinlto, o3-o3-thinlto]
         default: none
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
+  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}-{1}-{2}', github.run_id, inputs.profile || 'baseline', inputs.abis || 'all') || format('pr-{0}-{1}-{2}', github.workflow, inputs.profile || 'baseline', inputs.abis || 'smoke'))) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -99,11 +122,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Test core build policy
-        run: |
-          python3 -m unittest discover -s scripts -p test_core_build_policy.py
-          python3 -m unittest discover -s scripts -p test_core_release_incremental.py
-          python3 -m unittest discover -s scripts -p test_core_hotpath_patches.py
-          python3 -m unittest discover -s scripts -p test_core_hotpath_remaining.py
+        # Publication and standalone builds always run their own gate.
+        if: ${{ !inputs.shared_policy_validated || inputs.publish || inputs.publish_experimental || github.event_name == 'push' }}
+        run: bash scripts/check_core_policy.sh
       - id: plan
         env:
           ONLY: ${{ inputs.cores }}
@@ -118,15 +139,29 @@ jobs:
           set -euo pipefail
           if [ "$PUBLISH_EXPERIMENTAL" = true ]; then
             [[ ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) && "$GITHUB_REF" == refs/heads/main &&
-               "$PUBLISH" != true && ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && "$COMPARISON" == none ]] ||
-              { echo "::error::Experimental publishing requires main, optimized or optimized-a57, and no production publish/comparison"; exit 1; }
+               "$PUBLISH" != true && ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ||
+                 ( "$GITHUB_EVENT_NAME" == workflow_dispatch && ( "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ) ) ) && "$COMPARISON" == none ]] ||
+              { echo "::error::Experimental publishing requires main, a permitted profile, and no production publish/comparison"; exit 1; }
           fi
           if [[ "$GITHUB_EVENT_NAME" == push && "$PROFILE" != baseline && "$PUBLISH_EXPERIMENTAL" != true ]]; then
             echo "::error::Automatic non-baseline builds require explicit experimental channel"
             exit 1
           fi
+          plan_event="$GITHUB_EVENT_NAME"
+          # Reusable PR candidate jobs use the narrow, artifact-only planner.
+          if [[ "$plan_event" == pull_request && ( "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ) ]]; then
+            [[ "$PUBLISH" != true && "$PUBLISH_EXPERIMENTAL" != true ]] || exit 1
+            plan_event=workflow_dispatch
+          fi
+          # Full catalog PR validation is sharded by ABI/profile to stay
+          # below GitHub's 256-job limit. These jobs are never publishable.
+          if [[ "$plan_event" == pull_request && -n "$ABIS" ]]; then
+            [[ "$PUBLISH" != true && "$PUBLISH_EXPERIMENTAL" != true && -z "$ONLY" &&
+               "$COMPARISON" == none && ( "$PROFILE" == baseline || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) ]] || exit 1
+            plan_event=workflow_dispatch
+          fi
           matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
-            --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
+            --event "$plan_event" --ref "$GITHUB_REF" --publish "$PUBLISH" \
             --cores "$ONLY" --abis "$ABIS" --profile "$PROFILE" --comparison "$COMPARISON")
           reuse='[]'
           publish=false
@@ -179,8 +214,11 @@ jobs:
   build:
     needs: plan
     if: needs.plan.outputs.count != '0'
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ (matrix.core == 'cemu' || matrix.core == 'armsx2' || matrix.core == 'dolphin') && 180 || 60 }}
     strategy:
       fail-fast: false
       max-parallel: 20
@@ -216,11 +254,28 @@ jobs:
             echo "::warning::Compiler cache unavailable; compiling without it"
             echo "CORE_CCACHE=" >> "$GITHUB_ENV"
           fi
+      - name: Compute individual compiler cache identity
+        if: env.CORE_CCACHE != ''
+        id: cache_recipe
+        env:
+          CORE_JOB: ${{ toJSON(matrix) }}
+          PGO_SHA256: ${{ inputs.pgo_sha256 }}
+        run: |
+          set -euo pipefail
+          fp=$(python3 scripts/core_release_incremental.py cache-key --job "$CORE_JOB" --ndk "$NDK_VERSION" --pgo-sha256 "$PGO_SHA256")
+          [[ "$fp" =~ ^[0-9a-f]{64}$ ]]
+          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v5
         if: env.CORE_CCACHE != ''
         with:
           path: ~/.cache/ccache
-          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py', 'scripts/core_hotpath_remaining.py') }}
+          key: core-ccache-v2-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ matrix.commit }}-${{ steps.cache_recipe.outputs.fingerprint }}
+          # ccache verifies the compiler, flags, source and included headers.
+          # Reuse unchanged objects after a recipe or upstream pin changes.
+          # Never restore another core/ABI/profile's cache.
+          restore-keys: |
+            core-ccache-v2-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ matrix.commit }}-
+            core-ccache-v2-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.abi }}-${{ matrix.profile }}-
 
       - name: Fetch ${{ matrix.core }} at its pinned commit
         env:
@@ -236,6 +291,16 @@ jobs:
           # libretro's own CI does not fetch either.
           # Only submodules .gitmodules declares (mupen64plus-nx carries a gitlink without one).
           paths=$(git -C src config -f .gitmodules --get-regexp '\.path$' 2>/dev/null | awk '{ print $2 }' || true)
+          # Ymir vendors the dr_libs headers; this obsolete declaration has no gitlink.
+          if [[ "$CORE_REPO" == https://github.com/warmenhoven/Emir ]]; then
+            stale=vendor/dr_libs/dr_libs
+            if ! git -C src ls-files --error-unmatch "$stale" >/dev/null 2>&1; then
+              for header in dr_flac.h dr_mp3.h dr_wav.h; do
+                git -C src ls-files --error-unmatch "vendor/dr_libs/include/dr_libs/$header" >/dev/null
+              done
+              paths=$(printf '%s\n' "$paths" | grep -Fxv "$stale")
+            fi
+          fi
           if [ -n "$paths" ]; then
             # shellcheck disable=SC2086
             git -C src submodule update -q --init --depth 1 -- $paths || git -C src submodule update -q --init -- $paths
@@ -244,6 +309,27 @@ jobs:
           fi
           test "$(git -C src rev-parse HEAD)" = "$CORE_COMMIT"
 
+      - name: Verify trusted training workflow provenance
+        if: matrix.profile == 'pgo-use'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRAIN_RUN: ${{ inputs.pgo_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$TRAIN_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TRAIN_RUN" |
+            jq -e --arg repo "$GITHUB_REPOSITORY" '
+              .head_branch=="main" and .conclusion=="success" and
+              .event=="workflow_dispatch" and .head_repository.full_name==$repo and
+              .repository.full_name==$repo and .path==".github/workflows/core-pgo-train.yml"'
+      - name: Download trained PGO profile
+        if: matrix.profile == 'pgo-use'
+        uses: actions/download-artifact@v7
+        with:
+          name: pgo-${{ matrix.core }}-${{ matrix.abi }}
+          path: pgo-input
+          run-id: ${{ inputs.pgo_run_id }}
+          github-token: ${{ github.token }}
       - name: Build and verify
         env:
           ABI: ${{ matrix.abi }}
@@ -258,6 +344,8 @@ jobs:
           CFLAGS_EXTRA: ${{ matrix.cflags }}
           LDFLAGS_EXTRA: ${{ matrix.ldflags }}
           MAKEVARS: ${{ matrix.makevars }}
+          PGO_SHA256: ${{ inputs.pgo_sha256 }}
+          CORE_FINGERPRINT: ${{ matrix.fingerprint }}
         run: |
           set -euo pipefail
           mkdir -p out reports
@@ -265,19 +353,47 @@ jobs:
           read -r -a args <<< "$ARGS"
           read -r -a extra_env <<< "$EXTRA_ENV"
           read -r -a makevars <<< "$MAKEVARS"
-          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ]]; then
-            python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
+          pgo_args=()
+          source_recipe=""
+          if [[ "$PROFILE" == pgo-generate || "$PROFILE" == pgo-use ]]; then
+            source_recipe=$(python3 scripts/core_pgo.py recipe --root "$PWD" --core "$CORE")
+          fi
+          if [[ "$PROFILE" == pgo-use ]]; then
+            python3 scripts/core_pgo.py verify --directory pgo-input --core "$CORE" --abi "$ABI" --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --sha256 "$PGO_SHA256" --source-recipe "$source_recipe"
+            pgo_data="$PWD/pgo-input/ambient.profdata"
+            CFLAGS_EXTRA="${CFLAGS_EXTRA//ambient.profdata/$pgo_data}"
+            LDFLAGS_EXTRA="${LDFLAGS_EXTRA//ambient.profdata/$pgo_data}"
+            pgo_args=(--profile-data "$pgo_data")
+          fi
+          # The policy also applies mandatory compatibility fixes to baseline.
+          python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
+          if [[ "$PROFILE" == citra-arm64-jit ]]; then
+            python3 scripts/core_citra_arm64.py --root src
+          elif [[ "$PROFILE" == yabause-arm64-jit ]]; then
+            python3 scripts/core_yabause_arm64.py --root src
           fi
           if [ "$BUILD_KIND" = "cmake" ]; then
+            export ANDROID_NDK_HOME="$NDK" ANDROID_NDK_ROOT="$NDK"
+            if [[ "$CORE" == armsx2 ]]; then
+              (cd src && ANDROID_NDK="$NDK" ANDROID_ABI="$ABI" ANDROID_API=29 \
+                bash .github/workflows/scripts/android/build-dependencies.sh "$PWD/.deps")
+              args+=("-DCMAKE_PREFIX_PATH=$PWD/src/.deps" "-DCMAKE_FIND_ROOT_PATH=$PWD/src/.deps")
+            fi
+            if [[ "$CORE" == cemu ]]; then
+              unset CC CXX VCPKG_FORCE_SYSTEM_BINARIES
+            fi
             python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
             flags=()
             if [ -n "${CORE_CCACHE:-}" ]; then
               flags+=("-DCMAKE_C_COMPILER_LAUNCHER=$CORE_CCACHE" "-DCMAKE_CXX_COMPILER_LAUNCHER=$CORE_CCACHE")
             fi
             if [ -n "$CFLAGS_EXTRA" ]; then
-              flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
+              flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA")
             fi
-            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* ]]; then
+            if [ -n "$CFLAGS_EXTRA$CPPFLAGS_EXTRA" ]; then
+              flags+=("-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA $CPPFLAGS_EXTRA")
+            fi
+            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* || "$PROFILE" = pgo-* || "$PROFILE" = citra-arm64-jit ]]; then
               flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
             fi
             cmake -G "Unix Makefiles" -S src -B build \
@@ -292,11 +408,13 @@ jobs:
             # GNU Make must buffer each target; otherwise concurrent diagnostics can
             # splice into a verbose compiler/link command and corrupt the flag audit.
             cmake --build build --verbose -j"$(nproc)" -- --output-sync=target 2>&1 | tee reports/build.log
-            lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root build --pattern '*libretro*.so')
+            output_root=build
+            if [[ "$CORE" == cemu ]]; then output_root=src/bin; fi
+            lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "$output_root" --pattern '*libretro*.so')
           else
             python3 scripts/core_build_policy.py prepare-ndk --root "src/$JNI" --core "$CORE" --profile "$PROFILE"
             python3 scripts/core_build_policy.py ndk-flags \
-              --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
+              --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA" "${pgo_args[@]}"
             build_cwd="$PWD/src/$JNI/jni"
             # BEGIN MUPEN NATIVE OFFSET LAUNCHER
             ndk_ccache="${CORE_CCACHE:-}"
@@ -315,14 +433,35 @@ jobs:
           python3 scripts/check_elf_pages.py "$target"
           python3 scripts/core_build_policy.py report --nm "$bin/llvm-nm" --readelf "$bin/llvm-readelf" --binary "$target" --linked-library "$lib" \
             --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
-            --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --build-cwd "$build_cwd" --output reports/build.json
+            --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --source-recipe "$source_recipe" --build-cwd "$build_cwd" --output reports/build.json
+          if [[ -n "$CORE_FINGERPRINT" ]]; then
+            [[ "$CORE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+            jq --arg fp "$CORE_FINGERPRINT" '.fingerprint=$fp' reports/build.json > out/build.json
+            mv out/build.json reports/build.json
+          fi
+          cp reports/build.json out/build.json
           cat reports/build.json
           if [ -n "${CORE_CCACHE:-}" ]; then ccache --show-stats || true; fi
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: out/*.so
+          path: |
+            out/*.so
+            out/build.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Validate Citra native test executable
+        if: matrix.profile == 'citra-arm64-jit'
+        run: |
+          test -s build/bin/tests
+          python3 scripts/check_elf_pages.py build/bin/tests
+      - uses: actions/upload-artifact@v7
+        if: matrix.profile == 'citra-arm64-jit'
+        with:
+          name: citra-arm64-jit-native-tests
+          path: build/bin/tests
           if-no-files-found: error
           retention-days: 14
 
@@ -337,6 +476,7 @@ jobs:
   publish:
     permissions:
       contents: write
+      actions: read
     needs: [plan, build]
     if: >-
       always() && needs.plan.result == 'success' &&
@@ -344,7 +484,7 @@ jobs:
       (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.plan.outputs.count == '0')) &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish && inputs.profile == 'baseline') ||
-       ((github.event_name == 'workflow_dispatch' || github.event_name == 'push') && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57') && inputs.comparison == 'none') ||
+       ((github.event_name == 'workflow_dispatch' || github.event_name == 'push') && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57' || (github.event_name == 'workflow_dispatch' && (inputs.profile == 'citra-arm64-jit' || inputs.profile == 'yabause-arm64-jit'))) && inputs.comparison == 'none') ||
        (github.event_name == 'push' && !inputs.publish_experimental && (inputs.profile || 'baseline') == 'baseline'))
     runs-on: ubuntu-latest
     steps:
@@ -381,7 +521,8 @@ jobs:
             git archive FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
                 .github/workflows/cores.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
                 scripts/core_link_evidence.py scripts/check_elf_pages.py scripts/core_release_incremental.py \
-                scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py | tar -xf - -C "$current"
+                scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py scripts/core_citra_arm64.py \
+                scripts/core_yabause_arm64.py scripts/native_core_candidates | tar -xf - -C "$current"
             if ! python3 scripts/core_release_incremental.py assert-current \
                 --profile "$PROFILE" --ndk "$NDK_VERSION" --current-root "$current"; then
               rm -rf "$current"
@@ -391,9 +532,17 @@ jobs:
             rm -rf "$current"
           }
           assert_current_recipe
+          if [[ "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/core-jit-candidates.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=100" |
+              jq -e --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '
+                any(.workflow_runs[]; .event=="workflow_dispatch" and .head_branch=="main" and
+                    .head_sha==$sha and .head_repository.full_name==$repo and .conclusion=="success")' >/dev/null ||
+              { echo "::error::JIT publication requires successful dedicated main-commit validation"; exit 1; }
+          fi
           # Require every planned artifact, and ensure the profile cannot cross channels.
           if [ "$EXPERIMENT" = true ]; then
-            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) ]] || exit 1
+            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) ||
+               "$GITHUB_EVENT_NAME" == workflow_dispatch && ( "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ) ]] || exit 1
             prefix="candidate-$PROFILE-"
             tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           else
@@ -412,6 +561,12 @@ jobs:
             echo "::error::Expected ${#expected[@]} core builds, got $actual"
             exit 1
           }
+          # Recheck the downloaded binary rather than trusting its filename.
+          # The evidence bundle remains available even after CI artifacts expire.
+          python3 scripts/core_release_incremental.py verify-artifacts --matrix "$EXPECTED_MATRIX" \
+            --directory artifacts --ndk "$NDK_VERSION" > "$RUNNER_TEMP/core-build-evidence.json"
+          jq -n --slurpfile builds "$RUNNER_TEMP/core-build-evidence.json" --argjson reuse "$REUSE" \
+            '{version:1, builds:$builds[0], reused:[$reuse[] | {tag,entry}]}' > release/build-evidence.json
           entries=$(python3 scripts/core_release_incremental.py reuse --repo "$GITHUB_REPOSITORY" --records "$REUSE" --destination release)
           for dir in artifacts/"$prefix"*; do
             name=${dir#artifacts/"$prefix"}
@@ -423,8 +578,11 @@ jobs:
             (cd "$dir" && zip -q -X "../../release/$asset" "${core}_libretro_android.so")
             entries=$(jq -c --arg core "$core" --arg abi "$abi" --arg asset "$asset" \
               --arg sha "$(sha256sum "release/$asset" | cut -d' ' -f1)" --argjson size "$(stat -c %s "release/$asset")" \
-              --argjson matrix "$EXPECTED_MATRIX" \
+              --argjson matrix "$EXPECTED_MATRIX" --arg build "${dir#artifacts/}" \
+              --slurpfile evidence "$RUNNER_TEMP/core-build-evidence.json" \
               '. + [{ core: $core, abi: $abi, asset: $asset, sha256: $sha, size: $size,
+                      binary_sha256: $evidence[0][$build].binary_sha256,
+                      build_report_sha256: $evidence[0][$build].build_report_sha256,
                       commit: ($matrix.include[] | select(.core == $core and .abi == $abi) | .commit),
                       repo: ($matrix.include[] | select(.core == $core and .abi == $abi) | .repo),
                       fingerprint: ($matrix.include[] | select(.core == $core and .abi == $abi) | .fingerprint) }]' <<< "$entries")
@@ -432,7 +590,8 @@ jobs:
           count="$TOTAL"
           jq -e --argjson count "$count" 'length == $count and ([.[] | [.core,.abi]] | unique | length) == $count and all(.[]; .fingerprint | test("^[0-9a-f]{64}$"))' <<< "$entries" >/dev/null
           jq -n --arg tag "$tag" --arg profile "$PROFILE" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
-            '{ version: 1, tag: $tag, profile: $profile, created: $created, cores: $cores }' > release/manifest.json
+            --arg evidence "$(sha256sum release/build-evidence.json | cut -d' ' -f1)" \
+            '{ version: 1, tag: $tag, profile: $profile, created: $created, cores: $cores, build_evidence_sha256: $evidence }' > release/manifest.json
           key="$RUNNER_TEMP/ambient-cores-release-key.pem"
           trap 'rm -f "$key"' EXIT
           umask 077

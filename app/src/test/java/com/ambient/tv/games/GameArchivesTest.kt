@@ -101,17 +101,18 @@ class GameArchivesTest {
         assertEquals(GameSystems.cores.size, GameSystems.cores.map { it.id }.toSet().size)
     }
 
-    @Test fun pinnedCoresAndBuildbotOnlyCoresAreSeparated() {
+    @Test fun pinnedCatalogCoversEveryRegisteredCore() {
         val json = File("../cores/cores.json").takeIf { it.isFile } ?: File("cores/cores.json")
         val pinnedIds = Regex(""""core"\s*:\s*"([^"]+)"""")
-            .findAll(json.readText()).map { it.groupValues[1] }.toSet()
+            .findAll(json.readText()).map { it.groupValues[1] }.toList()
         val registeredIds = GameSystems.cores.map { it.id }.toSet()
-        assertTrue("All own-build cores must be registered", registeredIds.containsAll(pinnedIds))
-        assertTrue("The original pinned core catalog must remain available", pinnedIds.size >= 26)
-        // New systems are buildbot-first: requiring their own signed builds would be misleading.
-        assertFalse("PPSSPP is not yet pinned in cores.json", "ppsspp" in pinnedIds)
-        assertFalse("VICE is not yet pinned in cores.json", "vice_x64sc" in pinnedIds)
-        assertFalse("Cemu is not yet pinned in cores.json", "cemu" in pinnedIds)
+        val pinnedSet = pinnedIds.toSet()
+        assertEquals("Each core must have exactly one pinned build recipe", pinnedSet.size, pinnedIds.size)
+        assertEquals("Unregistered pinned cores: ${pinnedSet - registeredIds}; missing pinned recipes: ${registeredIds - pinnedSet}",
+            registeredIds, pinnedSet)
+        assertTrue("The expanded 50-core catalog must remain available", pinnedSet.size >= 50)
+        // The catalog contains build recipes, not proof of a published signed artifact.
+        // Runtime availability and buildbot fallback are tested separately.
     }
 
     @Test fun netplayInputSurvivesTheWire() {

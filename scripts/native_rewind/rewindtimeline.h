@@ -40,6 +40,8 @@ public:
         averageCaptureNs = 0;
         peakCaptureNs = 0;
         deadlineInterval = 1;
+        pressureInterval = 1;
+        stableCaptures = 0;
         resetFrameObservation();
     }
 
@@ -50,6 +52,8 @@ public:
 
     /** A completed asynchronous capture may already be several emulated frames old. */
     void captured(const RewindBuffer& buffer, uint64_t framesSinceCapture = 0) {
+        if (framesSinceCapture >= captureInterval()) observeCapturePressure(true);
+        else observeCapturePressure(false);
         pending = framesSinceCapture;
         const size_t count = buffer.getValidCount();
         if (count < 2 || buffer.getStoredBytes() == 0) {
@@ -137,6 +141,19 @@ public:
         workInterval = std::max<uint64_t>(1, std::min(maximumInterval, desired));
     }
 
+    // The compression worker may remain busy after the next capture is due.
+    // Back off without waiting; recover only after successful capture completions.
+    void observeCapturePressure(bool busy) {
+        if (busy) {
+            pressureInterval = pressureInterval > maximumInterval / 2
+                ? maximumInterval : pressureInterval * 2;
+            stableCaptures = 0;
+        } else if (++stableCaptures >= 8) {
+            pressureInterval = pressureInterval / 2 + pressureInterval % 2;
+            stableCaptures = 0;
+        }
+    }
+
     /** Include every emulated forward frame while an anchor exists, even when capture is skipped. */
     void advanced(uint64_t frames) {
         pending = saturatedAdd(pending, frames);
@@ -159,7 +176,7 @@ public:
     }
 
     uint64_t pendingFrames() const { return pending; }
-    uint64_t captureInterval() const { return std::max({interval, workInterval, deadlineInterval}); }
+    uint64_t captureInterval() const { return std::max({interval, workInterval, deadlineInterval, pressureInterval}); }
 
 private:
     static uint64_t saturatedAdd(uint64_t a, uint64_t b) {
@@ -176,6 +193,8 @@ private:
     uint64_t averageCaptureNs = 0;
     uint64_t peakCaptureNs = 0;
     uint64_t deadlineInterval = 1;
+    uint64_t pressureInterval = 1;
+    unsigned stableCaptures = 0;
     uint64_t previousStartNs = 0;
     uint64_t previousBudgetNs = 0;
     bool previousCaptured = false;

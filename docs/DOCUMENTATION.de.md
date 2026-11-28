@@ -1055,11 +1055,14 @@ Unter **App & Daten › Diagnose** (Fehlerprotokoll für Release-Builds):
 ./build.sh x86_64         # x86_64 (Emulator)
 ./build.sh all            # alle Android-Artefakte
 ./build.sh mpv            # nur native MPV-Bibliotheken
-./build.sh check-deps     # Gradle-Maven-Pins prüfen (stabile Releases)
-./build.sh update-deps    # nur Maven-Pins aktualisieren
-./build.sh update-deps media3 # optional nur Media3
+./build.sh deps-check     # Gradle-Maven-Pins prüfen (stabile Releases)
+./build.sh deps-update    # nur Maven-Pins aktualisieren
+./build.sh deps-update media3 # optional nur Media3
 ./build.sh libs-check     # Updates gepinnter Engines prüfen
-./build.sh libs-update    # Pins aktualisieren (ohne Build)
+./build.sh libs-update    # Bibliotheks-Pins aktualisieren (ohne Build)
+./build.sh cores-check    # alle Emulator-Core-Pins prüfen
+./build.sh cores-update   # nur Core-Pins aktualisieren
+./build.sh cores-update ppsspp # optionale Core-Auswahl
 ./build.sh gen-keystore   # keystore/release.jks anlegen
 ```
 

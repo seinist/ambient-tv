@@ -85,6 +85,18 @@ class GameMetadataProvidersTest {
         assertNull(url.fragment)
     }
 
+    @Test fun libretroReleaseTagsRemainValidAcrossPrimaryMirrorAndStorage() {
+        val name = "[Release] Super Mario World (Europe) [!]"
+        val candidate = GameMetadataPlatforms.libretroCandidates(query("snes", "$name.sfc").copy(title = name)).first()
+        val provider = GameMetadataProviderIds.LIBRETRO
+        val primary = sanitizedGameArtworkUrl(provider, candidate.metadata.coverUrl)!!.toHttpUrl()
+        assertEquals("$name.png", primary.pathSegments.last())
+        val mirror = libretroArtworkMirrorUrl(primary)!!
+        assertEquals("$name.png", credentialFreeGameUrl(mirror).pathSegments.last())
+        assertEquals("$name.png", candidate.metadata.bounded().coverUrl!!.toHttpUrl().pathSegments.last())
+        assertNull(sanitizedGameArtworkUrl(provider, "https://evil.example/[$name].png"))
+    }
+
     @Test fun libretroPinnedIdentitySurvivesDisplayRenameAndCanonicalNameIsPreferred() {
         val original = GameMetadataPlatforms.libretroCandidates(query().copy(canonicalTitle = "Tetris (World)")).first()
         val renamed = GameMetadataPlatforms.libretroCandidates(query().copy(title = "My favourite puzzle",

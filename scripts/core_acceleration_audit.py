@@ -1,5 +1,6 @@
 """Inspect emitted compiler commands for architecture-specific core acceleration."""
 from pathlib import Path
+import posixpath
 import re
 import shlex
 
@@ -10,7 +11,11 @@ SOURCE = re.compile(r"\.(?:c|cc|cpp|cxx|C|s|S|asm)$")
 AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive", "parallel_n64", "mednafen_psx_hw", "swanstation", "gambatte", "genesis_plus_gx",
            "mednafen_pce_fast", "mednafen_ngp", "mednafen_wswan", "mednafen_supergrafx", "snes9x2010",
            "nestopia", "snes9x", "mgba", "handy", "stella2014", "mednafen_vb",
-           "fceumm", "mesen", "bsnes", "sameboy", "race", "mednafen_lynx"}
+           "fceumm", "mesen", "bsnes", "sameboy", "race", "mednafen_lynx",
+           "melondsds", "noods", "citra2018", "panda3ds", "dolphin", "cemu", "ppsspp",
+           "flycast", "mednafen_saturn", "yabause", "yabasanshiro", "ymir", "armsx2",
+           "vice_x64sc", "vice_x64", "vice_xscpu64", "vice_x128", "vice_xvic", "vice_xplus4",
+           "vice_xpet", "vice_xcbm2", "vice_xcbm5x0", "prosystem", "a5200"}
 
 
 def expand_response(tokens, cwd, root, depth=0):
@@ -83,7 +88,8 @@ def build_commands(log, cwd=None, root=None, strict=False):
             if "&&" not in tokens:
                 continue
             tokens = tokens[tokens.index("&&") + 1:]
-        if tokens and Path(tokens[0]).name == "ccache":
+        # Upstream and CMake may both install the same launcher.
+        while tokens and Path(tokens[0]).name == "ccache":
             tokens = tokens[1:]
         if not tokens:
             continue
@@ -157,6 +163,10 @@ def evidence(commands, source, required=()):
     """Require the source and its effective macros in the SAME invocation."""
     for args in commands:
         path = compile_source(args)
+        if path is not None:
+            # ndk-build emits absolute paths containing jni/../..; compare
+            # normalized source identities rather than raw command spelling.
+            path = posixpath.normpath(path)
         if path is None or not (path == source or path.endswith("/" + source)):
             continue
         macros = defines(args)
@@ -170,6 +180,105 @@ def requirements(core, abi, profile):
     arm64 = abi == "arm64-v8a"
     # These are build-path contracts, not claims that a given runtime option
     # is enabled or a particular function has become faster.
+    if core == "melondsds":
+        result = {"software_compositor": ("src/libretro/render/software.cpp", ()),
+                  "input": ("src/libretro/input/joypad.cpp", ()),
+                  "core": ("src/libretro/core/core.cpp", ())}
+        if abi in {"arm64-v8a", "x86_64"}:
+            result["jit_fastmem_build"] = ("src/libretro/core/core.cpp", (("HAVE_JIT", "1"), ("HAVE_JIT_FASTMEM", "1")))
+        return result
+    if core == "noods":
+        return {"interpreter": ("src/interpreter.cpp", ()),
+                "software_2d": ("src/gpu_2d.cpp", ()),
+                "software_3d": ("src/gpu_3d_renderer.cpp", ()),
+                "frontend": ("src/libretro/libretro.cpp", ())}
+    if core == "citra2018":
+        result = {"cpu_interpreter": ("src/core/arm/dyncom/arm_dyncom_interpreter.cpp", ()),
+                  "audio": ("src/audio_core/libretro_sink.cpp", ()),
+                  "frontend": ("src/citra_libretro/citra_libretro.cpp", ())}
+        if abi == "x86_64":
+            result["dynarmic"] = ("src/core/arm/dynarmic/arm_dynarmic.cpp", ())
+        if abi == "arm64-v8a" and profile == "citra-arm64-jit":
+            result["dynarmic"] = ("src/core/arm/dynarmic/arm_dynarmic.cpp", (("AMBIENT_CITRA_ARM64_JIT", "1"),))
+            result["dynarmic_arm64_emitter"] = ("backend/arm64/emit_arm64_a32.cpp", ())
+            result["dynarmic_arm64_interface"] = ("backend/arm64/a32_interface.cpp", ())
+        return result
+    if core == "panda3ds":
+        return {"dynarmic": ("src/core/CPU/cpu_dynarmic.cpp", (("CPU_DYNARMIC", "1"),)),
+                "arm64_shader_jit": ("src/core/PICA/dynapica/shader_rec_emitter_arm64.cpp", (("PANDA3DS_ARM64_HOST", "1"),)),
+                "frontend": ("src/libretro_core.cpp", ())}
+    if core == "dolphin":
+        jit = "JitArm64" if arm64 else "Jit64"
+        return {"powerpc_jit": ("Source/Core/Core/PowerPC/" + jit + "/Jit.cpp", ()),
+                "input": ("Source/Core/DolphinLibretro/Input.cpp", ()),
+                "audio": ("Source/Core/DolphinLibretro/Audio.cpp", ()),
+                "vulkan": ("Source/Core/DolphinLibretro/Vulkan.cpp", ())}
+    if core == "cemu":
+        backend = "BackendAArch64" if arm64 else "BackendX64"
+        return {"powerpc_recompiler": ("src/Cafe/HW/Espresso/Recompiler/" + backend + "/" + backend + ".cpp", ()),
+                "vulkan": ("src/Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.cpp", ()),
+                "frontend": ("src/libretro/CemuLibretro.cpp", ())}
+    if core == "ppsspp":
+        result = {"ir_jit": ("Core/MIPS/IR/IRJit.cpp", ()),
+                  "frontend": ("libretro/libretro.cpp", ())}
+        native = {"arm64-v8a": "ARM64/Arm64IRJit.cpp", "armeabi-v7a": "ARM/ArmIRJit.cpp",
+                  "x86_64": "x86/X64IRJit.cpp"}.get(abi)
+        if native:
+            result["native_jit"] = ("Core/MIPS/" + native, ())
+        return result
+    if core == "flycast":
+        backend = {"arm64-v8a": "rec-ARM64/rec_arm64.cpp", "armeabi-v7a": "rec-ARM/rec_arm.cpp",
+                   "x86_64": "rec-x64/rec_x64.cpp", "x86": "rec-x86/rec_x86.cpp"}[abi]
+        return {"dynarec": ("core/" + backend, ()),
+                "audio": ("shell/libretro/audiostream.cpp", ()),
+                "frontend": ("shell/libretro/libretro.cpp", ())}
+    if core == "mednafen_saturn":
+        result = {"vdp1": ("mednafen/ss/vdp1.c", ()),
+                  "vdp2": ("mednafen/ss/vdp2_render.c", ()),
+                  "scsp_dsp_jit": ("mednafen/ss/scsp_dsp_jit.c", ()),
+                  "scu_dsp_jit": ("mednafen/ss/scu_dsp_jit.c", ()),
+                  "frontend": ("libretro.c", ())}
+        if arm64:
+            result["arm64_emitter"] = ("mednafen/ss/a64emit.c", ())
+            if profile in {"core-hotpaths", "optimized", "optimized-a57", "pgo-generate", "pgo-use"}:
+                for name in ("scsp_dsp_jit", "scu_dsp_jit"):
+                    result[name] = (result[name][0], (("WANT_JIT", "1"),))
+        return result
+    if core in {"yabause", "yabasanshiro"}:
+        result = {"frontend": ("yabause/src/libretro/libretro.c", ()),
+                  "disc_io": ("yabause/src/cd-libretro.c", ())}
+        if core == "yabasanshiro" and arm:
+            result["sh2_dynarec"] = ("yabause/src/sh2_dynarec_devmiyax/DynarecSh2.cpp", (("DYNAREC_DEVMIYAX", "1"),))
+        if core == "yabause" and profile == "yabause-arm64-jit" and arm64:
+            result["sh2_arm64_blocks"] = ("yabause/src/sh2int.c", (("AMBIENT_SH2_ARM64_JIT", "1"),))
+        return result
+    if core == "ymir":
+        return {"sh2": ("libs/ymir-core/src/ymir/hw/sh2/sh2.cpp", ()),
+                "scsp": ("libs/ymir-core/src/ymir/hw/scsp/scsp.cpp", ()),
+                "software_vdp": ("libs/ymir-core/src/ymir/hw/vdp/renderer/vdp_renderer_sw.cpp", ()),
+                "frontend": ("apps/ymir-libretro/src/libretro.cpp", ())}
+    if core == "armsx2":
+        return {"ee_dynarec": ("pcsx2/arm64/iR5900-arm64.cpp", ()),
+                "vif_dynarec": ("pcsx2/arm64/Vif_Dynarec.cpp", ()),
+                "vif_neon": ("pcsx2/arm64/Vif_UnpackNEON.cpp", ()),
+                "spu2_neon": ("pcsx2/SPU2/spu2_neon.cpp", ()),
+                "frontend": ("pcsx2-libretro/Main.cpp", ())}
+    if core.startswith("vice_") and core in AUDITED:
+        # The NDK recipe injects CORE_NAME for each machine, so the common
+        # source being linked alone is insufficient to identify the variant.
+        return {"machine": ("libretro/libretro-core.c", (("CORE_NAME", '"' + core[5:] + '"'),)),
+                "input": ("libretro/libretro-mapper.c", ()),
+                "video": ("libretro/libretro-graph.c", ())}
+    if core == "prosystem":
+        return {"maria_video": ("core/Maria.c", ()),
+                "tia_audio": ("core/Tia.c", ()),
+                "pokey_audio": ("core/Pokey.c", ()),
+                "frontend": ("core/libretro.c", ())}
+    if core == "a5200":
+        return {"antic_video": ("emu/antic.c", ()),
+                "gtia_video": ("emu/gtia.c", ()),
+                "pokey_audio": ("emu/pokey.c", ()),
+                "frontend": ("libretro/libretro.c", ())}
     if core == "nestopia":
         return {"cpu": ("source/core/NstCpu.cpp", (("__LIBRETRO__", "1"),)),
                 "ppu": ("source/core/NstPpu.cpp", ()),
@@ -224,7 +333,7 @@ def requirements(core, abi, profile):
                 "stereo_audio": ("sound/Stereo_Buffer.cpp", ())}
     if core == "snes9x2010":
         result = {"rgb565_renderer": ("libretro/libretro.c", (("FRONTEND_SUPPORTS_RGB565", "1"),))}
-        if profile in {"snes9x2010-threaded", "optimized", "optimized-a57"}:
+        if profile in {"snes9x2010-threaded", "optimized", "optimized-a57", "pgo-generate", "pgo-use"}:
             result["threaded_ppu"] = ("src/ppu.c", (("HAVE_THREADS", "1"),))
             result["threaded_frontend"] = ("libretro/libretro.c", (("HAVE_THREADS", "1"),))
             result["eventcount"] = ("rthreads/retro_eventcount.c", ())
@@ -279,14 +388,22 @@ def requirements(core, abi, profile):
     if core == "mednafen_psx_hw":
         return {"lightrec": ("lightrec/lightrec.c", (("HAVE_LIGHTREC", "1"),)),
                 "threaded_recompiler": ("lightrec/recompiler.c", (("ENABLE_THREADED_COMPILER", "1"), ("HAVE_VULKAN", "1")))}
-    if core == "swanstation" and abi != "x86":
-        arch = {"arm64-v8a": "aarch64", "armeabi-v7a": "aarch32", "x86_64": "x64"}[abi]
-        macros = (("WITH_RECOMPILER", "1"),)
-        if abi in {"arm64-v8a", "x86_64"}:
-            macros += (("WITH_MMAP_FASTMEM", "1"),)
-        return {"dynarec": ("cpu_recompiler_code_generator_" + arch + ".cpp", macros)}
-    if core == "picodrive" and (abi == "armeabi-v7a" or profile == "picodrive-sh2" or (abi == "arm64-v8a" and profile in {"optimized", "optimized-a57"})):
-        return {"sh2_dynarec": ("cpu/sh2/compiler.c", (("DRC_SH2", "1"),))}
+    if core == "swanstation":
+        result = {"cpu_core": ("src/core/cpu_core.cpp", ())}
+        if abi != "x86":
+            arch = {"arm64-v8a": "aarch64", "armeabi-v7a": "aarch32", "x86_64": "x64"}[abi]
+            macros = (("WITH_RECOMPILER", "1"),)
+            if abi in {"arm64-v8a", "x86_64"}:
+                macros += (("WITH_MMAP_FASTMEM", "1"),)
+            result["dynarec"] = ("cpu_recompiler_code_generator_" + arch + ".cpp", macros)
+        return result
+    if core == "picodrive":
+        result = {"frontend": ("platform/libretro/libretro.c", ()),
+                  "frame_loop": ("pico/pico.c", ()),
+                  "renderer": ("pico/draw.c", ())}
+        if abi == "armeabi-v7a" or profile == "picodrive-sh2" or (abi == "arm64-v8a" and profile in {"optimized", "optimized-a57", "pgo-generate", "pgo-use"}):
+            result["sh2_dynarec"] = ("cpu/sh2/compiler.c", (("DRC_SH2", "1"),))
+        return result
     return {}
 
 

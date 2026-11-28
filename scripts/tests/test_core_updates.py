@@ -70,6 +70,29 @@ class CoreUpdateTest(unittest.TestCase):
                 output = next(line for line in result.stdout.splitlines() if line.startswith("["))
                 self.assertEqual(json.loads(output), expected)
 
+    def test_pgo_cli_dispatch_is_artifact_only_and_requires_identity(self):
+        shutil.copyfile(updater.ROOT / "build.sh", self.root / "build.sh")
+        stub = self.root / "gh"
+        stub.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+        stub.chmod(0o755)
+        env = {**os.environ, "PATH": str(self.root) + os.pathsep + os.environ["PATH"]}
+        def run(*args):
+            return subprocess.run(["bash", str(self.root / "build.sh"), "cores", *args],
+                                  env=env, text=True, capture_output=True)
+        common = ("mgba", "--abis", "arm64-v8a")
+        generation = run(*common, "--profile", "pgo-generate")
+        self.assertEqual(generation.returncode, 0, generation.stderr)
+        self.assertIn("profile=pgo-generate", generation.stdout)
+        self.assertIn("publish=false", generation.stdout)
+        use = run(*common, "--profile", "pgo-use", "--pgo-run-id", "123", "--pgo-sha256", "a"*64)
+        self.assertEqual(use.returncode, 0, use.stderr)
+        self.assertIn("pgo_run_id=123", use.stdout)
+        self.assertIn("pgo_sha256="+"a"*64, use.stdout)
+        for args in (("--profile", "pgo-generate"), (*common, "--profile", "pgo-use"),
+                     (*common, "--profile", "pgo-generate", "--publish-experimental"),
+                     (*common, "--profile", "optimized", "--pgo-run-id", "123")):
+            self.assertNotEqual(run(*args).returncode, 0)
+
     def test_check_is_read_only(self):
         before = self.cores.read_bytes()
         self.assertEqual(self.run_updater("--check", self.new_head), 0)
@@ -127,12 +150,10 @@ class CoreUpdateTest(unittest.TestCase):
 
     def test_selected_core_updates_only_its_source_group(self):
         before = json.loads(self.cores.read_text())
-        selected = next(c for c in before["cores"] if c["core"] == "mgba")
-        self.assertEqual(self.run_updater("--apply", self.new_head, selected=selected["core"]), 0)
+        self.assertEqual(self.run_updater("--apply", self.new_head, selected="vice_x64"), 0)
         after = json.loads(self.cores.read_text())
-        source = (selected["repo"], selected.get("update_ref", "HEAD"))
         for old, new in zip(before["cores"], after["cores"]):
-            self.assertEqual(new["commit"], NEW if (old["repo"], old.get("update_ref", "HEAD")) == source else old["commit"])
+            self.assertEqual(new["commit"], NEW if old["core"].startswith("vice_") else old["commit"])
 
     def test_branch_specific_updates(self):
         cores = [

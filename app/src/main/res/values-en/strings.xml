@@ -2518,4 +2518,7 @@
     <string name="input_mapping_assign_all_step">Press a key · %1$d of %2$d</string>
     <string name="input_mapping_assign_all_hint">Press a key on this device for each highlighted console button. Wait to skip a button; waiting twice in a row ends the sequence.</string>
     <string name="input_mapping_legend_changed_hint">Mappings with a pencil icon differ from the default layout.</string>
+    <string name="games_core_source_citra_jit">Citra ARM64 JIT</string>
+    <string name="games_core_source_yabause_jit">Yabause ARM64 JIT</string>
+    <string name="games_core_source_jit_hint">Experimental native recompiler for its matching ARM64 core. Falls back to the optimized core if a signed build is unavailable.</string>
 </resources>

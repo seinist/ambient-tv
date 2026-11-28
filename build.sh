@@ -34,7 +34,7 @@
 #   ./build.sh cores-update [id[,id...]] # update emulator core pins only
 #   ./build.sh libs-check [svp|monogram|libretro]  # check managed libraries, or only one
 #   ./build.sh libs-update [svp|monogram|libretro] # update pins/assets/lockfile (no native build)
-#                               #                               # includes Monogram and LibretroDroid; cores use their own updater
+#                               # includes Monogram and LibretroDroid; cores use their own updater
 #
 # Environment overrides:
 #   MONOGRAM_NATIVE=1         Include Monogram in debug or single-ABI APKs (GPL distribution).
@@ -1354,7 +1354,7 @@ run_cores_command() {
         cores)
             shift
             local -a inputs=(-f publish=false)
-            local selected="" profile="baseline" abis="" comparison="none" core_ref="main" publish_experimental=false force_rebuild=false
+            local selected="" profile="baseline" abis="" comparison="none" core_ref="main" publish_experimental=false force_rebuild=false pgo_run_id="" pgo_sha256=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --profile)
@@ -1363,6 +1363,12 @@ run_cores_command() {
                     --abis)
                         [[ $# -ge 2 ]] || fail "--abis requires a comma-separated ABI list"
                         abis="$2"; shift 2 ;;
+                    --pgo-run-id)
+                        [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || fail "--pgo-run-id requires a numeric training workflow run ID"
+                        pgo_run_id="$2"; shift 2 ;;
+                    --pgo-sha256)
+                        [[ $# -ge 2 && "$2" =~ ^[0-9a-f]{64}$ ]] || fail "--pgo-sha256 requires the exact lowercase profile SHA-256"
+                        pgo_sha256="$2"; shift 2 ;;
                     --publish-experimental)
                         publish_experimental=true; shift ;;
                     --force)
@@ -1380,7 +1386,20 @@ run_cores_command() {
                         selected="$1"; shift ;;
                 esac
             done
-            case "$profile" in baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths) ;; *) fail "Unknown core profile: $profile" ;; esac
+            case "$profile" in baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit|pgo-generate|pgo-use) ;; *) fail "Unknown core profile: $profile" ;; esac
+            if [[ "$profile" == pgo-generate || "$profile" == pgo-use ]]; then
+                [[ "$selected" =~ ^[a-z0-9_]+$ && "$abis" =~ ^(arm64-v8a|armeabi-v7a|x86_64|x86)$ &&
+                   "$publish_experimental" == false && "$comparison" == none ]] ||
+                    fail "PGO requires one explicit core and ABI; artifact-only, no comparison"
+                if [[ "$profile" == pgo-use ]]; then
+                    [[ -n "$pgo_run_id" && -n "$pgo_sha256" ]] || fail "pgo-use requires --pgo-run-id and --pgo-sha256"
+                    inputs+=(-f "pgo_run_id=$pgo_run_id" -f "pgo_sha256=$pgo_sha256")
+                else
+                    [[ -z "$pgo_run_id$pgo_sha256" ]] || fail "pgo-generate does not accept a training artifact"
+                fi
+            else
+                [[ -z "$pgo_run_id$pgo_sha256" ]] || fail "PGO artifact options require --profile pgo-use"
+            fi
             if [[ -n "$selected" ]]; then inputs+=(-f "cores=$selected"); fi
             if [[ -n "$abis" ]]; then inputs+=(-f "abis=$abis"); fi
             if [[ "$profile" != baseline ]]; then inputs+=(-f "profile=$profile"); fi
@@ -1390,7 +1409,7 @@ run_cores_command() {
                 inputs+=(-f "comparison=$comparison")
             fi
             if [[ "$publish_experimental" == true ]]; then
-                [[ "$core_ref" == main && ( "$profile" == optimized || "$profile" == optimized-a57 ) && "$comparison" == none ]] || fail "Experimental release requires main, optimized or optimized-a57, and no comparison"
+                [[ "$core_ref" == main && ( "$profile" == optimized || "$profile" == optimized-a57 || "$profile" == citra-arm64-jit || "$profile" == yabause-arm64-jit ) && "$comparison" == none ]] || fail "Experimental release requires main, a supported signed profile, and no comparison"
                 inputs+=(-f publish_experimental=true)
                 if [[ "$force_rebuild" == true ]]; then inputs+=(-f force_rebuild=true); fi
             elif [[ "$force_rebuild" == true ]]; then
@@ -1426,7 +1445,7 @@ run_cores_command() {
                 if [[ "$tag" =~ ^cores-([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]+)(-[0-9]+)?$ ]]; then
                     date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
                     title="Ambient TV cores"
-                elif [[ "$tag" =~ ^core-experiments-(optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
+                elif [[ "$tag" =~ ^core-experiments-(optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
                     profile="${BASH_REMATCH[1]}"
                     date="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}"
                     title="Ambient TV cores – $profile"
@@ -1468,9 +1487,10 @@ Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretr
 Core pins: cores-check [id[,id...]], cores-update [id[,id...]] (all by default; no native build)
 
 Libretro cores on GitHub Actions (main):
-  cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths] [--abis ABI[,ABI...]]
+  cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit|pgo-generate|pgo-use] [--abis ABI[,ABI...]]
+        PGO: --pgo-run-id ID --pgo-sha256 SHA256 (pgo-use only; one core and ABI)
         [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch] [--publish-experimental [--force]]
-                      Build artifacts by default. --publish-experimental signs optimized or optimized-a57 on main; other profiles are diagnostic only.
+                      Build artifacts by default. --publish-experimental signs optimized, optimized-a57 or validated ARM64 JIT profiles on main.
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
   cores-release [--force]  Build/publish baseline, optimized and optimized-a57 in one run; --force rebuilds all.

@@ -38,7 +38,7 @@ class GameArtworkFiles(context: Context) {
     private val staging = File(context.cacheDir, "game_artwork_staging")
 
     fun stage(input: InputStream): GameArtworkFile {
-        if (!staging.isDirectory && !staging.mkdirs()) throw IOException("Cannot create artwork staging directory")
+        if (!staging.isDirectory && !staging.mkdirs() && !staging.isDirectory) throw IOException("Cannot create artwork staging directory")
         val file = File(staging, UUID.randomUUID().toString() + ".part")
         try {
             var count = 0L
@@ -80,7 +80,7 @@ class GameArtworkFiles(context: Context) {
     internal fun commit(fileId: String, kind: GameArtworkKind, staged: GameArtworkFile): String {
         require(staged.file.parentFile?.canonicalFile == staging.canonicalFile && staged.file.isFile)
         val directory = File(root, directoryKey(fileId))
-        if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Cannot create artwork directory")
+        if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) throw IOException("Cannot create artwork directory")
         require(directory.canonicalFile.parentFile == root.canonicalFile)
         val target = File(directory, "${kind.key}-${UUID.randomUUID()}.${staged.extension}")
         if (!staged.file.renameTo(target)) throw IOException("Cannot commit artwork")

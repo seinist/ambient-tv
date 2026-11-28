@@ -6,7 +6,8 @@ from pathlib import Path
 import re
 from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, compile_source
 from core_link_evidence import target_commands
-from core_hotpath_patches import prepare_hotpaths, SUPPORTED as HOTPATH_CORES
+from core_hotpath_patches import prepare_hotpaths, replace_once, patched_sources, SUPPORTED as HOTPATH_CORES
+from core_hotpath_remaining import prepare_remaining
 import subprocess
 import struct
 import sys
@@ -22,8 +23,13 @@ PROFILES = {
     "core-hotpaths": ((), ()),
     "optimized": (("-O3", "-flto=thin"), ("-flto=thin",)),
     "optimized-a57": (("-O3", "-flto=thin", "-mtune=cortex-a57"), ("-flto=thin",)),
+    "yabause-arm64-jit": (("-O3",), ()),
+    "citra-arm64-jit": (("-O3",), ()),
+    "pgo-generate": (("-O3", "-fprofile-instr-generate", "-flto=thin"), ("-fprofile-instr-generate", "-flto=thin")),
+    "pgo-use": (("-O3", "-fprofile-instr-use=ambient.profdata", "-Werror=profile-instr-out-of-date", "-flto=thin"), ("-fprofile-instr-use=ambient.profdata", "-flto=thin")),
 }
 PUBLIC_EXPERIMENTS = {"optimized", "optimized-a57"}
+PGO_PROFILES = {"pgo-generate", "pgo-use"}
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86_64", "x86"}
 REQUIRED_EXPORTS = {
     "retro_init", "retro_deinit", "retro_api_version", "retro_get_system_info",
@@ -35,6 +41,17 @@ REQUIRED_EXPORTS = {
     "retro_load_game_special", "retro_unload_game", "retro_get_region",
     "retro_get_memory_data", "retro_get_memory_size",
 }
+
+
+def selection(raw, available, label):
+    if not raw.strip():
+        return list(available)
+    values = [part.strip() for part in raw.split(",")]
+    if any(not value or value not in available for value in values):
+        raise ValueError(f"Unknown or empty {label}: {raw}")
+    if len(set(values)) != len(values):
+        raise ValueError(f"Duplicate {label}: {raw}")
+    return values
 
 
 def validate_update_ref(ref):
@@ -85,46 +102,26 @@ def validate_catalog(catalog):
     return declared_abis, entries, ids
 
 
-def selection(raw, available, label):
-    if not raw.strip():
-        return list(available)
-    values = [part.strip() for part in raw.split(",")]
-    if any(not value or value not in available for value in values):
-        raise ValueError(f"Unknown or empty {label}: {raw}")
-    if len(set(values)) != len(values):
-        raise ValueError(f"Duplicate {label}: {raw}")
-    return values
-
-
 def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", comparison="none"):
     if profile not in PROFILES:
         raise ValueError("Unknown build profile")
-    declared_abis = catalog["abis"]
-    if not declared_abis or len(set(declared_abis)) != len(declared_abis) or not set(declared_abis) <= ABIS:
-        raise ValueError("Invalid ABI catalog")
-    entries = catalog["cores"]
-    ids = [entry["core"] for entry in entries]
-    if not ids or len(set(ids)) != len(ids):
-        raise ValueError("Empty or duplicate core catalog")
-    for entry in entries:
-        if not re.fullmatch(r"[a-z0-9_]+", entry["core"]):
-            raise ValueError("Unsafe core id")
-        if not re.fullmatch(r"https://github\.com/[\w.-]+/[\w.-]+", entry["repo"]):
-            raise ValueError("Invalid upstream repository")
-        if not re.fullmatch(r"[0-9a-f]{40}", entry["commit"]):
-            raise ValueError("Expected a full pinned commit")
-        if entry["build"] not in {"ndk", "cmake"}:
-            raise ValueError("Unknown build system")
-        if entry["build"] == "ndk":
-            jni = Path(entry["jni"])
-            if jni.is_absolute() or ".." in jni.parts:
-                raise ValueError("Unsafe JNI path")
+    declared_abis, entries, ids = validate_catalog(catalog)
     if event not in {"push", "pull_request", "workflow_dispatch"}:
         raise ValueError("Unsupported build event")
     if comparison not in {"none", "baseline-thinlto", "o3-o3-thinlto"}:
         raise ValueError("Unknown comparison matrix")
     if comparison != "none" and (event != "workflow_dispatch" or publish or profile != "baseline"):
         raise ValueError("Paired comparisons require an artifact-only manual dispatch and baseline profile")
+    if profile in {"citra-arm64-jit", "yabause-arm64-jit"}:
+        if event != "workflow_dispatch" or publish or comparison != "none":
+            raise ValueError("ARM64 JIT profiles are artifact-only candidates")
+        cores = cores or ("citra2018" if profile == "citra-arm64-jit" else "yabause")
+        abis = abis or "arm64-v8a"
+    if profile in {"pgo-generate", "pgo-use"}:
+        if event != "workflow_dispatch" or publish or comparison != "none" or not cores or not abis:
+            raise ValueError("PGO requires an artifact-only manual dispatch with one explicit core and ABI")
+        if "," in cores or "," in abis:
+            raise ValueError("PGO profiles must be trained for exactly one core/ABI")
     # Narrow specialized experiments instead of silently applying them to unrelated cores.
     if profile == "picodrive-sh2":
         if event != "workflow_dispatch" or publish:
@@ -143,6 +140,8 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         abis = abis or "arm64-v8a"
     chosen_cores = selection(cores, ids, "core")
     chosen_abis = selection(abis, declared_abis, "ABI")
+    if profile in {"citra-arm64-jit", "yabause-arm64-jit"} and (chosen_cores != ["citra2018" if profile == "citra-arm64-jit" else "yabause"] or chosen_abis != ["arm64-v8a"]):
+        raise ValueError("JIT candidate requires its designated ARM64 core")
     if profile == "picodrive-sh2" and (chosen_cores != ["picodrive"] or chosen_abis != ["arm64-v8a"]):
         raise ValueError("PicoDrive SH2 candidate requires PicoDrive on arm64-v8a")
     if profile == "core-hotpaths" and not set(chosen_cores) <= HOTPATH_CORES:
@@ -179,15 +178,27 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
                  for variant in ("o3", "o3-thinlto")]
         jobs += [(core, "arm64-v8a", "baseline")
                  for core in ("parallel_n64", "mednafen_psx_hw", "swanstation")]
-        jobs += [(core, "arm64-v8a", variant) for core in sorted(HOTPATH_CORES)
+        # The two dedicated candidates already apply the same source patches;
+        # avoid duplicate source-only builds at the 256-job Actions limit.
+        jobs += [(core, "arm64-v8a", variant) for core in sorted(HOTPATH_CORES - {"picodrive", "snes9x2010"})
+                 if not next(entry for entry in entries if entry["core"] == core).get("extended")
                  for variant in ("baseline", "core-hotpaths")]
         jobs += [("pcsx_rearmed", "x86_64", "baseline"),
                  ("gpsp", "x86", "baseline"),
                  ("snes9x2010", "arm64-v8a", "baseline"),
                  ("snes9x2010", "arm64-v8a", "snes9x2010-threaded")]
-        # Compile all public combined candidates before merging the policy.
-        jobs += [(core, abi, "optimized") for core in ids for abi in declared_abis]
-        jobs += [(core, "arm64-v8a", "optimized-a57") for core in ids]
+        # The new recipes need full ABI coverage before they can be released.
+        # Keep the established targeted smoke jobs and validate each extended
+        # core on all its supported ABIs in baseline/optimized, plus A57 on ARM64.
+        original = [entry["core"] for entry in entries if not entry.get("extended")]
+        extended = [entry["core"] for entry in entries if entry.get("extended")]
+        if extended:
+            jobs += [(core, abi, variant) for core in extended for abi in declared_abis
+                     for variant in ("baseline", "optimized")]
+            jobs += [(core, "arm64-v8a", "optimized-a57") for core in extended]
+        else:
+            jobs += [(core, abi, "optimized") for core in original for abi in declared_abis]
+            jobs += [(core, "arm64-v8a", "optimized-a57") for core in original]
     elif comparison != "none":
         variants = ("baseline", "thinlto") if comparison == "baseline-thinlto" else ("o3", "o3-thinlto")
         jobs = [(core, abi, variant) for core in chosen_cores for abi in chosen_abis for variant in variants]
@@ -201,10 +212,15 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         if core not in by_id or abi not in declared_abis:
             raise ValueError(f"Missing required CI recipe: {core}/{abi}")
         entry = by_id[core]
+        if abi not in entry.get("abis", declared_abis):
+            continue
         cflags, ldflags = PROFILES[variant]
-        matrix.append({**entry, "abi": abi, "profile": variant,
+        recipe = {k: v for k, v in entry.items() if k not in {"abis", "abi_args", "extended", "update_ref"}}
+        if entry.get("abi_args", {}).get(abi):
+            recipe["args"] = " ".join(filter(None, (recipe.get("args", ""), entry["abi_args"][abi])))
+        matrix.append({**recipe, "abi": abi, "profile": variant,
                        "cflags": " ".join(cflags), "ldflags": " ".join(ldflags),
-                       "makevars": "use_sh2drc=1" if (variant == "picodrive-sh2" or (variant in PUBLIC_EXPERIMENTS and core == "picodrive" and abi == "arm64-v8a")) else "",
+                       "makevars": "use_sh2drc=1" if (variant == "picodrive-sh2" or (variant in PUBLIC_EXPERIMENTS | PGO_PROFILES and core == "picodrive" and abi == "arm64-v8a")) else "",
                        "artifact": ("core" if variant == "baseline" else "candidate-" + variant)
                                    + "-" + core + "-" + abi})
     if not matrix or len(matrix) > 256:
@@ -238,6 +254,68 @@ ALLOWED_NEEDED = {
     "libvulkan.so", "libOpenSLES.so", "libaaudio.so", "libjnigraphics.so",
     "libmediandk.so", "libnativewindow.so", "libsync.so", "libc++_shared.so",
 }
+
+
+# Separately built pinned dependency packages: their ABI and bytes are
+# verified, but their compiler flags are not claimed as core flag evidence.
+EXTERNAL_ARCHIVES = {
+    "cemu": {"boost_container", "boost_context", "boost_nowide", "boost_program_options",
+             "crypto", "curl", "fmt", "glm", "glslang", "pugixml", "ssl", "usb-1.0", "z", "zip", "zstd"},
+    "armsx2": {"SDL3", "freetype", "jpeg", "lz4", "plutosvg", "plutovg", "png16",
+               "shaderc_combined", "sharpyuv", "webp", "zstd"},
+}
+
+
+def external_archive_evidence(root, core, abi, unresolved):
+    triplet = {"arm64-v8a": "arm64-android", "x86_64": "x64-android"}.get(abi)
+    if core == "cemu" and triplet:
+        directory = f"build/vcpkg_installed/{triplet}/lib"
+    elif core == "armsx2" and abi == "arm64-v8a":
+        directory = "src/.deps/lib"
+    else:
+        directory = None
+    allowed = {f"{directory}/lib{name}.a" for name in EXTERNAL_ARCHIVES.get(core, ())} if directory else set()
+    root = Path(root).resolve()
+    machine, elfclass = ELF_ABIS[abi]
+    evidence = {}
+    remaining = []
+    for relative in unresolved:
+        if relative not in allowed:
+            remaining.append(relative)
+            continue
+        path = root / relative
+        if not path.is_file() or path.resolve() != path or not path.is_relative_to(root):
+            raise ValueError(f"Invalid external archive path: {relative}")
+        members = 0
+        with path.open("rb") as stream:
+            size = path.stat().st_size
+            if stream.read(8) != b"!<arch>\n":
+                raise ValueError(f"Invalid external archive: {relative}")
+            while stream.tell() < size:
+                header = stream.read(60)
+                if len(header) != 60 or header[58:] != bytes((96, 10)):
+                    raise ValueError(f"Invalid archive header: {relative}")
+                name = header[:16].decode("ascii").strip()
+                length = int(header[48:58].decode("ascii").strip())
+                start = stream.tell()
+                end = start + length
+                if length < 0 or end + (length & 1) > size:
+                    raise ValueError(f"Invalid archive member size: {relative}")
+                if name not in {"/", "//", "/SYM64/"}:
+                    name_size = int(name[3:]) if name.startswith("#1/") else 0
+                    if not 0 <= name_size <= length:
+                        raise ValueError(f"Invalid archive member name: {relative}")
+                    stream.seek(start + name_size)
+                    elf = stream.read(min(64, length - name_size))
+                    if (len(elf) < (64 if elfclass == 2 else 52) or
+                            elf[:7] != b"\x7fELF" + bytes((elfclass, 1, 1)) or
+                            struct.unpack_from("<HHI", elf, 16) != (1, machine, 1)):
+                        raise ValueError(f"External archive member is not a native {abi} object: {relative}")
+                    members += 1
+                stream.seek(end + (length & 1))
+        evidence[relative] = {"sha256": file_digest(path), "elf_members": members,
+                              "compiler_flags_verified": False}
+    return remaining, evidence
 
 
 def dynamic_dependencies(readelf, binary):
@@ -277,6 +355,51 @@ def file_digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+# Dolphin pins zlib-ng ce01b1e41da298334f8214389cc9369540a7560f.
+# Its CMakeLists.txt explicitly isolates runtime-dispatched ISA objects with
+# NOLTOFLAG. Do not remove that barrier or disable the optimized SIMD paths.
+_DOLPHIN_ZLIB_NATIVE_SIMD = {
+    "x86_64": {
+        "x86/slide_hash_avx2.c": ("-mavx2",),
+        "x86/chunkset_avx.c": ("-mavx2",),
+        "x86/compare256_avx2.c": ("-mavx2",),
+        "x86/adler32_avx2.c": ("-mavx2",),
+        "x86/adler32_avx512.c": ("-mavx512f", "-mavx512dq", "-mavx512bw", "-mavx512vl"),
+        "x86/adler32_avx512_vnni.c": ("-mavx512f", "-mavx512dq", "-mavx512bw", "-mavx512vl", "-mavx512vnni"),
+        "x86/chunkset_sse41.c": ("-msse4.1",),
+        "x86/adler32_sse42.c": ("-msse4.2",),
+        "x86/insert_string_sse42.c": ("-msse4.2",),
+        "x86/adler32_ssse3.c": ("-mssse3",),
+        "x86/crc32_fold_pclmulqdq.c": ("-mssse3", "-msse4.2", "-mpclmul"),
+        "x86/crc32_fold_vpclmulqdq.c": ("-mvpclmulqdq", "-mavx512f", "-mavx512dq", "-mavx512bw", "-mavx512vl"),
+    },
+    "arm64-v8a": {
+        "arm/crc32_acle.c": ("-march=armv8-a+crc",),
+        "arm/insert_string_acle.c": ("-march=armv8-a+crc",),
+        "arm/adler32_neon.c": ("-march=armv8-a+simd",),
+        "arm/chunkset_neon.c": ("-march=armv8-a+simd",),
+        "arm/compare256_neon.c": ("-march=armv8-a+simd",),
+        "arm/slide_hash_neon.c": ("-march=armv8-a+simd",),
+    },
+}
+
+
+def dolphin_native_simd_source(source, args, lto, core, abi, profile):
+    if (core != "dolphin" or "-flto=thin" not in PROFILES[profile][0]
+            or not lto or lto[-1] != "-fno-lto" or "-flto=thin" not in lto[:-1]):
+        return None
+    prefix = "/Externals/zlib-ng/zlib-ng/arch/"
+    for name, flags in _DOLPHIN_ZLIB_NATIVE_SIMD.get(abi, {}).items():
+        if not ("/" + source).endswith(prefix + name):
+            continue
+        effective = set(args)
+        if "-march=armv8-a+crc+simd" in effective:
+            effective.add("-march=armv8-a+crc")
+        if set(flags).issubset(effective):
+            return name
+    return None
+
+
 def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scoped_commands=None):
     """Check actual verbose driver invocations, not only requested CMake/Make settings.
 
@@ -288,6 +411,7 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
     opt_levels = {}
     thin_compiles = 0
     native_offset_helpers = 0
+    native_simd_sources = []
     thin_links = 0
     compile_lto_modes = {}
     link_lto_modes = {}
@@ -295,12 +419,15 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
     commands = (list(compiler_commands(log, cwd, root, strict=profile != "baseline" or core in AUDITED))
                 if scoped_commands is None else scoped_commands)
     tuning_count = 0
+    pgo_compiles = pgo_links = 0
     codegen_flags = {}
     tracked_flags = {"-funroll-loops", "-fno-unroll-loops", "-ffast-math", "-fno-fast-math", "-fomit-frame-pointer", "-fno-omit-frame-pointer", "-marm", "-mthumb"}
     for args in commands:
         source = compile_source(args)
         if source and re.search(r"\.(?:c|cc|cpp|cxx|C)$", source):
             compile_count += 1
+            pgo_compiles += bool(profile == "pgo-generate" and "-fprofile-instr-generate" in args or
+                                 profile == "pgo-use" and any(flag.startswith("-fprofile-instr-use=") for flag in args))
             for flag in set(args):
                 if flag in tracked_flags or flag.startswith(("-march=", "-mcpu=", "-mtune=", "-mfpu=")):
                     codegen_flags[flag] = codegen_flags.get(flag, 0) + 1
@@ -317,6 +444,9 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
                 if not lto or lto[-1] != "-fno-lto":
                     raise ValueError("Mupen64Plus offset helper must be compiled as native ELF")
                 native_offset_helpers += 1
+            native_simd = dolphin_native_simd_source(source, args, lto, core, abi, profile)
+            if native_simd is not None:
+                native_simd_sources.append(native_simd)
             thin_compiles += bool(lto and lto[-1] == "-flto=thin")
             mode = lto[-1] if lto else "(implicit)"
             compile_lto_modes[mode] = compile_lto_modes.get(mode, 0) + 1
@@ -324,6 +454,8 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
             tuning_count += bool(tune and tune[-1] == "-mtune=cortex-a57")
         elif "-shared" in args:
             link_count += 1
+            pgo_links += bool(profile == "pgo-generate" and "-fprofile-instr-generate" in args or
+                              profile == "pgo-use" and any(flag.startswith("-fprofile-instr-use=") for flag in args))
             lto = [token for token in args if token.startswith("-flto") or token == "-fno-lto"]
             thin_links += bool(lto and lto[-1] == "-flto=thin")
             mode = lto[-1] if lto else "(implicit)"
@@ -336,24 +468,54 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
         raise ValueError(f"Core overrides requested -O3: {opt_levels}")
     if native_offset_helpers > 1:
         raise ValueError("More than one Mupen64Plus native offset helper in linked inputs")
-    if "-flto=thin" in PROFILES[profile][0] and (thin_compiles != compile_count - native_offset_helpers or thin_links != link_count):
-        raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{compile_count - native_offset_helpers}, link {thin_links}/{link_count}")
+    if len(native_simd_sources) != len(set(native_simd_sources)):
+        raise ValueError("Duplicate Dolphin native SIMD sources in linked inputs")
+    required_thin_compiles = compile_count - native_offset_helpers - len(native_simd_sources)
+    if "-flto=thin" in PROFILES[profile][0] and (thin_compiles != required_thin_compiles or thin_links != link_count):
+        raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{required_thin_compiles}, link {thin_links}/{link_count}")
     if profile in {"tune-a57", "optimized-a57"} and tuning_count != compile_count:
         raise ValueError(f"Cortex-A57 tuning not effective: {tuning_count}/{compile_count}")
+    if profile in {"pgo-generate", "pgo-use"} and (pgo_compiles != compile_count or pgo_links != link_count):
+        raise ValueError("PGO flags missing from linked compile or link commands")
     acceleration = audit_acceleration(commands, core, abi, profile) if core else {}
     return {"compile_commands": compile_count, "shared_link_commands": link_count,
             "optimization_levels": opt_levels, "codegen_flag_occurrences": codegen_flags, "thinlto_compiles": thin_compiles,
-            "thinlto_links": thin_links, "native_offset_helpers": native_offset_helpers, "cortex_a57_compiles": tuning_count,
+            "thinlto_links": thin_links, "native_offset_helpers": native_offset_helpers,
+            "native_simd_sources": sorted(native_simd_sources), "cortex_a57_compiles": tuning_count,
+            "pgo_compiles": pgo_compiles, "pgo_links": pgo_links,
             "compile_lto_modes": compile_lto_modes, "link_lto_modes": link_lto_modes,
             "shared_link_outputs": shared_outputs, "acceleration": acceleration}
 
 
-def prepare_cmake(root, core, profile):
-    # SwanStation's pin sets IPO unconditionally for Release, overriding cache flags.
-    # Preserve the upstream baseline. In explicit candidates disable only the
-    # automatic IPO block; the workflow supplies the requested LTO mode itself.
-    if core != "swanstation" or profile not in ({"o3", "thinlto", "o3-thinlto"} | PUBLIC_EXPERIMENTS):
-        return
+def prepare_citra_cmake(root):
+    path = root / "src/common/CMakeLists.txt"
+    source = path.read_text()
+    marker = 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR ${BUILD_REPOSITORY})'
+    if source.count(marker) != 1:
+        raise ValueError("Citra CI version template changed")
+    path.write_text(source.replace(marker, 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR "${BUILD_REPOSITORY}")'))
+
+    # Catch2's Android debug writer calls __android_log_write from the
+    # test executable, independently of the libretro shared library.
+    tests = root / "src/tests/CMakeLists.txt"
+    source = tests.read_text()
+    marker = "target_link_libraries(tests PRIVATE common core video_core)"
+    if source.count(marker) != 1:
+        raise ValueError("Citra test linkage template changed")
+    tests.write_text(source.replace(marker, marker +
+        "\nif(ANDROID)\n    target_link_libraries(tests PRIVATE log)\nendif()"))
+
+
+def prepare_panda_cmake(root):
+    path = root / "CMakeLists.txt"
+    source = path.read_text()
+    marker = "if(ENABLE_LTO OR ENABLE_USER_BUILD)"
+    if source.count(marker) != 1 or source.count("set_target_properties(panda3ds_libretro PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)") != 1:
+        raise ValueError("Panda3DS IPO recipe changed; inspect the pinned CMakeLists.txt")
+    path.write_text(source.replace(marker, "if(FALSE) # Ambient TV explicit compiler profile"))
+
+
+def prepare_swan_cmake(root):
     path = root / "CMakeLists.txt"
     source = path.read_text()
     marker = '# Enable LTO/LTCG on Release builds.\nif(CMAKE_BUILD_TYPE MATCHES "Release")'
@@ -361,6 +523,50 @@ def prepare_cmake(root, core, profile):
         raise ValueError("SwanStation IPO recipe changed; inspect the pinned CMakeLists.txt")
     source = source.replace(marker, '# Explicit Ambient TV experiment: flags are provided by the build policy.\nif(FALSE)')
     path.write_text(source)
+
+
+def prepare_cmake(root, core, profile):
+    if core == "citra2018":
+        prepare_citra_cmake(root)
+    if core == "ppsspp":
+        path = root / "Common/Input/InputState.cpp"
+        source = path.read_text()
+        marker = "#include <cstdio>\n"
+        if source.count(marker) != 1:
+            raise ValueError("PPSSPP input include anchor changed")
+        path.write_text(source.replace(marker, marker + "#include <cstdlib>\n"))
+        # ARMv7 inline assembly may be cloned/inlined by ThinLTO. Use
+        # an assembler-local numeric label rather than a fixed symbol.
+        path = root / "GPU/Common/TextureDecoder.cpp"
+        source = path.read_text()
+        label = r'"QuickTexHashNEON_next:\n"'
+        branch = r'"blo QuickTexHashNEON_next\n"'
+        if source.count(label) != 1 or source.count(branch) != 1 or source.count("QuickTexHashNEON_next") != 2:
+            raise ValueError("PPSSPP NEON texture hash label anchors changed")
+        path.write_text(source.replace(label, r'"1:\n"').replace(branch, r'"blo 1b\n"'))
+    if "-O3" in PROFILES[profile][0]:
+        if core == "dolphin":
+            path = root / "Externals/mbedtls/CMakeLists.txt"
+            source = path.read_text()
+            marker = 'set(CMAKE_C_FLAGS_RELEASE     "-O2")'
+            if source.count(marker) != 2:
+                raise ValueError("Dolphin mbedTLS release flag anchors changed")
+            path.write_text(source.replace(marker, 'set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG")'))
+        elif core == "ppsspp":
+            path = root / "CMakeLists.txt"
+            source = path.read_text()
+            for target in ("udis86", "cityhash", "zlib"):
+                marker = f'target_compile_options({target} PRIVATE "-O2")'
+                if source.count(marker) != 1:
+                    raise ValueError(f"PPSSPP optimization anchor changed: {target}")
+                source = source.replace(marker, f'target_compile_options({target} PRIVATE "-O3")')
+            path.write_text(source)
+    if profile not in ({"o3", "thinlto", "o3-thinlto"} | PGO_PROFILES | PUBLIC_EXPERIMENTS):
+        return
+    if core == "panda3ds":
+        prepare_panda_cmake(root)
+    elif core == "swanstation":
+        prepare_swan_cmake(root)
 
 
 def prepare_mupen_offsets(root):
@@ -457,16 +663,24 @@ def prepare_ndk(root, core, profile):
     if core == "mupen64plus_next_gles3" and "-flto=thin" in PROFILES[profile][0]:
         prepare_mupen_offsets(root)
         return
-    if profile != "snes9x2010-threaded" and not (profile in PUBLIC_EXPERIMENTS and core == "snes9x2010"):
+    if profile != "snes9x2010-threaded" and not (profile in PUBLIC_EXPERIMENTS | PGO_PROFILES and core == "snes9x2010"):
         return
     if core != "snes9x2010":
         raise ValueError("Threaded renderer recipe requires Snes9x2010")
     prepare_snes_threading(root)
 
 
-def ndk_flags(path, profile, cppflags):
+def ndk_flags(path, profile, cppflags, profile_data=None):
     # Keep upstream flags; append rather than replace APP_LDFLAGS from Application.mk.
     cflags, ldflags = PROFILES[profile]
+    if profile == "pgo-use":
+        if profile_data is None or not profile_data.is_file():
+            raise ValueError("PGO use requires verified profile data")
+        data = str(profile_data.resolve())
+        if not re.fullmatch(r"[a-zA-Z0-9_./-]+", data):
+            raise ValueError("Unsafe profile path")
+        cflags = tuple(flag.replace("ambient.profdata", data) for flag in cflags)
+        ldflags = tuple(flag.replace("ambient.profdata", data) for flag in ldflags)
     with path.open("a", encoding="utf-8") as stream:
         stream.write("\n# Ambient TV reproducible core build\n")
         if cppflags:
@@ -504,6 +718,7 @@ def main():
     p.add_argument("--application", type=Path, required=True)
     p.add_argument("--profile", choices=PROFILES, required=True)
     p.add_argument("--cppflags", default="")
+    p.add_argument("--profile-data", type=Path)
     p = sub.add_parser("select")
     p.add_argument("--nm", required=True)
     p.add_argument("--root", type=Path, required=True)
@@ -521,6 +736,7 @@ def main():
     p.add_argument("--ndk", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--build-cwd", type=Path, default=Path.cwd())
+    p.add_argument("--source-recipe", default="")
     args = parser.parse_args()
     if args.action == "plan":
         print(json.dumps(plan(json.loads(args.catalog.read_text()), args.event, args.ref,
@@ -529,12 +745,16 @@ def main():
     elif args.action == "prepare-cmake":
         prepare_cmake(args.root, args.core, args.profile)
     elif args.action == "prepare-hotpaths":
-        if args.profile == "core-hotpaths" or (args.profile in PUBLIC_EXPERIMENTS and args.core in HOTPATH_CORES):
+        if args.profile in {"core-hotpaths", "citra-arm64-jit", "yabause-arm64-jit", "picodrive-sh2", "snes9x2010-threaded"} or (args.profile in PUBLIC_EXPERIMENTS | {"pgo-generate", "pgo-use"} and args.core in HOTPATH_CORES):
             prepare_hotpaths(args.root, args.core)
+        elif args.core == "noods":
+            # Compatibility fixes are shared by every profile; optimization
+            # remains opt-in. The full hotpath recipe already includes these.
+            prepare_remaining(args.root, "noods", replace_once, compatibility_only=True)
     elif args.action == "prepare-ndk":
         prepare_ndk(args.root, args.core, args.profile)
     elif args.action == "ndk-flags":
-        ndk_flags(args.application, args.profile, args.cppflags)
+        ndk_flags(args.application, args.profile, args.cppflags, args.profile_data)
     elif args.action == "select":
         print(select_library(args.nm, args.root, args.pattern))
     elif args.action == "report":
@@ -545,11 +765,16 @@ def main():
         identity = verify_elf_abi(args.binary, args.abi)
         dependencies = dynamic_dependencies(args.readelf, args.binary)
         build_log = args.log.read_text(errors="replace")
-        scoped, link_evidence = target_commands(build_log, args.build_cwd, Path.cwd(), args.linked_library)
+        scoped, link_evidence = target_commands(
+            build_log, args.build_cwd, Path.cwd(), args.linked_library,
+            patched_sources(args.core, args.abi, args.profile))
+        remaining, external = external_archive_evidence(Path.cwd(), args.core, args.abi, link_evidence["unresolved_local_inputs"])
+        link_evidence["unresolved_local_inputs"] = remaining
+        link_evidence["external_archive_evidence"] = external
         if link_evidence["unresolved_local_inputs"]:
             raise ValueError(f"Core has unaudited local linker inputs: {link_evidence['unresolved_local_inputs']}")
         report = {**identity, **link_evidence, "needed_libraries": dependencies, "core": args.core, "abi": args.abi, "commit": args.commit,
-                  "ndk": args.ndk, "profile": args.profile,
+                  "ndk": args.ndk, "profile": args.profile, "source_recipe": args.source_recipe,
                   "requested_cflags": PROFILES[args.profile][0],
                   "requested_ldflags": PROFILES[args.profile][1],
                   "binary_sha256": file_digest(args.binary),

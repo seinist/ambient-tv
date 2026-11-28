@@ -1,12 +1,14 @@
 import json
 import shutil
+import hashlib
+import struct
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from core_build_policy import plan
-from core_release_incremental import fingerprint, key, select, stage_reuse, signed_history, assert_current_recipe
+from core_release_incremental import fingerprint, key, select, stage_reuse, signed_history, assert_current_recipe, verify_build_artifacts
 
 
 class IncrementalCoreReleaseTest(unittest.TestCase):
@@ -18,6 +20,21 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             "core": j["core"], "abi": j["abi"], "fingerprint": fingerprint(j, self.ndk),
         }} for j in self.matrix["include"]}
         self.keys = set(self.records)
+
+    def test_fingerprint_is_stable_when_planner_attaches_it(self):
+        job = self.matrix["include"][0]
+        fp = fingerprint(job, self.ndk)
+        self.assertEqual(fp, fingerprint(dict(job, fingerprint=fp), self.ndk))
+
+    def test_update_branch_is_not_a_binary_build_input(self):
+        from copy import deepcopy
+        catalog = deepcopy(self.catalog)
+        catalog["cores"][0]["update_ref"] = "refs/heads/another-branch"
+        changed = plan(catalog, "push", "refs/heads/main", False)
+        self.assertEqual(changed, self.matrix)
+        job = self.matrix["include"][0]
+        self.assertEqual(fingerprint(job, self.ndk),
+                         fingerprint(dict(job, update_ref="refs/heads/another-branch"), self.ndk))
 
     def test_no_changes_skips_entire_release(self):
         result = select(self.matrix, self.records, self.keys, "baseline", self.ndk)
@@ -150,12 +167,25 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             self.assertEqual({core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]},
                              {"mupen64plus_next_gles3"})
             policy.write_text(original)
+            policy.write_text(original.replace("Panda3DS IPO recipe changed", "Panda3DS IPO recipe updated"))
+            self.assertEqual({core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]},
+                             {"panda3ds"})
+            policy.write_text(original)
             patches = root / "scripts/core_hotpath_remaining.py"
             patches.write_text(patches.read_text().replace("idle stick needs neither sqrt nor atan2", "idle stick skips sqrt and atan2"))
             changed = {core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]}
             # Non-patched cores use a conservative fallback, but unrelated
             # published patched recipes are unaffected.
             self.assertEqual(changed, {"mupen64plus_next_gles3"})
+            patches.write_bytes((source / "scripts/core_hotpath_remaining.py").read_bytes())
+            audit = root / "scripts/core_acceleration_audit.py"
+            original = audit.read_text()
+            audit.write_text(original.replace('"src/core/cpu_core.cpp"', '"src/core/cpu_core_revised.cpp"'))
+            changed = {core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]}
+            self.assertEqual(changed, {"swanstation"})
+            audit.write_text(original.replace("missing compiled acceleration evidence", "missing linked acceleration evidence"))
+            self.assertEqual({core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]},
+                             set(jobs))
 
     def test_publish_freshness_ignores_workflow_cleanup_but_rejects_build_changes(self):
         source = Path(__file__).resolve().parents[1]
@@ -212,7 +242,12 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         single = (root / "cores.yml").read_text()
         all_profiles = (root / "cores-all.yml").read_text()
         self.assertNotIn("\n  push:", single)
-        self.assertNotIn("\n  pull_request:", single)
+        # Catalog changes must build on PRs, but automatic publication stays on main.
+        self.assertIn("\n  pull_request:\n    paths:\n      - cores/cores.json\n", single)
+        publication = single.split("\n  publish:\n", 1)[1].split("\n    steps:", 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", publication)
+        self.assertIn("needs.plan.outputs.publish == 'true'", publication)
+        self.assertNotIn("pull_request", publication)
         self.assertIn("\n  push:", all_profiles)
         self.assertNotIn("\n  pull_request:", all_profiles)
         self.assertNotIn("mupen-validation", all_profiles)
@@ -222,6 +257,77 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         self.assertNotIn("format('candidate-{0}-*'", single)
         self.assertIn("force_rebuild: ${{ inputs.force_rebuild || false }}", all_profiles)
         self.assertFalse((root / "cores-experimental.yml").exists())
+
+    def test_elf_program_header_bounds_and_congruence(self):
+        from check_elf_pages import load_alignments
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "core.so"
+            for elfclass, header_size, ph_size, code in ((2, 64, 56, "IIQQQQQQ"), (1, 52, 32, "IIIIIIII")):
+                for endian, tag in (("<", 1), (">", 2)):
+                    header = bytearray(header_size)
+                    header[:7] = b"\x7fELF" + bytes((elfclass, tag, 1))
+                    if elfclass == 2:
+                        struct.pack_into(endian+"Q", header, 32, header_size)
+                        struct.pack_into(endian+"HH", header, 54, ph_size, 1)
+                        def entry(offset=0, address=0, filesz=32, memsz=32, align=16384):
+                            return struct.pack(endian+code, 1, 5, offset, address, 0, filesz, memsz, align)
+                    else:
+                        struct.pack_into(endian+"I", header, 28, header_size)
+                        struct.pack_into(endian+"HH", header, 42, ph_size, 1)
+                        def entry(offset=0, address=0, filesz=32, memsz=32, align=16384):
+                            return struct.pack(endian+code, 1, offset, address, 0, filesz, memsz, 5, align)
+                    path.write_bytes(header + entry())
+                    self.assertEqual(load_alignments(path), [16384])
+                    for bad in (entry(address=4096), entry(align=24576), entry(filesz=4096, memsz=4096),
+                                entry(filesz=32, memsz=16), entry()[:-1]):
+                        path.write_bytes(header + bad)
+                        with self.assertRaises(ValueError):
+                            load_alignments(path)
+
+    def test_publication_rechecks_downloaded_binary_and_report(self):
+        from core_build_policy import REQUIRED_EXPORTS
+        job = next(j for j in self.matrix["include"] if j["abi"] == "arm64-v8a")
+        job = dict(job, fingerprint=fingerprint(job, self.ndk))
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            folder = directory / job["artifact"]
+            folder.mkdir()
+            binary = folder / (job["core"] + "_libretro_android.so")
+            # Minimal synthetic ELF header with a 16 KiB PT_LOAD. Exports
+            # and link evidence are normally supplied by the actual build.
+            elf = bytearray(120)
+            elf[:7] = b"\x7fELF\x02\x01\x01"
+            struct.pack_into("<HHI", elf, 16, 3, 183, 1)
+            struct.pack_into("<Q", elf, 32, 64)
+            struct.pack_into("<HH", elf, 54, 56, 1)
+            struct.pack_into("<I", elf, 64, 1)
+            struct.pack_into("<Q", elf, 112, 16384)
+            binary.write_bytes(elf)
+            report = {k: job[k] for k in ("core", "abi", "commit", "profile", "fingerprint")}
+            report.update(ndk=self.ndk, elf_class=64, elf_machine=183,
+                          binary_sha256=hashlib.sha256(elf).hexdigest(),
+                          binary_bytes=len(elf), export_count=len(REQUIRED_EXPORTS),
+                          linked_compile_commands=1, unresolved_local_inputs=[], needed_libraries=["libc.so"])
+            path = folder / "build.json"
+            path.write_text(json.dumps(report))
+            matrix = {"include": [job]}
+            result = verify_build_artifacts(matrix, directory, self.ndk)
+            self.assertEqual(result[job["artifact"]]["binary_sha256"], report["binary_sha256"])
+            self.assertEqual(result[job["artifact"]]["report_json"].encode(), path.read_bytes())
+            self.assertEqual(result[job["artifact"]]["build_report_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+            for changed in (dict(profile="optimized"), dict(fingerprint="0"*64),
+                            dict(unresolved_local_inputs=["bad.o"]), dict(needed_libraries=["unknown.so"])):
+                path.write_text(json.dumps({**report, **changed}))
+                with self.assertRaises(ValueError):
+                    verify_build_artifacts(matrix, directory, self.ndk)
+            path.write_text(json.dumps(report))
+            binary.write_bytes(elf + b"bad")
+            with self.assertRaisesRegex(ValueError, "hash/size"):
+                verify_build_artifacts(matrix, directory, self.ndk)
+            binary.write_bytes(elf)
+            path.unlink()
+            with self.assertRaisesRegex(ValueError, "missing binary or build report"):
+                verify_build_artifacts(matrix, directory, self.ndk)
 
     def test_reuse_rejects_tampered_asset(self):
         record = {"tag": "cores-1", "entry": {"core": "mgba", "abi": "arm64-v8a",

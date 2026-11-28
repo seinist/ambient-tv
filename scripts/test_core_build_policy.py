@@ -15,11 +15,92 @@ class CoreBuildPolicyTest(unittest.TestCase):
     def setUp(self):
         self.catalog = json.loads((Path(__file__).resolve().parents[1] / "cores/cores.json").read_text())
 
+    def test_citra_ci_version_template_accepts_empty_repository(self):
+        import tempfile
+        from pathlib import Path
+        from core_build_policy import prepare_cmake
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "src/common/CMakeLists.txt"
+            path.parent.mkdir(parents=True)
+            path.write_text('string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR ${BUILD_REPOSITORY})')
+            tests = Path(temp) / "src/tests/CMakeLists.txt"
+            tests.parent.mkdir(parents=True)
+            tests.write_text("target_link_libraries(tests PRIVATE common core video_core)\n")
+            prepare_cmake(Path(temp), "citra2018", "baseline")
+            self.assertIn('"${BUILD_REPOSITORY}"', path.read_text())
+            self.assertIn("if(ANDROID)\n    target_link_libraries(tests PRIVATE log)\nendif()", tests.read_text())
+            self.assertEqual(tests.read_text().count("target_link_libraries(tests PRIVATE log)"), 1)
+
+    def test_ndk_dotdot_source_identity(self):
+        from core_acceleration_audit import evidence
+        self.assertTrue(evidence([["-c", "/src/yabause/src/libretro/jni/../../sh2int.c",
+                                   "-DAMBIENT_SH2_ARM64_JIT=1"]],
+                                 "yabause/src/sh2int.c", (("AMBIENT_SH2_ARM64_JIT", "1"),)))
+
+    def test_patched_source_contract(self):
+        from core_hotpath_patches import patched_sources
+        from core_link_evidence import source_dependencies
+        for core in self.catalog["cores"]:
+            self.assertTrue(patched_sources(core["core"], "arm64-v8a", "optimized"))
+        self.assertIn("Common/Thread/ThreadManager.cpp", patched_sources("ppsspp", "arm64-v8a", "optimized"))
+        self.assertIn("src/memfile.h", patched_sources("noods", "arm64-v8a", "baseline"))
+        self.assertFalse(patched_sources("picodrive", "x86", "optimized"))
+        self.assertNotIn("libco/arm.c", patched_sources("bsnes", "arm64-v8a", "optimized"))
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root/"a.d").write_text("a.o: src/a.cpp \\\n src/b.h\nsrc/b.h:\n")
+            self.assertEqual(source_dependencies(["-c", "src/a.cpp", "-MF", "a.d"], root),
+                             {root/"src/a.cpp", root/"src/b.h"})
+
+    def test_pgo_acceleration_matches_optimized(self):
+        for profile in ("pgo-generate", "pgo-use"):
+            for core in ("picodrive", "snes9x2010", "mednafen_saturn"):
+                job = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,
+                           cores=core, abis="arm64-v8a", profile=profile)["include"][0]
+                optimized = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,
+                                 cores=core, abis="arm64-v8a", profile="optimized")["include"][0]
+                self.assertEqual(job["makevars"], optimized["makevars"])
+                self.assertEqual(requirements(core, "arm64-v8a", profile),
+                                 requirements(core, "arm64-v8a", "optimized"))
+
+    def test_pgo_is_artifact_only_and_requires_one_explicit_target(self):
+        for profile in ("pgo-generate", "pgo-use"):
+            jobs = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,
+                        cores="mgba", abis="arm64-v8a", profile=profile)["include"]
+            self.assertEqual(len(jobs), 1)
+            self.assertTrue(jobs[0]["artifact"].startswith("candidate-pgo-"))
+            with self.assertRaises(ValueError):
+                plan(self.catalog, "workflow_dispatch", "refs/heads/main", True,
+                     cores="mgba", abis="arm64-v8a", profile=profile)
+            with self.assertRaises(ValueError):
+                plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, profile=profile)
+            flag = jobs[0]["cflags"].split()[1]
+            commands = [["clang", "-O3", flag, "-flto=thin", "-c", "a.c"], ["clang", flag, "-flto=thin", "-shared", "a.o"]]
+            self.assertEqual(audit_commands("", profile, scoped_commands=commands)["pgo_compiles"], 1)
+            with self.assertRaises(ValueError):
+                audit_commands("", profile, scoped_commands=[commands[0], ["clang", "-shared", "a.o"]])
+
     def test_release_matrix(self):
         matrix = plan(self.catalog, "push", "refs/heads/main", False)["include"]
-        self.assertEqual(len(matrix), len(self.catalog["cores"]) * len(self.catalog["abis"]))
+        self.assertEqual(len(matrix), sum(len(c.get("abis", self.catalog["abis"])) for c in self.catalog["cores"]))
         self.assertTrue(all(item["profile"] == "baseline" for item in matrix))
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
+
+    def test_catalog_matches_app_and_abi_restrictions(self):
+        import re
+        app = (Path(__file__).resolve().parents[1] / "app/src/main/java/com/ambient/tv/games/GameSystems.kt").read_text()
+        ids = set(re.findall(r'GameCore\(\s*"([^"]+)"', app))
+        self.assertEqual({c["core"] for c in self.catalog["cores"]}, ids)
+        for profile in ("baseline", "optimized", "optimized-a57"):
+            jobs = plan(self.catalog, "push", "refs/heads/main", False, profile=profile)["include"]
+            self.assertEqual({j["core"] for j in jobs}, ids)
+            self.assertFalse(any(j["core"] == "melondsds" and j["abi"] == "x86" for j in jobs))
+            self.assertTrue(all(j["abi"] == "arm64-v8a" for j in jobs if j["core"] in {"armsx2", "panda3ds"}))
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False, cores="melondsds", abis="x86")
+        job = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
+                   cores="melondsds", abis="armeabi-v7a")["include"][0]
+        self.assertIn("-DENABLE_JIT=OFF", job["args"])
 
     def test_experiment(self):
         matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
@@ -31,9 +112,18 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 69 + len(self.catalog["cores"]) * (len(self.catalog["abis"]) + 1))
+        self.assertLessEqual(len(matrix), 256)
         self.assertEqual({item["core"] for item in matrix if item["profile"] == "core-hotpaths"},
-                         {core["core"] for core in self.catalog["cores"]} - {"picodrive", "snes9x2010"})
+                         {core["core"] for core in self.catalog["cores"] if not core.get("extended")} - {"picodrive", "snes9x2010"})
+        self.assertIn(("picodrive", "picodrive-sh2"), {(j["core"], j["profile"]) for j in matrix})
+        self.assertIn(("snes9x2010", "snes9x2010-threaded"), {(j["core"], j["profile"]) for j in matrix})
+        for core in self.catalog["cores"]:
+            if core.get("extended"):
+                actual = {(item["abi"], item["profile"]) for item in matrix if item["core"] == core["core"]}
+                expected = {(abi, profile) for abi in core.get("abis", self.catalog["abis"])
+                            for profile in ("baseline", "optimized")}
+                expected.add(("arm64-v8a", "optimized-a57"))
+                self.assertEqual(actual, expected)
         self.assertEqual({item["profile"] for item in matrix},
                          {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths", "optimized", "optimized-a57"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
@@ -43,7 +133,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
         for profile in ("optimized", "optimized-a57"):
             matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, profile=profile)["include"]
             abis = self.catalog["abis"] if profile == "optimized" else ["arm64-v8a"]
-            self.assertEqual(len(matrix), len(self.catalog["cores"]) * len(abis))
+            self.assertEqual(len(matrix), sum(len(set(c.get("abis", self.catalog["abis"])) & set(abis)) for c in self.catalog["cores"]))
             self.assertEqual({j["abi"] for j in matrix}, set(abis))
             self.assertTrue(all(j["cflags"].startswith("-O3 -flto=thin") and j["ldflags"] == "-flto=thin" for j in matrix))
             self.assertTrue(all(("-mtune=cortex-a57" in j["cflags"]) == (profile == "optimized-a57") for j in matrix))
@@ -187,10 +277,13 @@ class CoreBuildPolicyTest(unittest.TestCase):
     def test_full_paired_comparisons(self):
         for comparison, profiles in (("baseline-thinlto", ("baseline", "thinlto")),
                                      ("o3-o3-thinlto", ("o3", "o3-thinlto"))):
-            matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
-                          comparison=comparison)["include"]
+            # The expanded catalog exceeds the Actions limit for a paired
+            # all-ABI build. Pair per ABI without changing the coverage.
+            matrix = [job for abi in self.catalog["abis"]
+                      for job in plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
+                                      abis=abi, comparison=comparison)["include"]]
             expected = {(core["core"], abi, profile) for core in self.catalog["cores"]
-                        for abi in self.catalog["abis"] for profile in profiles}
+                        for abi in core.get("abis", self.catalog["abis"]) for profile in profiles}
             actual = {(item["core"], item["abi"], item["profile"]) for item in matrix}
             self.assertEqual(actual, expected)
             self.assertEqual(len(matrix), len(expected))
@@ -229,10 +322,12 @@ class CoreBuildPolicyTest(unittest.TestCase):
             audit_acceleration([["-DHAVE_DYNAREC", "-DMMAP_JIT_CACHE", "-UHAVE_DYNAREC", "-c", "cpu_threaded.c"],
                                 commands[1]], "gpsp", "arm64-v8a", "baseline")
         self.assertEqual(defines(["-D", "A=4", "-UB", "-D", "B=0", "-UA"]), {"B": "0"})
-        self.assertFalse(audit_acceleration([], "picodrive", "arm64-v8a", "baseline")["sh2_dynarec"])
+        pico = [["-c", "src/"+source] for source, _ in
+                requirements("picodrive", "arm64-v8a", "baseline").values()]
+        self.assertFalse(audit_acceleration(pico, "picodrive", "arm64-v8a", "baseline")["sh2_dynarec"])
         with self.assertRaises(ValueError):
-            audit_acceleration([], "picodrive", "arm64-v8a", "picodrive-sh2")
-        self.assertTrue(audit_acceleration([["-DDRC_SH2", "-c", "src/cpu/sh2/compiler.c"]],
+            audit_acceleration(pico, "picodrive", "arm64-v8a", "picodrive-sh2")
+        self.assertTrue(audit_acceleration(pico+[["-DDRC_SH2", "-c", "src/cpu/sh2/compiler.c"]],
                                           "picodrive", "arm64-v8a", "picodrive-sh2")["sh2_dynarec"])
 
     def test_response_files(self):
@@ -254,6 +349,68 @@ class CoreBuildPolicyTest(unittest.TestCase):
         malformed = '2026-11-26T16:49:47.2705010Z /ndk/bin/clang "unterminated'
         with self.assertRaisesRegex(ValueError, "Malformed compiler command"):
             list(compiler_commands(malformed, strict=True))
+
+    def test_nested_ccache_link_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "build"
+            nested.mkdir()
+            log = ("cd build && ccache /usr/bin/ccache /ndk/bin/clang++ -O3 -c ../src/a.cpp -o a.o\n"
+                   "cd build && /usr/bin/ccache /usr/bin/ccache /ndk/bin/clang -O3 -c ../src/b.c -o b.o\n"
+                   "cd build && /ndk/bin/clang++ -shared a.o b.o -o libretro.so\n")
+            commands, graph = target_commands(log, root, root, nested / "libretro.so",
+                                               ("a.cpp", "b.c"))
+            self.assertEqual(graph["unresolved_local_inputs"], [])
+            self.assertEqual(graph["linked_compile_commands"], 2)
+            self.assertEqual(len(commands), 3)
+
+    def test_external_archive_contract(self):
+        from core_build_policy import external_archive_evidence
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = "src/.deps/lib/libzstd.a"
+            path = root / relative
+            path.parent.mkdir(parents=True)
+            obj = bytearray(64)
+            obj[:7] = b"\x7fELF" + bytes((2, 1, 1))
+            struct.pack_into("<HHI", obj, 16, 1, 183, 1)
+            header = b"member.o/       " + b"0           " + b"0     " + b"0     " + b"644     " + b"64        " + bytes((96, 10))
+            self.assertEqual(len(header), 60)
+            path.write_bytes(b"!<arch>\n" + header + obj)
+            missing, proof = external_archive_evidence(root, "armsx2", "arm64-v8a", [relative, "unknown.a"])
+            self.assertEqual(missing, ["unknown.a"])
+            self.assertEqual(proof[relative]["elf_members"], 1)
+            self.assertFalse(proof[relative]["compiler_flags_verified"])
+            self.assertEqual(len(proof[relative]["sha256"]), 64)
+            self.assertEqual(external_archive_evidence(root, "cemu", "arm64-v8a", [relative]), ([relative], {}))
+            struct.pack_into("<H", obj, 18, 62)
+            path.write_bytes(b"!<arch>\n" + header + obj)
+            with self.assertRaises(ValueError):
+                external_archive_evidence(root, "armsx2", "arm64-v8a", [relative])
+
+    def test_dolphin_and_ppsspp_explicit_optimization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mbed = root / "Externals/mbedtls/CMakeLists.txt"
+            mbed.parent.mkdir(parents=True)
+            mbed.write_text('set(CMAKE_C_FLAGS_RELEASE     "-O2")\n' * 2)
+            prepare_cmake(root, "dolphin", "optimized")
+            self.assertEqual(mbed.read_text().count("-O3 -DNDEBUG"), 2)
+            source = root / "Common/Input/InputState.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text("#include <cstdio>\n")
+            decoder = root / "GPU/Common/TextureDecoder.cpp"
+            decoder.parent.mkdir(parents=True)
+            decoder.write_text(r'"QuickTexHashNEON_next:\n"' + "\n" +
+                               r'"blo QuickTexHashNEON_next\n"' + "\n")
+            cmake = root / "CMakeLists.txt"
+            cmake.write_text("\n".join(f'target_compile_options({target} PRIVATE "-O2")'
+                                       for target in ("udis86", "cityhash", "zlib")))
+            prepare_cmake(root, "ppsspp", "optimized-a57")
+            self.assertIn("#include <cstdlib>", source.read_text())
+            self.assertEqual(decoder.read_text(), r'"1:\n"' + "\n" +
+                             r'"blo 1b\n"' + "\n")
+            self.assertEqual(cmake.read_text().count('"-O3"'), 3)
 
     def test_command_boundaries_and_working_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -285,6 +442,47 @@ class CoreBuildPolicyTest(unittest.TestCase):
         for cores in ("nope", "mgba,invalid", "mgba,mgba", "mgba,"):
             with self.assertRaises(ValueError):
                 plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, cores)
+
+    def test_dolphin_zlib_native_simd_thinlto_barrier(self):
+        from core_build_policy import _DOLPHIN_ZLIB_NATIVE_SIMD
+        prefix = "src/Externals/zlib-ng/zlib-ng/arch/"
+        for abi, jit, profile in (("x86_64", "Jit64", "optimized"),
+                                  ("arm64-v8a", "JitArm64", "optimized-a57")):
+            flags = ["-O3", "-flto=thin"]
+            if abi == "arm64-v8a":
+                flags.append("-mtune=cortex-a57")
+            required = ["Source/Core/Core/PowerPC/" + jit + "/Jit.cpp",
+                        "Source/Core/DolphinLibretro/Input.cpp",
+                        "Source/Core/DolphinLibretro/Audio.cpp",
+                        "Source/Core/DolphinLibretro/Vulkan.cpp"]
+            normal = [["clang++", *flags, "-c", src] for src in required]
+            simd = [["clang", *flags, *isa, "-fno-lto", "-c", prefix + src]
+                    for src, isa in _DOLPHIN_ZLIB_NATIVE_SIMD[abi].items()]
+            link = ["clang++", "-shared", "-flto=thin", "a.o"]
+            def audit(commands, core="dolphin", selected_abi=abi):
+                return audit_commands("", profile, core=core, abi=selected_abi,
+                                      scoped_commands=commands)
+            result = audit(normal + simd + [link])
+            self.assertEqual(result["thinlto_compiles"], len(normal))
+            self.assertEqual(result["native_simd_sources"], sorted(_DOLPHIN_ZLIB_NATIVE_SIMD[abi]))
+            self.assertEqual(result["compile_lto_modes"]["-fno-lto"], len(simd))
+            invalid = [simd[0][:-1] + [prefix + "generic.c"],
+                       simd[0][:-1] + ["other/arch/" + simd[0][-1].split("/")[-1]],
+                       [arg for arg in simd[0] if arg not in _DOLPHIN_ZLIB_NATIVE_SIMD[abi][next(iter(_DOLPHIN_ZLIB_NATIVE_SIMD[abi]))]],
+                       [arg for arg in simd[0] if arg != "-flto=thin"]]
+            for bad in invalid:
+                with self.assertRaisesRegex(ValueError, "ThinLTO not effective"):
+                    audit(normal + [bad, link])
+            with self.assertRaisesRegex(ValueError, "ThinLTO not effective"):
+                audit(normal + simd + [link], core=None)
+            with self.assertRaisesRegex(ValueError, "ThinLTO not effective"):
+                audit(normal + simd + [link], selected_abi="x86")
+            with self.assertRaisesRegex(ValueError, "ThinLTO not effective"):
+                audit(normal + simd + [["clang++", "-shared", "a.o"]])
+            with self.assertRaisesRegex(ValueError, "overrides requested -O3"):
+                audit(normal + [[arg if arg != "-O3" else "-O2" for arg in simd[0]], link])
+            with self.assertRaisesRegex(ValueError, "Duplicate Dolphin"):
+                audit(normal + simd + [simd[0], link])
 
     def test_actual_flags(self):
         log = ("clang -O2 -O3 -flto=thin -c a.c -o a.o\n"
@@ -371,6 +569,47 @@ class CoreBuildPolicyTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prepare_cmake(root, "swanstation", "thinlto")
 
+    def test_panda3ds_ipo_is_not_allowed_to_override_explicit_profile(self):
+        original = ("if(ENABLE_LTO OR ENABLE_USER_BUILD)\n"
+                    "  set_target_properties(panda3ds_libretro PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)\n"
+                    "endif()\n")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "CMakeLists.txt"
+            path.write_text(original)
+            prepare_cmake(root, "panda3ds", "baseline")
+            self.assertEqual(path.read_text(), original)
+            prepare_cmake(root, "panda3ds", "optimized-a57")
+            self.assertIn("if(FALSE)", path.read_text())
+            self.assertIn("INTERPROCEDURAL_OPTIMIZATION TRUE", path.read_text())
+            with self.assertRaises(ValueError):
+                prepare_cmake(root, "panda3ds", "optimized")
+
+    def test_extended_acceleration_contracts_are_architecture_specific(self):
+        self.assertIn("jit_fastmem_build", requirements("melondsds", "arm64-v8a", "optimized"))
+        self.assertNotIn("jit_fastmem_build", requirements("melondsds", "armeabi-v7a", "optimized"))
+        self.assertNotIn("dynarmic", requirements("citra2018", "arm64-v8a", "optimized"))
+        self.assertIn("dynarmic", requirements("citra2018", "x86_64", "optimized"))
+        self.assertIn("vif_neon", requirements("armsx2", "arm64-v8a", "optimized-a57"))
+        self.assertIn("spu2_neon", requirements("armsx2", "arm64-v8a", "optimized-a57"))
+        for profile in ("core-hotpaths", "optimized", "optimized-a57"):
+            saturn = requirements("mednafen_saturn", "arm64-v8a", profile)
+            for dsp in ("scsp_dsp_jit", "scu_dsp_jit"):
+                self.assertIn(("WANT_JIT", "1"), saturn[dsp][1])
+            commands = [["-D" + key + "=" + value for key, value in macros] + ["-c", source]
+                        for source, macros in saturn.values()]
+            self.assertTrue(all(audit_acceleration(commands, "mednafen_saturn", "arm64-v8a", profile).values()))
+            with self.assertRaises(ValueError):
+                audit_acceleration([[flag for flag in cmd if flag != "-DWANT_JIT=1"] for cmd in commands],
+                                   "mednafen_saturn", "arm64-v8a", profile)
+        self.assertEqual(requirements("mednafen_saturn", "armeabi-v7a", "optimized")["scsp_dsp_jit"][1], ())
+        rules = requirements("vice_x64sc", "arm64-v8a", "optimized")
+        commands = [["-D" + key + "=" + value for key, value in macros] + ["-c", source]
+                    for source, macros in rules.values()]
+        self.assertTrue(all(audit_acceleration(commands, "vice_x64sc", "arm64-v8a", "optimized").values()))
+        with self.assertRaises(ValueError):
+            audit_acceleration(commands, "vice_x64", "arm64-v8a", "optimized")
+
     def test_threaded_snes_candidate(self):
         matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
                       profile="snes9x2010-threaded")["include"]
@@ -414,22 +653,18 @@ class CoreBuildPolicyTest(unittest.TestCase):
         self.assertEqual(AUDITED, {core["core"] for core in self.catalog["cores"]})
         for entry in self.catalog["cores"]:
             core = entry["core"]
-            for abi in self.catalog["abis"]:
+            for abi in entry.get("abis", self.catalog["abis"]):
                 with self.subTest(core=core, abi=abi):
                     rules = requirements(core, abi, "baseline")
-                    # These two recipes intentionally have no acceleration
-                    # requirement for their non-dynarec baseline variants.
-                    if core == "picodrive" and abi != "armeabi-v7a":
-                        continue
-                    if core == "swanstation" and abi == "x86":
-                        continue
+                    # Even interpreter-only targets need linked hotpath evidence.
                     self.assertTrue(rules)
                     commands = [
                         ["-D" + key + "=" + value for key, value in macros]
                         + ["-c", "upstream/" + source]
                         for source, macros in rules.values()
                     ]
-                    self.assertTrue(all(audit_acceleration(commands, core, abi, "baseline").values()))
+                    actual = audit_acceleration(commands, core, abi, "baseline")
+                    self.assertTrue(all(actual[k] for k in rules))
                     with self.assertRaises(ValueError):
                         audit_acceleration([], core, abi, "baseline")
 
@@ -437,14 +672,14 @@ class CoreBuildPolicyTest(unittest.TestCase):
         matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
                       profile="core-hotpaths")["include"]
         self.assertEqual({item["core"] for item in matrix},
-                         {core["core"] for core in self.catalog["cores"]} - {"picodrive", "snes9x2010"})
-        self.assertEqual(len(matrix), 24 * len(self.catalog["abis"]))
+                         {core["core"] for core in self.catalog["cores"]})
+        self.assertEqual(len(matrix), sum(len(c.get("abis", self.catalog["abis"])) for c in self.catalog["cores"]))
         self.assertTrue(all(item["artifact"].startswith("candidate-core-hotpaths-") for item in matrix))
         with self.assertRaises(ValueError):
             plan(self.catalog, "workflow_dispatch", "refs/heads/main", True, profile="core-hotpaths")
         with self.assertRaises(ValueError):
             plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
-                 cores="picodrive", profile="core-hotpaths")
+                 cores="not-a-registered-core", profile="core-hotpaths")
 
     def test_select_by_exports_not_filename_order(self):
         with tempfile.TemporaryDirectory() as directory:

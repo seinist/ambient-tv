@@ -41,6 +41,7 @@ jobs:
     name: ${{ matrix.profile }}
     permissions:
       contents: write
+      actions: read
     uses: ./.github/workflows/cores.yml
     with:
       profile: ${{ matrix.profile }}

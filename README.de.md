@@ -220,8 +220,10 @@ PRIVATE_KEYS=1 ./build.sh release
 # Externe Engines prüfen / Pins aktualisieren
 ./build.sh libs-check
 ./build.sh libs-update
+# Emulator-Core-Pins separat prüfen / aktualisieren
 ./build.sh cores-check
 ./build.sh cores-update
+./build.sh cores-update ppsspp
 ```
 
 Lokale APK-Builds mit `build.sh` reservieren eine Build-Nummer pro Aufruf und aktualisieren `version.properties` sowie beide README-Versionsanzeigen erst nach erfolgreicher Fertigstellung aller angeforderten APKs und des Release-Packagings. Fehlgeschlagene Builds erhöhen den Zähler nicht.

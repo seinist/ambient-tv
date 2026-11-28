@@ -1,0 +1,46 @@
+name: Full core catalog validation
+on:
+  pull_request:
+    paths:
+      - cores/cores.json
+      - app/src/main/java/com/ambient/tv/games/GameSystems.kt
+      - scripts/core_*.py
+      - scripts/test_core_*.py
+      - scripts/native_core_candidates/**
+      - scripts/check_core_policy.sh
+      - scripts/check_elf_pages.py
+      - scripts/test_game_rewind.py
+      - scripts/native_rewind/**
+      - .github/workflows/core-policy-validation.yml
+      - .github/workflows/cores.yml
+      - .github/workflows/core-catalog-validation.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  core-policy:
+    uses: ./.github/workflows/core-policy-validation.yml
+  catalog:
+    needs: core-policy
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [baseline, optimized, optimized-a57]
+        abi: [arm64-v8a, armeabi-v7a, x86_64, x86]
+        exclude:
+          - {profile: optimized-a57, abi: armeabi-v7a}
+          - {profile: optimized-a57, abi: x86_64}
+          - {profile: optimized-a57, abi: x86}
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/cores.yml
+    with:
+      profile: ${{ matrix.profile }}
+      abis: ${{ matrix.abi }}
+      publish: false
+      publish_experimental: false
+      shared_policy_validated: true
+    secrets:
+      CORES_SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}

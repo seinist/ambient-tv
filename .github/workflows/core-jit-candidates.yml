@@ -1,0 +1,73 @@
+name: ARM64 JIT candidates
+on:
+  pull_request:
+    paths:
+      - cores/cores.json
+      - app/src/main/java/com/ambient/tv/games/GameSystems.kt
+      - scripts/core_*.py
+      - scripts/test_core_*.py
+      - scripts/native_core_candidates/**
+      - scripts/check_core_policy.sh
+      - scripts/check_elf_pages.py
+      - scripts/test_game_rewind.py
+      - scripts/native_rewind/**
+      - .github/workflows/core-policy-validation.yml
+      - .github/workflows/cores.yml
+      - .github/workflows/core-jit-candidates.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  core-policy:
+    uses: ./.github/workflows/core-policy-validation.yml
+  differential-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Execute emitted SH2 instructions and shared-memory tests on AArch64
+        run: |
+          cc -std=c99 -O2 -Wall -Wextra -Werror -D_GNU_SOURCE scripts/native_core_candidates/sh2_arm64_test.c -o /tmp/sh2-arm64-test
+          /tmp/sh2-arm64-test
+          python3 -m unittest discover -s scripts -p test_core_candidates.py
+      - name: Compare memory and control opcodes with pinned Yabause handlers
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          git -C "$tmp" init -q
+          pin=$(python3 -c 'import json; c=next(x for x in json.load(open("cores/cores.json"))["cores"] if x["core"]=="yabause"); assert c["repo"]=="https://github.com/libretro/yabause"; print(c["commit"])')
+          [[ "$pin" =~ ^[0-9a-f]{40}$ ]]
+          git -C "$tmp" fetch -q --depth 1 https://github.com/libretro/yabause.git "$pin"
+          test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$pin"
+          git -C "$tmp" show FETCH_HEAD:yabause/src/sh2int.c > "$tmp/sh2int.c"
+          python3 scripts/native_core_candidates/sh2_memory_differential.py --upstream "$tmp/sh2int.c"
+          python3 scripts/native_core_candidates/sh2_native_differential.py --upstream "$tmp/sh2int.c"
+          # The differential harness uses the original pinned handlers, not
+          # the production source patcher. Verify both together explicitly.
+          git -C "$tmp" checkout -q --detach FETCH_HEAD
+          python3 scripts/core_build_policy.py prepare-hotpaths --root "$tmp" --core yabause --profile yabause-arm64-jit
+          python3 scripts/core_yabause_arm64.py --root "$tmp"
+          grep -F 'ambient_sh2_try_in_scope(context, cycles, &ambient_scope)' "$tmp/yabause/src/sh2int.c"
+          grep -F 'ambient_sh2_note_bulk_write();' "$tmp/yabause/src/sh2core.c"
+          grep -F 'ambient_sh2_t2_written(mem,addr,4);' "$tmp/yabause/src/memory.h"
+  candidates:
+    needs: core-policy
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [citra-arm64-jit, yabause-arm64-jit]
+    # The called workflow declares gated main-only release jobs with write permission.
+    # Its actual candidate build/plan jobs explicitly retain read-only access.
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/cores.yml
+    with:
+      profile: ${{ matrix.profile }}
+      publish: false
+      publish_experimental: false
+      shared_policy_validated: true
+    secrets:
+      CORES_SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}

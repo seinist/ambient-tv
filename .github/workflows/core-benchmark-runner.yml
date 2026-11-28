@@ -1,0 +1,103 @@
+name: Core benchmark runner
+on:
+  pull_request:
+    paths:
+      - scripts/native_core_candidates/core_benchmark_runner.cpp
+      - scripts/native_core_candidates/core_benchmark_input.h
+      - scripts/native_core_candidates/core_benchmark_input_test.cpp
+      - scripts/native_core_candidates/core_benchmark_mock.cpp
+      - scripts/test_ppsspp_thread_budget.py
+      - scripts/test_core_benchmark.py
+      - scripts/test_core_device_validation.py
+      - scripts/validate_core_device_matrix.py
+      - scripts/check_elf_pages.py
+      - scripts/core_hotpath_remaining.py
+      - scripts/native_rewind/**
+      - scripts/native_core_candidates/core_benchmark_vulkan.h
+      - scripts/native_core_candidates/core_benchmark_vulkan_test.cpp
+      - scripts/build_core_benchmark_runner.sh
+      - scripts/run_core_benchmark.py
+      - scripts/benchmark_core_matrix.py
+      - .github/workflows/core-benchmark-runner.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vulkan-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install software Vulkan driver and headers
+        run: sudo apt-get update -qq && sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers libegl-dev libgles-dev
+      - name: Execute headless Vulkan submission tests
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          git -C "$tmp" init -q
+          git -C "$tmp" fetch -q --depth 1 https://github.com/libretro/libretro-common.git ae22debd425c33fe355ac2e51d9a140d7e8b3fa6
+          git -C "$tmp" show FETCH_HEAD:include/libretro.h > "$tmp/libretro.h"
+          git -C "$tmp" show FETCH_HEAD:include/libretro_vulkan.h > "$tmp/libretro_vulkan.h"
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -I"$tmp" scripts/native_core_candidates/core_benchmark_vulkan_test.cpp -pthread -lvulkan -o "$tmp/test"
+          export VK_DRIVER_FILES=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$VK_DRIVER_FILES"
+          "$tmp/test"
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -I"$tmp" scripts/native_core_candidates/core_benchmark_input_test.cpp -o "$tmp/input-test"
+          "$tmp/input-test"
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -I"$tmp" -Iscripts/native_rewind \
+            scripts/native_core_candidates/core_benchmark_runner.cpp scripts/native_rewind/rewindbuffer.cpp \
+            -ldl -lEGL -lGLESv2 -lvulkan -pthread -o "$tmp/runner"
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -I"$tmp" -shared -fPIC \
+            scripts/native_core_candidates/core_benchmark_mock.cpp -o "$tmp/mock.so"
+          mkdir "$tmp/system" "$tmp/save"
+          printf 'synthetic content\n' > "$tmp/game.rom"
+          yes '0 | 1:1:0:256:4 0:3:0:97:1' | head -n 64 > "$tmp/input.txt" || test "$(wc -l < "$tmp/input.txt")" -eq 64
+          printf 'mock_mode=selected\n@controller.1=1\n' > "$tmp/options.txt"
+          AMBIENT_BENCHMARK_VERIFY_OUTPUT=1 AMBIENT_BENCHMARK_VERIFY_REWIND=1 AMBIENT_BENCHMARK_EXPORT_STATE=1 \
+            AMBIENT_BENCHMARK_REWIND_BUDGET_MIB=1 "$tmp/runner" "$tmp/mock.so" "$tmp/game.rom" "$tmp/system" \
+            "$tmp/save" "$tmp/input.txt" "$tmp/options.txt" 64 "$tmp/capture" 4
+          python3 - "$tmp" <<'PY'
+          import csv, json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          proof = json.loads((root / "capture-output.json").read_text())
+          assert proof["rewind_checked"] >= 4 and proof["rewind_history_frames"] >= 4
+          summary = json.loads((root / "capture-summary.json").read_text())
+          assert summary["fresh_frames"] == 60 and summary["audio_frames"] == 120
+          with (root / "capture.csv").open() as stream:
+              frames = list(csv.DictReader(stream))
+          assert len(frames) == 64 and {float(row["fps"]) for row in frames} == {50, 60}
+          assert {float(row["sample_rate"]) for row in frames} == {44100, 48000}
+          PY
+      - name: Test benchmark and device validation tooling
+        run: |
+          python3 -m unittest discover -s scripts -p test_core_benchmark.py
+          python3 -m unittest discover -s scripts -p test_core_device_validation.py
+      - name: Stress patched PPSSPP worker pool on host
+        run: python3 scripts/test_ppsspp_thread_budget.py
+  runner:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64, x86]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;30.0.16248370" > /dev/null || "$sdkmanager" --channel=3 "ndk;30.0.16248370" > /dev/null
+      - name: Build diagnostic runner
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          bash scripts/build_core_benchmark_runner.sh "$ABI" out/core-benchmark-runner
+          python3 scripts/check_elf_pages.py out/core-benchmark-runner
+          python3 -m py_compile scripts/run_core_benchmark.py scripts/benchmark_core_matrix.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: core-benchmark-runner-${{ matrix.abi }}
+          path: out/core-benchmark-runner
+          if-no-files-found: error

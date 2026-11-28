@@ -339,7 +339,24 @@ static void captureAssociatedPresentationCadence() {
     CHECK(timeline.captureInterval() == 1);
 }
 
+static void workerPressureBacksOffAndRecovers() {
+    RewindTimeline timeline;
+    timeline.configure(120, 15);
+    for (int i=0; i<10; ++i) timeline.observeCapturePressure(true);
+    CHECK(timeline.captureInterval() == 15);
+    for (int i=0; i<7; ++i) timeline.observeCapturePressure(false);
+    CHECK(timeline.captureInterval() == 15);
+    timeline.observeCapturePressure(false);
+    CHECK(timeline.captureInterval() == 8);
+    for (int i=0; i<32; ++i) timeline.observeCapturePressure(false);
+    CHECK(timeline.captureInterval() == 1);
+    timeline.observeCapturePressure(true);
+    timeline.reset();
+    CHECK(timeline.captureInterval() == 1);
+}
+
 int main() {
+    workerPressureBacksOffAndRecovers();
     initialStateAndFastForward();
     firstRewindNeverStepsForwardAndBranchKeepsItsDistance();
     variableBatchesSkippedCapturesAndZeroFrameSteps();
@@ -351,5 +368,5 @@ int main() {
     saturatingArithmeticCannotWrapTheTimeline();
     expensiveCapturesYieldToFrameBudget();
     captureAssociatedPresentationCadence();
-    std::cout << "Rewind timeline: 11 integration tests passed (including 25000 randomized transitions).\n";
+    std::cout << "Rewind timeline: 12 integration tests passed (including 25000 randomized transitions).\n";
 }
