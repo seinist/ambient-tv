@@ -214,7 +214,7 @@ jobs:
       - name: Install host Vulkan and libplacebo build dependencies
         run: |
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
-          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev ffmpeg python3-numpy
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev ffmpeg python3-numpy xvfb xauth libx11-dev
       - name: Build pinned libplacebo and render local-window reference fixture
         run: |
           for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/libplacebo-patches/*.patch; do
@@ -254,6 +254,11 @@ jobs:
             native/vlc-aar/experimental/test_hdr10plus_frame_reference_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr10plus-frame-reference
           run_validated .ci/test-hdr10plus-frame-reference
+          cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_wsi_retirement_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lvulkan -lX11 -lm -o .ci/test-wsi-retirement
+          xvfb-run -a bash -c 'set -o pipefail; VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation timeout 90 .ci/test-wsi-retirement 2>&1 | tee .ci/wsi-validation.log'
+          if grep -Ei 'Validation Error|VUID-[^[:space:]]+' .ci/wsi-validation.log; then exit 1; fi
           cc -std=gnu11 -Wall -Wextra -fsanitize=undefined -fno-sanitize-recover=all -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_etsi_external_fel_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-etsi-fel
