@@ -38,8 +38,8 @@ fn family_motion(p:vec2f,grid:vec2u,phase:f32)->FamilyMotion{
     if ((params.y>>8u)&31u)==23u{
         let ea=family_field(p,grid,8u*n+3u);
         let eb=family_field(p,grid,9u*n+3u);
-        ff=-ea.xy/max(ea.w,1.0)*time;
-        bb=-eb.xy/max(eb.w,1.0)*(1.0-time);
+        ff=ea.xy/max(ea.w,1.0)*time;
+        bb=eb.xy/max(eb.w,1.0)*(1.0-time);
     }
     return FamilyMotion(f,r,ff,bb,mask,time,fields[2u*n].x!=0);
 }
