@@ -164,7 +164,8 @@ val modulePackaging = providers.gradleProperty("MODULE_PACKAGING")
     .orElse(providers.environmentVariable("MODULE_PACKAGING")).orElse("full").get()
 require(modulePackaging in setOf("full", "modular-preview")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
 val modularPreview = modulePackaging == "modular-preview"
-val smartTubeBundled = rootProject.findProject(":youtubeapi") != null
+val smartTubeHostResources = rootProject.findProject(":youtubeapi") != null
+val smartTubeBundled = smartTubeHostResources && !modularPreview
 val smartTubeAdapterInputs = fileTree("src/main/java/com/ambient/tv/youtube") { include("**/*.kt") }.files +
     fileTree(rootProject.file("smarttube_wrappers")) { include("**/*.gradle.kts", "**/*.pro") }.files + setOf(
         rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/external-versions.properties"),
@@ -352,6 +353,7 @@ android {
         buildConfigField("String", "MONOGRAM_ADAPTER_SHA256", quotedBuildConfigString(monogramAdapterSha))
         buildConfigField("String", "SMARTTUBE_ADAPTER_SHA256", quotedBuildConfigString(smartTubeAdapterSha))
         buildConfigField("boolean", "SMARTTUBE_BUNDLED", smartTubeBundled.toString())
+        buildConfigField("boolean", "SMARTTUBE_HOST_RESOURCES", smartTubeHostResources.toString())
         buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
         val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
         buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", monogramPgoGenerate.toString())
@@ -510,7 +512,7 @@ android {
             // Retain FFmpeg and other APK-owned dependencies for local audio and MPV modules.
             if (modularPreview) excludes += setOf(
                 "**/libprojectM-4.so", "**/libambientprojectm.so",
-                "**/libmpv.so", "**/libambientmpv.so",
+                "**/libmpv.so", "**/libambientmpv.so", "**/libj2v8.so",
             )
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
             if (!spotifyEnabled || modularPreview) excludes += "**/libspotify_receiver_core.so"
@@ -604,6 +606,41 @@ if (smartTubeBundled) {
         }
         variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
             ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
+    }
+}
+
+/** Remove engine classes before D8/R8 while retaining normal AAR resource merging. */
+abstract class StripSmartTubeClasses @Inject constructor(
+    private val execOperations: ExecOperations,
+) : DefaultTask() {
+    @get:InputFiles abstract val allJars: ListProperty<RegularFile>
+    @get:InputFiles abstract val allDirectories: ListProperty<Directory>
+    @get:InputFile abstract val stripper: org.gradle.api.file.RegularFileProperty
+    @get:InputFile abstract val ownershipScript: org.gradle.api.file.RegularFileProperty
+    @get:org.gradle.api.tasks.OutputFile abstract val output: org.gradle.api.file.RegularFileProperty
+
+    @TaskAction fun strip() {
+        val command = mutableListOf("python3", stripper.get().asFile.absolutePath,
+            "--output", output.get().asFile.absolutePath)
+        for (input in allJars.get().map { it.asFile } + allDirectories.get().map { it.asFile }) {
+            command.addAll(listOf("--input", input.absolutePath))
+        }
+        execOperations.exec { commandLine(command) }.assertNormalExitValue()
+    }
+}
+
+if (modularPreview && smartTubeHostResources) {
+    androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+        val task = tasks.register<StripSmartTubeClasses>(
+            "strip" + variant.name.replaceFirstChar { it.uppercase() } + "SmartTubeClasses",
+        ) {
+            stripper.set(rootProject.layout.projectDirectory.file("scripts/strip_smarttube_classes.py"))
+            ownershipScript.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toTransform(
+            ScopedArtifact.CLASSES, StripSmartTubeClasses::allJars,
+            StripSmartTubeClasses::allDirectories, StripSmartTubeClasses::output,
         )
     }
 }
