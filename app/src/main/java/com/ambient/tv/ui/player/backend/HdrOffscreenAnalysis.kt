@@ -62,7 +62,7 @@ internal object HdrOffscreenAnalysis {
                     val options = linkedMapOf(
                         "vo" to "gpu-next", "gpu-api" to "vulkan", "gpu-context" to "androidvk",
                         "vulkan-device" to device, "hwdec" to hwdec, "hwdec-codecs" to "hevc",
-                        "audio" to "no", "sid" to "no", "untimed" to "yes",
+                        "aid" to "no", "sid" to "no", "untimed" to "yes",
                         "video-sync" to "desync", "framedrop" to "no", "keep-open" to "no",
                         "idle" to "yes", "force-window" to "no", "sub-auto" to "no",
                         "target-prim" to "bt.709", "target-trc" to "srgb", "target-peak" to "100",
@@ -83,9 +83,9 @@ internal object HdrOffscreenAnalysis {
                     while (true) {
                         currentCoroutineContext().ensureActive()
                         if (!session.valid()) return@withContext false
-                        repeat(128) {
+                        for (i in 0 until 128) {
                             when(api.nativePollEvent(handle)) {
-                                0 -> return@repeat
+                                0 -> break
                                 1 -> return@withContext false
                                 7 -> return@withContext api.nativeEndReason(handle)==0 &&
                                     api.nativePlaybackError(handle)>=0 && session.advance()
