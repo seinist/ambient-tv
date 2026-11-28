@@ -52,7 +52,7 @@ fn high_synthesis_spirv(mode:u32)->Result<Vec<u32>>{high_synthesis_config(mode,N
 fn high_synthesis_config(mode:u32,t:Option<ResidentTuning>)->Result<Vec<u32>>{
     if mode==3{
         let mut source=SYNTHESIS.replace("rgba8unorm,write","rgba16float,write");
-        if let Some(t)=t{source=tuned_synthesis(&source,t)?;}
+        if let Some(t)=t{source=tuned_synthesis(&source,t,mode)?;}
         return spirv(&source,"@group(0) @binding(8) var<uniform> params:vec4u;","synthesize");
     }
     let scale=match mode{1=>"65535.0/64.0",2=>"65535.0",_=>return Err("unknown high-depth mode".into())};
@@ -76,7 +76,7 @@ fn high_synthesis_config(mode:u32,t:Option<ResidentTuning>)->Result<Vec<u32>>{
 "#);
     let mut source=format!("{}{}{}",&SYNTHESIS[..old_start],conversion,&SYNTHESIS[old_end..])
         .replace("rgba8unorm,write","rgba16float,write");
-    if let Some(t)=t{source=tuned_synthesis(&source,t)?;}
+    if let Some(t)=t{source=tuned_synthesis(&source,t,mode)?;}
     spirv(&source,"@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")
 }
 
@@ -128,7 +128,7 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
 "#);
     if mode==5{source.push_str("        textureStore(dv,vec2i(cp),pack10(sample_pair(av,bv,ap*0.5,bp*0.5,blend,visible/2u)));\n");}
     source.push_str("    }\n}\n");
-    if let Some(t)=t{source=tuned_synthesis(&source,t)?;}
+    if let Some(t)=t{source=tuned_synthesis(&source,t,mode)?;}
     spirv(&source,"@group(0) @binding(10) var<uniform> params:vec4u;","synthesize")
 }
 /// Optional configured quality path. Legacy callers keep the original
@@ -223,10 +223,12 @@ fn mask_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
         .replace("SVP_DEPTH_SCALE",if mode==0{"1"}else{"4"});
     spirv(&source,"@group(0) @binding(7) var<uniform> params:vec4u;",entry)
 }
-fn tuned_synthesis(source:&str,t:ResidentTuning)->Result<String>{
+fn tuned_synthesis(source:&str,t:ResidentTuning,mode:u32)->Result<String>{
     let family=include_str!("resident_synthesis_family.wgsl")
         .replace("SVP_STEP",&t.step().to_string())
         .replace("SVP_ORIGIN",&(t.overlap/2).to_string())
+        .replace("SVP_PEL",&t.pel.to_string())
+        .replace("SVP_SDR8",if mode==0{"true"}else{"false"})
         .replace("SVP_AREA_BLEND",if t.artifacts==3{"0.7"}else{"0.4"});
     let entry=source.find("@compute @workgroup_size(8,8)").ok_or("tuned synthesis entry")?;
     let threshold=match t.artifacts{1=>64,2=>48,3=>32,_=>48};
@@ -335,16 +337,19 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
             pixel=family_plane(ay,by,p,m,1.0,visible,algo).rgb;
         }else{
             let ap=p+m.a;let bp=p+m.b;
-            let f=yuv(ay,au,av,ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
-            let b=yuv(by,bu,bv,bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
-            let f0=yuv(ay,au,av,p,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
-            let b0=yuv(by,bu,bv,p,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
-            // Extended vectors are only meaningful with adjacent source
-            // fields. Without them the selector dispatches 21, not 23.
-            let ff=yuv(ay,au,av,p+m.ext_a,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
-            let bb=yuv(by,bu,bv,p+m.ext_b,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
-            pixel=rgb(family_blend(vec4f(f,1),vec4f(b,1),vec4f(f0,1),vec4f(b0,1),
-                vec4f(ff,1),vec4f(bb,1),m,algo).rgb);
+            let f=family_yuv(ay,au,av,ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
+            let b=family_yuv(by,bu,bv,bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
+            let f0=family_yuv(ay,au,av,p,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
+            let b0=family_yuv(by,bu,bv,p,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
+            var ff=f;var bb=b;
+            if algo==23u{
+                ff=family_yuv(ay,au,av,p+m.ext_a,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
+                bb=family_yuv(by,bu,bv,p+m.ext_b,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
+            }
+            var value=family_blend(vec4f(f,1),vec4f(b,1),vec4f(f0,1),vec4f(b0,1),
+                vec4f(ff,1),vec4f(bb,1),m,algo).rgb;
+            if FAMILY_SDR8{value.x=family_encode(value.x);}
+            pixel=rgb(value);
         }
         textureStore(dst,vec2i(id.xy),vec4f(pixel,1.0));
         return;
@@ -736,7 +741,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     types.push(vk::DescriptorType::STORAGE_BUFFER);
     types.extend(std::iter::repeat_n(vk::DescriptorType::STORAGE_IMAGE,raw_planes(mode)));
     let synthesis_words=if mode==0{
-        if let Some(t)=tuning{spirv(&tuned_synthesis(SYNTHESIS,t)?,"@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")?}
+        if let Some(t)=tuning{spirv(&tuned_synthesis(SYNTHESIS,t,0)?,"@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")?}
         else{synthesis_spirv()?}
     }else if mode>=4{raw_synthesis_config(mode,tuning)?}else{high_synthesis_config(mode,tuning)?};
     let synthesis=Pipeline::new(&device,&types,&synthesis_words,c"synthesize")?;
@@ -1007,7 +1012,7 @@ mod tests{
             assert_eq!(super::quality_spirv(mode,t,"scene").unwrap()[0],0x07230203);
             assert_eq!(super::quality_spirv(mode,t,"snapshot").unwrap()[0],0x07230203);
             for entry in ["clear","scatter","finish"]{assert_eq!(super::mask_spirv(mode,t,entry).unwrap()[0],0x07230203);}
-            let out=if mode==0{super::spirv(&super::tuned_synthesis(super::SYNTHESIS,t).unwrap(),
+            let out=if mode==0{super::spirv(&super::tuned_synthesis(super::SYNTHESIS,t,0).unwrap(),
                 "@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")}
                 else if mode>=4{super::raw_synthesis_config(mode,Some(t))}else{super::high_synthesis_config(mode,Some(t))};
             assert_eq!(out.unwrap()[0],0x07230203);
