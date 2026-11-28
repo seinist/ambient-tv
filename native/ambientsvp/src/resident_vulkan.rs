@@ -1180,7 +1180,7 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_read_rectangles(pair:*const VulkanPa
         if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
         match unsafe{p.core.device.get_fence_status(p.fence)}{Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
         let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
-        job.gradients(unsafe{std::slice::from_raw_parts_mut(gradients,count as usize)}).map_or(-1,|_|1)
+        job.rectangles(unsafe{std::slice::from_raw_parts_mut(rectangles,count as usize)}).map_or(-1,|_|1)
     })).unwrap_or(-1)
 }
 // The caller must pass the fence of the successful submission containing
