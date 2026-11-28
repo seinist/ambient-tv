@@ -25,6 +25,12 @@ internal object SystemModuleHost {
     // Only engines with a migrated first-load path are exposed. More contracts
     // are added as their actual adapter/build/release pipeline is migrated.
     private val contracts = mapOf(
+        SystemModule.SVP to SystemModuleRuntime.Contract(
+            nativeRoots = setOf("libambientsvp.so"),
+            bundledOverrides = setOf("libambientsvp.so"),
+            hostBindingSha256 = BuildConfig.SVP_MODULE_BINDING_SHA256,
+            requireSoname = true,
+        ),
         SystemModule.SHADERS to SystemModuleRuntime.Contract(assetOnly = true),
         SystemModule.SPOTIFY to SystemModuleRuntime.Contract(
             nativeRoots = setOf("libspotify_receiver_core.so"),
