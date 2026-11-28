@@ -169,8 +169,8 @@ def monogram(out, version, aar, licenses):
     return entries
 
 
-def monogram_dex(out, version, dex_dir, apks, licenses):
-    """Package isolated adapter and its two native roots from matching Full APKs."""
+def adapter_dex(out, module, version, dex_dir, apks, licenses):
+    """Package isolated adapter and native roots from matching Full APKs."""
     binding = (dex_dir / "host-binding.sha256").read_text(encoding="ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{64}", binding):
         raise ValueError("invalid Monogram adapter host fingerprint")
@@ -179,7 +179,8 @@ def monogram_dex(out, version, dex_dir, apks, licenses):
     if not dex or set(dex) != expected or any(
             len(data) < 112 or not data.startswith(b"dex\n") for data in dex.values()):
         raise ValueError("invalid or noncontiguous Monogram adapter DEX")
-    roots = {"libmonogram_mtproto.so", "libjnidispatch.so"}
+    roots = {"libmonogram_mtproto.so", "libjnidispatch.so"} if module == "monogram" else {"libj2v8.so"}
+    primary = "libmonogram_mtproto.so" if module == "monogram" else "libj2v8.so"
     entries = []
     seen = set()
     for apk in apks:
@@ -189,7 +190,7 @@ def monogram_dex(out, version, dex_dir, apks, licenses):
                 raise ValueError(f"duplicate APK entries: {apk}")
             for abi in ABIS:
                 prefix = f"lib/{abi}/"
-                if prefix + "libmonogram_mtproto.so" not in names:
+                if prefix + primary not in names:
                     continue
                 if abi in seen:
                     raise ValueError(f"duplicate APK ABI: {abi}")
@@ -206,15 +207,19 @@ def monogram_dex(out, version, dex_dir, apks, licenses):
                     if path in files:
                         raise ValueError("duplicate license filename")
                     files[path] = license.read_bytes()
-                entries.append(write_package(out, "monogram", abi, version, files, binding=binding))
+                entries.append(write_package(out, module, abi, version, files, binding=binding))
     if seen != set(ABIS):
         raise ValueError("Monogram adapter requires matching Full APKs for all four ABIs")
     return entries
 
 
+def monogram_dex(out, version, dex_dir, apks, licenses):
+    return adapter_dex(out, "monogram", version, dex_dir, apks, licenses)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram"), required=True)
+    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube"), required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -222,6 +227,7 @@ def main():
     parser.add_argument("--license", type=Path, action="append", default=[])
     parser.add_argument("--monogram-aar", type=Path)
     parser.add_argument("--monogram-dex-dir", type=Path)
+    parser.add_argument("--smarttube-dex-dir", type=Path)
     args = parser.parse_args()
     if args.version <= 0 or not re.fullmatch(r"modules-" + args.module + r"-[A-Za-z0-9._-]{1,70}", args.tag):
         parser.error("invalid tag or version")
@@ -237,6 +243,10 @@ def main():
             entries = monogram_dex(args.output, args.version, args.monogram_dex_dir, args.apk, args.license)
         else:
             entries = monogram(args.output, args.version, args.monogram_aar, args.license)
+    elif args.module == "smarttube":
+        if not args.smarttube_dex_dir or not args.apk or not args.license:
+            parser.error("SmartTube requires matching DEX, Full APKs and license notices")
+        entries = adapter_dex(args.output, "smarttube", args.version, args.smarttube_dex_dir, args.apk, args.license)
     else:
         if not args.apk or not args.license:
             parser.error("Native modules require verified Full APKs and corresponding license notices")
