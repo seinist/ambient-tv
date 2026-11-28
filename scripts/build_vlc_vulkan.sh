@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
-    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch) | sha256sum | cut -d ' ' -f1
+    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh scripts/patch_vlc_module_loader.py native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch) | sha256sum | cut -d ' ' -f1
     exit 0
 fi
 SOURCE_HASH="$(bash "$0" --hash)"
@@ -32,6 +32,7 @@ for patch in "$ROOT"/native/vlc-aar/jni-patches/*.patch; do
         git -C "$JNI" apply --reverse --check "$patch"
     fi
 done
+python3 "$ROOT/scripts/patch_vlc_module_loader.py" "$JNI/libvlc/src/main/java"
 bash "$ROOT/scripts/prepare_svp_sources.sh" vlc "$JNI/vlc"
 for patch in "$JNI"/libvlc/patches/*.patch; do
     if git -C "$JNI/vlc" apply --check "$patch" 2>/dev/null; then
