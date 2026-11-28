@@ -1841,12 +1841,19 @@ mod gpu_tests{
                         HdrWindow{rect:[w/3,h/3,w,h],count:2,percentages:[50,100,0,0,0,0,0,0,0,0,0,0,0,0,0]},
                     ];
                     let mut stats=[HdrResult::default();3];
+                    let scene_p=[1u32,5,10,25,50,75,90,95,99];
+                    let scene=if mode==3&&!tuned{ambient_svp_hdr_scene_create(0,1,w,h,&scene_p)}else{ptr::null_mut()};
                     if mode==3{
                         if tuned{
                             let tracks=windows.map(|window|HdrTrack{a:window.rect,b:window.rect,ellipse:[window.rect[0],window.rect[1]]});
                             let axes=[[0,0,0],[4,2,0],[4,2,90]];
                             assert_eq!(ambient_svp_vk_hdr_stats_ellipse(pair,0,windows.as_ptr(),tracks.as_ptr(),axes.as_ptr(),phase,3),0);
-                        }else{assert_eq!(ambient_svp_vk_hdr_stats(pair,0,windows.as_ptr(),3),0);}
+                        }else{
+                            assert!(!scene.is_null());
+                            let mut global=windows[0];global.count=9;global.percentages[..9].copy_from_slice(&scene_p);
+                            assert_eq!(ambient_svp_vk_hdr_stats_scene(pair,0,&global,1),0);
+                            assert_eq!(ambient_svp_hdr_scene_push(scene,pair,0,0),-1);
+                        }
                         assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),-1);
                     }
                     transition(&d,cmd,high[4].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -1867,8 +1874,21 @@ mod gpu_tests{
                             let mut boxes=[[0u32;4];3];
                             assert_eq!(ambient_svp_vk_hdr_read_rectangles(pair,0,boxes.as_mut_ptr(),3),1);
                             assert_eq!(boxes,windows.map(|window|window.rect));
-                        }else{assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),1);}
-                        for (index,(r,window)) in stats.iter().zip(windows).enumerate(){
+                        }else{
+                            assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),1),1);
+                            let mut measured=SceneResult::default();
+                            assert_eq!(ambient_svp_hdr_scene_finish(scene,&mut measured),-1);
+                            assert_eq!(ambient_svp_hdr_scene_push(scene,pair,0,0),1);
+                            assert_eq!(ambient_svp_hdr_scene_push(scene,pair,0,0),-1);
+                            assert_eq!(ambient_svp_hdr_scene_finish(scene,&mut measured),1);
+                            assert_eq!(measured.fraction,1000);
+                            assert_eq!(measured.average,stats[0].average);
+                            assert_eq!(measured.maxscl,stats[0].maxscl);
+                            assert_eq!(measured.percentiles,[measured.average,0,255,measured.average,measured.average,measured.average,measured.average,measured.average,measured.average]);
+                            assert_eq!(ambient_svp_hdr_scene_validate(0,1,&measured,&measured,1),1);
+                            ambient_svp_hdr_scene_destroy(scene);
+                        }
+                        for (index,(r,window)) in stats.iter().zip(windows).take(if tuned{3}else{0}).enumerate(){
                             let area=(window.rect[2]-window.rect[0])*(window.rect[3]-window.rect[1]);
                             if tuned&&index>0{
                                 let (major,minor)=if index==1{(4i32,2i32)}else{(2i32,4i32)};
