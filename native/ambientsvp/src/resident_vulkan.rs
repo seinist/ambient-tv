@@ -533,6 +533,9 @@ impl HeldField{
         }
     }
 }
+struct AdjacentEntry{field:HeldField,key:Option<[u64;2]>}
+#[derive(Default)]
+struct AdjacentCache{entries:Vec<AdjacentEntry>,recording:bool}
 struct Core{
     device:ash::Device,
     memory:vk::PhysicalDeviceMemoryProperties,
@@ -543,8 +546,11 @@ struct Core{
     in_flight:AtomicU32,aux_in_flight:AtomicU32,
     idle:Mutex<Vec<PairResources>>,
     held_idle:Mutex<Vec<HeldCommands>>,held_field:Mutex<Vec<HeldField>>,
+    adjacent:Mutex<AdjacentCache>,held_source_ids:Mutex<Option<[u64;4]>>,
     #[cfg(test)]
     held_hits:AtomicU32,
+    #[cfg(test)]
+    adjacent_hits:AtomicU32,
     lost:AtomicBool,
     stats_supported:bool,
     stats:Mutex<Option<Arc<StatsPipelines>>>,stats_idle:Mutex<Vec<StatsJob>>,
@@ -580,6 +586,7 @@ pub struct VulkanPair{
     a:VulkanPicture,b:VulkanPicture,
     phases:usize,
     extended:Vec<VulkanPair>,auxiliary:bool,cached_extended:bool,
+    adjacent_publish:Option<[(usize,[u64;2]);3]>,
     rgb_outputs:[vk::ImageView;MAX_PHASES],
     hdr_jobs:[Option<StatsJob>;MAX_PHASES],
     fence:vk::Fence,
@@ -588,6 +595,9 @@ pub struct VulkanPair{
 }
 impl Drop for VulkanPair{
     fn drop(&mut self){unsafe{
+        if self.adjacent_publish.take().is_some(){
+            self.core.adjacent.lock().unwrap_or_else(|e|e.into_inner()).recording=false;
+        }
         let d=&self.core.device;
         d.destroy_descriptor_pool(self.pool,None);
         d.destroy_buffer(self.field,None);
@@ -612,7 +622,7 @@ impl VulkanPair{
         counter.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<max).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
-            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),auxiliary,cached_extended:false,
+            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),auxiliary,cached_extended:false,adjacent_publish:None,
             rgb_outputs:[vk::ImageView::null();MAX_PHASES],hdr_jobs:std::array::from_fn(|_|None),fence:vk::Fence::null(),
             #[cfg(target_os="android")]
             ahb_inputs:None};
@@ -877,13 +887,15 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"scatter")?,c"scatter")?,
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"finish")?,c"finish")?])
     }else{None};
-    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),held_idle:Mutex::new(Vec::new()),held_field:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
+    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),held_idle:Mutex::new(Vec::new()),held_field:Mutex::new(Vec::new()),adjacent:Mutex::new(AdjacentCache::default()),held_source_ids:Mutex::new(None),lost:AtomicBool::new(false),
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=4&&
             limits.max_storage_buffer_range>=100001*4*3&&
             u64::from(limits.max_storage_buffer_range)>=4*(3*100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
         stats:Mutex::new(None),stats_idle:Mutex::new(Vec::new()),
         #[cfg(test)]
-        held_hits:AtomicU32::new(0)})))
+        held_hits:AtomicU32::new(0),
+        #[cfg(test)]
+        adjacent_hits:AtomicU32::new(0)})))
 }
 
 #[unsafe(no_mangle)]
@@ -937,7 +949,12 @@ pub unsafe extern "C" fn ambient_svp_vk_set_synthesis(s:*const VulkanResident,al
     catch_unwind(AssertUnwindSafe(||{
         let c=unsafe{&(*s).0};
         if c.tuning.is_none()||c.in_flight.load(Ordering::Acquire)!=0{return -1;}
-        c.algorithm.store(algorithm,Ordering::Release);0
+        let previous=c.algorithm.swap(algorithm,Ordering::AcqRel);
+        if previous!=algorithm{
+            let mut cache=c.adjacent.lock().unwrap_or_else(|e|e.into_inner());
+            for entry in &mut cache.entries{entry.key=None;}
+        }
+        0
     })).unwrap_or(-1)
 }
 /// Player settings shared by all transports, without depending on
@@ -1094,6 +1111,13 @@ pub unsafe extern "C" fn ambient_svp_vk_collect_held_stats(job:*mut HeldSubmissi
             (pass.is_null()||ambient_svp_hdr_pass_verify_geometry(pass,p,0,index)==1)
     })}
 }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_set_held_source_ids(s:*const VulkanResident,ids:*const [u64;4])->i32{
+    if s.is_null(){return -1;}
+    let c=unsafe{&(*s).0};
+    *c.held_source_ids.lock().unwrap_or_else(|e|e.into_inner())=if ids.is_null(){None}else{Some(unsafe{*ids})};
+    0
+}
 /// Renderer bridge for libplacebo-held, canonical RGBA16F textures.
 /// Caller owns queue serialization and image hold/release. Waits are
 /// binary hold semaphores; signal is a caller-owned timeline semaphore.
@@ -1154,6 +1178,7 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
             views:Vec::new(),pair:ptr::null_mut(),
         }));
         let mut deferred=false;
+        let source_ids=core.held_source_ids.lock().unwrap_or_else(|e|e.into_inner()).take();
         let mut cache=core.held_field.lock().unwrap_or_else(|e|e.into_inner());
         let mut key=HeldKey{generation,images:[vk::Image::null();4],count,algorithm:core.algorithm.load(Ordering::Acquire)};
         key.images[..count as usize-1].copy_from_slice(&images[..count as usize-1]);
@@ -1196,7 +1221,7 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 core.held_hits.fetch_add(1,Ordering::Relaxed);
                 pair=Box::into_raw(Box::new(p));
             }else{
-                if count==5{pair=ambient_svp_vk_begin_extended(s,cmd,&picture(2),&a,&b,&picture(3));}
+                if count==5{pair=begin_extended_impl(s,cmd,&picture(2),&a,&b,&picture(3),queue,source_ids.map(|i|[i[2],i[0],i[1],i[3]]));}
                 if pair.is_null(){pair=ambient_svp_vk_begin(s,cmd,&a,&b);}
                 if !pair.is_null(){
                     if let Some(x)=cached{
@@ -1321,6 +1346,18 @@ pub unsafe extern "C" fn ambient_svp_vk_begin(s:*const VulkanResident,command:vk
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_begin_extended(s:*const VulkanResident,command:vk::CommandBuffer,
     previous:*const VulkanPicture,a:*const VulkanPicture,b:*const VulkanPicture,next:*const VulkanPicture)->*mut VulkanPair{
+    unsafe{begin_extended_impl(s,command,previous,a,b,next,vk::Queue::null(),None)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_begin_extended_cached(s:*const VulkanResident,command:vk::CommandBuffer,
+    previous:*const VulkanPicture,a:*const VulkanPicture,b:*const VulkanPicture,next:*const VulkanPicture,
+    queue:vk::Queue,ids:*const [u64;4])->*mut VulkanPair{
+    if ids.is_null(){return ptr::null_mut();}
+    unsafe{begin_extended_impl(s,command,previous,a,b,next,queue,Some(*ids))}
+}
+unsafe fn begin_extended_impl(s:*const VulkanResident,command:vk::CommandBuffer,
+    previous:*const VulkanPicture,a:*const VulkanPicture,b:*const VulkanPicture,next:*const VulkanPicture,
+    queue:vk::Queue,ids:Option<[u64;4]>)->*mut VulkanPair{
     if s.is_null()||previous.is_null()||a.is_null()||b.is_null()||next.is_null(){return ptr::null_mut();}
     catch_unwind(AssertUnwindSafe(||{
         let core=unsafe{(*s).0.clone()};
@@ -1331,12 +1368,55 @@ pub unsafe extern "C" fn ambient_svp_vk_begin_extended(s:*const VulkanResident,c
         let Ok(mut center)=VulkanPair::new(core.clone(),command,a,b)else{return ptr::null_mut();};
         let Ok(left)=VulkanPair::new_kind(core.clone(),command,p,a,true)else{return ptr::null_mut();};
         let Ok(right)=VulkanPair::new_kind(core.clone(),command,b,n,true)else{return ptr::null_mut();};
+        let mut reused=false;
+        if let Some(ids)=ids.filter(|ids|queue!=vk::Queue::null()&&ids.iter().enumerate().all(|(i,id)|*id!=0&&!ids[..i].contains(id))){
+            let keys=[[ids[1],ids[2]],[ids[0],ids[1]],[ids[2],ids[3]]];
+            let mut cache=core.adjacent.lock().unwrap_or_else(|e|e.into_inner());
+            if !cache.recording&&(cache.entries.is_empty()||cache.entries[0].field.queue==queue){
+                while cache.entries.len()<3{
+                    let Ok(field)=HeldField::new(&core,queue)else{break;};
+                    cache.entries.push(AdjacentEntry{field,key:None});
+                }
+                if cache.entries.len()==3{
+                    let mut slots=[usize::MAX;3];
+                    let mut hits=[false;3];
+                    for i in 0..3{
+                        if let Some(j)=cache.entries.iter().position(|x|x.key==Some(keys[i])){
+                            slots[i]=j;hits[i]=true;
+                        }
+                    }
+                    for i in 0..3{
+                        if slots[i]==usize::MAX{
+                            slots[i]=(0..3).find(|j|!slots.contains(j)).unwrap();
+                            // Never expose overwritten storage on a failed or
+                            // abandoned recording, even before submission.
+                            cache.entries[slots[i]].key=None;
+                        }
+                    }
+                    cache.recording=true;
+                    center.adjacent_publish=Some(std::array::from_fn(|i|(slots[i],keys[i])));
+                    for (i,p) in [&center,&left,&right].into_iter().enumerate(){
+                        let field=&cache.entries[slots[i]].field;
+                        if hits[i]{
+                            let [ay,au,av]=p.a.views();let [by,bu,bv]=p.b.views();
+                            let sampled=vk::DescriptorType::SAMPLED_IMAGE;
+                            p.descriptors(p.sets[MAX_PHASES+1],&[(0,ay,sampled),(1,au,sampled),(2,av,sampled),
+                                (3,by,sampled),(4,bu,sampled),(5,bv,sampled)],6);
+                            unsafe{field.copy(p,true);}
+                            #[cfg(test)]
+                            core.adjacent_hits.fetch_add(1,Ordering::Relaxed);
+                        }else{unsafe{p.analyse();field.copy(p,false);}}
+                    }
+                    reused=true;
+                }
+            }
+        }
         unsafe{
-            center.analyse();left.analyse();right.analyse();
+            if !reused{center.analyse();left.analyse();right.analyse();}
             let d=&core.device;
-            let before=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            let before=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE|vk::AccessFlags::TRANSFER_WRITE|vk::AccessFlags::TRANSFER_READ)
                 .dst_access_mask(vk::AccessFlags::TRANSFER_READ|vk::AccessFlags::TRANSFER_WRITE)];
-            d.cmd_pipeline_barrier(command,vk::PipelineStageFlags::COMPUTE_SHADER,
+            d.cmd_pipeline_barrier(command,vk::PipelineStageFlags::COMPUTE_SHADER|vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::TRANSFER,vk::DependencyFlags::empty(),&before,&[],&[]);
             let n=u64::from(core.gw)*u64::from(core.gh);
             // Upstream's previous forward/backward naming is opposite
@@ -1728,7 +1808,13 @@ pub unsafe extern "C" fn ambient_svp_vk_seal(pair:*mut VulkanPair,fence:vk::Fenc
     if pair.is_null() || fence==vk::Fence::null(){return -1;}
     let p=unsafe{&mut *pair};
     if p.fence!=vk::Fence::null() || p.phases==0{return -1;}
-    p.fence=fence;0
+    p.fence=fence;
+    if let Some(keys)=p.adjacent_publish.take(){
+        let mut cache=p.core.adjacent.lock().unwrap_or_else(|e|e.into_inner());
+        for (i,key) in keys{cache.entries[i].key=Some(key);}
+        cache.recording=false;
+    }
+    0
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_release(pair:*mut VulkanPair)->i32{

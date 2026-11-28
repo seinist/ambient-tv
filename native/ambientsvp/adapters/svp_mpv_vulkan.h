@@ -50,6 +50,7 @@ struct svp_vk_mpv {
     void (*destroy)(AmbientSvpVk *);
     AmbientSvpVkPair *(*begin)(const AmbientSvpVk *,VkCommandBuffer,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *);
     AmbientSvpVkPair *(*begin_extended)(const AmbientSvpVk *,VkCommandBuffer,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *);
+    AmbientSvpVkPair *(*begin_extended_cached)(const AmbientSvpVk *,VkCommandBuffer,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,VkQueue,const uint64_t (*)[4]);
     int (*render)(AmbientSvpVkPair *,float,uint32_t,VkImageView);
     int (*render_raw)(AmbientSvpVkPair *,float,const VkImageView *,uint32_t);
     int (*hdr_stats)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,uint32_t);
@@ -107,6 +108,7 @@ struct svp_vk_mpv {
     unsigned next_output, output_count;
     double origin, source_rate, target_rate;
     uint64_t tick, input_frames, output_frames, generated_frames;
+    uint64_t previous_id,older_id,lookahead_id;
 };
 struct svp_vk_ref {
     AVHWFramesContext *fc;
@@ -899,6 +901,7 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     if(quality){
         s->algorithm=quality->algorithm?quality->algorithm:quality->preset==3?23:13;
         s->begin_extended=dlsym(library,"ambient_svp_vk_begin_extended");
+        s->begin_extended_cached=dlsym(library,"ambient_svp_vk_begin_extended_cached");
     }
     s->output_hwframes=av_hwframe_ctx_alloc(s->device_ref);
     if (!s->output_hwframes) goto fail;
@@ -1215,7 +1218,11 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     }
     VkDependencyInfo di={.sType=VK_STRUCTURE_TYPE_DEPENDENCY_INFO,.imageMemoryBarrierCount=nbar,.pImageMemoryBarriers=barriers};
     s->barrier(cmd,&di);
-    if(extended)j->pair=s->begin_extended(s->engine,cmd,&src[2],&src[0],&src[1],&src[3]);
+    if(extended){
+        uint64_t ids[4]={s->older_id,s->previous_id,s->lookahead_id,s->input_frames+1};
+        if(s->begin_extended_cached)j->pair=s->begin_extended_cached(s->engine,cmd,&src[2],&src[0],&src[1],&src[3],s->queue,&ids);
+        else j->pair=s->begin_extended(s->engine,cmd,&src[2],&src[0],&src[1],&src[3]);
+    }
     if(!j->pair)j->pair=s->begin(s->engine,cmd,&src[0],&src[1]);
     if (!j->pair) goto fail;
     for (unsigned i=0;i<count;i++) {
@@ -1413,20 +1420,21 @@ static bool svp_vk_feed(struct svp_vk_mpv *s,struct mp_image *img)
 {
     if (!s || !svp_vk_matches(s,img) || s->output_count) return false;
     if (!s->previous) {
-        s->previous=img;s->origin=img->pts;s->tick=0;s->input_frames++;return true;
+        s->previous=img;s->origin=img->pts;s->tick=0;s->previous_id=++s->input_frames;return true;
     }
     double expected=1.0/s->source_rate;
     struct mp_image *last=s->lookahead?s->lookahead:s->previous;
     double delta=img->pts-last->pts;
     if(fabs(delta-expected)>fmax(0.003,expected*0.25)){svp_vk_scene_abort(s);return false;}
     if(s->algorithm==23&&s->begin_extended){
-        if(!s->lookahead){s->lookahead=img;s->input_frames++;return true;}
+        if(!s->lookahead){s->lookahead=img;s->lookahead_id=++s->input_frames;return true;}
         if(!svp_vk_pair_frames(s,s->lookahead,s->lookahead->pts,img)){svp_vk_scene_abort(s);return false;}
-        mp_image_unrefp(&s->older);s->older=s->previous;
-        s->previous=s->lookahead;s->lookahead=img;s->input_frames++;return true;
+        mp_image_unrefp(&s->older);s->older=s->previous;s->older_id=s->previous_id;
+        s->previous=s->lookahead;s->previous_id=s->lookahead_id;
+        s->lookahead=img;s->lookahead_id=++s->input_frames;return true;
     }
     if(!svp_vk_pair_frames(s,img,img->pts,NULL)){svp_vk_scene_abort(s);return false;}
-    mp_image_unrefp(&s->previous);s->previous=img;s->input_frames++;return true;
+    mp_image_unrefp(&s->previous);s->previous=img;s->previous_id=++s->input_frames;return true;
 }
 static void svp_vk_eof(struct svp_vk_mpv *s)
 {

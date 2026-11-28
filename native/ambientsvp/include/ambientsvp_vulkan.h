@@ -85,6 +85,13 @@ int ambient_svp_vk_set_synthesis(const AmbientSvpVk *,uint32_t algorithm);
 AmbientSvpVkPair *ambient_svp_vk_begin_extended(const AmbientSvpVk *,VkCommandBuffer,
     const AmbientSvpVkPicture *previous,const AmbientSvpVkPicture *a,
     const AmbientSvpVkPicture *b,const AmbientSvpVkPicture *next);
+/* Immutable, never-reused per-engine source IDs in previous,a,b,next order.
+ * Record/submit/seal serially on the supplied queue. Failed recordings
+ * must be canceled only after discarding their command buffer. */
+AmbientSvpVkPair *ambient_svp_vk_begin_extended_cached(const AmbientSvpVk *,VkCommandBuffer,
+    const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,VkQueue,const uint64_t (*)[4]);
+/* Optional held bridge IDs in a,b,previous,next order, consumed once. */
+int ambient_svp_vk_set_held_source_ids(const AmbientSvpVk *,const uint64_t (*)[4]);
 AmbientSvpVk *ambient_svp_vk_create_quality(VkInstance,VkPhysicalDevice,VkDevice,
     PFN_vkGetInstanceProcAddr,uint32_t,uint32_t,uint32_t,const AmbientSvpQuality *);
 /* Held canonical RGBA16F images: [A,B,out] or [A,B,past,next,out].
