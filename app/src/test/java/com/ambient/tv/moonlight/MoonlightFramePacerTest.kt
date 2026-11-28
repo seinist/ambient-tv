@@ -19,6 +19,13 @@ class MoonlightFramePacerTest {
         assertFalse(pacer.shouldDrain(1000000L, 1001000000L))
         assertTrue(pacer.shouldDrain(1000000L, 1100000000L))
     }
+    @Test fun resetDiscardsPreviousPresentationSchedule() {
+        val pacer = MoonlightFramePacer("smooth", 60)
+        pacer.presentationTime(1_000_000_000L)
+        assertTrue(pacer.presentationTime(1_001_000_000L) > 1_001_000_000L)
+        pacer.reset()
+        assertEquals(1_002_000_000L, pacer.presentationTime(1_002_000_000L))
+    }
     @Test fun p95IsBoundedAndIgnoresInvalidSamples() {
         val h = MoonlightLatencyHistogram()
         assertNull(h.p95Ms())
