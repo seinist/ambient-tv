@@ -1,6 +1,10 @@
 package com.ambient.tv.games.metadata
 
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.library.gameDatSearchKey
+import com.ambient.tv.games.library.gameDisplayTitle
+import com.ambient.tv.games.library.gameTitleRegionLabel
+import com.ambient.tv.games.library.gameTitleLanguageLabel
 import java.security.MessageDigest
 
 /** A user rename is presentation, never a request to identify a different ROM. */
@@ -22,9 +26,7 @@ internal fun gameMetadataQuery(
         ?: matched?.canonicalTitle?.takeIf(String::isNotBlank)
         ?: verified
         ?: game.metadataTitle?.takeIf(String::isNotBlank)
-    val rawFilename = game.filename.substringBeforeLast('.')
-    val filename = (if (game.systemId == "nds") rawFilename.replace(Regex("""^\d{4,5}\s*[-_.]\s*"""), "") else rawFilename)
-        .replace('_', ' ').trim()
+    val filename = gameCatalogFilename(game.systemId, game.filename)
     return GameMetadataQuery(
         systemId = game.systemId,
         title = explicit ?: canonical ?: filename,
@@ -38,6 +40,24 @@ internal fun gameMetadataQuery(
             !(provider == GameMetadataProviderIds.LIBRETRO && matched?.matchLocked != true && verified != null))
             matched?.providerGameId?.takeIf(String::isNotBlank) else null,
     )
+}
+
+/** Remove known DS release numbering, not genuine numeric names on other platforms. */
+internal fun gameCatalogFilename(systemId: String, filename: String): String {
+    val stem = filename.substringAfterLast('/').substringBeforeLast('.')
+    return (if (systemId == "nds") stem.replace(Regex("""^\d{4,5}\s*[-_.]\s*"""), "") else stem)
+        .replace('_', ' ').trim()
+}
+
+/** Filename/catalog agreement is not a checksum match. Restrict fallback to exact normalized
+ * names, preserving explicit region/language tags and never selecting a partial title. */
+internal fun matchingGameCatalogTitles(hint: String, candidates: List<String>): List<String> {
+    val exact = gameDatSearchKey(hint)
+    if (exact.isEmpty()) return emptyList()
+    val full = candidates.filter { gameDatSearchKey(it) == exact }.distinct()
+    if (full.isNotEmpty()) return full
+    if (gameTitleRegionLabel(hint) != null || gameTitleLanguageLabel(hint) != null) return emptyList()
+    return candidates.filter { gameDatSearchKey(gameDisplayTitle(it)) == exact }.distinct()
 }
 
 /** Includes file version and locale so a previous miss cannot suppress a new ROM/region. */
