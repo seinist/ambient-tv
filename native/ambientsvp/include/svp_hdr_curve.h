@@ -14,20 +14,28 @@ typedef struct {
 } SvpHdrCurve;
 /* Quantized version-1 scene statistics, recommended distribution list.
  * Reserved marker entries are not actual percentiles and may exceed peak. */
-static inline bool svp_hdr_scene_values(const uint32_t maxscl[3],uint32_t average,
-    const uint32_t percentiles[9],uint32_t fraction)
+static inline bool svp_hdr_scene_values_schema(const uint32_t maxscl[3],uint32_t average,
+    const uint32_t percentiles[9],uint32_t fraction,const uint32_t schema[9])
 {
-    if(!maxscl||!percentiles||fraction<1||fraction>1000||
-       percentiles[1]!=0||percentiles[2]!=255)return false;
+    if(!maxscl||!percentiles||!schema||fraction<1||fraction>1000)return false;
+    for(unsigned i=0;i<9;i++)if(schema[i]>100||(i&&schema[i]<=schema[i-1]))return false;
+    bool reserved=schema[1]==5&&schema[2]==10;
+    if(reserved&&(percentiles[1]!=0||percentiles[2]!=255))return false;
     uint32_t peak=0,last=0;
     for(unsigned i=0;i<3;i++){if(maxscl[i]>100000)return false;if(maxscl[i]>peak)peak=maxscl[i];}
     if(average>peak)return false;
     for(unsigned i=0;i<9;i++){
-        if(i==1||i==2)continue;
+        if(reserved&&(i==1||i==2))continue;
         if(percentiles[i]>peak||percentiles[i]<last)return false;
         last=percentiles[i];
     }
     return true;
+}
+static inline bool svp_hdr_scene_values(const uint32_t maxscl[3],uint32_t average,
+    const uint32_t percentiles[9],uint32_t fraction)
+{
+    const uint32_t schema[9]={1,5,10,25,50,75,90,95,99};
+    return svp_hdr_scene_values_schema(maxscl,average,percentiles,fraction,schema);
 }
 static inline bool svp_hdr_curve(uint32_t peak,uint32_t mean,uint32_t percentile,
     double target_nits,SvpHdrCurve *out)
