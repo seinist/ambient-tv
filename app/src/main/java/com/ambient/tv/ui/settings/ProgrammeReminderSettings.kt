@@ -23,6 +23,7 @@ internal fun ProgrammeReminderSettings(youtube: Boolean) {
     var lead by remember(youtube) { mutableIntStateOf(LiveTvReminderScheduler.leadMinutes(context, youtube)) }
     var auto by remember(youtube) { mutableStateOf(LiveTvReminderScheduler.autoSwitch(context, youtube)) }
     var manage by remember { mutableStateOf(false) }
+    var editingId by remember { mutableStateOf<String?>(null) }
     SettingsGroup(title = stringResource(if (youtube) R.string.programme_reminder_smarttube else R.string.settings_live_reminders)) {
         TvSettingRow(
             title = stringResource(if (youtube) R.string.programme_reminder_auto_play else R.string.reminder_auto_switch),
@@ -44,7 +45,9 @@ internal fun ProgrammeReminderSettings(youtube: Boolean) {
             onCheckedChange = store::setHomeVisible)
         SettingsSingleAction(text = stringResource(R.string.programme_reminder_manage), onClick = { store.refresh(); manage = true })
     }
-    if (manage) AppDialog(
+    val editing = reminders.firstOrNull { it.id == editingId && it.plan != null }
+    if (manage && editing != null) com.ambient.tv.livetv.ScheduledPlaybackDialog(editing, store) { editingId = null }
+    else if (manage) AppDialog(
         title = stringResource(R.string.programme_reminder_manage),
         onDismiss = { manage = false },
         footer = { TvActionButton(stringResource(R.string.common_back), { manage = false }) },
@@ -57,6 +60,7 @@ internal fun ProgrammeReminderSettings(youtube: Boolean) {
                 Text(reminder.title)
                 Text(reminder.channelName + " · " + date)
                 if (reminder.due) Text(stringResource(R.string.programme_reminder_status_due))
+                if (reminder.plan != null) TvActionButton(stringResource(R.string.schedule_edit), { editingId = reminder.id })
                 TvActionButton(stringResource(R.string.reminder_remove), { store.remove(reminder.id) })
             }
         }
