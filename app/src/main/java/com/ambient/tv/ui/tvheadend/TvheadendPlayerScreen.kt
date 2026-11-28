@@ -1254,7 +1254,7 @@ private fun TvhRendererSettingsPanel(
     val options = buildList {
         add("auto" to stringResource(R.string.player_automatic))
         add("media3" to "Media3")
-        add("vlc" to "VLC")
+        if (com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable) add("vlc" to "VLC")
         if (com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) add("mpv" to "MPV")
     }
     TvhSidePanel(stringResource(R.string.player_renderer), onBack) {
