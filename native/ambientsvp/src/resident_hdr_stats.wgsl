@@ -306,3 +306,29 @@ fn bright_reduce(@builtin(local_invocation_index) lane:u32){
         atomicStore(&words[63u],n);
     }
 }
+
+// Section 8.4: accumulate linear MaxRGB before quantization to the
+// 1e-5 metadata grid. One 64-bit fixed-point sum per workgroup,
+// represented by two 32-bit words for devices without shaderInt64.
+var<workgroup> linear_values:array<u32,64>;
+@compute @workgroup_size(8,8)
+fn scene_linear_sum(@builtin(global_invocation_id) id:vec3u,@builtin(local_invocation_index) lane:u32){
+    var value=0u;
+    if all(id.xy<params.xy){
+        let rgb=clamp(pq(textureLoad(source,vec2i(id.xy),0).rgb),vec3f(0.0),vec3f(1.0));
+        value=u32(round(max(rgb.x,max(rgb.y,rgb.z))*1000000000.0));
+    }
+    linear_values[lane]=value;
+    workgroupBarrier();
+    if lane==0u{
+        var lo=0u;var hi=0u;
+        for(var i=0u;i<64u;i++){
+            let v=linear_values[i];
+            if lo>0xffffffffu-v{hi+=1u;}
+            lo+=v;
+        }
+        let old=atomicAdd(&words[56u],lo);
+        let carry=select(0u,1u,old>0xffffffffu-lo);
+        atomicAdd(&words[57u],hi+carry);
+    }
+}
