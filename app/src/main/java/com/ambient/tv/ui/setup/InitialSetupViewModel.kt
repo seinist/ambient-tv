@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class InitialSetupUiState(
@@ -33,6 +34,15 @@ class InitialSetupViewModel @Inject constructor(
     val uiState: StateFlow<InitialSetupUiState> = _uiState.asStateFlow()
     private var signInWatchJob: Job? = null
     private var signInRequestJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            com.ambient.tv.modules.SystemModuleAvailability.states.collect { states ->
+                val available = states.getValue(com.ambient.tv.modules.SystemModule.SMARTTUBE).usable
+                _uiState.update { it.copy(youtubeAvailable = available) }
+            }
+        }
+    }
 
     fun requestYouTubeSignIn() {
         if (!youtubeEngine.available || _uiState.value.youtubeSignedIn || _uiState.value.youtubeLoading) return
