@@ -305,7 +305,9 @@ internal object HdrScenePlanner {
         try {
             val result = withContext(Dispatchers.IO) {
                 range = HdrRangeSource.open(context,url,headers)
-                val direct = range?.let { scanLocal(context,url,headers,source,target,vlc,directory,it) { created = it } }
+                val direct = try { range?.let { scanLocal(context,url,headers,source,target,vlc,directory,it) { created = it } } }
+                    catch(e:kotlinx.coroutines.CancellationException){throw e}
+                    catch(_:Exception){null}
                 if (direct != null) direct else {
                     range?.close();range=null;created?.deleteRecursively();created=null
                     currentCoroutineContext().ensureActive()
@@ -348,18 +350,21 @@ internal object HdrScenePlanner {
         val key = range?.key ?: hex(digest.digest())
         val reuse = File(context.cacheDir,"hdr-scene-analysis-v2")
         val apk = File(context.applicationInfo.sourceDir)
-        val reuseKey = HdrSceneReuse.key("plan-v2|$key|${source.toBits()}|${target.toBits()}|$vlc|${android.os.Build.FINGERPRINT}|${apk.length()}|${apk.lastModified()}")
+        val dynamicAvailable = SvpNative.dynamicSceneAvailable()
+        val reuseKey = HdrSceneReuse.key("plan-v3|$dynamicAvailable|$key|${source.toBits()}|${target.toBits()}|$vlc|${android.os.Build.FINGERPRINT}|${apk.length()}|${apk.lastModified()}")
         val planCopy = File(run,"cached-plan")
         val reused = if (HdrSceneReuse.copyIn(reuse,"$reuseKey.plan",planCopy,2_000_000L)) {
             try {
                 runCatching {
                     val lines = planCopy.readLines()
-                    if (lines.size !in 4..MAX_SCENES+3 || lines[0]!="HDR_PLAN_CACHE_2" || lines[1]!=key) return@runCatching null
+                    if (lines.size !in 5..MAX_SCENES+4 || lines[0]!="HDR_PLAN_CACHE_3" || lines[1]!=key) return@runCatching null
                     val version = lines[2].toIntOrNull()?.takeIf { it in 0..1 } ?: return@runCatching null
-                    val ends = lines.drop(3).map { it.toLongOrNull() ?: return@runCatching null }
+                    val dynamic = when(lines[3]){"gpu"->true;"decoded"->false;else->return@runCatching null}
+                    if(dynamic&&(!dynamicAvailable||version!=1))return@runCatching null
+                    val ends = lines.drop(4).map { it.toLongOrNull() ?: return@runCatching null }
                     if (ends.first()<=0||ends.last()>=1_000_000_000L||ends.zipWithNext().any { it.first>=it.second }||
                         version==0&&ends.last()>1_000_000L) return@runCatching null
-                    version to Plan(ends,source,target)
+                    Triple(version,Plan(ends,source,target),dynamic)
                 }.getOrNull()
             } finally { planCopy.delete() }
         } else null
@@ -368,21 +373,28 @@ internal object HdrScenePlanner {
             if (!unchanged()) return null
             val manifest=File(run,"plan")
             manifest.writeText(buildString {
-                appendLine("AMBIENTSVP_SCENE_PLAN_1");appendLine(key);reused.second.ends.forEach { appendLine(it) }
+                appendLine(if(reused.third)"AMBIENTSVP_SCENE_PLAN_2" else "AMBIENTSVP_SCENE_PLAN_1");appendLine(key);reused.second.ends.forEach { appendLine(it) }
             })
-            return HdrSceneSession(file,length,modified,key,reused.second,manifest,File(run,"cache"),local==null,reused.first,reuse,reuseKey,range)
+            return HdrSceneSession(file,length,modified,key,reused.second,manifest,File(run,"cache"),local==null,reused.first,reuse,reuseKey,range,reused.third)
         }
         val samples = ArrayList<Sample>()
         val known = HashMap<String,String>()
-        // Parse compressed HDR metadata from the same extractor samples
-        // already being fed to the content-cut decoder. No second demux pass.
-        val cuts = HdrContentSceneDetector.scan(file,range) { pts, bytes ->
-            if (samples.size >= MAX_FRAMES || bytes.size !in 3 until MAX_SAMPLE) return@scan false
-            val hdr = metadata(bytes) ?: return@scan false
-            if (hdr !in known && known.size >= MAX_SCENES) return@scan false
-            samples += Sample(pts,known.getOrPut(hdr) { hdr })
-            true
-        } ?: return null
+        fun accept(pts:Long,bytes:ByteArray,v1Only:Boolean):Boolean{
+            if(samples.size>=MAX_FRAMES||bytes.size !in 3 until MAX_SAMPLE)return false
+            val hdr=metadata(bytes)?:return false
+            if(v1Only&&!hdr.startsWith("1:"))return false
+            if(hdr !in known&&known.size>=MAX_SCENES)return false
+            samples+=Sample(pts,known.getOrPut(hdr){hdr})
+            return true
+        }
+        // V1's single global window can discover scene cuts in the native
+        // statistics pass. Retain the decoded planner for legacy or older
+        // native libraries; abort the compressed probe on the first non-V1 sample.
+        val dynamic=dynamicAvailable&&HdrContentSceneDetector.scanCompressed(file,range){pts,bytes->accept(pts,bytes,true)}
+        val cuts=if(dynamic)emptySet() else {
+            samples.clear();known.clear()
+            HdrContentSceneDetector.scan(file,range){pts,bytes->accept(pts,bytes,false)}?:return null
+        }
         val version = samples.firstOrNull()?.metadata?.substringBefore(':') ?: return null
         if (samples.any { it.metadata.substringBefore(':') != version }) return null
         val plan = plan(samples,source,target,vlc,cuts) ?: return null
@@ -392,15 +404,15 @@ internal object HdrScenePlanner {
         return try {
             val manifest = File(run,"plan")
             manifest.writeText(buildString {
-                appendLine("AMBIENTSVP_SCENE_PLAN_1");appendLine(key)
+                appendLine(if(dynamic)"AMBIENTSVP_SCENE_PLAN_2" else "AMBIENTSVP_SCENE_PLAN_1");appendLine(key)
                 plan.ends.forEach { appendLine(it) }
             })
             planCopy.writeText(buildString {
-                appendLine("HDR_PLAN_CACHE_2");appendLine(key);appendLine(version);plan.ends.forEach { appendLine(it) }
+                appendLine("HDR_PLAN_CACHE_3");appendLine(key);appendLine(version);appendLine(if(dynamic)"gpu" else "decoded");plan.ends.forEach { appendLine(it) }
             })
             HdrSceneReuse.store(reuse,"$reuseKey.plan",planCopy,2_000_000L)
             planCopy.delete()
-            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null,version.toInt(),reuse,reuseKey,range)
+            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null,version.toInt(),reuse,reuseKey,range,dynamic)
         } catch (e: Exception) { run.deleteRecursively();throw e }
     }
 }
@@ -418,6 +430,7 @@ internal class HdrSceneSession(
     private val reuseDirectory: File? = null,
     private val reuseKey: String? = null,
     private val range: HdrRangeSource? = null,
+    private val dynamic: Boolean = false,
 ) {
     @Volatile var mode: Int = 1
         private set
@@ -457,8 +470,10 @@ internal class HdrSceneSession(
                 val line = tail.toString(Charsets.UTF_8).trimEnd().substringAfterLast('\n')
                 val fields = line.trim().split(Regex("\\s+"))
                 val first = if (plan.ends.size == 1) 0L else plan.ends[plan.ends.lastIndex-1]
-                if (fields.size < 3 || fields[0].toLongOrNull() != first ||
-                    fields[1].toLongOrNull() != plan.ends.last()) false
+                val actualFirst=fields.firstOrNull()?.toLongOrNull()
+                if(fields.size<3||actualFirst==null||
+                    (if(dynamic)actualFirst !in first until plan.ends.last() else actualFirst!=first)||
+                    fields[1].toLongOrNull()!=plan.ends.last())false
                 else if (version == 1) (fields.size == 17 || fields.size == 26) && fields[16].toIntOrNull()?.let { it in 1..1000 } == true
                 else {
                     val count = fields[2].toIntOrNull() ?: return@use false

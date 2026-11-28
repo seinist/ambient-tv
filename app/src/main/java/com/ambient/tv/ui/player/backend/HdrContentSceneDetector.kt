@@ -99,6 +99,40 @@ internal object HdrContentSceneDetector {
         return out
     }
 
+    // V1 GPU-driven scene planning still needs the exact compressed
+    // presentation timeline and metadata runs, but no decoded pictures.
+    suspend fun scanCompressed(file: File,range: HdrRangeSource?,onSample:(Long,ByteArray)->Boolean):Boolean {
+        val ex=MediaExtractor()
+        try {
+            if(range!=null)ex.setDataSource(range.fd,0,range.length) else ex.setDataSource(file.path)
+            val index=(0 until ex.trackCount).singleOrNull {
+                ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/")==true
+            }?:return false
+            val format=ex.getTrackFormat(index)
+            if(format.getString(MediaFormat.KEY_MIME)!="video/hevc"||
+                format.getInteger(MediaFormat.KEY_WIDTH) !in 32..3840||
+                format.getInteger(MediaFormat.KEY_HEIGHT) !in 32..2160)return false
+            ex.selectTrack(index)
+            val buffer=java.nio.ByteBuffer.allocateDirect(16*1024*1024)
+            val seen=HashSet<Long>()
+            while(ex.sampleTrackIndex>=0){
+                currentCoroutineContext().ensureActive()
+                val pts=ex.sampleTime
+                val size=ex.sampleSize
+                if(ex.sampleTrackIndex!=index||pts<0||size !in 3L until buffer.capacity().toLong()||
+                    (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_ENCRYPTED)!=0||seen.size>=1_000_000||!seen.add(pts))return false
+                buffer.clear()
+                val actual=ex.readSampleData(buffer,0)
+                if(actual.toLong()!=size)return false
+                val bytes=ByteArray(actual)
+                buffer.position(0);buffer.limit(actual);buffer.get(bytes)
+                if(!onSample(pts,bytes))return false
+                if(!ex.advance())break
+            }
+            return seen.size>=2
+        }finally{ex.release()}
+    }
+
     suspend fun analyze(file: File, expectedPts: Set<Long>): Set<Long>? {
         if (expectedPts.size !in 2..1_000_000) return null
         val seen = HashSet<Long>()

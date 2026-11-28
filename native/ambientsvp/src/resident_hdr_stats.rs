@@ -896,7 +896,7 @@ impl TwoPass{
         }
         if ends.is_empty(){return Err("empty scene plan".into());}
         if version==0&&*ends.last().unwrap()>1_000_000{return Err("legacy geometry cache frame limit".into());}
-        let mut s=Self{mode,version,key:key.into(),profile:profile.into(),width:w,height:h,ends,dynamic,path:cache.into(),
+        let mut s=Self{mode,version,key:key.into(),profile:if dynamic{format!("{profile}:gpu-cuts-v1")}else{profile.into()},width:w,height:h,ends,dynamic,path:cache.into(),
             next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,geometry:Vec::new(),geometry_verified:None,schemas:Vec::new(),current_schema:None,failed:false};
         if mode==2{s.read_cache()?;}
         else if cache.exists(){return Err("scene cache already exists".into());}

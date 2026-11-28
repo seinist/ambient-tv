@@ -62,6 +62,8 @@ internal object SvpNative {
     external fun gpuFrames(): Long
     private external fun residentOutputs(): Long
     private external fun hdrResidentOutputs(): Long
+    private external fun dynamicSceneCapability(): Int
+    @Synchronized fun dynamicSceneAvailable():Boolean = loaded&&runCatching { dynamicSceneCapability()==1 }.getOrDefault(false)
 
     /** Missing entry means an older engine; never enable its experimental transport. */
     @Synchronized
