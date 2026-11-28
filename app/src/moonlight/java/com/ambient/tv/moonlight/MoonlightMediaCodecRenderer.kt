@@ -225,9 +225,18 @@ class MoonlightMediaCodecRenderer(
     override fun submitDecodeUnit(
         data: ByteArray, length: Int, type: Int, frameNumber: Int, frameType: Int,
         frameHostProcessingLatency: Char, receiveTimeUs: Long, enqueueTimeUs: Long,
-    ): Int = synchronized(inputLock) {
+    ): Int = submitUnit(data, length, type, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs)
+
+    override fun supportsDirectPicture(): Boolean = true
+
+    override fun submitDirectPicture(length: Int, frameNumber: Int, frameType: Int,
+        hostLatency: Char, receiveTimeUs: Long, enqueueTimeUs: Long): Int =
+        submitUnit(null, length, MoonBridge.BUFFER_TYPE_PICDATA, frameNumber, frameType, hostLatency, receiveTimeUs, enqueueTimeUs)
+
+    private fun submitUnit(data: ByteArray?, length: Int, type: Int, frameNumber: Int, frameType: Int,
+        frameHostProcessingLatency: Char, receiveTimeUs: Long, enqueueTimeUs: Long): Int = synchronized(inputLock) {
         if (closing || failed.get() || !playing || codec == null) return@synchronized MoonBridge.DR_NEED_IDR
-        if (length <= 0 || length > data.size || length > MAX_NAL_BYTES)
+        if (length <= 0 || (data != null && length > data.size) || length > MAX_NAL_BYTES)
             return@synchronized MoonBridge.DR_NEED_IDR
         val idr = frameType == MoonBridge.FRAME_TYPE_IDR
         val newFrame = lastFrame != frameNumber
@@ -249,7 +258,7 @@ class MoonlightMediaCodecRenderer(
             if (idr) clearCsd()
         }
         if (type != MoonBridge.BUFFER_TYPE_PICDATA) {
-            if (!idr || length > MAX_CSD_BYTES) return@synchronized MoonBridge.DR_NEED_IDR
+            if (data == null || !idr || length > MAX_CSD_BYTES) return@synchronized MoonBridge.DR_NEED_IDR
             val target = when (type) {
                 MoonBridge.BUFFER_TYPE_VPS -> vps
                 MoonBridge.BUFFER_TYPE_SPS -> sps
@@ -263,7 +272,7 @@ class MoonlightMediaCodecRenderer(
         if (idr && lastCsdFrame != frameNumber) {
             val buffers = vps + sps + pps
             if (buffers.isNotEmpty() && !queueInput(buffers.sumOf { it.size }, 0L,
-                    MediaCodec.BUFFER_FLAG_CODEC_CONFIG) { buffer -> buffers.forEach { buffer.put(it) } })
+                    MediaCodec.BUFFER_FLAG_CODEC_CONFIG) { buffer -> buffers.forEach { buffer.put(it) }; true })
                 return@synchronized MoonBridge.DR_NEED_IDR
             lastCsdFrame = frameNumber
             vps.clear(); sps.clear(); pps.clear()
@@ -277,12 +286,15 @@ class MoonlightMediaCodecRenderer(
         val timestamp = max(ptsUs + 1, System.nanoTime() / 1000L)
         ptsUs = timestamp
         val flags = if (idr) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-        if (queueInput(length, timestamp, flags) { it.put(data, 0, length) }) MoonBridge.DR_OK
+        if (queueInput(length, timestamp, flags) { buffer ->
+                if (data == null) MoonBridge.copyActivePictureData(buffer, length)
+                else { buffer.put(data, 0, length); true }
+            }) MoonBridge.DR_OK
         else { dropped.incrementAndGet(); MoonBridge.DR_NEED_IDR }
     }
 
     private inline fun queueInput(length: Int, timestamp: Long, flags: Int,
-                                  fill: (java.nio.ByteBuffer) -> Unit): Boolean {
+                                  fill: (java.nio.ByteBuffer) -> Boolean): Boolean {
         val decoder = codec ?: return false
         return try {
             val timeout = moonlightDecoderInputTimeoutUs(requested.pacing, decodedFps, directSubmit,
@@ -295,7 +307,10 @@ class MoonlightMediaCodecRenderer(
                 return false
             }
             buffer.clear()
-            fill(buffer)
+            if (!fill(buffer)) {
+                decoder.queueInputBuffer(index, 0, 0, timestamp, 0)
+                return false
+            }
             decoder.queueInputBuffer(index, 0, length, timestamp, flags)
             true
         } catch (_: Exception) {

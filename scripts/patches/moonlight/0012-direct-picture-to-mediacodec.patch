@@ -1,0 +1,263 @@
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -44,7 +44,10 @@
+ static jshortArray DecodedAudioBuffer;
+ static jshort* DecodedAudioScratch;
+ static int DecodedAudioSamples;
+-static int DecodedFrameCapacity;
++static int DecodedFrameCapacity;
++static jmethodID BridgeDrSupportsDirectPictureMethod;
++static jmethodID BridgeDrSubmitPictureMethod;
++static bool directPictureEnabled;
+ 
+ void DetachThread(void* context) {
+     (*JVM)->DetachCurrentThread(JVM);
+@@ -90,7 +93,9 @@
+     BridgeDrStartMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrStart", "()V");
+     BridgeDrStopMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrStop", "()V");
+     BridgeDrCleanupMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrCleanup", "()V");
+-    BridgeDrSubmitDecodeUnitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrSubmitDecodeUnit", "([BIIIICJJ)I");
++    BridgeDrSubmitDecodeUnitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrSubmitDecodeUnit", "([BIIIICJJ)I");
++    BridgeDrSupportsDirectPictureMethod = (*env)->GetStaticMethodID(env, GlobalBridgeClass, "bridgeDrSupportsDirectPicture", "()Z");
++    BridgeDrSubmitPictureMethod = (*env)->GetStaticMethodID(env, GlobalBridgeClass, "bridgeDrSubmitPicture", "(IIICJJ)I");
+     BridgeArInitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArInit", "(III)I");
+     BridgeArStartMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStart", "()V");
+     BridgeArStopMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStop", "()V");
+@@ -122,7 +127,9 @@
+         return err;
+     }
+ 
+-    // Allocate on first submission and retain geometric capacity for the session.
++    directPictureEnabled = (*env)->CallStaticBooleanMethod(env, GlobalBridgeClass, BridgeDrSupportsDirectPictureMethod);
++    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); directPictureEnabled = false; }
++    // Allocate on first submission and retain geometric capacity for the session.
+     DecodedFrameBuffer = NULL;
+     DecodedFrameCapacity = 0;
+ 
+@@ -151,80 +158,106 @@
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeDrCleanupMethod);
+ }
+ 
+-int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
+-    JNIEnv* env = GetThreadEnv();
+-    int ret;
+-
+-    // Avoid a JNI length lookup each frame and repeated exact-size allocations.
+-    if (decodeUnit->fullLength <= 0) return DR_NEED_IDR;
+-    if (DecodedFrameCapacity < decodeUnit->fullLength) {
+-        int capacity = DecodedFrameCapacity > 0 ? DecodedFrameCapacity : 32768;
+-        while (capacity < decodeUnit->fullLength) {
+-            if (capacity > INT_MAX / 2) { capacity = decodeUnit->fullLength; break; }
+-            capacity *= 2;
+-        }
+-        jbyteArray local = (*env)->NewByteArray(env, capacity);
+-        if (local == NULL) {
+-            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+-            return DR_NEED_IDR;
+-        }
+-        jbyteArray replacement = (*env)->NewGlobalRef(env, local);
+-        (*env)->DeleteLocalRef(env, local);
+-        if (replacement == NULL) {
+-            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+-            return DR_NEED_IDR;
+-        }
+-        if (DecodedFrameBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
+-        DecodedFrameBuffer = replacement;
+-        DecodedFrameCapacity = capacity;
+-    }
+-
+-    PLENTRY currentEntry;
+-    int offset;
+-
+-    currentEntry = decodeUnit->bufferList;
+-    offset = 0;
+-    while (currentEntry != NULL) {
+-        // Submit parameter set NALUs separately from picture data
+-        if (currentEntry->bufferType != BUFFER_TYPE_PICDATA) {
+-            // Use the beginning of the buffer each time since this is a separate
+-            // invocation of the decoder each time.
+-            (*env)->SetByteArrayRegion(env, DecodedFrameBuffer, 0, currentEntry->length, (jbyte*)currentEntry->data);
+-
+-            ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
+-                                              DecodedFrameBuffer, currentEntry->length, currentEntry->bufferType,
+-                                              decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
+-                                              (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
+-            if ((*env)->ExceptionCheck(env)) {
+-                // We will crash here
+-                (*JVM)->DetachCurrentThread(JVM);
+-                return DR_OK;
+-            }
+-            else if (ret != DR_OK) {
+-                return ret;
+-            }
+-        }
+-        else {
+-            (*env)->SetByteArrayRegion(env, DecodedFrameBuffer, offset, currentEntry->length, (jbyte*)currentEntry->data);
+-            offset += currentEntry->length;
+-        }
+-
+-        currentEntry = currentEntry->next;
+-    }
+-
+-    ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
+-                                       DecodedFrameBuffer, offset, BUFFER_TYPE_PICDATA,
+-                                       decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
+-                                       (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
+-    if ((*env)->ExceptionCheck(env)) {
+-        // We will crash here
+-        (*JVM)->DetachCurrentThread(JVM);
+-        return DR_OK;
+-    }
+-    else {
+-        return ret;
+-    }
+-}
++// Only the synchronous renderer callback on this native thread can access the DU.
++// No native pointer is exposed to Java or retained after the callback returns.
++static __thread PDECODE_UNIT activePictureUnit;
++static __thread int activePictureLength;
++
++JNIEXPORT jboolean JNICALL Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(
++        JNIEnv* env, jclass clazz, jobject target, jint length) {
++    (void)clazz;
++    if (activePictureUnit == NULL || target == NULL || length <= 0 ||
++            length != activePictureLength) return JNI_FALSE;
++    unsigned char* dest = (*env)->GetDirectBufferAddress(env, target);
++    jlong capacity = (*env)->GetDirectBufferCapacity(env, target);
++    if (dest == NULL || capacity < length) return JNI_FALSE;
++    int offset = 0;
++    for (PLENTRY entry = activePictureUnit->bufferList; entry != NULL; entry = entry->next) {
++        if (entry->bufferType != BUFFER_TYPE_PICDATA) continue;
++        if (entry->length <= 0 || entry->length > length - offset || entry->data == NULL) return JNI_FALSE;
++        memcpy(dest + offset, entry->data, entry->length);
++        offset += entry->length;
++    }
++    return offset == length ? JNI_TRUE : JNI_FALSE;
++}
++
++static bool ensureFrameArray(JNIEnv* env, int length) {
++    if (DecodedFrameCapacity >= length) return true;
++    int capacity = DecodedFrameCapacity > 0 ? DecodedFrameCapacity : 32768;
++    while (capacity < length) {
++        if (capacity > INT_MAX / 2) { capacity = length; break; }
++        capacity *= 2;
++    }
++    jbyteArray local = (*env)->NewByteArray(env, capacity);
++    if (local == NULL) {
++        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
++        return false;
++    }
++    jbyteArray replacement = (*env)->NewGlobalRef(env, local);
++    (*env)->DeleteLocalRef(env, local);
++    if (replacement == NULL) {
++        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
++        return false;
++    }
++    if (DecodedFrameBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
++    DecodedFrameBuffer = replacement;
++    DecodedFrameCapacity = capacity;
++    return true;
++}
++
++int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
++    JNIEnv* env = GetThreadEnv();
++    if (decodeUnit->fullLength <= 0) return DR_NEED_IDR;
++    int pictureLength = 0, totalLength = 0, configLength = 0;
++    for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
++        if (entry->length <= 0 || entry->length > decodeUnit->fullLength - totalLength ||
++                entry->data == NULL) return DR_NEED_IDR;
++        totalLength += entry->length;
++        if (entry->bufferType == BUFFER_TYPE_PICDATA) pictureLength += entry->length;
++        else if (entry->length > configLength) configLength = entry->length;
++    }
++    if (totalLength != decodeUnit->fullLength || pictureLength <= 0) return DR_NEED_IDR;
++    int arrayLength = directPictureEnabled ? configLength : decodeUnit->fullLength;
++    if (arrayLength > 0 && !ensureFrameArray(env, arrayLength)) return DR_NEED_IDR;
++    for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
++        if (entry->bufferType == BUFFER_TYPE_PICDATA) continue;
++        (*env)->SetByteArrayRegion(env, DecodedFrameBuffer, 0, entry->length, (jbyte*)entry->data);
++        if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return DR_OK; }
++        int ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
++                DecodedFrameBuffer, entry->length, entry->bufferType,
++                decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
++                (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
++        if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return DR_OK; }
++        if (ret != DR_OK) return ret;
++    }
++    int ret;
++    if (directPictureEnabled) {
++        if (activePictureUnit != NULL) return DR_NEED_IDR;
++        activePictureUnit = decodeUnit;
++        activePictureLength = pictureLength;
++        ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitPictureMethod,
++                pictureLength, decodeUnit->frameNumber, decodeUnit->frameType,
++                (jchar)decodeUnit->frameHostProcessingLatency,
++                (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
++        activePictureUnit = NULL;
++        activePictureLength = 0;
++    }
++    else {
++        int offset = 0;
++        for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
++            if (entry->bufferType != BUFFER_TYPE_PICDATA) continue;
++            (*env)->SetByteArrayRegion(env, DecodedFrameBuffer, offset, entry->length, (jbyte*)entry->data);
++            if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return DR_OK; }
++            offset += entry->length;
++        }
++        ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
++                DecodedFrameBuffer, pictureLength, BUFFER_TYPE_PICDATA, decodeUnit->frameNumber,
++                decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
++                (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
++    }
++    if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return DR_OK; }
++    return ret;
++}
+ 
+ int BridgeArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int flags) {
+     JNIEnv* env = GetThreadEnv();
+diff --git a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+--- a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
++++ b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+@@ -229,7 +229,21 @@
+         }
+     }
+ 
+-    public static int bridgeArInit(int audioConfiguration, int sampleRate, int samplesPerFrame) {
++    // Only valid synchronously inside bridgeDrSubmitPicture on the native decode thread.
++    public static native boolean copyActivePictureData(java.nio.ByteBuffer target, int length);
++
++    public static boolean bridgeDrSupportsDirectPicture() {
++        return videoRenderer != null && videoRenderer.supportsDirectPicture();
++    }
++
++    public static int bridgeDrSubmitPicture(int length, int frameNumber, int frameType,
++                                           char hostLatency, long receiveTimeUs, long enqueueTimeUs) {
++        return videoRenderer != null
++                ? videoRenderer.submitDirectPicture(length, frameNumber, frameType, hostLatency, receiveTimeUs, enqueueTimeUs)
++                : DR_NEED_IDR;
++    }
++
++    public static int bridgeArInit(int audioConfiguration, int sampleRate, int samplesPerFrame) {
+         if (audioRenderer != null) {
+             return audioRenderer.setup(new AudioConfiguration(audioConfiguration), sampleRate, samplesPerFrame);
+         }
+diff --git a/app/src/main/java/com/limelight/nvstream/av/video/VideoDecoderRenderer.java b/app/src/main/java/com/limelight/nvstream/av/video/VideoDecoderRenderer.java
+--- a/app/src/main/java/com/limelight/nvstream/av/video/VideoDecoderRenderer.java
++++ b/app/src/main/java/com/limelight/nvstream/av/video/VideoDecoderRenderer.java
+@@ -13,7 +13,14 @@
+                                          int frameNumber, int frameType, char frameHostProcessingLatency,
+                                          long receiveTimeUs, long enqueueTimeUs);
+     
+-    public abstract void cleanup();
++    // Opt-in preserves compatibility with renderers that use the byte-array callback.
++    public boolean supportsDirectPicture() { return false; }
++    public int submitDirectPicture(int length, int frameNumber, int frameType,
++                                   char hostLatency, long receiveTimeUs, long enqueueTimeUs) {
++        return com.limelight.nvstream.jni.MoonBridge.DR_NEED_IDR;
++    }
++
++    public abstract void cleanup();
+ 
+     public abstract int getCapabilities();
+ 
