@@ -224,6 +224,10 @@ fn mask_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
     spirv(&source,"@group(0) @binding(7) var<uniform> params:vec4u;",entry)
 }
 fn tuned_synthesis(source:&str,t:ResidentTuning)->Result<String>{
+    let family=include_str!("resident_synthesis_family.wgsl")
+        .replace("SVP_STEP",&t.step().to_string())
+        .replace("SVP_ORIGIN",&(t.block/2).to_string())
+        .replace("SVP_AREA_BLEND",if t.artifacts==3{"0.7"}else{"0.4"});
     let entry=source.find("@compute @workgroup_size(8,8)").ok_or("tuned synthesis entry")?;
     let threshold=match t.artifacts{1=>64,2=>48,3=>32,_=>48};
     let mismatch=match t.artifacts{1=>8,2=>6,3=>4,_=>6};
@@ -258,6 +262,7 @@ fn warp_block(p:vec2f,grid:vec2u,index:u32,phase:f32)->Warp{{
 "#,step=t.step(),overlap=t.overlap,threshold=threshold,mismatch=mismatch);
     let mut result=source[..entry].to_owned();
     result.push_str(&helper);
+    result.push_str(&family);
     if source.contains("var dy:texture_storage"){
         result.push_str(r#"
 @compute @workgroup_size(8,8)
@@ -268,6 +273,17 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     let phase=bitcast<f32>(params.x);
     let blocks=overlap_grid(id.xy,grid);
     let p=vec2f(id.xy);
+    let algo=(params.y>>8u)&31u;
+    if algo!=0u{
+        let motion=family_motion(p,grid,phase);
+        textureStore(dy,vec2i(id.xy),pack10(family_plane(ay,by,p,motion,1.0,visible,algo)));
+        if all((id.xy&vec2u(1))==vec2u(0)){
+            let cp=vec2i(id.xy/2u);
+            textureStore(du,cp,pack10(family_plane(au,bu,p*0.5,motion,0.5,visible/2u,algo)));
+            SVP_FAMILY_V
+        }
+        return;
+    }
     var y=vec4f(0);var u=vec4f(0);var v=vec4f(0);
     let chroma=all((id.xy&vec2u(1))==vec2u(0));
     for(var i=0u;i<4u;i++){
@@ -288,7 +304,8 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     }
 }
 "#);
-        result=result.replace("SVP_STORE_V",if source.contains("var dv:texture_storage"){"textureStore(dv,cp,pack10(v));"}else{""})
+        result=result.replace("SVP_FAMILY_V",if source.contains("var dv:texture_storage"){"textureStore(dv,cp,pack10(family_plane(av,bv,p*0.5,motion,0.5,visible/2u,algo)));"}else{""})
+            .replace("SVP_STORE_V",if source.contains("var dv:texture_storage"){"textureStore(dv,cp,pack10(v));"}else{""})
             .replace("SVP_V",if source.contains("var dv:texture_storage"){"v+=weight*sample_pair(av,bv,m.ap*0.5,m.bp*0.5,m.blend,visible/2u);"}else{""});
     }else{
         result.push_str(r#"
@@ -309,6 +326,29 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     if any(id.xy>=visible)||any(id.xy>=textureDimensions(dst)){return;}
     let grid=(visible+vec2u(SVP_STEP-1u))/SVP_STEP;
     let phase=bitcast<f32>(params.x);
+    let algo=(params.y>>8u)&31u;
+    if algo!=0u{
+        let p=vec2f(id.xy);
+        let m=family_motion(p,grid,phase);
+        var pixel:vec3f;
+        if (params.y&64u)!=0u{
+            pixel=family_plane(ay,by,p,m,1.0,visible,algo).rgb;
+        }else{
+            let ap=p+m.a;let bp=p+m.b;
+            let f=yuv(ay,au,av,ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
+            let b=yuv(by,bu,bv,bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
+            let f0=yuv(ay,au,av,p,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
+            let b0=yuv(by,bu,bv,p,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
+            // Extended vectors are only meaningful with adjacent source
+            // fields. Without them the selector dispatches 21, not 23.
+            let ff=yuv(ay,au,av,p+m.ext_a,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
+            let bb=yuv(by,bu,bv,p+m.ext_b,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
+            pixel=rgb(family_blend(vec4f(f,1),vec4f(b,1),vec4f(f0,1),vec4f(b0,1),
+                vec4f(ff,1),vec4f(bb,1),m,algo).rgb);
+        }
+        textureStore(dst,vec2i(id.xy),vec4f(pixel,1.0));
+        return;
+    }
     let blocks=overlap_grid(id.xy,grid);
     var pixel=vec3f(0);
     for(var i=0u;i<4u;i++){
