@@ -43,6 +43,7 @@ internal class SystemModuleRuntime(
         val dexOwnership: ModuleDexOwnership? = null,
         val dexNativeRoots: Set<String> = emptySet(),
         val dexAlternative: Contract? = null,
+        val requireSoname: Boolean = false,
     )
 
     data class Loaded(
@@ -172,6 +173,8 @@ internal class SystemModuleRuntime(
                     if (hostLibraryHash(location) != hash)
                         throw SystemModuleTrustException("Host native dependency fingerprint mismatch")
                 }
+                if (contract.requireSoname && files.native.any { (name, binary) -> binary.soname != name })
+                    throw SystemModuleTrustException("Native runtime requires matching ELF SONAME")
                 nativeOrder(files.native, contract.nativeRoots)
             }
             else -> if (files.dex.isNotEmpty() || files.native.isNotEmpty())
