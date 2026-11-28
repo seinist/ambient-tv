@@ -42,8 +42,8 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
           yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
-          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1" ||
-            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1"
+          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1" ||
+            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v4
       - name: Fetch and patch pinned upstream sources
         run: |
@@ -61,6 +61,10 @@ jobs:
           ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 \
             --tests '*SmartTube*' --tests '*YouTube*' \
             --tests '*ChunkedStreamRelayTest' --tests '*RenewingMedia3DataSourceTest'
+      - name: Export SmartTube adapter candidate
+        run: |
+          ./gradlew :app:exportSmartTubeAdapterDex -PAPK_ABI=arm64
+          test -s app/build/outputs/system-modules/smarttube-dex/classes.dex
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -68,4 +72,5 @@ jobs:
           path: |
             smarttube_wrappers/youtubeapi/build/test-results/
             app/build/test-results/
+            app/build/outputs/system-modules/smarttube-dex/
           if-no-files-found: warn
