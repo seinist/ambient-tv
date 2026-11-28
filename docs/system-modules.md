@@ -825,6 +825,21 @@ An existing dependency tree without retained source archives cannot be
 silently relabeled as source-proven. This does not independently reconstruct
 the patched Git checkouts or validate their resulting binary.
 
+J2V8 native source audit traces the prebuilt SharedModules libraries back
+to the historical j2v8-6.2.1-fixed.aar Git object (commit
+5191f173e966f982fe8cad980c819ef90deb705e, blob
+fad5a99ebd692aeec064399e1b0d835d3ecf06a1). The integration workflow compares
+all four ABI binaries and executable section hashes with that AAR and the
+official Maven Central 6.2.1 AAR. Source candidates include exact Git
+snapshots of EclipseSource J2V8 00dddaa31a80782abbe93c4a01f325db3c4975d6
+and V8 9.3.345.11 / 17da96eb5a1f5db470de4488b780d6c07056d8cf, with build
+recipes, V8 DEPS and licenses. Their archive digests and binary evidence
+are checked before signing. These are candidate sources, not proof of
+the fixed AAR's native patch series or a verified rebuild; the status
+remains unverified until the exact producer's build inputs or an
+independent source build can establish correspondence. No shipped
+binary is silently replaced.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

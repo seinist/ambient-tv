@@ -50,6 +50,15 @@ jobs:
           bash scripts/fetch_smarttube_engine.sh
           bash scripts/fetch_libretrodroid.sh
           python3 scripts/patch_smarttube_compat.py --check --root third_party/smarttube
+      - name: Compare J2V8 historical and official AAR native binaries
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --connect-timeout 20 --max-time 180 \
+            --max-filesize 134217728 \
+            https://repo.maven.apache.org/maven2/com/eclipsesource/j2v8/j2v8/6.2.1/j2v8-6.2.1.aar \
+            -o "$RUNNER_TEMP/j2v8-official.aar"
+          python3 scripts/j2v8_source_audit.py --shared third_party/smarttube/SharedModules \
+            --official-aar "$RUNNER_TEMP/j2v8-official.aar" --output j2v8-native-source-audit.json
       - name: Test the patched SmartTube account and format paths
         run: |
           ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' --tests '*SmartTubeFormatBridgeTest' -PAPK_ABI=arm64
@@ -76,4 +85,5 @@ jobs:
             smarttube_wrappers/youtubeapi/build/test-results/
             app/build/test-results/
             app/build/outputs/system-modules/smarttube-dex/
+            j2v8-native-source-audit.json
           if-no-files-found: warn

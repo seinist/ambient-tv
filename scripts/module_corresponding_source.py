@@ -139,6 +139,12 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     maven_root = maven_roots[0] if maven_roots else None
     maven_inventory = None
     maven_files = {}
+    j2v8_reference_roots = [name for name in expected if name.rsplit("/", 1)[-1] == "resolved-j2v8-native-source"]
+    if module == "smarttube" and len(j2v8_reference_roots) != 1:
+        raise ValueError("Missing or ambiguous J2V8 native source candidate root")
+    j2v8_reference_root = j2v8_reference_roots[0] if j2v8_reference_roots else None
+    j2v8_reference = None
+    j2v8_reference_archives = {}
     cargo_inventory = None
     cargo_files = {}
     cargo_checksums = {}
@@ -211,6 +217,14 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                         cargo_files[relative] = member_digest
                     else:
                         raise ValueError("Unexpected vendored Cargo member")
+                if root == j2v8_reference_root:
+                    if relative == "native-source-evidence.json":
+                        if not 0 < member.size <= MAX_INVENTORY_BYTES:
+                            raise ValueError("Invalid J2V8 native source evidence")
+                        j2v8_reference = json.load(archive.extractfile(member))
+                    elif relative in {"j2v8-source.tar.gz", "v8-source.tar.gz"}:
+                        member_digest = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
+                        j2v8_reference_archives[relative] = (member.size, member_digest)
                 if root == maven_root:
                     if relative == "maven-inventory.json":
                         if not 0 < member.size <= 16 * 1024**2:
@@ -258,14 +272,30 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     if module == "smarttube":
         validate_maven_inventory(maven_inventory, maven_files)
         from package_system_modules import ABIS
+        from j2v8_source_audit import SOURCE_PINS, HISTORICAL_COMMIT, HISTORICAL_BLOB
+        if not isinstance(j2v8_reference, dict) or j2v8_reference.get("nativeSourceCorrespondence") != "unverified" or j2v8_reference.get("historicalCommit") != HISTORICAL_COMMIT or j2v8_reference.get("historicalBlob") != HISTORICAL_BLOB:
+            raise ValueError("Missing pinned J2V8 historical source evidence")
+        snapshots = j2v8_reference.get("sourceCandidates", [])
+        if len(snapshots) != len(SOURCE_PINS) or {row.get("name") for row in snapshots} != set(SOURCE_PINS):
+            raise ValueError("Incomplete J2V8/V8 source candidates")
+        for row in snapshots:
+            name = row["name"]
+            if row["commit"] != SOURCE_PINS[name][1] or row["archive"] != f"{name}-source.tar.gz" or j2v8_reference_archives.get(row["archive"]) != (row["size"], row["sha256"]):
+                raise ValueError("J2V8/V8 source candidate differs from pinned snapshot")
         if not isinstance(j2v8, dict) or j2v8.get("schema") != 1 or j2v8.get("nativeSourceCorrespondence") != "unverified":
             raise ValueError("Missing or invalid J2V8 provenance")
         rows = j2v8.get("libraries", [])
         if len(rows) != len(ABIS) or {row.get("abi") for row in rows} != set(ABIS):
             raise ValueError("Incomplete J2V8 provenance")
+        reference_rows = j2v8_reference.get("libraries", [])
+        if len(reference_rows) != len(ABIS) or {row.get("abi") for row in reference_rows} != set(ABIS):
+            raise ValueError("Incomplete J2V8 historical ABI evidence")
         for row in rows:
             if not all(re.fullmatch(r"[a-f0-9]{64}", row.get(key, "")) for key in ("inputSha256", "textSha256", "apkSha256")) or not re.fullmatch(r"[a-f0-9]{40}", row.get("gitBlob", "")):
                 raise ValueError("Invalid J2V8 binary fingerprints")
+            evidence = next(item for item in reference_rows if item["abi"] == row["abi"])
+            if evidence.get("currentSha256") != row["inputSha256"] or evidence.get("currentTextSha256") != row["textSha256"]:
+                raise ValueError("J2V8 source evidence differs from packaged binary")
     if module == "mpv":
         verify_mpv_archives(mpv_archives, (ROOT / "gradle/external-versions.properties").read_text())
     if module == "vlc":
@@ -808,6 +838,9 @@ def main():
             parser.error("SmartTube requires Full APKs for J2V8 provenance")
         extra_roots.append(collect_j2v8_provenance(ROOT / "third_party/smarttube/SharedModules",
             args.dist, args.output.parent / "resolved-j2v8-provenance"))
+        from j2v8_source_audit import collect_sources
+        extra_roots.append(collect_sources(ROOT / "third_party/smarttube/SharedModules",
+            args.output.parent / "resolved-j2v8-native-source"))
         extra_roots.append(collect_smarttube_maven_sources(
             ROOT / "app/build/outputs/system-modules/smarttube-maven-inputs",
             args.output.parent / "resolved-smarttube-maven-source"))
