@@ -63,6 +63,15 @@ class ModularPreviewTest(unittest.TestCase):
                 preview.verify_no_optional_classes(dex(name, True))
         preview.verify_no_optional_classes(dex("Lcom/liskovsoft/youtubeapi/R$raw;", True))
 
+    def test_vlc_custom_build_must_not_ship_native_roots(self):
+        with tempfile.TemporaryDirectory() as root:
+            for name in preview.VLC_EXTERNAL:
+                apk = self.make_apk(root, ["lib/arm64-v8a/" + name])
+                self.assertEqual(preview.verify(apk), {"arm64-v8a"})
+                with self.assertRaises(ValueError):
+                    preview.verify(apk, expect_vlc_external=True)
+            self.assertEqual(preview.verify(self.make_apk(root), expect_vlc_external=True), {"arm64-v8a"})
+
 
 if __name__ == "__main__":
     unittest.main()
