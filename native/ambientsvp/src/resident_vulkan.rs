@@ -483,7 +483,7 @@ pub struct VulkanPair{
     hdr_jobs:[Option<StatsJob>;MAX_PHASES],
     fence:vk::Fence,
     #[cfg(target_os="android")]
-    ahb_inputs:Option<[*const crate::ahb_vulkan::Job;2]>,
+    ahb_inputs:Option<Vec<*const crate::ahb_vulkan::Job>>,
 }
 impl Drop for VulkanPair{
     fn drop(&mut self){unsafe{
@@ -1046,10 +1046,32 @@ pub unsafe extern "C" fn ambient_svp_vk_begin_ahb(s:*const VulkanResident,comman
         let (Some(pa),Some(pb))=(convert(a),convert(b))else{return ptr::null_mut();};
         let Ok(mut pair)=VulkanPair::new(core,command,pa,pb)else{return ptr::null_mut();};
         unsafe{(&*a).retain_consumer();(&*b).retain_consumer();}
-        pair.ahb_inputs=Some([a,b]);
+        pair.ahb_inputs=Some(vec![a,b]);
         unsafe{pair.analyse();}
         Box::into_raw(Box::new(pair))
     })).unwrap_or(ptr::null_mut())
+}
+#[cfg(target_os="android")]
+pub(crate) unsafe fn begin_ahb_extended(s:*const VulkanResident,command:vk::CommandBuffer,queue:vk::Queue,
+    past:*const crate::ahb_vulkan::Job,a:*const crate::ahb_vulkan::Job,b:*const crate::ahb_vulkan::Job,
+    next:*const crate::ahb_vulkan::Job)->*mut VulkanPair{
+    if s.is_null()||queue==vk::Queue::null()||[past,a,b,next].iter().any(|p|p.is_null()){return ptr::null_mut();}
+    let core=unsafe{&(*s).0};
+    let convert=|p:*const crate::ahb_vulkan::Job|{
+        let (device,q,w,h,view)=unsafe{(&*p).picture()};
+        if unsafe{(&*p).high_depth()}!=(core.mode==3)||device!=core.device.handle()||
+            q!=queue||(w,h)!=(core.width,core.height){return None;}
+        Some(VulkanPicture{y:view,u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0})
+    };
+    let (Some(pp),Some(pa),Some(pb),Some(pn))=(convert(past),convert(a),convert(b),convert(next))
+        else{return ptr::null_mut();};
+    let pair=unsafe{ambient_svp_vk_begin_extended(s,command,&pp,&pa,&pb,&pn)};
+    if !pair.is_null(){
+        let inputs=vec![past,a,b,next];
+        for &p in &inputs{unsafe{(&*p).retain_consumer();}}
+        unsafe{(*pair).ahb_inputs=Some(inputs);}
+    }
+    pair
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_render(pair:*mut VulkanPair,phase:f32,matrix:u32,output:vk::ImageView)->i32{
