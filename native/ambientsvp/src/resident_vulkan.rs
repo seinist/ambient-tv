@@ -2131,6 +2131,13 @@ fn weight_probe(@builtin(global_invocation_id) id:vec3u){
 mod gpu_tests{
     use super::*;
     struct Image{image:vk::Image,view:vk::ImageView,memory:vk::DeviceMemory}
+    // CPU Vulkan may defer LLVM shader compilation until first dispatch.
+    // Keep a finite watchdog, but do not use a physical-device latency
+    // threshold to judge a cold software compiler. No production waits
+    // use this test-only budget.
+    fn fixture_fence_budget(properties:&vk::PhysicalDeviceProperties)->u64{
+        if properties.device_type==vk::PhysicalDeviceType::CPU{180_000_000_000}else{20_000_000_000}
+    }
     fn memory_index(props:&vk::PhysicalDeviceMemoryProperties,bits:u32,flags:vk::MemoryPropertyFlags)->u32{
         (0..props.memory_type_count).find(|&i|bits&(1<<i)!=0&&props.memory_types[i as usize].property_flags.contains(flags)).unwrap()
     }
@@ -2195,7 +2202,7 @@ mod gpu_tests{
                 Some(entry.static_fn().get_instance_proc_addr),w,h,3,&quality);
             assert!(!engine.is_null());
             let src=vk::ImageUsageFlags::SAMPLED|vk::ImageUsageFlags::TRANSFER_DST;
-            let out=vk::ImageUsageFlags::STORAGE|vk::ImageUsageFlags::TRANSFER_SRC;
+            let out=vk::ImageUsageFlags::STORAGE|vk::ImageUsageFlags::SAMPLED|vk::ImageUsageFlags::TRANSFER_SRC;
             let images=std::array::from_fn::<_,7,_>(|i|image(&d,&props,w,h,vk::Format::R16G16B16A16_SFLOAT,if i<2||i>=5{src}else{out}));
             let pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family)
                 .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),None).unwrap();
@@ -2497,6 +2504,8 @@ mod gpu_tests{
             let queue=d.get_device_queue(family,0);
             let props=instance.get_physical_device_memory_properties(physical);
             let (w,h)=(66u32,34u32);
+            let properties=instance.get_physical_device_properties(physical);
+            let fixture_wait=fixture_fence_budget(&properties);
             let engine=ambient_svp_vk_create(instance.handle(),physical,d.handle(),
                 Some(entry.static_fn().get_instance_proc_addr),w,h);
             assert!(!engine.is_null(),"native resident initialization failed");
@@ -2576,7 +2585,7 @@ mod gpu_tests{
             // Destroy the session handle before completion: pair Arc
             // retains pipelines until the actual fence is signaled.
             ambient_svp_vk_destroy(engine);
-            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
             assert_eq!(ambient_svp_vk_release(pair),1);
             let mapped=d.map_memory(readback_memory,0,bytes*3,vk::MemoryMapFlags::empty()).unwrap();
             let data=std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*3) as usize);
@@ -2619,7 +2628,7 @@ mod gpu_tests{
             d.end_command_buffer(cmd).unwrap();
             d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
             assert_eq!(ambient_svp_vk_seal(pair,fence),0);
-            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
             assert_eq!(ambient_svp_vk_release(pair),1);
             let mapped=d.map_memory(readback_memory,0,bytes,vk::MemoryMapFlags::empty()).unwrap();
             for pixel in std::slice::from_raw_parts(mapped.cast::<u8>(),bytes as usize).chunks_exact(4){
@@ -2649,7 +2658,7 @@ mod gpu_tests{
             d.end_command_buffer(cmd).unwrap();
             d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
             assert_eq!(ambient_svp_vk_seal(stationary,fence),0);
-            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
             assert_eq!(ambient_svp_vk_release(stationary),1);
             let mapped=d.map_memory(readback_memory,0,bytes,vk::MemoryMapFlags::empty()).unwrap();
             for pixel in std::slice::from_raw_parts(mapped.cast::<u8>(),bytes as usize).chunks_exact(4){
@@ -2685,7 +2694,7 @@ mod gpu_tests{
             d.end_command_buffer(cmd).unwrap();
             d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
             assert_eq!(ambient_svp_vk_seal(pair,fence),0);
-            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
             assert_eq!(ambient_svp_vk_release(pair),1);
             assert_eq!((&*engine).0.aux_in_flight.load(Ordering::Acquire),0);
             assert_eq!((&*engine).0.in_flight.load(Ordering::Acquire),0);
@@ -2773,7 +2782,7 @@ mod gpu_tests{
                     d.end_command_buffer(cmd).unwrap();
                     d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
                     assert_eq!(ambient_svp_vk_seal(pair,fence),0);
-                    d.wait_for_fences(&[fence],true,20_000_000_000)
+                    d.wait_for_fences(&[fence],true,fixture_wait)
                         .unwrap_or_else(|e|panic!("high-depth fence mode={mode} tuned={tuned} phase={phase}: {e:?}"));
                     if mode==3{
                         if tuned&&i==1{
@@ -2891,7 +2900,7 @@ mod gpu_tests{
                         d.end_command_buffer(cmd).unwrap();
                         d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
                         assert_eq!(ambient_svp_vk_seal(pair,fence),0);
-                        d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+                        d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
                         assert_eq!(ambient_svp_hdr_scene_push(scene,pair,0,frame),1);
                         let f=(&*pair).hdr_jobs[0].as_ref().unwrap().scene_frame().unwrap();
                         assert_eq!(f.maxscl,if frame==0{[100000,100000,0]}else{[0,100000,0]});
@@ -2975,7 +2984,7 @@ mod gpu_tests{
                         d.end_command_buffer(cmd).unwrap();
                         d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
                         assert_eq!(ambient_svp_vk_seal(pair,fence),0);
-                        d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+                        d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
                         assert_eq!(ambient_svp_vk_release(pair),1);
                         let mapped=d.map_memory(readback_memory,0,bytes*3,vk::MemoryMapFlags::empty()).unwrap();
                         let data=std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*3) as usize);
@@ -3050,7 +3059,7 @@ mod gpu_tests{
                 assert_eq!(pending,0);
                 assert_eq!(counter,0);
             });
-            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
             d.reset_fences(&[fence]).unwrap();
             d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
@@ -3065,7 +3074,7 @@ mod gpu_tests{
             let mut timeline=vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values);
             let submit=vk::SubmitInfo::default().push_next(&mut timeline).wait_semaphores(&sems).wait_dst_stage_mask(&stages).command_buffers(&commands);
             d.queue_submit(queue,&[submit],fence).unwrap();
-            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
             let mapped=d.map_memory(readback_memory,0,bytes*2,vk::MemoryMapFlags::empty()).unwrap();
             for pixel in std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*2) as usize).chunks_exact(8){
                 for channel in pixel[..6].chunks_exact(2){assert_eq!(u16::from_ne_bytes(channel.try_into().unwrap()),0x3800);}

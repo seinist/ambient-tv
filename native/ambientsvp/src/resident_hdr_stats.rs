@@ -146,6 +146,7 @@ pub(super) struct StatsJob{
     hist:Buffer,summary:Buffer,scene_hist:Option<Buffer>,windows:Vec<HdrWindow>,
     pipelines:Arc<StatsPipelines>,set:vk::DescriptorSet,
     tracking:bool,affine:bool,scanlines:bool,width:u32,height:u32,step:u32,
+    dispatch_tracking:bool,
 }
 impl Drop for StatsJob{
     fn drop(&mut self){unsafe{self.device.destroy_descriptor_pool(self.pool,None);}}
@@ -184,6 +185,10 @@ impl StatsJob{
         let scene_size=BINS*4*windows.len() as u64;
         let has_spans=ellipses.is_some()&&windows.len()>1;
         let static_spans=has_spans&&tracking.is_some_and(|t|t.1==0.0);
+        // Phase zero has authored geometry and zero shift. The tracking
+        // shader already returns immediately for it; avoid the dispatch
+        // entirely, including the first-use compiler cost on CPU Vulkan.
+        let dispatch_tracking=windows.len()>1&&tracking.is_some_and(|t|t.1!=0.0);
         let span_words=if has_spans{2*core.height as usize*(windows.len()-1)}else{0};
         let summary_size=((STRIDE*windows.len()+span_words)*4) as u64;
         let cached={
@@ -196,6 +201,7 @@ impl StatsJob{
             cached.windows.clear();cached.windows.extend_from_slice(windows);
             cached.tracking=tracking.is_some();cached.affine=tracking.is_some_and(|t|t.2);
             cached.scanlines=has_spans&&!static_spans;
+            cached.dispatch_tracking=dispatch_tracking;
             cached
         }else{
             let hist=Buffer::new(core,hist_size,
@@ -206,7 +212,7 @@ impl StatsJob{
                 vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
             Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
                 pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),
-                scanlines:has_spans&&!static_spans,width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)}
+                scanlines:has_spans&&!static_spans,width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step),dispatch_tracking}
         };
         let mut config=vec![0u32;STRIDE*windows.len()+span_words];
         for (i,w) in windows.iter().enumerate(){
@@ -270,7 +276,7 @@ impl StatsJob{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER|vk::PipelineStageFlags::TRANSFER|
                 vk::PipelineStageFlags::HOST,vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&before,&[],&[]);
             let between=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(read)];
-            if self.tracking{
+            if self.dispatch_tracking{
                 self.pipelines.track.dispatch(cmd,self.set,params,self.windows.len() as u32,1);
                 d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::COMPUTE_SHADER,
                     vk::DependencyFlags::empty(),&between,&[],&[]);
