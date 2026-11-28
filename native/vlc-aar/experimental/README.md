@@ -1078,3 +1078,13 @@ compute/transfer families remain disabled until cross-family ownership is
 validated. Terminal cleanup waits on queue zero and every additional queue
 before releasing Vulkan resources; an uncertain result quarantines output.
 The throughput effect and driver behavior require Android hardware tests.
+
+### Current release policy (supersedes historical progress entries)
+
+Standard builds now include the extended VLC AAR; runtime experimental
+features remain disabled by default under `vlc_experimental_features_enabled`.
+The isolated CI AAR still uses `-PVLC_AHB_EXPERIMENT=1`. Historical sections
+above describe their respective earlier revisions, not current activation or
+certification status. Android hardware, WSI and full numerical conformance
+must be validated independently. AFM4 uses AFA1 for applied packets and AFA2
+for terminal stale-session/seek rejection; only transport failure is retried.

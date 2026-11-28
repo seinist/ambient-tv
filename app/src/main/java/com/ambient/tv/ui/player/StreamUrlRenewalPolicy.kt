@@ -9,6 +9,14 @@ internal class StreamUrlRenewalPolicy(
     private val replacements = LinkedHashMap<String, String>()
     private val attempted = LinkedHashMap<String, Long>()
     private val inFlight = HashMap<String, java.util.concurrent.CompletableFuture<String?>>()
+    private companion object {
+        val workers = java.util.concurrent.ThreadPoolExecutor(
+            0, 4, 30L, java.util.concurrent.TimeUnit.SECONDS,
+            java.util.concurrent.SynchronousQueue<Runnable>(),
+            { work -> Thread(work, "media-url-renewal").apply { isDaemon = true } },
+            java.util.concurrent.ThreadPoolExecutor.AbortPolicy(),
+        )
+    }
 
     @Synchronized fun current(url: String): String = replacements[url] ?: url
 
@@ -26,22 +34,45 @@ internal class StreamUrlRenewalPolicy(
         // A provider refresh may perform network I/O. Never hold the cache monitor
         // during that refresh or while another range request waits for the same URL.
         if (owner) {
-            val fresh = runCatching { renew(failed) }.getOrNull()
-                ?.takeIf { it.isNotBlank() && it != failed }
-            synchronized(this) {
-                val result = storeReplacement(original, failed, fresh)
-                flight.complete(fresh)
-                inFlight.remove(failed)
-                return result
+            try {
+                workers.execute {
+                    val fresh = runCatching { renew(failed) }.getOrNull()
+                        ?.takeIf { it.isNotBlank() && it != failed }
+                    synchronized(this) {
+                        if (inFlight[failed] === flight) {
+                            storeReplacement(original, failed, fresh)
+                            inFlight.remove(failed)
+                            flight.complete(fresh)
+                        }
+                    }
+                }
+            } catch (_: java.util.concurrent.RejectedExecutionException) {
+                synchronized(this) {
+                    if (inFlight[failed] === flight) inFlight.remove(failed)
+                    flight.complete(null)
+                }
             }
         }
         val fresh = try {
             flight.get(waiterTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (_: InterruptedException) {
+            if (owner) synchronized(this) {
+                if (inFlight[failed] === flight) {
+                    inFlight.remove(failed)
+                    flight.complete(null)
+                }
+            }
             Thread.currentThread().interrupt()
             return null
         } catch (_: java.util.concurrent.TimeoutException) {
-            // Do not cancel the shared refresh or start a duplicate provider request.
+            // Only the owner retires the shared flight. A timed-out late result
+            // cannot overwrite a later URL; a waiter must not cancel the owner.
+            if (owner) synchronized(this) {
+                if (inFlight[failed] === flight) {
+                    inFlight.remove(failed)
+                    flight.complete(null)
+                }
+            }
             return null
         } catch (_: java.util.concurrent.ExecutionException) {
             return null

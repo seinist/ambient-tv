@@ -41,22 +41,25 @@ class StreamUrlRenewalPolicyTest {
         }
     }
 
-    @Test fun waitingRequestTimesOutWithoutCancellingSharedRefresh() {
+    @Test fun ownerAndWaitersAreBoundedAndLateCompletionIsIgnored() {
         val entered = CountDownLatch(1)
         val unblock = CountDownLatch(1)
+        val finished = CountDownLatch(1)
         val executor = Executors.newSingleThreadExecutor()
-        val policy = StreamUrlRenewalPolicy(waiterTimeoutMs = 25L) {
+        val policy = StreamUrlRenewalPolicy(waiterTimeoutMs = 100L) {
             entered.countDown()
-            check(unblock.await(5, TimeUnit.SECONDS))
-            "fresh"
+            try { check(unblock.await(5, TimeUnit.SECONDS)); "fresh" }
+            finally { finished.countDown() }
         }
         try {
             val owner = executor.submit<String?> { policy.replacement("old", "old") }
             assertTrue(entered.await(5, TimeUnit.SECONDS))
             assertNull(policy.replacement("old", "old"))
-            assertFalse(owner.isDone)
+            assertNull(owner.get(2, TimeUnit.SECONDS))
             unblock.countDown()
-            assertEquals("fresh", owner.get(5, TimeUnit.SECONDS))
+            assertTrue(finished.await(5, TimeUnit.SECONDS))
+            assertEquals("old", policy.current("old"))
+            assertNull(policy.replacement("old", "old"))
         } finally {
             unblock.countDown()
             executor.shutdownNow()

@@ -226,29 +226,39 @@ jobs:
           nm -D --defined-only .ci/pl-build/src/libplacebo.so > .ci/pl-exported-symbols.txt
           grep -E '[[:space:]]pl_vulkan_swapchain_ambient_mark_retired$' .ci/pl-exported-symbols.txt
           grep -E '[[:space:]]pl_vulkan_swapchain_ambient_presented$' .ci/pl-exported-symbols.txt
+          grep -E '[[:space:]]pl_vulkan_swapchain_ambient_enable$' .ci/pl-exported-symbols.txt
+          set -o pipefail
+          run_validated() {
+            local log=".ci/vulkan-$(basename "$1").log"
+            VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation "$@" 2>&1 | tee "$log"
+            if grep -Ei 'Validation Error|VUID-[^[:space:]]+|UNASSIGNED-[^[:space:]]+.*[Ee]rror' "$log"; then
+              echo "::error::Vulkan validation reported an error"
+              return 1
+            fi
+          }
           cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_hdr10plus_spatial_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdrplus-spatial
-          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdrplus-spatial
+          run_validated .ci/test-hdrplus-spatial
           cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_dovi_fel_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-dovi-fel
-          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-dovi-fel
+          run_validated .ci/test-dovi-fel
           python3 native/vlc-aar/experimental/generate_hdr_reference.py > .ci/hdr_reference_vectors.h
           cc -std=c11 -I .ci -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_hdr_reference_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr-reference
-          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdr-reference
+          run_validated .ci/test-hdr-reference
           python3 native/vlc-aar/experimental/generate_hdr10plus_frame_reference.py > .ci/hdr10plus_frame_reference.h
           cc -std=c11 -I .ci -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_hdr10plus_frame_reference_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr10plus-frame-reference
-          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdr10plus-frame-reference
+          run_validated .ci/test-hdr10plus-frame-reference
           cc -std=gnu11 -Wall -Wextra -fsanitize=undefined -fno-sanitize-recover=all -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_etsi_external_fel_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-etsi-fel
-          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin
-          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin \
+          run_validated .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin
+          run_validated .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin \
             .ci/real-fel/real-bl-plane.yuv .ci/real-fel/real-el-plane.yuv
           # Compile the real-data validator even when no licensed corpus is available.
           python3 -m py_compile native/vlc-aar/experimental/run_official_hdr_reference.py
