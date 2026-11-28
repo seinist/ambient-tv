@@ -259,9 +259,10 @@ class VlcPlaybackController(
             } finally {
                 if (!adopted) result.cleanup()
                 if (held) {
+                    val restoreVisiblePlayer = hdrSceneHold.active
                     hdrSceneHold.release()
                     // A cancelled analysis must never resume a replaced/released player.
-                    if (!adopted && !released && !ended && player === visiblePlayer && prepared &&
+                    if (restoreVisiblePlayer && !adopted && !released && !ended && player === visiblePlayer && prepared &&
                         !openingOrRestarting && errorMessage == null && desiredPlayWhenReady) visiblePlayer.play()
                 }
             }
@@ -1068,7 +1069,13 @@ class VlcPlaybackController(
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
         if (released) return
-        if (!hdrSceneRestartPending && hdrSceneHold.active) cancelHdrScenePass()
+        if (!hdrSceneRestartPending && hdrSceneHold.active) {
+            // Explicit media reopen supersedes the old analysis. Release the
+            // hold before cancellation so its finally cannot resume the old
+            // media or pause the replacement player's Playing event.
+            hdrSceneHold.release()
+            cancelHdrScenePass()
+        }
         frameDropSamples.prepare()
         if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
             // Nothing to wait for: open in this call, not one main-thread round trip later.
@@ -2058,6 +2065,7 @@ class VlcPlaybackController(
 
     override fun release() {
         if (released) return
+        hdrSceneHold.release()
         cancelHdrScenePass()
         hdrSceneScope.cancel()
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "release vulkan=$vulkanOutput")
