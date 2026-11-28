@@ -347,6 +347,16 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            com.ambient.tv.modules.SystemModuleAvailability.states.collect { states ->
+                val available = states.getValue(com.ambient.tv.modules.SystemModule.SMARTTUBE).usable
+                if (_uiState.value.youtubeAvailable != available) {
+                    youtubeSettingsLoaded = false
+                    _uiState.update { it.copy(youtubeAvailable = available, youtubeAuthKnown = false,
+                        youtubeSignedIn = false) }
+                }
+            }
+        }
+        viewModelScope.launch {
             // collectLatest + delay debounces typing; toggles and choices land within ~0.4 s.
             _uiState.collectLatest {
                 kotlinx.coroutines.delay(AUTOSAVE_DEBOUNCE_MS)
