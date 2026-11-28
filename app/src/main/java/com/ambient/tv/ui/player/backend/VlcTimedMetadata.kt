@@ -19,6 +19,7 @@ data class VlcTimedMetadata(
     val seekEpoch: Long,
     val seekTargetUs: Long? = null,
     val seekRequestId: Long = 0,
+    val packetId: Long = 0,
 ) {
     enum class Kind { EVENT_MESSAGE, PRODUCER_REFERENCE_TIME }
 }
@@ -42,16 +43,17 @@ internal object VlcTimedMetadataPacket {
     fun read(input: InputStream): Message {
         val data = DataInputStream(input)
         val magic = data.readInt()
-        require(magic in 0x41464d31..0x41464d33) // AFM1 / AFM2 / AFM3
+        require(magic in 0x41464d31..0x41464d34) // AFM1 through AFM4
         val wireKind = data.readInt()
         val pts = data.readLong()
         val duration = data.readLong()
         val size = data.readInt()
         val epoch = data.readInt().toLong() and 0xffffffffL
         val target = if (magic >= 0x41464d32) data.readLong().also { require(it >= -1L) }.takeIf { it >= 0L } else null
-        val requestId = if (magic == 0x41464d33) data.readLong().also { require(it >= 0L) } else 0L
+        val requestId = if (magic >= 0x41464d33) data.readLong().also { require(it >= 0L) } else 0L
+        val packetId = if (magic >= 0x41464d34) data.readLong().also { require(it >= 0L) } else 0L
         if (wireKind == 2) {
-            require(pts == 0L && duration == 0L && size == 0)
+            require(pts == 0L && duration == 0L && size == 0 && packetId == 0L)
             return Message.Epoch(epoch, target, requestId)
         }
         val kind = when (wireKind) {
@@ -60,6 +62,7 @@ internal object VlcTimedMetadataPacket {
             else -> throw IllegalArgumentException("Invalid timed metadata kind")
         }
         require(pts >= 0 && duration >= 0 && duration <= Long.MAX_VALUE - pts && size in 8..MAX_BOX)
+        require(magic < 0x41464d34 || packetId > 0L)
         val box = ByteArray(size)
         data.readFully(box)
         val header = DataInputStream(box.inputStream())
@@ -67,7 +70,7 @@ internal object VlcTimedMetadataPacket {
         val type = header.readInt()
         require(type == if (kind == VlcTimedMetadata.Kind.EVENT_MESSAGE) 0x656d7367 else 0x70726674)
         require(if (boxSize == 1L) size >= 16 && header.readLong() == size.toLong() else boxSize == size.toLong())
-        return Message.Event(VlcTimedMetadata(kind, pts, duration, box, epoch, target, requestId))
+        return Message.Event(VlcTimedMetadata(kind, pts, duration, box, epoch, target, requestId, packetId))
     }
 }
 
@@ -174,12 +177,9 @@ internal class VlcTimedMetadataInbox {
     @Synchronized fun offer(session: Long, event: VlcTimedMetadata) {
         if (!advanceEpoch(session, event.seekEpoch, event.seekTargetUs, event.seekRequestId)) return
         if (event.box.size > VlcTimedMetadataPacket.MAX_BOX) return
-        // A sender whose ACK was lost can retransmit the identical framed box.
-        // Deduplicate only exact identity (including timestamps and payload).
-        if (mutable.value.any { it.kind == event.kind && it.presentationTimeUs == event.presentationTimeUs &&
-                it.durationUs == event.durationUs && it.seekEpoch == event.seekEpoch &&
-                it.seekRequestId == event.seekRequestId && it.seekTargetUs == event.seekTargetUs &&
-                it.box.contentEquals(event.box) }) return
+        // AFM4 identity is per occurrence, not per content. Legacy AFM1-3
+        // cannot distinguish retries from valid repeated identical boxes.
+        if (event.packetId != 0L && mutable.value.any { it.packetId == event.packetId }) return
         val next = mutable.value.toMutableList()
         while (next.isNotEmpty() && (next.size >= 64 || bytes + event.box.size > 4 * 1024 * 1024)) {
             bytes -= next.removeAt(0).box.size

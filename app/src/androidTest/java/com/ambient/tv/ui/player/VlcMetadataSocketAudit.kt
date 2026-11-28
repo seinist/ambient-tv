@@ -21,14 +21,14 @@ internal fun auditVlcMetadataSocket(log: (String) -> Unit) {
         inbox.offer(session, it)
         processed.countDown()
     })
-    fun packet(epoch: Int, id: Long, event: Boolean): ByteArray =
-        ByteBuffer.allocate(if (event) 56 else 48).apply {
-            putInt(0x41464d33); putInt(if (event) 0 else 2)
+    fun packet(epoch: Int, id: Long, event: Boolean, packetId: Long = id): ByteArray =
+        ByteBuffer.allocate(if (event) 64 else 48).apply {
+            putInt(if (event) 0x41464d34 else 0x41464d33); putInt(if (event) 0 else 2)
             putLong(if (event) 250000L else 0L)
             putLong(if (event) 100000L else 0L)
             putInt(if (event) 8 else 0); putInt(epoch)
             putLong(1234000); putLong(id)
-            if (event) { putInt(8); putInt(0x656d7367) }
+            if (event) { putLong(packetId); putInt(8); putInt(0x656d7367) }
         }.array()
     fun send(bytes: ByteArray, ack: Int? = null) {
         LocalSocket().use { socket ->

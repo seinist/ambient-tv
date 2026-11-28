@@ -208,11 +208,14 @@ class VlcTimedMetadataTest {
         val d = inbox.clearForSeek(4000000, 44)
         inbox.acceptSeek(c)
         inbox.rejectSeek(d)
-        val current = old.copy(seekEpoch = 4, seekTargetUs = 3000000, seekRequestId = 43)
+        val current = old.copy(seekEpoch = 4, seekTargetUs = 3000000, seekRequestId = 43, packetId = 1)
         inbox.offer(session, current)
         assertEquals(listOf(current), inbox.events.value)
         inbox.offer(session, current.copy(box = current.box.copyOf()))
         assertEquals(listOf(current), inbox.events.value)
+        val another = current.copy(packetId = 2)
+        inbox.offer(session, another)
+        assertEquals(listOf(current, another), inbox.events.value)
     }
 
     @Test fun unrelatedEpochCannotDiscardRollbackJournal() {

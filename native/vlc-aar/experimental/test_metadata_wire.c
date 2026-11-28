@@ -30,5 +30,10 @@ int main(void)
     assert(out[7]==0&&out[27]==8&&out[47]==43);
     ambient_metadata_header(out,2,0,0,0,0,-1,0);
     for(unsigned i=32;i<40;i++)assert(out[i]==255);
-    close(fd[0]);close(fd[1]);puts("AFM3 native wire and Unix socket contract passed");
+    uint8_t v4[56];
+    ambient_metadata_header_v4(v4,0,250000,100000,8,7,1234000,42,123);
+    assert(v4[3]=='4'&&v4[47]==42&&v4[55]==123);
+    ambient_metadata_header_v4(v4,0,250000,100000,8,7,1234000,42,124);
+    assert(v4[55]==124);
+    close(fd[0]);close(fd[1]);puts("AFM3/AFM4 native wire and Unix socket contract passed");
 }

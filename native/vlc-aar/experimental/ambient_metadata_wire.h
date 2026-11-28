@@ -17,6 +17,17 @@ static inline void ambient_metadata_header(uint8_t p[AMBIENT_METADATA_HEADER_SIZ
     ambient_metadata_be(p+28,epoch,4);ambient_metadata_be(p+32,(uint64_t)target,8);
     ambient_metadata_be(p+40,request,8);
 }
+/* AFM4 adds an event-instance ID, stable across retries but never shared by
+ * two boxes merely because they have equal payload and timestamps. */
+enum { AMBIENT_METADATA_V4_HEADER_SIZE = 56 };
+static inline void ambient_metadata_header_v4(uint8_t p[AMBIENT_METADATA_V4_HEADER_SIZE],
+    uint32_t kind,uint64_t pts,uint64_t duration,uint32_t size,uint32_t epoch,
+    int64_t target,uint64_t request,uint64_t packet)
+{
+    ambient_metadata_header(p,kind,pts,duration,size,epoch,target,request);
+    p[3]='4';
+    ambient_metadata_be(p+48,packet,8);
+}
 static inline bool ambient_metadata_ack_valid(const uint8_t p[8],uint32_t epoch)
 {
     uint8_t expected[8];
