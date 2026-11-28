@@ -279,12 +279,12 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
         "effect.game.$gameKey",
     )
 
-    /** DS/3DS pointer games default to an unobstructed screen; others show buttons on phones. */
+    /** Every system offers phone buttons by default, independently of native pointer input. */
     fun touchControls(system: GameSystem): Boolean =
-        values["touch.${system.id}"]?.let { it == "1" } ?: !system.pointerInput
+        values["touch.${system.id}"]?.let { it == "1" } ?: true
 
     fun withTouchControls(system: GameSystem, on: Boolean): GameSettingsState =
-        set("touch.${system.id}", (if (on) "1" else "0").takeIf { on != !system.pointerInput })
+        set("touch.${system.id}", "0".takeIf { !on })
 
     fun touchMode(system: GameSystem): GameTouchMode = GameTouchMode.fromKey(values["touchmode.${system.id}"])
 

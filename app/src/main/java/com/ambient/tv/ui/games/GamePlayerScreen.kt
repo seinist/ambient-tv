@@ -191,12 +191,7 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         val center = Modifier.align(Alignment.Center)
         when (val current = state) {
-            is GameUiState.Preparing -> StatePanel(
-                title = stringResource(R.string.game_preparing),
-                body = current.progress?.let { stringResource(R.string.game_progress, (it * 100).roundToInt()) },
-                actionLabel = stringResource(R.string.back), onAction = onBack,
-                modifier = center, centered = true, actionLoading = false,
-            )
+            is GameUiState.Preparing, is GameUiState.DownloadingCore -> Unit
             is GameUiState.NeedsCore -> {
                 val core = current.core
                 StatePanel(
@@ -221,12 +216,6 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                 secondaryActionLabel = stringResource(R.string.back),
                 onSecondaryAction = onBack,
                 modifier = center, centered = true,
-            )
-            is GameUiState.DownloadingCore -> StatePanel(
-                title = stringResource(R.string.game_core_loading, current.core.name),
-                body = current.progress?.let { stringResource(R.string.game_progress, (it * 100).roundToInt()) },
-                actionLabel = stringResource(R.string.back), onAction = onBack,
-                modifier = center, centered = true, actionLoading = false,
             )
             is GameUiState.Failed -> StatePanel(
                 title = stringResource(current.reason.titleRes()),
@@ -255,6 +244,7 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
             // A new session (other core, OpenGL ES after Vulkan) is a new player.
             is GameUiState.Ready -> key(current.session) { GameContent(current.session, model, onBack, gameDisplay) }
         }
+        GameLoadingDialog(state, onCancel = onBack, modifier = center)
     }
 }
 
