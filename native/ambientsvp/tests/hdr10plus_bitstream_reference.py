@@ -3,12 +3,13 @@
 
 FATE source: https://fate-suite.ffmpeg.org/hevc/hdr10_plus_h265_sample.hevc
 Reference: FFmpeg tests/ref/fate/hevc-hdr10-plus-metadata.
-The 2020 sample predates the current version-1 marker convention; syntax
-must survive, but the strict authoring validator must flag the old marker.
+The sample contains a nonzero reserved version-1 marker; syntax must
+survive, but the strict authoring validator must flag that marker.
 This is a bitstream metadata test, not a decoded-image conformance test.
 """
 import argparse
 import hashlib
+import itertools
 from pathlib import Path
 import re
 import subprocess
@@ -33,7 +34,7 @@ def registered_payloads(stream):
     prev = next(starts,None)
     if prev is None:
         raise ValueError("Annex B start code missing")
-    for marker in list(starts)+[None]:
+    for marker in itertools.chain(starts,[None]):
         nal = stream[prev.end():marker.start() if marker else len(stream)]
         prev = marker
         if len(nal)<3 or ((nal[0]>>1)&63) not in (39,40):
@@ -99,6 +100,8 @@ def main():
                 raise ValueError("corpus payload count limit")
             if payload in seen:
                 continue
+            if len(payload)>1024:
+                raise ValueError("registered HDR10+ payload exceeds parser bound")
             if len(seen)>=100_000:
                 raise ValueError("corpus unique payload limit")
             seen.add(payload)
