@@ -1686,3 +1686,27 @@ tolerances, nonuniform real GPU proxy fixtures and authoritative
 scene boundaries remain necessary for a complete conformance claim.
 The generated tone-mapping curve and display adaptation are renderer
 policy within the standard's allowed metadata structure.
+
+
+Motion-affine legacy two-pass replay
+------------------------------------
+Version-zero capture and replay now interpolate compatible source
+windows at synthesized phases and use the resident reciprocal motion
+field to update translation, rectangle, ellipse axes and orientation.
+Source ticks and authoritative scene holds keep authored geometry.
+Both passes measure the same quantized selector. Legacy cache records
+include a bounded per-output geometry fingerprint (rectangle, center,
+axes, angle, percentile schema and selected pixel count); a mismatch
+aborts before cache lookup. This is a consistency check, not a
+cryptographic content authentication mechanism. The revised cache
+requires these records and is limited to 1,000,000 output frames
+and 32 MB; obsolete version-zero caches must be regenerated.
+At replay, the measured geometry is applied separately from scene
+statistics. Dynamic cardinal-angle membership uses integer products;
+arbitrary angles share a floating-point selector. The scene-sum
+words no longer overlap the local affine-gradient words.
+Nonuniform 66x34 two-frame RGB fixtures compare actual Vulkan
+MaxSCL, percentiles, mean, brightest frame and FBP with a separate
+Decimal/Fraction oracle, including a partial proxy cell and fractional
+bright-band membership. These are synthetic conformance checks, not
+validation on a commercial bitstream or physical display.
