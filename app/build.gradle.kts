@@ -574,7 +574,7 @@ dependencies {
         implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
         implementation("org.rustls:rustls-platform-verifier:${externalVersion("MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION")}")
     }
-    // Packed games: ZIP/7z (with LZMA via xz) and RAR4/RAR5.
+    // Packed games: ZIP/7z (with LZMA via xz) and RAR4.
     implementation(libs.commons.compress)
     implementation(libs.xz)
     implementation(libs.junrar)
@@ -590,9 +590,10 @@ dependencies {
     implementation(libs.zxing.core)
     // WireGuard X25519 (the platform JCA has it only from API 33); also required by smbj/jcifs-ng.
     implementation(libs.bouncycastle.prov)
-    // SFTP file sources. bcpkix uses the published 1.85 release; bcprov retains its 1.85.2 patch.
+    // SFTP file sources. Bouncy Castle provider, PKIX and utility modules share one release.
     implementation(libs.sshj)
     implementation(libs.bouncycastle.pkix)
+    implementation(libs.bouncycastle.util)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)

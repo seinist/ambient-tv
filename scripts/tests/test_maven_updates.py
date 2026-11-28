@@ -202,7 +202,7 @@ class MavenUpdatesTest(unittest.TestCase):
             "okhttp", "logging-interceptor", "okhttp-dnsoverhttps", "okhttp-brotli",
         })
         self.assertEqual({a.name for a in pins["bouncycastle"].artifacts}, {
-            "bcprov-jdk18on", "bcpkix-jdk18on",
+            "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on",
         })
         self.assertEqual({a.name for a in pins["smarttubeSlf4j"].artifacts}, {
             "slf4j-api", "slf4j-nop",

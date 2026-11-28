@@ -63,6 +63,7 @@ jcifs-ng = { module = "eu.agno3.jcifs:jcifs-ng", version.ref = "jcifsNg" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 bouncycastle-prov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
+bouncycastle-util = { module = "org.bouncycastle:bcutil-jdk18on", version.ref = "bouncycastle" }
 sshj = { module = "com.hierynomus:sshj", version.ref = "sshj" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
