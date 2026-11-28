@@ -22,6 +22,14 @@ struct ambient_svp_hdr_source {
     bool aligned,has_hdrplus;
     struct ambient_hdrplus hdrplus;
 };
+struct ambient_svp_hdr_phase {
+    bool valid;
+    unsigned slot;
+    uint64_t token,index;
+    pl_tex texture;
+    struct ambient_hdrplus metadata;
+    struct svp_placebo_hdr stats;
+};
 struct ambient_svp_hdr_display {
     struct ambient_svp_hdr_source sources[4];
     struct ambient_fel_render fel;
@@ -39,11 +47,24 @@ struct ambient_svp_hdr_display {
     void (*scene_destroy)(AmbientSvpHdrPass *);
     bool scene_finished;
     unsigned scene_version;
+    struct ambient_svp_hdr_phase phases[SVP_PLACEBO_PENDING];
+    uint64_t phase_ids[4],phase_group;
+    bool phase_group_valid;
     int (*scene_lookup_legacy)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
 };
+static inline void ambient_svp_hdr_discard_phases(struct ambient_svp_hdr_display *s)
+{
+    for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++){
+        struct ambient_svp_hdr_phase *p=&s->phases[i];
+        if(p->token)svp_placebo_discard_stats(&s->quality,p->token);
+        p->token=0;p->valid=false;
+    }
+    s->phase_group_valid=false;
+}
 static inline void ambient_svp_hdr_scene_close(pl_gpu gpu,struct ambient_svp_hdr_display *s,bool abort)
 {
     if(abort&&!s->scene_finished){ambient_svp_scene_config_abort(s->scene);s->quality.capture_failed=true;}
+    ambient_svp_hdr_discard_phases(s);
     svp_placebo_quality_retire_texture(gpu,&s->quality,NULL);
     s->quality.capture_failed=false;
     if(s->scene_pass)s->scene_destroy(s->scene_pass);
@@ -108,6 +129,7 @@ static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp
     for(unsigned i=0;i<4;i++){
         pl_tex_destroy(gpu,&s->sources[i].texture);
     }
+    for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++)pl_tex_destroy(gpu,&s->phases[i].texture);
     pl_tex_destroy(gpu,&s->output);svp_placebo_quality_destroy(gpu,&s->quality);pl_dispatch_destroy(&s->dp);
     *s=(struct ambient_svp_hdr_display){0};
 }
@@ -418,6 +440,75 @@ static inline bool ambient_svp_hdr_scene_replay(struct ambient_svp_hdr_display *
     uint32_t schema[9];for(unsigned j=0;j<9;j++)schema[j]=s->metadata.windows[0].histogram[j].percentage;
     return s->scene_lookup(s->scene_pass,index,&schema,&r)==1&&ambient_svp_hdr_apply_scene(&s->metadata,&r);
 }
+// Pre-submit the remaining measured phases of this exact source group.
+// Each slot owns a distinct renderer texture and a native stats ticket.
+// Readback/legacy geometry verification occurs only for the presented tick.
+static inline struct ambient_svp_hdr_phase *ambient_svp_hdr_find_phase(struct ambient_svp_hdr_display *s,unsigned slot)
+{
+    for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++)
+        if(s->phases[i].valid&&s->phases[i].slot==slot)return &s->phases[i];
+    return NULL;
+}
+static inline struct ambient_svp_hdr_phase *ambient_svp_hdr_submit_phase(pl_gpu gpu,struct ambient_svp_hdr_display *s,
+    const struct ambient_svp_pair *pair,struct ambient_svp_hdr_source *a,struct ambient_svp_hdr_source *b,
+    bool extended,bool legacy,unsigned slot,float phase,uint64_t index,int w,int h)
+{
+    struct ambient_svp_hdr_phase *p=NULL;
+    for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++)if(!s->phases[i].valid){p=&s->phases[i];break;}
+    if(!p||s->quality.pending_count>=SVP_PLACEBO_PENDING)return NULL;
+    p->metadata=a->hdrplus;p->token=0;
+    bool same=phase==0.f||a==b;
+    if(!same&&!ambient_svp_hdrplus_lerp(&p->metadata,&a->hdrplus,&b->hdrplus,phase,w,h))return NULL;
+    if(!ambient_svp_hdr_prepare_stats(&p->stats,&p->metadata,&a->hdrplus,same?&a->hdrplus:&b->hdrplus,w,h))return NULL;
+    if(!svp_placebo_quality_render_pass_ex(gpu,&s->quality,a->texture,same?a->texture:b->texture,
+        !same&&extended?s->sources[2].texture:NULL,!same&&extended?s->sources[3].texture:NULL,
+        &p->texture,same?0.f:phase,&pair->quality,&p->stats,legacy?s->scene_pass:NULL,index,false,&p->token))return NULL;
+    p->valid=true;p->slot=slot;p->index=index;return p;
+}
+static inline bool ambient_svp_hdr_measured_phase(pl_gpu gpu,struct ambient_svp_hdr_display *s,
+    const struct ambient_svp_pair *pair,struct ambient_svp_hdr_source *a,struct ambient_svp_hdr_source *b,
+    bool extended,bool legacy,bool force_same,int w,int h,pl_tex *output)
+{
+    unsigned count=pair->phase_count,slot=pair->phase_slot;
+    bool group=count>0&&count<=8&&slot<count&&pair->group_phases[slot]==pair->phase;
+    if(!group){count=1;slot=0;}
+    uint64_t first=group?pair->group_first:pair->scene_index;
+    if(first>UINT64_MAX-count||legacy&&first+slot!=pair->scene_index)return false;
+    uint64_t ids[4]={pair->a_id,pair->b_id,pair->past_id,pair->future_id};
+    if(!s->phase_group_valid||s->phase_group!=first||memcmp(s->phase_ids,ids,sizeof(ids))){
+        ambient_svp_hdr_discard_phases(s);
+        s->phase_group_valid=true;s->phase_group=first;memcpy(s->phase_ids,ids,sizeof(ids));
+    }
+    for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++){
+        struct ambient_svp_hdr_phase *p=&s->phases[i];
+        if(p->valid&&p->slot<slot){
+            if(p->token)svp_placebo_discard_stats(&s->quality,p->token);
+            p->token=0;p->valid=false;
+        }
+    }
+    float phase=force_same?0.f:pair->phase;
+    struct ambient_svp_hdr_phase *current=ambient_svp_hdr_find_phase(s,slot);
+    if(!current)current=ambient_svp_hdr_submit_phase(gpu,s,pair,a,b,extended,legacy,slot,phase,first+slot,w,h);
+    if(!current)return false;
+    // At a source-only tick B might not yet be imported. In that case
+    // prefetch only if the whole group is deliberately repeated.
+    bool can_prefetch=current->token&&(a!=b||force_same);
+    for(unsigned i=slot+1;can_prefetch&&i<count&&s->quality.pending_count<SVP_PLACEBO_PENDING;i++){
+        float next=force_same?0.f:pair->group_phases[i];
+        if(!isfinite(next)||next<0.f||next>=1.f||(!legacy&&next==0.f))break;
+        if(!ambient_svp_hdr_find_phase(s,i)&&
+            !ambient_svp_hdr_submit_phase(gpu,s,pair,a,b,extended,legacy,i,next,first+i,w,h))break;
+    }
+    bool ok=!current->token||svp_placebo_collect_stats(gpu,&s->quality,current->token,&current->stats,
+        legacy?s->scene_pass:NULL,current->index);
+    current->token=0;current->valid=false;
+    if(!ok)return false;
+    s->metadata=current->metadata;
+    ok=legacy?ambient_svp_hdr_apply_geometry(&s->metadata,&current->stats,w,h):
+        ambient_svp_hdr_apply_stats(&s->metadata,&current->stats,w,h);
+    if(ok)*output=current->texture;
+    return ok;
+}
 static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct ambient_svp_hdr_display *s,struct ambient_ahb_owner *owner,
     const struct ambient_svp_pair *pair,bool raw,bool dovi,struct pl_frame *img)
@@ -446,13 +537,13 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     s->has_metadata=a->has_hdrplus;s->metadata_aligned=a->aligned;
     if(s->has_metadata)s->metadata=a->hdrplus;
     int w=a->texture->params.w,h=a->texture->params.h;
-    bool scene=pair->scene!=NULL;
+    bool scene=pair->scene!=NULL,repeat_group=pair->a_id==pair->b_id;
     if(!ambient_svp_hdr_scene_open(gpu,s,pair,w,h,a->has_hdrplus?a->hdrplus.version:2)||s->quality.capture_failed)goto original;
     if(scene){
         uint64_t boundary;
         if(s->scene_interval(s->scene_pass,pair->scene_index,&boundary)!=1||
             pair->scene_pair_end<=pair->scene_index||pair->scene_pair_end>boundary)goto original;
-        if(pair->scene_pair_end==boundary)same=true;
+        if(pair->scene_pair_end==boundary){same=true;repeat_group=true;}
     }
     if(scene&&(!s->has_metadata||!a->aligned||dovi||a->color.transfer!=PL_COLOR_TRC_PQ||
         a->color.primaries!=PL_COLOR_PRIM_BT_2020||!ambient_svp_hdr_scene_compatible(&a->hdrplus)||
@@ -470,12 +561,9 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
                 *img=ambient_pl_rgb_frame(s->output,a->color);
             }else{
                 if(s->scene_version==0){
-                    struct svp_placebo_hdr job;
-                    if(!ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,&a->hdrplus,w,h)||
-                        !svp_placebo_quality_render_pass(gpu,&s->quality,a->texture,a->texture,NULL,NULL,
-                            &s->output,0.f,&pair->quality,&job,s->scene_pass,pair->scene_index,false)||
-                        !ambient_svp_hdr_apply_geometry(&s->metadata,&job,w,h))goto original;
-                    *img=ambient_pl_rgb_frame(s->output,a->color);
+                    pl_tex output=NULL;
+                    if(!ambient_svp_hdr_measured_phase(gpu,s,pair,a,a,false,true,repeat_group,w,h,&output))goto original;
+                    *img=ambient_pl_rgb_frame(output,a->color);
                 }
                 if(!ambient_svp_hdr_scene_replay(s,pair->scene_index))goto original;
                 vlc_video_hdr_dynamic_metadata_t global;
@@ -506,24 +594,28 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     bool capture=scene&&s->scene->mode==1;
     bool per_frame=s->has_metadata&&!scene;
     bool legacy=scene&&s->scene_version==0;
-    if((s->has_metadata&&(a->color.transfer!=PL_COLOR_TRC_PQ||a->color.primaries!=PL_COLOR_PRIM_BT_2020||
-            !ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,scene&&!legacy?&a->hdrplus:&b->hdrplus,w,h)))||
+    pl_tex output=NULL;
+    bool measured=per_frame||(legacy&&!capture);
+    if(s->has_metadata&&(a->color.transfer!=PL_COLOR_TRC_PQ||a->color.primaries!=PL_COLOR_PRIM_BT_2020))goto original;
+    if(measured){
+        if(!ambient_svp_hdr_measured_phase(gpu,s,pair,a,b,extended,legacy,false,w,h,&output))goto original;
+    }else if((s->has_metadata&&
+            !ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,scene&&!legacy?&a->hdrplus:&b->hdrplus,w,h))||
         !svp_placebo_quality_render_pass(gpu,&s->quality,a->texture,b->texture,
         extended?s->sources[2].texture:NULL,extended?s->sources[3].texture:NULL,
-        &s->output,pair->phase,&pair->quality,(capture||per_frame||legacy)?&job:NULL,(capture||legacy)?s->scene_pass:NULL,pair->scene_index,capture)||
-        (per_frame&&!ambient_svp_hdr_apply_stats(&s->metadata,&job,w,h))){
+        &s->output,pair->phase,&pair->quality,(capture||legacy)?&job:NULL,(capture||legacy)?s->scene_pass:NULL,pair->scene_index,capture)){
         // Preserve the exact reconstructed picture and its metadata
         // if the renderer cannot share the native Vulkan queue.
         goto original;
     }
+    if(!output)output=s->output;
     if(scene){
         if(!capture){
-            if(legacy&&!ambient_svp_hdr_apply_geometry(&s->metadata,&job,w,h))goto original;
             if(!ambient_svp_hdr_scene_replay(s,pair->scene_index))goto original;
         }
         if(!ambient_svp_hdr_scene_end(gpu,s,pair))goto original;
     }
-    *img=ambient_pl_rgb_frame(s->output,a->color);
+    *img=ambient_pl_rgb_frame(output,a->color);
     if(s->has_metadata){
         vlc_video_hdr_dynamic_metadata_t global;
         ambient_hdrplus_project_global(&global,&s->metadata);
@@ -534,6 +626,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     }
     return true;
 original:
+    ambient_svp_hdr_discard_phases(s);
     if(scene){ambient_svp_scene_config_abort(pair->scene);ambient_svp_hdr_scene_close(gpu,s,true);}
     if(a->has_hdrplus)s->metadata=a->hdrplus;
     *img=ambient_pl_rgb_frame(a->texture,a->color);return true;
