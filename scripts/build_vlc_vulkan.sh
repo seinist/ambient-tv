@@ -14,9 +14,9 @@ fi
 [[ "$INSTALL_APP" == 0 || "$INSTALL_APP" == 1 ]] || { echo "Invalid VLC_INSTALL_APP" >&2; exit 1; }
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
-    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch
+    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh scripts/vlc_ccache_compiler.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch
         bash scripts/prepare_svp_sources.sh --hash vlc
-        sha256sum native/vlc-aar/build.gradle.kts native/vlc-aar/settings.gradle.kts native/vlc-aar/consumer-rules.pro gradle/libs.versions.toml gradle/wrapper/gradle-wrapper.properties
+        sha256sum native/vlc-aar/build.gradle.kts native/vlc-aar/settings.gradle.kts native/vlc-aar/consumer-rules.pro gradle/libs.versions.toml gradle/wrapper/gradle-wrapper.properties gradle/wrapper/gradle-wrapper.jar gradle.properties
         if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
             sha256sum scripts/prepare_vlc_ahb_experimental.sh
             # Native staging consumes headers, C/C++ sources, shaders and patches.
@@ -37,12 +37,26 @@ if [[ "${1:-}" == "--toolchain-hash" ]]; then
         uname -srm
         [[ ! -r /etc/os-release ]] || cat /etc/os-release
         [[ ! -r "$ndk/source.properties" ]] || cat "$ndk/source.properties"
-        for tool in cc c++ cmake ninja meson rustc cargo java python3 pkg-config make autoconf automake glslc; do
+        for tool in cc c++ ld ar ranlib cmake ninja meson rustc cargo rustup java python3 pkg-config make autoconf automake autopoint gettext libtool glslc glslangValidator nasm yasm bison flex ccache; do
             printf '%s\n' "$tool"
             if command -v "$tool" >/dev/null; then "$tool" --version 2>&1 || true; else echo missing; fi
         done
-        find "$ndk/toolchains/llvm/prebuilt" -path '*/bin/clang' -type f -print0 2>/dev/null |
-            sort -z | xargs -0 -r sha256sum | sed 's@  .*@  ndk-clang@' || true
+        # Include the actual NDK binaries (clang may be a symlink), the
+        # NDK shader compiler and SDK package revisions used for packaging.
+        for path in "$ndk"/toolchains/llvm/prebuilt/*/bin/{clang,ld.lld,llvm-ar,llvm-strip} "$ndk"/shader-tools/*/glslc; do
+            if [[ -f "$path" ]]; then
+                printf '%s ' "${path##*/}"
+                sha256sum "$path" | cut -d ' ' -f1
+            fi
+        done
+        sdk="${ANDROID_HOME:-${ndk%/ndk/*}}"
+        for path in "$sdk"/platforms/android-37*/source.properties "$sdk"/build-tools/37*/source.properties; do
+            if [[ -f "$path" ]]; then printf '%s\n' "${path#"$sdk"/}"; cat "$path"; fi
+        done
+        # These values are hashed locally; do not print their contents into CI.
+        for key in CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CC CXX AR LD PKG_CONFIG_PATH PKG_CONFIG_LIBDIR SOURCE_DATE_EPOCH; do
+            printf '%s=%s\n' "$key" "${!key-}"
+        done
         printf 'abi=%s\nexperimental=%s\n' "${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}" "$EXPERIMENTAL_AHB"
     ) | sha256sum | cut -d ' ' -f1
     exit 0
@@ -76,6 +90,16 @@ if [[ -f "$JNI/.ambient-toolchain-hash" && "$(<"$JNI/.ambient-toolchain-hash")" 
 fi
 export ANDROID_NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-$HOME/Android/Sdk/ndk/30.0.16248370}}"
 export MAKEFLAGS="-j${NATIVE_JOBS:-8}"
+if [[ -n "${AMBIENT_VLC_CCACHE_ROOT:-}" ]]; then
+    command -v ccache >/dev/null
+    export AMBIENT_VLC_CCACHE_ROOT="$(mkdir -p "$AMBIENT_VLC_CCACHE_ROOT"; cd "$AMBIENT_VLC_CCACHE_ROOT"; pwd)"
+    export AMBIENT_VLC_COMPILER_WRAPPER="$AMBIENT_VLC_CCACHE_ROOT/bin"
+    mkdir -p "$AMBIENT_VLC_COMPILER_WRAPPER"
+    for name in clang clang++ ndk-ccache; do
+        ln -sfn "$ROOT/scripts/vlc_ccache_compiler.sh" "$AMBIENT_VLC_COMPILER_WRAPPER/$name"
+    done
+    export NDK_CCACHE="$AMBIENT_VLC_COMPILER_WRAPPER/ndk-ccache"
+fi
 export PKG_CONFIG_IGNORE_CONFLICTS=1
 JNI_REF=a8d53a9151d7e4a9a5dfd0a5eb1cd92669afdc21
 VLC_REF=c84ef1eda4f14f8b57a5b266b51c843cf51ed28b
@@ -187,6 +211,21 @@ fi
 # Upstream's probe used `which` as a standalone command under set -e.
 perl -0777 -i -pe 's/which autopoint >\/dev\/null\nif \[ ! \$\? -eq 0 \];then/if ! command -v autopoint >\/dev\/null; then/' "$JNI/buildsystem/build-libvlc.sh"
 perl -i -pe 's/find \$1 -name \x27\$2\x27/find "\$1" -name "\$2"/' "$JNI/buildsystem/build-libvlc.sh"
+# Route direct NDK clang paths through opt-in per-library compiler caches.
+# Leave upstream tool names and flags unchanged when no cache is configured.
+python3 - "$JNI/buildsystem/build-libvlc.sh" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+anchor = 'CROSS_CLANG=${NDK_TOOLCHAIN_PATH}/${CLANG_PREFIX}${ANDROID_API}-clang\n'
+assert s.count(anchor) == 1
+p.write_text(s.replace(anchor, anchor + '''
+if [ -n "${AMBIENT_VLC_COMPILER_WRAPPER:-}" ]; then
+    export AMBIENT_VLC_REAL_CLANG="$CROSS_CLANG"
+    CROSS_CLANG="$AMBIENT_VLC_COMPILER_WRAPPER/clang"
+fi
+'''))
+PY
     stage_signature > "$JNI/.ambient-stage-signature"
     printf '%s\n' "$SOURCE_HASH" > "$JNI/.ambient-source-hash"
     printf '%s\n' "$TOOLCHAIN_HASH" > "$JNI/.ambient-toolchain-hash"

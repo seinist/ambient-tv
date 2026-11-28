@@ -27,6 +27,7 @@ on:
       - 'scripts/build_vlc_vulkan.sh'
       - 'scripts/run_vlc_seek_e2e.sh'
       - 'scripts/verify_vlc_cached_aar.py'
+      - 'scripts/vlc_ccache_compiler.sh'
       - 'scripts/audit_profile7_stream.sh'
       - 'native/vlc-aar/seek-audit/**'
       - '.github/workflows/vlc-ahb-experimental.yml'
@@ -310,6 +311,7 @@ jobs:
       VLC_SEEK_AUDIT_ABI: arm64-v8a
       VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
       VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
+      AMBIENT_VLC_CCACHE_ROOT: ${{ github.workspace }}/.native/vlc-ccache
     steps:
       - uses: actions/checkout@v5
         with:
@@ -323,7 +325,7 @@ jobs:
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
             pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
-            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg ccache
           rustup toolchain install stable --profile minimal
           rustup default stable
       - name: Install pinned Meson and SDK
@@ -346,25 +348,75 @@ jobs:
         run: |
           echo "source=$(bash scripts/build_vlc_vulkan.sh --hash)" >> "$GITHUB_OUTPUT"
           echo "toolchain=$(bash scripts/build_vlc_vulkan.sh --toolchain-hash)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         id: native-aar-cache
         with:
           path: |
             native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
             native/vlc-aar/build/experimental/native-link-receipt.txt
-          key: vlc-linked-v2-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}
-      - name: Validate cached AAR and rebind receipt to current checkout
-        if: steps.native-aar-cache.outputs.cache-hit == 'true'
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Validate cached AAR or discard invalid cache
+        id: verified-aar
         run: |
-          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+          if python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f native/vlc-aar/build/experimental/{libvlc-vulkan-ahb-experimental.aar,native-link-receipt.txt}
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/ffmpeg
+          key: vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/libplacebo
+          key: vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/vlc
+          key: vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/jni
+          key: vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/contrib
+          key: vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
       - name: Build full linked VLC and JNI AAR (arm64-v8a)
-        if: steps.native-aar-cache.outputs.cache-hit != 'true'
+        if: steps.verified-aar.outputs.valid != 'true'
         run: |
           bash scripts/build_vlc_vulkan.sh
           aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
           unzip -tq "$aar"
           unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlc.so"
           unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlcjni.so"
+          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+      - uses: actions/cache/save@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v5
         with:
           name: vlc-ahb-experimental-arm64
@@ -409,6 +461,7 @@ jobs:
       VLC_SEEK_AUDIT_ABI: x86_64
       VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
       VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
+      AMBIENT_VLC_CCACHE_ROOT: ${{ github.workspace }}/.native/vlc-ccache
     steps:
       - uses: actions/checkout@v5
         with:
@@ -422,7 +475,7 @@ jobs:
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
             pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
-            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg ccache
           rustup toolchain install stable --profile minimal
           rustup default stable
       - name: Install pinned Meson and SDK
@@ -445,25 +498,75 @@ jobs:
         run: |
           echo "source=$(bash scripts/build_vlc_vulkan.sh --hash)" >> "$GITHUB_OUTPUT"
           echo "toolchain=$(bash scripts/build_vlc_vulkan.sh --toolchain-hash)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         id: native-aar-cache
         with:
           path: |
             native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
             native/vlc-aar/build/experimental/native-link-receipt.txt
-          key: vlc-linked-v2-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}
-      - name: Validate cached AAR and rebind receipt to current checkout
-        if: steps.native-aar-cache.outputs.cache-hit == 'true'
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-
+      - name: Validate cached AAR or discard invalid cache
+        id: verified-aar
         run: |
-          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+          if python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f native/vlc-aar/build/experimental/{libvlc-vulkan-ahb-experimental.aar,native-link-receipt.txt}
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/ffmpeg
+          key: vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-ffmpeg-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/libplacebo
+          key: vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-libplacebo-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/vlc
+          key: vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-vlc-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/jni
+          key: vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-jni-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
+      - uses: actions/cache@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: .native/vlc-ccache/contrib
+          key: vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-${{ steps.native-key.outputs.source }}
+          restore-keys: |
+            vlc-ccache-v1-contrib-${{ runner.os }}-${{ steps.native-key.outputs.toolchain }}-
       - name: Build full linked VLC and JNI AAR (x86_64)
-        if: steps.native-aar-cache.outputs.cache-hit != 'true'
+        if: steps.verified-aar.outputs.valid != 'true'
         run: |
           bash scripts/build_vlc_vulkan.sh
           aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
           unzip -tq "$aar"
           unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlc.so"
           unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlcjni.so"
+          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+      - uses: actions/cache/save@v4
+        if: steps.verified-aar.outputs.valid != 'true'
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v3-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v5
         with:
           name: vlc-ahb-experimental-x86_64
