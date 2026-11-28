@@ -1,0 +1,18 @@
+diff --git a/contrib/src/main.mak b/contrib/src/main.mak
+--- a/contrib/src/main.mak
++++ b/contrib/src/main.mak
+@@ -573,7 +573,13 @@
+ # generated crossfile, so everything should work as
+ # expected.
+ MESONFLAGS += --cross-file $(abspath crossfile.meson)
+-MESON = env -i PATH="$(PATH)" \
++# The optional Ambient compiler wrapper needs its exact cross compiler and
++# cache configuration even when Meson deliberately strips the environment.
++# Do not restore CC/CXX/CFLAGS or other host toolchain variables.
++AMBIENT_MESON_CCACHE_ENV = $(if $(AMBIENT_VLC_REAL_CLANG),HOME="$(HOME)" \
++	AMBIENT_VLC_REAL_CLANG="$(AMBIENT_VLC_REAL_CLANG)" \
++	AMBIENT_VLC_CCACHE_ROOT="$(AMBIENT_VLC_CCACHE_ROOT)" AMBIENT_VLC_CCACHE_MAXSIZE="$(AMBIENT_VLC_CCACHE_MAXSIZE)")
++MESON = env -i PATH="$(PATH)" $(AMBIENT_MESON_CCACHE_ENV) \
+ 	meson setup -Dpkg_config_path="$(PKG_CONFIG_PATH)" \
+ 	$(MESONFLAGS)
+ 

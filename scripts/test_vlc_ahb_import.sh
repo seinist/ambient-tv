@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/native/vlc-aar/experimental"
+python3 "$ROOT/scripts/tests/test_vlc_meson_ccache.py"
 NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}/ndk/30.0.16248370}}"
 case "$(uname -s)" in
     Linux) host=linux-x86_64 ;;
