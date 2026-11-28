@@ -59,5 +59,5 @@ report="$dest/svp-resident-$abi-$(date -u +%Y%m%dT%H%M%SZ).log"
     done
     [[ "$(python3 "$ROOT/scripts/svp_dependency.py" --fingerprint)" == "$fingerprint" ]]
 } | tee "$report"
-grep -q 'SVP_PARITY exact' "$report"
+[[ "$(grep -c 'SVP_PARITY exact' "$report")" == 3 ]]
 echo "Report: $report"

@@ -531,6 +531,8 @@ struct Core{
     in_flight:AtomicU32,aux_in_flight:AtomicU32,
     idle:Mutex<Vec<PairResources>>,
     held_idle:Mutex<Vec<HeldCommands>>,held_field:Mutex<Option<HeldField>>,
+    #[cfg(test)]
+    held_hits:AtomicU32,
     lost:AtomicBool,
     stats_supported:bool,
     stats:Mutex<Option<Arc<StatsPipelines>>>,
@@ -861,7 +863,9 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=4&&
             limits.max_storage_buffer_range>=100001*4*3&&
             u64::from(limits.max_storage_buffer_range)>=4*(3*100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
-        stats:Mutex::new(None)})))
+        stats:Mutex::new(None),
+        #[cfg(test)]
+        held_hits:AtomicU32::new(0)})))
 }
 
 #[unsafe(no_mangle)]
@@ -1152,6 +1156,8 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 p.descriptors(p.sets[MAX_PHASES+1],&[(0,ay,sampled),(1,au,sampled),(2,av,sampled),
                     (3,by,sampled),(4,bu,sampled),(5,bv,sampled)],6);
                 x.copy(&p,true);
+                #[cfg(test)]
+                core.held_hits.fetch_add(1,Ordering::Relaxed);
                 pair=Box::into_raw(Box::new(p));
             }else{
                 if count==5{pair=ambient_svp_vk_begin_extended(s,cmd,&picture(2),&a,&b,&picture(3));}
@@ -2053,6 +2059,7 @@ mod gpu_tests{
                 println!("SVP_BENCH mode={} host_submit_mean_us={} complete_mean_us={}",
                     ["sync_uncached","async_uncached","async_cached"][mode],host_us/runs as u128,total_us/runs as u128);
             }
+            assert_eq!((&(*engine).0).held_hits.load(Ordering::Relaxed),runs+1,"motion snapshot was not reused for each phase");
             // Independently read each final output and compare all FP16 bytes.
             let bytes=u64::from(w)*u64::from(h)*8;
             let buf=d.create_buffer(&vk::BufferCreateInfo::default().size(bytes*3).usage(vk::BufferUsageFlags::TRANSFER_DST),None).unwrap();
@@ -2081,6 +2088,61 @@ mod gpu_tests{
             assert_eq!(&data[..b],&data[b..2*b]);assert_eq!(&data[..b],&data[2*b..]);
             d.unmap_memory(memory);d.destroy_buffer(buf,None);d.free_memory(memory,None);
             println!("SVP_PARITY exact");
+            // Exercise the new capture/readback ABI on the small CI fixture
+            // outside the measured workload. Two captures may be submitted
+            // before either readback, but the cache must publish in tick order.
+            if (w,h)==(66,34){
+                let directory=std::env::temp_dir().join(format!("ambient-held-scene-{}-{}",
+                    std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+                std::fs::create_dir(&directory).unwrap();
+                let plan=directory.join("plan");let cache=directory.join("cache");
+                let key="a".repeat(64);
+                std::fs::write(&plan,format!("AMBIENTSVP_SCENE_PLAN_1\n{key}\n2\n")).unwrap();
+                let schema=[1,5,10,25,50,75,90,95,99];
+                let mut window=HdrWindow{rect:[0,0,w,h],count:9,percentages:[0;15]};
+                window.percentages[..9].copy_from_slice(&schema);
+                d.reset_fences(&[fence]).unwrap();d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+                d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()).unwrap();
+                for img in &images[2..]{
+                    transition(&d,cmd,img.image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,vk::ImageLayout::GENERAL,
+                        vk::AccessFlags::TRANSFER_READ,vk::AccessFlags::SHADER_WRITE,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+                }
+                d.end_command_buffer(cmd).unwrap();
+                d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+                d.wait_for_fences(&[fence],true,u64::MAX).unwrap();
+                let mut capture=TwoPass::open(1,&plan,&cache,&key,"held-test",w,h).unwrap();
+                let second=std::array::from_fn::<_,3,_>(|_|d.create_semaphore(&vk::SemaphoreCreateInfo::default(),None).unwrap());
+                let mut jobs=[ptr::null_mut();2];
+                for(i,waits)in [&hold,&second].into_iter().enumerate(){
+                    d.queue_submit(queue,&[vk::SubmitInfo::default().signal_semaphores(waits)],vk::Fence::null()).unwrap();
+                    let handles=[images[0].image,images[1].image,images[2+i].image];
+                    value+=1;
+                    assert_eq!(ambient_svp_vk_submit_held_capture(engine,queue,family,handles.as_ptr(),3,waits.as_ptr(),
+                        done,value,0.5,&window,ptr::null(),ptr::null(),1,&mut capture,i as u64,&mut jobs[i],1),0);
+                    assert!(!jobs[i].is_null());
+                }
+                assert!(!cache.exists());
+                for(i,job)in jobs.into_iter().enumerate(){assert_eq!(ambient_svp_vk_retire_held_capture(job,1,&mut capture,i as u64),1);}
+                capture.finish().unwrap();
+                let mut replay=TwoPass::open(2,&plan,&cache,&key,"held-test",w,h).unwrap();
+                let a=replay.lookup_v1(0,schema).unwrap();let b=replay.lookup_v1(1,schema).unwrap();
+                assert_eq!(a.maxscl,b.maxscl);assert_eq!(a.average,b.average);assert_eq!(a.percentiles,b.percentiles);
+                replay.finish().unwrap();
+                for sem in second{d.destroy_semaphore(sem,None);}
+                std::fs::remove_dir_all(directory).unwrap();
+                // Live per-frame readback must consume its own ticket.
+                d.queue_submit(queue,&[vk::SubmitInfo::default().signal_semaphores(&hold)],vk::Fence::null()).unwrap();
+                let handles=[images[0].image,images[1].image,images[4].image];
+                value+=1;
+                let mut job=ptr::null_mut();
+                assert_eq!(ambient_svp_vk_submit_held_stats(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),
+                    done,value,0.5,&window,ptr::null(),ptr::null(),1,ptr::null_mut(),0,&mut job,2),0);
+                assert!(!job.is_null());
+                let mut result=HdrResult::default();let mut rect=[[0u32;4]];let mut ellipse=[[0u32;3]];let mut shift=[[0i32;2]];
+                assert_eq!(ambient_svp_vk_collect_held_stats(job,1,&mut result,rect.as_mut_ptr(),ellipse.as_mut_ptr(),
+                    shift.as_mut_ptr(),1,ptr::null_mut(),0),1);
+                assert_eq!(result.pixels,w*h);
+            }
             ambient_svp_vk_destroy(engine);
             for s in hold{d.destroy_semaphore(s,None);}d.destroy_semaphore(done,None);
             for img in images{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
