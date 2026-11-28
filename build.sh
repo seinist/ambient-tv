@@ -281,7 +281,7 @@ ensure_android_sdk() {
 write_canonical_root_build_kts() {
     local target="$1"
     cat > "$target" <<'EOF_ROOT_BUILD'
-// AMBIENT_TV_ROOT_BUILD_V038
+// AMBIENT_TV_ROOT_BUILD_V039
 buildscript {
     // The catalog is the single source of truth, including this early classpath.
     val kotlinPin = file("gradle/libs.versions.toml").readLines()
@@ -310,6 +310,9 @@ subprojects {
             for (legacy in listOf("cronet-api", "cronet-common", "cronet-fallback", "cronet-shared", "httpengine-native-provider")) {
                 substitute(module("org.chromium.net:$legacy"))
                     .using(module("org.chromium.net:cronet:$ambientChromiumCronetVersion"))
+                    // Explicit @aar selectors retain the old artifact name even
+                    // after module substitution. Resolve the new module's default AAR.
+                    .withoutArtifactSelectors()
                     .because("Cronet 500+ replaces the deprecated transitional artifact")
             }
         }
@@ -379,12 +382,12 @@ ensure_root_build_kts() {
     local template="$ROOT_DIR/gradle/root.build.compat.gradle.kts"
     local target="$ROOT_DIR/build.gradle.kts"
 
-    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V038' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
+    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V039' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
         log "Repairing canonical root Gradle build preflight"
         write_canonical_root_build_kts "$template"
     fi
 
-    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V038' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
+    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V039' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
         log "Restoring canonical root Gradle build preflight"
         cp "$template" "$target"
     fi

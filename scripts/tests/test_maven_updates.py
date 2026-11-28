@@ -246,6 +246,8 @@ class MavenUpdatesTest(unittest.TestCase):
         self.assertEqual(canonical, template)
         self.assertEqual(canonical, recovery)
         self.assertIn('module("org.chromium.net:cronet:$ambientChromiumCronetVersion")', canonical)
+        self.assertRegex(canonical, r'\.using\(module\("org\.chromium\.net:cronet:[^"]+"\)\)[\s\S]*?\.withoutArtifactSelectors\(\)')
+        self.assertIn('implementation(libs.chromium.cronet)', (root / "app/build.gradle.kts").read_text(encoding="utf-8"))
         self.assertNotIn('libs.smarttube.core.ktx', (root / "smarttube_wrappers/sharedutils/build.gradle.kts").read_text(encoding="utf-8"))
 
 
