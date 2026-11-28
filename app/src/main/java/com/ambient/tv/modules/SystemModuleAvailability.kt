@@ -25,6 +25,7 @@ internal data class ModuleAvailability(
  */
 internal object SystemModuleAvailability {
     fun bundled(module: SystemModule): Boolean = when (module) {
+        SystemModule.VLC -> BuildConfig.VLC_BUNDLED
         SystemModule.SMARTTUBE -> BuildConfig.SMARTTUBE_BUNDLED
         SystemModule.MONOGRAM -> BuildConfig.MONOGRAM_NATIVE && BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SPOTIFY -> BuildConfig.SPOTIFY_ENABLED && BuildConfig.MODULE_PACKAGING == "full"
