@@ -11,6 +11,10 @@ class SmartTubeModuleAdapter : SystemModuleEntrypoint {
         val loader = checkNotNull(javaClass.classLoader)
         val library = File(checkNotNull(assets.parentFile), "lib/libj2v8.so")
         check(library.isFile)
+        val resolved = (loader as? dalvik.system.BaseDexClassLoader)?.findLibrary("j2v8")
+        check(resolved != null && File(resolved).canonicalFile == library.canonicalFile) {
+            "SmartTube native library resolved outside the selected package"
+        }
         // The JavaScript runtime must resolve through its own child loader.
         // Do not invoke System.load from the host or load an APK copy first.
         for (name in listOf(
