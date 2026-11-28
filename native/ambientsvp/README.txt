@@ -1632,3 +1632,57 @@ independent reference vectors and formal standard certification
 are still required. Estimated scene boundaries, finite precision
 PQ/FP16 shader inputs, and unsupported version-0/multi-window
 two-pass authoring are not claimed to be fully normative.
+
+
+Versioned HDR10+ two-pass scene statistics
+-----------------------------------------
+ST 2094-40:2020 sections 6, 8, 9 and 10 distinguish application
+versions 0 and 1. The Android scanner now recognizes both, refuses
+mixed-version sessions, and validates the corresponding cache type.
+The native session retains a separate result schema for each scene.
+
+Version 0 accepts one to three processing windows and up to fifteen
+actual distribution entries per window. It measures the selected
+rectangle/outer-ellipse intersection for every output frame, aggregates
+independent per-window histograms and linear sums, and writes newly
+generated FractionBrightPixels as zero. The current two-pass policy
+holds the authored geometry of the preceding source picture for the
+output phases; both passes use the same geometry. It does not apply
+the single-pass motion-affine window deformation in legacy two-pass
+mode. Optional authored peak grids and saturation are retained.
+Window topology and percentile indices must remain stable within
+each declared scene. An inconsistent scene invalidates the run.
+The cache stores version-zero window count, indices and values; it
+cannot be loaded as a version-one cache.
+
+Version 1 accepts any ascending nine-entry distribution vector, not
+just the recommended table. The special V1/V2 marker values are
+applied only when their matching indices are 5/10. The final index
+99 uses 99.98%, and v0 uses 99.98% at every index 99. Canonical
+v1 cache rows remain readable; noncanonical rows append their exact
+schema, verified in both player adapters before application.
+
+The native PQ statistic path uses a shared high-precision CPU lookup
+for every representable nonnegative FP16 code through 1.0, followed
+by GPU integer histogram quantization, selected-pixel 1e-9 sums,
+rational area weighting on the 5:1 proxy grid, and portable two-word
+integer bright-band accumulation. Local legacy ellipse scanlines
+are computed in f64 with exact integer cardinal-angle boundaries.
+The GPU result is still a measurement of FP16 reconstructed frames,
+not a promise to recover pre-decoder mastering precision.
+
+Independent Python Decimal/Fraction fixtures cover PQ, distribution,
+ellipse membership, proxy resize, scene tie selection, FBP weights
+and the portable wide-integer arithmetic. Native Vulkan tests compare
+actual FP16 output samples against the independent PQ vectors and
+exercise legacy selected pixel counts, and CPU fixtures test complete
+multi-window cache capture/replay and v1 schema rejection. CI runs
+the reference script independently before Rust and Vulkan tests.
+
+This implements a versioned measurement/replay contract, not formal
+certification. Full linked MPV/VLC builds, physical devices, varied
+commercial and synthetic HDR10+ streams, arbitrary-angle boundary
+tolerances, nonuniform real GPU proxy fixtures and authoritative
+scene boundaries remain necessary for a complete conformance claim.
+The generated tone-mapping curve and display adaptation are renderer
+policy within the standard's allowed metadata structure.
