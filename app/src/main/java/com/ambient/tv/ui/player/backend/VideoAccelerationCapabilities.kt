@@ -61,7 +61,8 @@ object VideoAccelerationRuntime {
                 val mpv = if (MpvBackendAvailability.nativeRuntimeAvailable) {
                     runCatching { MpvNativeBridge.nativeVulkanSupport() }.getOrDefault(0)
                 } else 0
-                val vlc = if (VulkanNativeProbe.available) runCatching {
+                val vlcReady = VlcBackendAvailability.probe(context)
+                val vlc = if (vlcReady && VulkanNativeProbe.available) runCatching {
                     val instance = LibVLC(context.applicationContext, arrayListOf("--verbose=0"))
                     try { VulkanNativeProbe.vlcModules() } finally { instance.release() }
                 }.getOrDefault(false) else false
