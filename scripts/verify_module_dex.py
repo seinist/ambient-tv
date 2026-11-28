@@ -12,7 +12,7 @@ import zlib
 from export_monogram_adapter import ownership
 
 
-def definitions(data):
+def inspect(data):
     size = len(data)
     if not 112 <= size <= 256 * 1024**2 or bytes(data[:8]) not in {
         b"dex\n035\0", b"dex\n037\0", b"dex\n038\0", b"dex\n039\0", b"dex\n040\0"
@@ -48,16 +48,16 @@ def definitions(data):
         types.add(kind)
         last_offset = offset
 
-    classes = set()
-    if uint(96) > 65536:
-        raise ValueError("Too many DEX class definitions")
-    for i in range(uint(96)):
-        index = uint(uint(100) + i * 32)
-        if index >= uint(64):
-            raise ValueError("Invalid DEX class type")
-        string = uint(uint(68) + index * 4)
+    # Every class definition is also a type_id. Inspect the complete type
+    # table once, including array component types, to catch dangling private
+    # references without guessing from arbitrary constant strings.
+    if uint(64) > 65536 or uint(96) > 65536:
+        raise ValueError("Too many DEX types or class definitions")
+    names = []
+    for i in range(uint(64)):
+        string = uint(uint(68) + i * 4)
         if string >= uint(56):
-            raise ValueError("Invalid DEX class string")
+            raise ValueError("Invalid DEX type string")
         offset = uint(uint(60) + string * 4)
         if not 112 <= offset < size:
             raise ValueError("Invalid DEX descriptor offset")
@@ -72,16 +72,32 @@ def definitions(data):
                 break
         else:
             raise ValueError("Invalid DEX descriptor length")
-        if not 3 <= length <= 1024 or length >= size - offset or data[offset + length] != 0:
+        if not 1 <= length <= 1024 or length >= size - offset or data[offset + length] != 0:
             raise ValueError("Invalid DEX descriptor length")
-        descriptor = data[offset:offset + length]
-        if not re.fullmatch(rb"L[A-Za-z0-9_/$-]+;", descriptor):
-            raise ValueError("Invalid DEX descriptor")
-        name = descriptor[1:-1].decode("ascii") + ".class"
-        if name in classes:
-            raise ValueError("Duplicate DEX definition")
+        raw = data[offset:offset + length]
+        descriptor = raw.lstrip(b"[")
+        if len(raw) - len(descriptor) > 255:
+            raise ValueError("Invalid DEX array type")
+        if re.fullmatch(rb"L[A-Za-z0-9_/$-]+;", descriptor):
+            names.append((descriptor[1:-1].decode("ascii") + ".class", raw == descriptor))
+        elif descriptor in (b"Z", b"B", b"S", b"C", b"I", b"J", b"F", b"D") or raw == b"V":
+            names.append((None, False))
+        else:
+            raise ValueError("Invalid DEX type descriptor")
+    classes = set()
+    for i in range(uint(96)):
+        index = uint(uint(100) + i * 32)
+        if index >= len(names):
+            raise ValueError("Invalid DEX class type")
+        name, is_class = names[index]
+        if not is_class or name in classes:
+            raise ValueError("Invalid or duplicate DEX definition")
         classes.add(name)
-    return classes
+    return classes, {name for name, _ in names if name is not None}
+
+
+def definitions(data):
+    return inspect(data)[0]
 
 
 def verify_adapter(module, dex):
@@ -90,13 +106,21 @@ def verify_adapter(module, dex):
         raise ValueError("Missing or noncontiguous adapter DEX")
     owner, required = ownership(module)
     classes = set()
+    references = set()
     for data in dex.values():
-        found = definitions(data)
+        found, types = inspect(data)
+        references.update(types)
         if classes & found:
             raise ValueError("Duplicate classes across DEX files")
         if not all(owner(name) for name in found):
             raise ValueError("Adapter defines host or foreign classes")
         classes |= found
+    foreign = [ownership(other)[0] for other in ("monogram", "smarttube", "vlc", "libretrodroid") if other != module]
+    missing = {name for name in references if owner(name) and name not in classes}
+    if missing:
+        raise ValueError(f"Adapter references missing private classes: {sorted(missing)[:10]}")
+    if any(check(name) for name in references for check in foreign):
+        raise ValueError("Adapter references another isolated module")
     if not set(required) <= classes:
         raise ValueError(f"Adapter missing classes: {sorted(set(required) - classes)}")
     if module == "monogram" and not all(any(name.startswith(prefix) for name in classes)

@@ -782,6 +782,13 @@ cannot be replaced by another module. Reservations survive failed linker
 attempts until process restart. All prepared files are verified before the
 first new activation and rechecked immediately before their own activation.
 
+Adapter DEX publication checks all type IDs in addition to class definitions.
+Owned references must resolve somewhere in the same complete multi-DEX
+adapter. Direct references into other isolated adapters are rejected; host
+resource IDs and shared host APIs remain permitted. Primitive/array type
+descriptors are handled explicitly. This is a conservative ASCII linkage
+policy, not a substitute for ART verification or device tests.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
