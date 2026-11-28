@@ -30,7 +30,8 @@ compiler build is not proof of correct gameplay or a performance improvement.
   mapped bus helpers). Cold ALU instructions use lazily generated immutable
   W^X slabs indexed by opcode; no mapping is allocated for memory/control
   operations. The two SH2 CPUs own independent single-op slabs. Each cached
-  block retains two outgoing links to stable cache slots and can execute a
+  block retains four polymorphic outgoing links (MRU first) to stable slots
+  in a 256-entry, two-way set-associative per-CPU translation cache and can execute a
   bounded chain of 16 validated blocks without returning to the outer loop.
   Links always recheck fetch mappings, code bytes and cycle budget. Direct
   BRA/BSR targets with a pure native delay slot are fused into one trace:

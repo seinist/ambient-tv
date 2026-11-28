@@ -87,6 +87,33 @@ static void test_linked_traces(void) {
     ambient_sh2_clear();
     puts("SH2 fused BRA/BSR traces, register state, chained exits and stale-source invalidation passed");
 }
+static void test_associative_cache(void) {
+    u16 program[8]={0x7101,0x7102,0x7103,0x7104,0x7105,0x7106,0x7107,0x7108};
+    SH2_struct got;
+    const u32 base=0x06000100u;
+    u32 collide=base+2;
+    while(ambient_sh2_slot(collide)!=ambient_sh2_slot(base))collide+=2;
+    u32 third=collide+2;
+    while(ambient_sh2_slot(third)!=ambient_sh2_slot(base))third+=2;
+    AmbientSh2Block* executed=NULL;
+    setup_program(&got,program,8,base);
+    for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+        if(ambient_sh2_try_block(&got,100,NULL,&executed))abort();
+    got.program_base=got.regs.PC=collide;
+    for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+        if(ambient_sh2_try_block(&got,100,NULL,&executed))abort();
+    AmbientSh2Block* first=ambient_sh2_lookup(0,base,0);
+    AmbientSh2Block* second=ambient_sh2_lookup(0,collide,0);
+    if(!first||!second||first==second||!first->code||!second->code)abort();
+    /* Touch first, replace the other way, and reject the stale linked slot. */
+    if(ambient_sh2_lookup(0,base,0)!=first)abort();
+    if(ambient_sh2_lookup(0,third,1)!=second || second->pc!=third || second->code)abort();
+    got.regs.PC=collide;
+    if(ambient_sh2_try_block(&got,100,second,&executed))abort();
+    if(ambient_sh2_lookup(0,base,0)!=first||!first->code)abort();
+    ambient_sh2_clear();
+    puts("SH2 two-way cache collision and stale dynamic-link replacement passed");
+}
 static void test_indirect_native_exits(void) {
     const u16 branches[]={0x0123,0x0103,0x412b,0x410b,0x000b};
     const u16 slots[]={0x7105,0xe101,0x412a,0x002a,0x0018};
@@ -154,6 +181,7 @@ static void test_resident_cache_traces(void) {
 int main(void) {
     test_linked_traces();
     test_indirect_native_exits();
+    test_associative_cache();
     test_resident_cache_traces();
     unsigned legal=0, illegal=0, delayed=0;
     u32 seed=0x6a09e667u;

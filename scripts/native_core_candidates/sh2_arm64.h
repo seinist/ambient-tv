@@ -398,7 +398,10 @@ static void ambient_sh2_delay_native(SH2_struct* sh, u32 addr)
         ((opcodefunc*)sh->opcodes)[sh->instruction](sh); /* illegal opcode or W^X failure */
     sh->regs.PC-=2;
 }
-#define AMBIENT_SH2_SLOTS 64
+#define AMBIENT_SH2_SETS 128
+#define AMBIENT_SH2_WAYS 2
+#define AMBIENT_SH2_SLOTS (AMBIENT_SH2_SETS*AMBIENT_SH2_WAYS)
+#define AMBIENT_SH2_EDGES 4
 #define AMBIENT_SH2_HOT 4
 
 typedef struct AmbientSh2Block AmbientSh2Block;
@@ -414,11 +417,12 @@ struct AmbientSh2Block {
     opcodefunc terminal_handler;
     void* code;
     size_t bytes;
-    struct { uint32_t pc; AmbientSh2Block* target; } edges[2];
-    unsigned next_edge;
+    struct { uint32_t pc; AmbientSh2Block* target; } edges[AMBIENT_SH2_EDGES];
+    unsigned next_edge, last_edge;
 };
 static AmbientSh2Block ambient_sh2_cache[2][AMBIENT_SH2_SLOTS];
 static int ambient_sh2_disabled[2];
+static uint8_t ambient_sh2_victim[2][AMBIENT_SH2_SETS];
 
 static void ambient_sh2_clear(void)
 {
@@ -435,6 +439,7 @@ static void ambient_sh2_clear(void)
     memset(ambient_sh2_single,0,sizeof(ambient_sh2_single));
     memset(ambient_sh2_cache, 0, sizeof(ambient_sh2_cache));
     memset(ambient_sh2_disabled, 0, sizeof(ambient_sh2_disabled));
+    memset(ambient_sh2_victim,0,sizeof(ambient_sh2_victim));
 }
 
 static int ambient_sh2_eligible(const SH2_struct* context)
@@ -481,7 +486,31 @@ static int ambient_sh2_peek(SH2_struct* context,fetchfunc fetch,u32 addr,u16* op
 
 static unsigned ambient_sh2_slot(uint32_t pc)
 {
-    return (pc>>1 ^ pc>>9)&(AMBIENT_SH2_SLOTS-1);
+    return (pc>>1 ^ pc>>9 ^ pc>>17 ^ pc>>25)&(AMBIENT_SH2_SETS-1);
+}
+
+/* Set-associative translated-block cache. Linked pointers always refer to
+ * permanent slots, never to freed code pages. The tag is checked again
+ * before entry, including after a replacement of the pointed-to slot. */
+static AmbientSh2Block* ambient_sh2_lookup(unsigned cpu,u32 pc,int allocate)
+{
+    const unsigned set=ambient_sh2_slot(pc);
+    unsigned empty=AMBIENT_SH2_WAYS;
+    for(unsigned way=0;way<AMBIENT_SH2_WAYS;++way) {
+        AmbientSh2Block* b=&ambient_sh2_cache[cpu][set+way*AMBIENT_SH2_SETS];
+        if(b->pc==pc && (b->hits||b->code||b->has_terminal)) {
+            ambient_sh2_victim[cpu][set]=(uint8_t)(way^1u);
+            return b;
+        }
+        if(!b->hits&&!b->code&&!b->has_terminal&&empty==AMBIENT_SH2_WAYS)empty=way;
+    }
+    if(!allocate)return NULL;
+    const unsigned way=empty<AMBIENT_SH2_WAYS?empty:ambient_sh2_victim[cpu][set];
+    AmbientSh2Block* b=&ambient_sh2_cache[cpu][set+way*AMBIENT_SH2_SETS];
+    if(b->code)munmap(b->code,b->bytes);
+    memset(b,0,sizeof(*b));b->pc=pc;
+    ambient_sh2_victim[cpu][set]=(uint8_t)(way^1u);
+    return b;
 }
 
 static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
@@ -500,10 +529,11 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     if(yabsys.sh2_cache_enabled && !ambient_sh2_peek(context,fetch,pc,&first))return 0;
     const unsigned cpu = context->isslave ? 1 : 0;
     if (ambient_sh2_disabled[cpu]) return 0;
-    AmbientSh2Block* block = linked ? linked : &ambient_sh2_cache[cpu][ambient_sh2_slot(pc)];
+    AmbientSh2Block* block = linked ? linked : ambient_sh2_lookup(cpu,pc,1);
     /* A cache slot is stable, but its translation may have been replaced.
      * Linked targets never bypass guest-code, fetch or cycle-budget checks. */
     if(linked && (block->pc!=pc || (!block->code && !block->has_terminal)))return 0;
+    if(linked)ambient_sh2_victim[cpu][ambient_sh2_slot(pc)]=(uint8_t)(((block-ambient_sh2_cache[cpu])/AMBIENT_SH2_SETS)^1u);
     if (block->pc == pc && (block->code || block->has_terminal) &&
         block->cycles <= budget - context->cycles &&
         (!block->has_terminal || block->cycles < budget - context->cycles)) {
@@ -563,7 +593,8 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     if (block->hits < AMBIENT_SH2_HOT && ++block->hits < AMBIENT_SH2_HOT) return 0;
     if (block->count == 1) {
         u16 current;
-        if (!ambient_sh2_peek(context,fetch,pc,&current) || current == block->ops[0]) return 0;
+        if (!ambient_sh2_peek(context,fetch,pc,&current))return 0;
+        if(!yabsys.sh2_cache_enabled && current==block->ops[0])return 0;
         block->count = 0;
     }
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
@@ -709,7 +740,8 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     return 0; /* cold execution uses the native single-op path */
 }
 
-/* Two cached outgoing edges per block accommodate taken/not-taken branches.
+/* Four cached outgoing edges per block accommodate polymorphic jumps.
+ * Try the most recently used edge first and retain exact target tags.
  * Never patch RX pages. Chained entry uses the exact same validation as an
  * ordinary cache hit and writes back architectural state before helpers.
  */
@@ -722,15 +754,20 @@ static int ambient_sh2_try(SH2_struct* context,u32 budget)
         const uint32_t pc=context->regs.PC;
         const unsigned cpu=context->isslave?1:0;
         AmbientSh2Block* target=NULL;
-        for(unsigned i=0;i<2;++i)
-            if(current->edges[i].target && current->edges[i].pc==pc) {
-                target=current->edges[i].target;break;
+        for(unsigned j=0;j<AMBIENT_SH2_EDGES;++j) {
+            const unsigned i=(current->last_edge+j)&(AMBIENT_SH2_EDGES-1);
+            AmbientSh2Block* candidate=current->edges[i].target;
+            if(candidate && current->edges[i].pc==pc && candidate->pc==pc &&
+               (candidate->code||candidate->has_terminal)) {
+                target=candidate;current->last_edge=i;break;
             }
+        }
         if(!target) {
-            target=&ambient_sh2_cache[cpu][ambient_sh2_slot(pc)];
-            if(target->pc!=pc || (!target->code && !target->has_terminal))break;
-            const unsigned i=current->next_edge++&1u;
+            target=ambient_sh2_lookup(cpu,pc,0);
+            if(!target || (!target->code && !target->has_terminal))break;
+            const unsigned i=current->next_edge++&(AMBIENT_SH2_EDGES-1);
             current->edges[i].pc=pc;current->edges[i].target=target;
+            current->last_edge=i;
         }
         AmbientSh2Block* completed=NULL;
         if(!ambient_sh2_try_block(context,budget,target,&completed))break;
