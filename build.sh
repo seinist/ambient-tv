@@ -742,7 +742,12 @@ ensure_vlc_vulkan() {
             [[ -f "$ROOT_DIR/app/libs/.projectm-pcm-vlc-$abi" ]] || complete=0
             [[ -f "$ROOT_DIR/app/libs/.svp-vlc-$abi" && "$(<"$ROOT_DIR/app/libs/.svp-vlc-$abi")" == "$(svp_adapter_hash vlc)" ]] || complete=0
         done
-        [[ "$complete" == 1 ]] && return 0
+        if [[ "$complete" == 1 ]]; then
+            if [[ "${VLC_DEX_MODULE:-0}" != 1 ]] || python3 "$ROOT_DIR/scripts/check_vlc_shared_native.py" "$artifact" --abis "${SUPPORTED_ABIS[*]}"; then
+                return 0
+            fi
+            log "Cached VLC is missing required shared native exports; rebuilding"
+        fi
     fi
     log "Building Vulkan-enabled LibVLC for ${SUPPORTED_ABIS[*]}"
     bash "$ROOT_DIR/scripts/build_vlc_vulkan.sh"

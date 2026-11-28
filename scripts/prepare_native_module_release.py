@@ -116,6 +116,12 @@ def verify(root, module, run_id, sha):
                     raise ValueError("Unexpected LibretroDroid DEX native payload")
             elif native != roots:
                 raise ValueError("Unexpected native payload")
+            dex_mode = any(n.startswith("code/") for n in names)
+            if dex_mode and module in {"vlc", "libretrodroid"}:
+                from check_vlc_shared_native import CORE, JNI, LIBRETRO, require_exports
+                required = {"libvlc.so": CORE, "libvlcjni.so": JNI} if module == "vlc" else {"liblibretrodroid.so": LIBRETRO}
+                for name, exports in required.items():
+                    require_exports(archive.read("lib/" + name), exports, f"{abi}/{name}")
             for name in native:
                 validate_elf(archive.read("lib/" + name), abi)
             if archive.testzip() is not None:

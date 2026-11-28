@@ -184,6 +184,19 @@ jobs:
             exit 1
           fi
 
+      - name: Compile isolated Libretro DEX and verify stripped host class boundary
+        env:
+          LIBRETRO_DEX_MODULE: '1'
+          SKIP_MPV_NATIVE: '1'
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager" --channel=3 'build-tools;37.0.0'
+          ./gradlew :app:exportLibretroAdapterDex -PAPK_ABI=arm64 -PMODULE_PACKAGING=full
+          test -s app/build/outputs/system-modules/libretrodroid-dex/classes.dex
+          test -s app/build/outputs/system-modules/libretrodroid-dex/host-binding.sha256
+          ./gradlew :app:stripReleaseSmartTubeClasses -PAPK_ABI=arm64 -PMODULE_PACKAGING=modular-preview
+
       - name: Upload input artwork previews
         if: always()
         uses: actions/upload-artifact@v5

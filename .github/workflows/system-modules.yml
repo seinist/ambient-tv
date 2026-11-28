@@ -24,6 +24,9 @@ on:
       - 'scripts/strip_smarttube_classes.py'
       - 'scripts/test_strip_smarttube_classes.py'
       - 'scripts/patch_vlc_module_loader.py'
+      - 'scripts/check_vlc_shared_native.py'
+      - 'scripts/test_check_vlc_shared_native.py'
+      - 'native/ambientsvp/include/ambientsvp_shared.h'
       - 'scripts/test_patch_vlc_module_loader.py'
       - 'scripts/patch_libretrodroid_module_loader.py'
       - 'scripts/test_patch_libretrodroid_module_loader.py'
@@ -88,6 +91,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_export_monogram_adapter.py
           python3 -m unittest discover -s scripts -p test_strip_smarttube_classes.py
           python3 -m unittest discover -s scripts -p test_patch_vlc_module_loader.py
+          python3 -m unittest discover -s scripts -p test_check_vlc_shared_native.py
           python3 -m unittest discover -s scripts -p test_patch_libretrodroid_module_loader.py
           python3 -m unittest discover -s scripts -p test_patch_moonlight_module_loader.py
           python3 -m unittest discover -s scripts -p test_reconcile_moonlight_module_host.py

@@ -62,6 +62,16 @@ class ModularPreviewTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "bundled SmartTube"):
                 preview.verify_no_optional_classes(dex(name, True))
         preview.verify_no_optional_classes(dex("Lcom/liskovsoft/youtubeapi/R$raw;", True))
+        for name in ("Lorg/videolan/libvlc/LibVLC;", "Lcom/ambient/tv/ui/player/backend/VlcModuleAdapter;"):
+            preview.verify_no_optional_classes(dex(name, False), expect_vlc_dex=True)
+            with self.assertRaisesRegex(ValueError, "bundled VLC"):
+                preview.verify_no_optional_classes(dex(name, True), expect_vlc_dex=True)
+        for name in ("Lcom/swordfish/libretrodroid/GLRetroView;", "Lcom/ambient/tv/ui/games/BundledRetroView;"):
+            preview.verify_no_optional_classes(dex(name, False), expect_libretro_dex=True)
+            with self.assertRaisesRegex(ValueError, "bundled LibretroDroid"):
+                preview.verify_no_optional_classes(dex(name, True), expect_libretro_dex=True)
+        preview.verify_no_optional_classes(dex("Lcom/swordfish/libretrodroid/R$id;", True), expect_libretro_dex=True)
+        preview.verify_no_optional_classes(dex("Lcom/ambient/tv/ui/games/RetroViewPort;", True), expect_libretro_dex=True)
 
     def test_vlc_custom_build_must_not_ship_native_roots(self):
         with tempfile.TemporaryDirectory() as root:
