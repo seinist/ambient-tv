@@ -24,7 +24,7 @@
 #define SVP_VK_PHASES 8
 #define SVP_VK_JOBS 4
 #define SVP_VK_FRAMES (4 + SVP_VK_PHASES)
-#define SVP_VK_IMAGES (6 + 3*SVP_VK_PHASES)
+#define SVP_VK_IMAGES (12 + 3*SVP_VK_PHASES)
 struct svp_vk_job {
     VkCommandPool pool;
     VkFence fence;
@@ -960,7 +960,7 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
         double time=s->origin+(double)tick++/s->target_rate;
         double phase=(time-s->previous->pts)/duration;
         if (phase< -0.25 || phase>1.0) return false;
-        times[count]=time;phases[count++]=(float)fmax(0.0,phase);
+        times[count]=time;phases[count++]=(float)(s->algorithm?round(fmax(0.0,phase)*256.0)/256.0:fmax(0.0,phase));
     }
     if (!count) return false;
     const struct mp_image *a=s->previous;
