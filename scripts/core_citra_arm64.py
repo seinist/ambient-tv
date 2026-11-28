@@ -26,6 +26,74 @@ def replace(root, path, old, new, count=1):
         raise ValueError(f"{path}: expected {count} occurrences of {old[:80]!r}")
     file.write_text(source.replace(old, new))
 
+def prepare_fastmem(root, dependency):
+    import shutil
+    shutil.copyfile(Path(__file__).parent / "native_core_candidates/citra_fastmem.h",
+                    root / "src/core/ambient_fastmem.h")
+    replace(root, "src/core/memory.h", '#include "core/mmio.h"',
+            '#include "core/mmio.h"\n#include "core/ambient_fastmem.h"')
+    replace(root, "src/core/memory.h", "struct PageTable {",
+            "struct PageTable {\n    AmbientFastmem::Arena fastmem;")
+    replace(root, "src/core/memory.cpp", "        if (memory != nullptr)\n            memory += PAGE_SIZE;\n    }",
+            "        if (memory != nullptr)\n            memory += PAGE_SIZE;\n    }\n"
+            "    page_table.fastmem.sync(page_table.pointers, end - size, size);")
+    replace(root, "src/core/memory.cpp",
+            "            default:\n                UNREACHABLE();\n            }\n        }\n    }\n}\n\nvoid RasterizerFlushRegion",
+            "            default:\n                UNREACHABLE();\n            }\n        }\n"
+            "        current_page_table->fastmem.sync(current_page_table->pointers, vaddr >> PAGE_BITS, 1);\n"
+            "    }\n}\n\nvoid RasterizerFlushRegion")
+    # Convert only the kernel-owned byte buffers that may be guest mapped.
+    files = ("src/core/hle/kernel/memory.h", "src/core/hle/kernel/memory.cpp",
+             "src/core/hle/kernel/process.h", "src/core/hle/kernel/process.cpp",
+             "src/core/hle/kernel/vm_manager.h", "src/core/hle/kernel/vm_manager.cpp",
+             "src/core/hle/kernel/shared_memory.h", "src/core/hle/kernel/shared_memory.cpp",
+             "src/core/hle/kernel/ipc.cpp", "src/core/hle/applets/applet.h",
+             "src/core/hle/applets/mint.cpp", "src/core/hle/applets/erreula.cpp",
+             "src/core/hle/applets/mii_selector.cpp", "src/core/hle/applets/swkbd.cpp",
+             "src/core/hle/service/ldr_ro/ldr_ro.cpp", "src/core/loader/ncch.cpp",
+             "src/core/loader/elf.cpp", "src/core/loader/3dsx.cpp")
+    for name in files:
+        file = root / name
+        source = file.read_text()
+        updated = source.replace("std::shared_ptr<std::vector<u8>>",
+                                 "std::shared_ptr<AmbientFastmem::MemoryBlock>").replace(
+            "std::make_shared<std::vector<u8>>", "std::make_shared<AmbientFastmem::MemoryBlock>").replace(
+            "const std::vector<u8>* block", "const AmbientFastmem::MemoryBlock* block")
+        if updated == source:
+            raise ValueError(f"Fastmem backing contract changed: {name}")
+        # Include directly; no reliance on incidental include order.
+        first_include = updated.index("#include ")
+        updated = updated[:first_include] + '#include "core/ambient_fastmem.h"\n' + updated[first_include:]
+        file.write_text(updated)
+    # A guest-page crossing access must not partially commit to a writable
+    # mapped host page before faulting on the following page.
+    file = dependency / "src/dynarmic/backend/arm64/emit_arm64_memory.cpp"
+    source = file.read_text()
+    marker = "    const auto [Xbase, Xoffset] = FastmemEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);"
+    if source.count(marker) != 2:
+        raise ValueError("Dynarmic fastmem boundary changed")
+    file.write_text(source.replace(marker,
+        "    EmitDetectMisalignedVAddr<bitsize>(code, ctx, Xaddr, fallback);\n" + marker))
+    # Legacy memory callbacks also used a potentially out-of-range memcpy on
+    # cross-page accesses. Split only those accesses into little-endian bytes.
+    replace(root, "src/core/memory.cpp", "T Read(const VAddr vaddr) {",
+            """T Read(const VAddr vaddr) {
+    if (sizeof(T) > 1 && (vaddr & PAGE_MASK) > PAGE_SIZE - sizeof(T)) {
+        T value{};
+        auto* bytes = reinterpret_cast<u8*>(&value);
+        for (size_t i = 0; i < sizeof(T); ++i)
+            bytes[i] = Read<u8>(vaddr + static_cast<u32>(i));
+        return value;
+    }""")
+    replace(root, "src/core/memory.cpp", "void Write(const VAddr vaddr, const T data) {",
+            """void Write(const VAddr vaddr, const T data) {
+    if (sizeof(T) > 1 && (vaddr & PAGE_MASK) > PAGE_SIZE - sizeof(T)) {
+        const auto* bytes = reinterpret_cast<const u8*>(&data);
+        for (size_t i = 0; i < sizeof(T); ++i)
+            Write<u8>(vaddr + static_cast<u32>(i), bytes[i]);
+        return;
+    }""")
+
 def prepare(root):
     root = root.resolve()
     dependency = root / "externals/ambient-dynarmic"
@@ -40,6 +108,8 @@ def prepare(root):
     for path, pin in DEPENDENCIES.items():
         if git(dependency / path, "rev-parse", "HEAD") != pin:
             raise ValueError(f"Dependency pin mismatch: {path}")
+
+    prepare_fastmem(root, dependency)
 
     # Keep Citra's old fmt target and ABI isolated from Dynarmic's newer headers.
     for path in ("CMakeLists.txt", "externals/CMakeLists.txt",
@@ -156,8 +226,11 @@ private:
     config.only_detect_misalignment_via_page_table_on_page_boundary = true;
     config.code_cache_size = 32 * 1024 * 1024;
     config.unsafe_optimizations = false;
-    // No contiguous, alias-coherent 4 GiB mapping exists in Citra 2018.
-    config.fastmem_pointer = std::nullopt;""")
+    // Only alias-coherent, host-page-aligned backing is mapped; all other
+    // guest pages fault back to the existing memory callbacks.
+    if (current_page_table)
+        config.fastmem_pointer = current_page_table->fastmem.ensure(current_page_table->pointers);
+    config.fastmem_exclusive_access = false;""")
     # The single emulated CPU serializes guest reads/writes. Do not execute
     # compare-and-write on MMIO, rasterizer-cached pages or page-straddling data.
     marker = "    void InterpreterFallback(VAddr pc, std::size_t num_instructions) override {"
