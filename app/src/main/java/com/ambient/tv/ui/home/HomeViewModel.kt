@@ -115,6 +115,7 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> "radio"
         ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) -> "telegram"
+        ratingKey.startsWith(HOME_PROGRAMME_REMINDER_PREFIX) -> "reminders"
         ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX) -> "youtube"
         EmbyBackend.owns(ratingKey) -> "emby"
         JellyfinBackend.owns(ratingKey) -> "jellyfin"
@@ -130,6 +131,7 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> MediaSystem.RADIO.customName ?: "Radio Browser"
         ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) -> MediaSystem.TELEGRAM.customName ?: "Monogram"
+        ratingKey.startsWith(HOME_PROGRAMME_REMINDER_PREFIX) -> studio
         ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX) -> "SmartTube"
         EmbyBackend.owns(ratingKey) -> "Emby"
         JellyfinBackend.owns(ratingKey) -> "Jellyfin"
@@ -221,6 +223,8 @@ class HomeViewModel @Inject constructor(
     private val loadCoordinator: BrowseLoadCoordinator,
     private val rommLibrary: com.ambient.tv.romm.RommLibrary,
 ) : ViewModel() {
+
+    private val programmeReminderStore = com.ambient.tv.livetv.LiveTvReminderStore(context)
 
     val homeHeroStyleKey: String get() = appPreferences.homeHeroStyleKey
     val homeHeroIntensityPercent: Int get() = appPreferences.homeHeroIntensityPercent
@@ -512,6 +516,16 @@ class HomeViewModel @Inject constructor(
             HomePlaybackProvider.MEDIA -> { commit(); true }
             HomePlaybackProvider.TELEGRAM -> telegramPlaybackContext.commitReturn(pending.scope, pending.contextRevision) { commit() }
             else -> youtubePlaybackContext.commitReturn(pending.scope, pending.contextRevision.toInt()) { commit() }
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            combine(programmeReminderStore.reminders, programmeReminderStore.homeVisible) { entries, visible ->
+                entries to visible
+            }.distinctUntilChanged().collect {
+                if (hasEntered) publishRows(lastPublication?.first ?: (_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            }
         }
     }
 
@@ -2548,8 +2562,10 @@ class HomeViewModel @Inject constructor(
         val combinedRows = visibleMediaRows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
                 it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || it.id.startsWith("games.") ||
-                it.id.startsWith("romm.")
-        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + rommRows + youtubeRows + telegramRows
+                it.id.startsWith("romm.") || it.id == HOME_PROGRAMME_REMINDER_ROW
+        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + rommRows + youtubeRows + telegramRows +
+            listOfNotNull(if (!plexOnly && !jellyfinOnly && !embyOnly && programmeReminderStore.homeVisible.value)
+                programmeReminderHomeRow(context, programmeReminderStore.reminders.value) else null)
         val playedRow = trailerPlaybackReturn.source?.takeIf {
             playbackRowEnabled(it) || (it.items.none { item -> homeTrailerVideoId(item.ratingKey) != null ||
                 homeYouTubeVideoId(item.ratingKey) != null || item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) })
@@ -2724,7 +2740,7 @@ class HomeViewModel @Inject constructor(
 
     fun onItemFocused(rowId: String, item: MediaItem) {
         trailerPlaybackReturn.focused(rowId, item.ratingKey)
-        if (!item.ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX)) metadataPrefetcher.detail(item.ratingKey)
+        if (!item.ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX) && !item.ratingKey.startsWith(HOME_PROGRAMME_REMINDER_PREFIX)) metadataPrefetcher.detail(item.ratingKey)
         val current = _uiState.value as? HomeUiState.Loaded ?: return
         val focusChanged = !activeFocusKnown || activeFocusedRatingKey != item.ratingKey || activeFocusedRowId != rowId
         val mustReleaseInitialFocus = current.initialFocusTarget != HomeInitialFocusTarget.NONE
