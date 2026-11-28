@@ -1814,3 +1814,38 @@ measurements have been recorded yet.
 Audit benchmark extension: translated nonuniform FP16 source textures, four outstanding native tickets, same-phase final output comparison, algorithm 23 four-picture inputs, and UHD workload. Physical-device execution remains required.
 
 Audit hardening: up to three ordered field snapshots; copy only final vectors, scene flags, SADs and optional extended vectors. Bounded render-side fence polling does not abandon GPU-owned resources. The final texture/device destruction still requires proof of retirement or confirmed device loss. Same-handle source overwrite and new generation are exercised on both benchmark algorithms.
+
+Further HDR pipeline and lifecycle integration
+--------------------------------------------
+Direct MPV may prefetch decoded source pairs while the oldest HDR
+batch fence is pending. A FIFO of at most four native jobs protects
+output tick ordering; V1 replay needs no new statistics, while live
+and legacy replay collect exact metadata at output consumption.
+VLC's scheduler supplies immutable interpolation phase groups. The
+libplacebo display can submit up to four measured phases into distinct
+textures, then collect each phase's metadata and legacy geometry only
+when that tick is rendered. Skipped/aborted tickets are discarded
+without freeing in-flight GPU resources. Both paths preserve original
+source pixels and metadata on unsupported/failed readback.
+
+Algorithm 23 caches three adjacent ordered source-pair analyses using
+never-reused source IDs. Only successful submission+seal publishes
+entries. Both direct MPV and shared libplacebo bridge supply identities;
+queue order protects device-local cache overwrites. Tests exercise two
+adjacent hits and discarded unsubmitted recordings. Same-format source
+texture content updates use libplacebo's timeline rather than waiting
+on the CPU; incompatible replacement uses bounded retirement. Final
+GPU destruction still requires proof of retirement or confirmed loss.
+
+Android hashes network snapshots during copying, parses HDR metadata
+from the same samples fed to the content-cut decoder, and retains
+small content-addressed plan/statistics artifacts for repeat playback
+(128 MiB / 12 entries maximum; native replay validates its own profile).
+The first analysis of a new source still requires content-cut decoding
+before measured synthesis, since authoritative boundaries are needed
+by the current native scene accumulator. A network snapshot remains
+necessary for byte-identical capture and replay; no persistent video
+snapshot is cached. Adopted scene files outlive their native player and
+are removed after confirmed player retirement, while canceled offscreen
+analysis owns its temporary files until native destruction completes.
+Physical Android driver and full CI validation remain required.

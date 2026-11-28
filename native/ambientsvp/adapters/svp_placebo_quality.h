@@ -123,6 +123,21 @@ static inline void svp_placebo_quality_retire_texture(pl_gpu gpu,struct svp_plac
         if(!svp_placebo_retire_one(gpu,s,0,wait))break;
     }
 }
+// For live replacement, never block indefinitely on a driver. Keep
+// the existing allocation and reject this synthesis if ownership
+// has not returned. Final destruction uses the stricter drain above.
+static inline bool svp_placebo_quality_try_retire_texture(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
+{
+    while(s->pending_count){
+        bool needed=texture==NULL;
+        for(unsigned i=0;i<s->pending_count;i++)
+            for(unsigned j=0;j<s->pending[i].count;j++)needed|=s->pending[i].textures[j]==texture;
+        if(!needed)return true;
+        if(s->pending[0].stats_token)return false;
+        if(!svp_placebo_retire_one(gpu,s,0,2))return false;
+    }
+    return true;
+}
 static inline void svp_placebo_quality_source_changed(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
 {
     (void)gpu;(void)texture;
@@ -149,7 +164,8 @@ static inline bool svp_placebo_quality_target(pl_gpu gpu,struct svp_placebo_qual
     if(w<=0||h<=0||!fmt)return false;
     if(*tex&&(*tex)->params.w==w&&(*tex)->params.h==h&&(*tex)->params.format==fmt&&
         (*tex)->params.sampleable&&(*tex)->params.renderable&&(!storage||(*tex)->params.storable))return true;
-    if(*tex)svp_placebo_quality_retire_texture(gpu,s,*tex);
+    if(*tex&&!svp_placebo_quality_try_retire_texture(gpu,s,*tex))return false;
+    if(s->device_lost)return false;
     return pl_tex_recreate(gpu,tex,pl_tex_params(.w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true,.storable=storage));
 }
 static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_placebo_quality *s,
@@ -190,7 +206,10 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
     if(pass&&(!s->render_pass||!hdr||hdr->count<1||hdr->count>3))return false;
     const int w=a->params.w,h=a->params.h;
     if(!s->engine||w!=s->w||h!=s->h||memcmp(&s->options,options,sizeof(*options))){
-        svp_placebo_quality_retire_texture(gpu,s,NULL);
+        // Incompatible quality/geometry must not consume old stats as
+        // new output. Abandon them, then retire only with bounded waits.
+        for(unsigned i=0;i<s->pending_count;i++)s->pending[i].stats_token=0;
+        if(!svp_placebo_quality_try_retire_texture(gpu,s,NULL)||s->device_lost)return false;
         if(s->engine)s->destroy(s->engine);
         s->engine=s->create(vk->instance,vk->phys_device,vk->device,vk->get_proc_addr,w,h,3,options);
         if(!s->engine)return false;
