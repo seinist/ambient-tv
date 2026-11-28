@@ -32,6 +32,25 @@ def selected(x,y,rect,center,axes,rotation):
         raise ValueError("fixture requires orthogonal ellipse")
     return Fraction(dx*dx,axes[0]**2)+Fraction(dy*dy,axes[1]**2)<=1
 
+def trig_decimal(angle):
+    # Independent 70-digit Taylor series for exact integer-degree input.
+    with localcontext() as ctx:
+        ctx.prec = 70
+        pi = D("3.1415926535897932384626433832795028841971693993751058209749445923078164")
+        x = D(angle)*pi/180
+        sin, cos, st, ct = x, D(1), x, D(1)
+        for k in range(1,80):
+            st *= -x*x/(2*k*(2*k+1))
+            ct *= -x*x/((2*k-1)*2*k)
+            sin += st
+            cos += ct
+        return cos,sin
+
+def ellipse_decimal_value(x,y,a,b,c,s):
+    with localcontext() as ctx:
+        ctx.prec = 65
+        return ((x*c+y*s)/a)**2+((-x*s+y*c)/b)**2
+
 def distribution(values, percentages, version):
     ordered = sorted(values)
     result = []
@@ -86,6 +105,35 @@ class Reference(unittest.TestCase):
         self.assertEqual(distribution(values,[1,5,10,25,50,75,90,95,99],1),[100,0,255,100,200,300,400,400,400])
         self.assertEqual(sum(selected(x,y,(0,0,8,8),(0,0),(4,2),0) for y in range(8) for x in range(8)),10)
         self.assertEqual(sum(selected(x,y,(0,0,8,8),(0,0),(4,2),90) for y in range(8) for x in range(8)),10)
+
+    def test_arbitrary_angle_ellipse_reference(self):
+        scale = 1 << 30
+        for angle,expected in [(45,13),(73,11)]:
+            c,s=trig_decimal(angle)
+            selected_count=sum(ellipse_decimal_value(x,y,4,2,c,s)<=1
+                               for y in range(34) for x in range(66))
+            self.assertEqual(selected_count,expected)
+        rng=random.Random(20944030)
+        for angle in [1,17,45,73,89,91,137,179]:
+            c,s=trig_decimal(angle)
+            ci,si=quant(c,scale),quant(s,scale)
+            for _ in range(1000):
+                a=rng.randrange(1,65536);b=rng.randrange(1,a+1)
+                x=rng.randrange(-3839,3840);y=rng.randrange(-2159,2160)
+                v=ellipse_decimal_value(x,y,a,b,c,s)
+                u,t=x*ci+y*si,-x*si+y*ci
+                lhs=u*u*b*b+t*t*a*a
+                rhs=a*a*b*b*scale*scale
+                self.assertLess(lhs,1<<127)
+                # Compare the fixed-point predicate against an
+                # independently evaluated continuous ellipse away
+                # from the analytically bounded coefficient error.
+                with localcontext() as ctx:
+                    ctx.prec=65
+                    error=(D(abs(x)+abs(y))/(2*scale))**2*(D(1)/(a*a)+D(1)/(b*b))
+                    error+=2*D(abs(x)+abs(y))/(2*scale)*(abs(x*c+y*s)/(a*a)+abs(-x*s+y*c)/(b*b))
+                    if abs(v-1)>error:
+                        self.assertEqual(lhs<=rhs,v<=1)
 
     def test_portable_gpu_integer_arithmetic(self):
         # Independent arbitrary-precision oracle versus the two-word
