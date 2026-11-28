@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, compile_source
 from core_link_evidence import target_commands
-from core_hotpath_patches import prepare_hotpaths, replace_once, SUPPORTED as HOTPATH_CORES
+from core_hotpath_patches import prepare_hotpaths, replace_once, patched_sources, SUPPORTED as HOTPATH_CORES
 from core_hotpath_remaining import prepare_remaining
 import subprocess
 import struct
@@ -372,31 +372,25 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
             "shared_link_outputs": shared_outputs, "acceleration": acceleration}
 
 
-def prepare_cmake(root, core, profile):
-    if core == "citra2018":
-        path = root / "src/common/CMakeLists.txt"
-        source = path.read_text()
-        marker = 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR ${BUILD_REPOSITORY})'
-        if source.count(marker) != 1:
-            raise ValueError("Citra CI version template changed")
-        path.write_text(source.replace(marker, 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR "${BUILD_REPOSITORY}")'))
-    # SwanStation's pin sets IPO unconditionally for Release, overriding cache flags.
-    # Preserve the upstream baseline. In explicit candidates disable only the
-    # automatic IPO block; the workflow supplies the requested LTO mode itself.
-    if profile not in ({"o3", "thinlto", "o3-thinlto", "pgo-generate", "pgo-use"} | PUBLIC_EXPERIMENTS):
-        return
-    if core == "panda3ds":
-        # ENABLE_USER_BUILD also disables assertions; keep that setting and
-        # disable only its implicit IPO so the explicit ThinLTO policy wins.
-        path = root / "CMakeLists.txt"
-        source = path.read_text()
-        marker = "if(ENABLE_LTO OR ENABLE_USER_BUILD)"
-        if source.count(marker) != 1 or source.count("set_target_properties(panda3ds_libretro PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)") != 1:
-            raise ValueError("Panda3DS IPO recipe changed; inspect the pinned CMakeLists.txt")
-        path.write_text(source.replace(marker, "if(FALSE) # Ambient TV explicit compiler profile"))
-        return
-    if core != "swanstation":
-        return
+def prepare_citra_cmake(root):
+    path = root / "src/common/CMakeLists.txt"
+    source = path.read_text()
+    marker = 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR ${BUILD_REPOSITORY})'
+    if source.count(marker) != 1:
+        raise ValueError("Citra CI version template changed")
+    path.write_text(source.replace(marker, 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR "${BUILD_REPOSITORY}")'))
+
+
+def prepare_panda_cmake(root):
+    path = root / "CMakeLists.txt"
+    source = path.read_text()
+    marker = "if(ENABLE_LTO OR ENABLE_USER_BUILD)"
+    if source.count(marker) != 1 or source.count("set_target_properties(panda3ds_libretro PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)") != 1:
+        raise ValueError("Panda3DS IPO recipe changed; inspect the pinned CMakeLists.txt")
+    path.write_text(source.replace(marker, "if(FALSE) # Ambient TV explicit compiler profile"))
+
+
+def prepare_swan_cmake(root):
     path = root / "CMakeLists.txt"
     source = path.read_text()
     marker = '# Enable LTO/LTCG on Release builds.\nif(CMAKE_BUILD_TYPE MATCHES "Release")'
@@ -404,6 +398,17 @@ def prepare_cmake(root, core, profile):
         raise ValueError("SwanStation IPO recipe changed; inspect the pinned CMakeLists.txt")
     source = source.replace(marker, '# Explicit Ambient TV experiment: flags are provided by the build policy.\nif(FALSE)')
     path.write_text(source)
+
+
+def prepare_cmake(root, core, profile):
+    if core == "citra2018":
+        prepare_citra_cmake(root)
+    if profile not in ({"o3", "thinlto", "o3-thinlto"} | PGO_PROFILES | PUBLIC_EXPERIMENTS):
+        return
+    if core == "panda3ds":
+        prepare_panda_cmake(root)
+    elif core == "swanstation":
+        prepare_swan_cmake(root)
 
 
 def prepare_mupen_offsets(root):
@@ -602,7 +607,9 @@ def main():
         identity = verify_elf_abi(args.binary, args.abi)
         dependencies = dynamic_dependencies(args.readelf, args.binary)
         build_log = args.log.read_text(errors="replace")
-        scoped, link_evidence = target_commands(build_log, args.build_cwd, Path.cwd(), args.linked_library)
+        scoped, link_evidence = target_commands(
+            build_log, args.build_cwd, Path.cwd(), args.linked_library,
+            patched_sources(args.core, args.abi, args.profile))
         if link_evidence["unresolved_local_inputs"]:
             raise ValueError(f"Core has unaudited local linker inputs: {link_evidence['unresolved_local_inputs']}")
         report = {**identity, **link_evidence, "needed_libraries": dependencies, "core": args.core, "abi": args.abi, "commit": args.commit,

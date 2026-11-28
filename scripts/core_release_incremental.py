@@ -44,13 +44,19 @@ def policy_fingerprint(job, root):
     nodes = syntax(root / "scripts/core_build_policy.py")
     # Planner output is already included as the complete selected job.
     # Shared verification and dispatch code remains a conservative dependency.
-    isolated = {"prepare_mupen_offsets", "prepare_snes_threading", "prepare_cmake"}
+    isolated = {"prepare_mupen_offsets", "prepare_snes_threading",
+                "prepare_citra_cmake", "prepare_panda_cmake", "prepare_swan_cmake"}
     omitted = isolated | {"plan", "selection", "PROFILES"}
     common = [n for n in nodes if named(n) not in omitted]
     selected = set()
     profile, core = job["profile"], job["core"]
-    if job["build"] == "cmake":
-        selected.add("prepare_cmake")
+    if core == "citra2018":
+        selected.add("prepare_citra_cmake")
+    if profile in {"o3", "thinlto", "o3-thinlto", "pgo-generate", "pgo-use", "optimized", "optimized-a57"}:
+        if core == "panda3ds":
+            selected.add("prepare_panda_cmake")
+        elif core == "swanstation":
+            selected.add("prepare_swan_cmake")
     if core == "mupen64plus_next_gles3" and "-flto=thin" in job["cflags"].split():
         selected.add("prepare_mupen_offsets")
     if core == "snes9x2010" and profile in {"snes9x2010-threaded", "optimized", "optimized-a57", "pgo-generate", "pgo-use"}:
@@ -71,7 +77,7 @@ def hotpath_fingerprint(core, root):
     entries = {ast.literal_eval(k): v for k, v in zip(table.keys, table.values)}
     # Common patch execution is shared; only the selected entry's source
     # replacement data is hashed, never the entire unrelated PATCHES table.
-    common = [n for n in primary if named(n) in {"replace_once", "prepare_hotpaths"} or isinstance(n, (ast.Import, ast.ImportFrom))]
+    common = [n for n in primary if named(n) in {"replace_once", "prepare_hotpaths", "patched_sources"} or isinstance(n, (ast.Import, ast.ImportFrom))]
     if core in entries:
         return digest(json.dumps({"dispatch": semantic(common),
                                   "executor": semantic([n for n in remaining if named(n) != "PATCHES"]),

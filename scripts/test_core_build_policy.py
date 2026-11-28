@@ -32,6 +32,21 @@ class CoreBuildPolicyTest(unittest.TestCase):
                                    "-DAMBIENT_SH2_ARM64_JIT=1"]],
                                  "yabause/src/sh2int.c", (("AMBIENT_SH2_ARM64_JIT", "1"),)))
 
+    def test_patched_source_contract(self):
+        from core_hotpath_patches import patched_sources
+        from core_link_evidence import source_dependencies
+        for core in self.catalog["cores"]:
+            self.assertTrue(patched_sources(core["core"], "arm64-v8a", "optimized"))
+        self.assertIn("Common/Thread/ThreadManager.cpp", patched_sources("ppsspp", "arm64-v8a", "optimized"))
+        self.assertIn("src/memfile.h", patched_sources("noods", "arm64-v8a", "baseline"))
+        self.assertFalse(patched_sources("picodrive", "x86", "optimized"))
+        self.assertNotIn("libco/arm.c", patched_sources("bsnes", "arm64-v8a", "optimized"))
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root/"a.d").write_text("a.o: src/a.cpp \\\n src/b.h\nsrc/b.h:\n")
+            self.assertEqual(source_dependencies(["-c", "src/a.cpp", "-MF", "a.d"], root),
+                             {root/"src/a.cpp", root/"src/b.h"})
+
     def test_pgo_acceleration_matches_optimized(self):
         for profile in ("pgo-generate", "pgo-use"):
             for core in ("picodrive", "snes9x2010", "mednafen_saturn"):

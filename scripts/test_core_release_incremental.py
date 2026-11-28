@@ -167,6 +167,10 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             self.assertEqual({core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]},
                              {"mupen64plus_next_gles3"})
             policy.write_text(original)
+            policy.write_text(original.replace("Panda3DS IPO recipe changed", "Panda3DS IPO recipe updated"))
+            self.assertEqual({core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]},
+                             {"panda3ds"})
+            policy.write_text(original)
             patches = root / "scripts/core_hotpath_remaining.py"
             patches.write_text(patches.read_text().replace("idle stick needs neither sqrt nor atan2", "idle stick skips sqrt and atan2"))
             changed = {core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]}
