@@ -99,6 +99,7 @@ jobs:
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::synthesis_tests::coverage_and_sad_masks_match_upstream -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::synthesis_tests::all_synthesis_equations_match_reference -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::held_cache_and_submission_benchmark -- --ignored --exact --nocapture
+          AMBIENT_SVP_BENCH_ALGORITHM=23 cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::held_cache_and_submission_benchmark -- --ignored --exact --nocapture
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::native_resident_commands_keep_images_on_shared_device -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident::tests::resident_motion_matches_unpruned_scalar_search -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_candidate_costs_match_cpu -- --ignored --exact

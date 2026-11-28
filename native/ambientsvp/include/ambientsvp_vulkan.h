@@ -104,6 +104,9 @@ typedef struct HeldSubmission AmbientSvpVkHeld;
 int ambient_svp_vk_submit_held(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
     const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **);
 int ambient_svp_vk_retire_held(AmbientSvpVkHeld *,uint32_t wait);
+/* Extended status: 3 consumes on device loss; wait=2 is bounded and
+ * returns 0 if still pending. Legacy retire maps loss to consumed (1). */
+int ambient_svp_vk_retire_held_status(AmbientSvpVkHeld *,uint32_t wait);
 /* generation must change BEFORE any cached source image is overwritten
  * or replaced; zero disables reuse. Only same-queue analysis is reused. */
 int ambient_svp_vk_submit_held_cached(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,

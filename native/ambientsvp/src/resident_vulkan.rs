@@ -506,18 +506,23 @@ impl HeldField{
     }
     unsafe fn copy(&self,p:&VulkanPair,restore:bool){
         let d=&self.device;let cmd=p.command;
-        let before=[vk::MemoryBarrier::default()
-            .src_access_mask(vk::AccessFlags::SHADER_WRITE|vk::AccessFlags::TRANSFER_WRITE|vk::AccessFlags::TRANSFER_READ)
-            .dst_access_mask(vk::AccessFlags::TRANSFER_READ|vk::AccessFlags::TRANSFER_WRITE)];
-        let after=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-            .dst_access_mask(vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE)];
+        let (src,dst)=if restore{(self.buffer,p.field)}else{(p.field,self.buffer)};
+        let barrier=|buffer,src_access,dst_access|vk::BufferMemoryBarrier::default()
+            .buffer(buffer).offset(0).size(p.core.field_size)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .src_access_mask(src_access).dst_access_mask(dst_access);
+        let before=[
+            barrier(src,vk::AccessFlags::SHADER_WRITE|vk::AccessFlags::TRANSFER_WRITE,vk::AccessFlags::TRANSFER_READ),
+            barrier(dst,vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE|vk::AccessFlags::TRANSFER_READ|vk::AccessFlags::TRANSFER_WRITE,
+                vk::AccessFlags::TRANSFER_WRITE)];
+        let after=[barrier(dst,vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE|vk::AccessFlags::TRANSFER_READ)];
         unsafe{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER|vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::TRANSFER,vk::DependencyFlags::empty(),&before,&[],&[]);
-            let (src,dst)=if restore{(self.buffer,p.field)}else{(p.field,self.buffer)};
+                vk::PipelineStageFlags::TRANSFER,vk::DependencyFlags::empty(),&[],&before,&[]);
             d.cmd_copy_buffer(cmd,src,dst,&[vk::BufferCopy::default().size(p.core.field_size)]);
-            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::DependencyFlags::empty(),&after,&[],&[]);
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER|vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),&[],&after,&[]);
         }
     }
 }
@@ -530,7 +535,7 @@ struct Core{
     width:u32,height:u32,gw:u32,gh:u32,field_size:u64,mode:u32,
     in_flight:AtomicU32,aux_in_flight:AtomicU32,
     idle:Mutex<Vec<PairResources>>,
-    held_idle:Mutex<Vec<HeldCommands>>,held_field:Mutex<Option<HeldField>>,
+    held_idle:Mutex<Vec<HeldCommands>>,held_field:Mutex<Vec<HeldField>>,
     #[cfg(test)]
     held_hits:AtomicU32,
     lost:AtomicBool,
@@ -865,7 +870,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"scatter")?,c"scatter")?,
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"finish")?,c"finish")?])
     }else{None};
-    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),held_idle:Mutex::new(Vec::new()),held_field:Mutex::new(None),lost:AtomicBool::new(false),
+    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),held_idle:Mutex::new(Vec::new()),held_field:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=4&&
             limits.max_storage_buffer_range>=100001*4*3&&
             u64::from(limits.max_storage_buffer_range)>=4*(3*100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
@@ -984,8 +989,13 @@ pub struct HeldSubmission {
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_retire_held(job:*mut HeldSubmission,wait:u32)->i32{
+    if wait>1{return -1;}
     let rc=unsafe{retire_held_impl(job,wait,ptr::null_mut(),0)};
-    rc
+    if rc==3{1}else{rc}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_retire_held_status(job:*mut HeldSubmission,wait:u32)->i32{
+    unsafe{retire_held_impl(job,wait,ptr::null_mut(),0)}
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_retire_held_capture(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64)->i32{
@@ -993,7 +1003,7 @@ pub unsafe extern "C" fn ambient_svp_vk_retire_held_capture(job:*mut HeldSubmiss
     unsafe{retire_held_impl(job,wait,pass,index)}
 }
 unsafe fn retire_held_impl(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64)->i32{
-    if job.is_null()||wait>1{return -1;}
+    if job.is_null()||wait>2{return -1;}
     unsafe{retire_held_with(job,wait,|p|pass.is_null()||ambient_svp_hdr_pass_capture(pass,p,0,index)==1)}
 }
 unsafe fn retire_held_with(job:*mut HeldSubmission,wait:u32,consume:impl FnOnce(*const VulkanPair)->bool)->i32{
@@ -1001,13 +1011,14 @@ unsafe fn retire_held_with(job:*mut HeldSubmission,wait:u32,consume:impl FnOnce(
     let d=&j.core.device;
     let fence=j.commands.as_ref().unwrap().fence;
     let lost=loop{
-        let status=if wait==1{unsafe{d.wait_for_fences(&[fence],true,u64::MAX)}.map(|_|true)}
+        let status=if wait!=0{unsafe{d.wait_for_fences(&[fence],true,if wait==2{250_000_000}else{u64::MAX})}.map(|_|true)}
             else{unsafe{d.get_fence_status(fence)}};
         match status{
             Ok(true)=>break false,
             Ok(false)=>return 0,
             Err(vk::Result::ERROR_DEVICE_LOST)=>break true,
-            Err(_)=>if wait==0{return -1;}else{std::thread::yield_now();},
+            Err(vk::Result::TIMEOUT)=>if wait!=1{return 0;},
+            Err(_)=>if wait!=1{return -1;}else{std::thread::sleep(std::time::Duration::from_millis(10));},
         }
     };
     let j=unsafe{Box::from_raw(job)};
@@ -1067,7 +1078,7 @@ pub unsafe extern "C" fn ambient_svp_vk_submit_held_stats(s:*const VulkanResiden
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_collect_held_stats(job:*mut HeldSubmission,wait:u32,
     results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],n:u32,pass:*mut TwoPass,index:u64)->i32{
-    if job.is_null()||wait>1||n==0||n>3||results.is_null()||rects.is_null()||ellipses.is_null()||shifts.is_null(){return -1;}
+    if job.is_null()||wait>2||n==0||n>3||results.is_null()||rects.is_null()||ellipses.is_null()||shifts.is_null(){return -1;}
     unsafe{retire_held_with(job,wait,|p|{
         let rc=if n==1{ambient_svp_vk_hdr_read(p,0,results,n)}
             else{ambient_svp_vk_hdr_read_track(p,0,results,shifts,n)};
@@ -1137,9 +1148,21 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
         }));
         let mut deferred=false;
         let mut cache=core.held_field.lock().unwrap_or_else(|e|e.into_inner());
-        if generation!=0&&cache.is_none(){*cache=HeldField::new(core,queue).ok();}
         let mut key=HeldKey{generation,images:[vk::Image::null();4],count,algorithm:core.algorithm.load(Ordering::Acquire)};
         key.images[..count as usize-1].copy_from_slice(&images[..count as usize-1]);
+        // A small same-queue cache. Never destroy a snapshot while a
+        // queued command may still read it; evict by overwriting in queue order.
+        let mut slot=None;
+        if generation!=0&&(cache.is_empty()||cache[0].queue==queue){
+            slot=cache.iter().position(|x|x.key==Some(key));
+            if slot.is_none(){
+                slot=cache.iter().position(|x|x.key.is_none());
+                if slot.is_none()&&cache.len()<3{
+                    if let Ok(field)=HeldField::new(core,queue){cache.push(field);slot=Some(cache.len()-1);}
+                }
+                if slot.is_none()&&!cache.is_empty(){slot=Some(0);}
+            }
+        }
         let mut publish_cache=false;
         let result=catch_unwind(AssertUnwindSafe(||->Result<()>{
             for &image in images{
@@ -1152,7 +1175,7 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
             let picture=|i:usize|VulkanPicture{y:views[i],u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0};
             let a=picture(0);let b=picture(if count==2{0}else{1});
-            let cached=cache.as_mut().filter(|x|generation!=0&&x.queue==queue);
+            let cached=slot.map(|i|&mut cache[i]);
             if let Some(x)=cached.as_ref().filter(|x|x.key==Some(key)){
                 let mut p=VulkanPair::new(core.clone(),cmd,a,b)?;
                 p.cached_extended=x.extended;
@@ -1199,7 +1222,11 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 return Err(err(e));
             }
             submitted=true;
-            if publish_cache{if let Some(x)=cache.as_mut(){x.key=Some(key);x.extended=(*pair).extended.len()==2;}}
+            if let Some(i)=slot{
+                if publish_cache{cache[i].key=Some(key);cache[i].extended=(*pair).extended.len()==2;}
+                // Move the used snapshot to the MRU end without freeing GPU storage.
+                if cache[i].key==Some(key){let entry=cache.remove(i);cache.push(entry);}
+            }
             let sealed=ambient_svp_vk_seal(pair,fence)==0;
             if sealed{
                 if let Some(mut job)=ticket.take(){

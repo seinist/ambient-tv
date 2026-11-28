@@ -45,6 +45,7 @@ struct svp_placebo_quality {
     int (*submit)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **);
     int (*retire)(AmbientSvpVkHeld *,uint32_t);
+    int (*retire_status)(AmbientSvpVkHeld *,uint32_t);
     int (*submit_cached)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **,uint64_t);
     uint64_t generation;
@@ -67,10 +68,12 @@ struct svp_placebo_quality {
 };
 // Retire native image views before a renderer-owned texture can be
 // destroyed or recreated. No queue mutex is held during fence waits.
-static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality *s,unsigned i,bool wait)
+static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality *s,unsigned i,unsigned wait)
 {
     struct svp_placebo_pending *p=&s->pending[i];
-    int rc=p->capture&&!s->capture_failed?s->retire_capture(p->job,wait?1:0,p->capture,p->index):s->retire(p->job,wait?1:0);
+    unsigned mode=wait==2&&!s->retire_status?0:wait;
+    int rc=p->capture&&!s->capture_failed?s->retire_capture(p->job,mode,p->capture,p->index):
+        s->retire_status?s->retire_status(p->job,mode):s->retire(p->job,mode);
     if(rc!=1&&rc!=2&&rc!=3)return false;
     if(rc==3)s->device_lost=true;
     if(rc!=1)s->capture_failed=true;
@@ -133,6 +136,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         s->render_pass=dlsym(s->lib,"ambient_svp_vk_render_held_pass");
         s->submit=dlsym(s->lib,"ambient_svp_vk_submit_held");
         s->retire=dlsym(s->lib,"ambient_svp_vk_retire_held");
+        s->retire_status=dlsym(s->lib,"ambient_svp_vk_retire_held_status");
         s->submit_cached=dlsym(s->lib,"ambient_svp_vk_submit_held_cached");
         s->submit_capture=dlsym(s->lib,"ambient_svp_vk_submit_held_capture");
         s->retire_capture=dlsym(s->lib,"ambient_svp_vk_retire_held_capture");
@@ -157,7 +161,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     // the queue lock. The legacy and metadata paths also share the budget.
     while(s->pending_count&&svp_placebo_retire_one(gpu,s,0,false)){}
     if(s->device_lost||(capture&&s->capture_failed))return false;
-    if(s->pending_count==SVP_PLACEBO_PENDING&&!svp_placebo_retire_one(gpu,s,0,true))return false;
+    if(s->pending_count==SVP_PLACEBO_PENDING&&!svp_placebo_retire_one(gpu,s,0,2))return false;
     if(s->device_lost||(capture&&s->capture_failed))return false;
     if(*out&&((*out)->params.w!=w||(*out)->params.h!=h))
         svp_placebo_quality_retire_texture(gpu,s,*out);
@@ -217,9 +221,10 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     // Metadata belongs to this exact output, but collection no longer
     // holds the external Vulkan queue lock while waiting for the fence.
     if(split_stats&&job){
-        int result=s->collect_stats(job,1,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index);
+        int result=s->collect_stats(job,s->retire_status?2:1,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index);
         if(result==1||result==2||result==3)job=NULL;
-        else {int rc=s->retire(job,1);if(rc==1||rc==2||rc==3)job=NULL;if(rc==3)s->device_lost=true;}
+        // On timeout keep the ticket and its textures alive, and fall back
+        // to the original source instead of presenting unmeasured HDR.
         if(result==3)s->device_lost=true;
         ok=ok&&result==1;
     }
