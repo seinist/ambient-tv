@@ -218,11 +218,12 @@ static bool svp_hdr_window_lerp(AVHDRPlusColorTransformParams *o,
     }
     if (a->tone_mapping_flag){
         Q(knee_point_x,4095,1);Q(knee_point_y,4095,1);
-        if (!o->knee_point_x.num || !o->knee_point_y.num) return false;
+        uint16_t anchors[15]={0};
         for(unsigned i=0;i<a->num_bezier_curve_anchors;i++){
             Q(bezier_curve_anchors[i],1023,1);
-            if(i && o->bezier_curve_anchors[i].num<o->bezier_curve_anchors[i-1].num)return false;
+            anchors[i]=(uint16_t)o->bezier_curve_anchors[i].num;
         }
+        if(!svp_hdr_anchors_monotone(anchors,o->num_bezier_curve_anchors))return false;
     }
     if(a->color_saturation_mapping_flag){Q(color_saturation_weight,8,7.875);}
 #undef Q
