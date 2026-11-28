@@ -1,0 +1,35 @@
+name: Core benchmark runner
+on:
+  pull_request:
+    paths:
+      - scripts/native_core_candidates/core_benchmark_runner.cpp
+      - scripts/build_core_benchmark_runner.sh
+      - scripts/run_core_benchmark.py
+      - .github/workflows/core-benchmark-runner.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runner:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64, x86]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install NDK
+        run: sdkmanager "ndk;30.0.16248370"
+      - name: Build diagnostic runner
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          bash scripts/build_core_benchmark_runner.sh "$ABI" out/core-benchmark-runner
+          python3 scripts/check_elf_pages.py out/core-benchmark-runner
+          python3 -m py_compile scripts/run_core_benchmark.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: core-benchmark-runner-${{ matrix.abi }}
+          path: out/core-benchmark-runner
+          if-no-files-found: error
