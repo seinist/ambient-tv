@@ -64,6 +64,8 @@ data class GamePortableState(
     val lastPlayed: Long = 0L,
     /** Explicit user edits/matches only. Automatic scraper payloads remain in SQLite. */
     val metadata: GameMetadata? = null,
+    /** Explicit per-ROM assignment, only effective in automatically detected folders. */
+    val systemId: String? = null,
 )
 
 data class LibraryGame(
@@ -306,6 +308,73 @@ class GameLibraryRepository @Inject constructor(
         ensureQueryIndex()
         changed()
         updated
+    }
+
+    /** Restrict per-ROM choices to compatible raw files in auto folders. Ambiguous archives
+     * need inner-file validation; their assignment remains available in folder management. */
+    fun gameSystemChoices(fileId: String): List<com.ambient.tv.games.GameSystem> = synchronized(queryLock) {
+        val configuration = ensureQueryIndex()
+        val game = game(fileId) ?: return@synchronized emptyList()
+        if (GameSystems.extension(game.filename) in GameSystems.archiveExtensions ||
+            GameSystems.extension(game.filename) == "iso") return@synchronized emptyList()
+        val onlyAuto = db.readableDatabase.rawQuery("SELECT folder_id FROM game_entries WHERE file_id=?",
+            arrayOf(fileId)).use { rows ->
+            var allowed = true
+            while (rows.moveToNext()) {
+                if (configuration.folders[rows.getString(0)]?.systemId != "auto") allowed = false
+            }
+            allowed
+        }
+        if (!onlyAuto) return@synchronized emptyList()
+        GameSystems.alphabetical.filter { GameSystems.acceptsFile(it, game.filename) }
+    }
+
+    /** Serialize with scans and preserve raw user state and stable source/file IDs. */
+    suspend fun changeGameSystem(fileId: String, targetId: String?): Boolean = scanLock.withLock {
+        withContext(Dispatchers.IO) {
+            synchronized(queryLock) {
+                val current = game(fileId) ?: return@synchronized false
+                val choices = gameSystemChoices(fileId)
+                if (choices.isEmpty() || (targetId != null && choices.none { it.id == targetId }))
+                    return@synchronized false
+                val detected = GameSystems.forAssignedFile(current.filename, targetId,
+                    GameSystems.forSourceFile(current.filename, current.path)) ?: return@synchronized false
+                val configuration = ensureQueryIndex()
+                val writable = db.writableDatabase
+                val systemChanged = current.systemId != detected.id
+                val key = current.sourceId to current.path
+                val before = configuration.overrides[key]
+                val retainedMetadata = if (systemChanged)
+                    before?.metadata?.withoutSystemIdentity() else before?.metadata
+                val choice = GamePortableState(current.sourceId, current.path, current.customTitle,
+                    current.favorite, current.lastPlayed, retainedMetadata, targetId)
+                val discarded = mutableListOf<String>()
+                writable.beginTransaction()
+                try {
+                    if (systemChanged) {
+                        writable.rawQuery("SELECT path FROM game_artwork WHERE file_id=? AND pinned=0",
+                            arrayOf(fileId)).use { rows -> while (rows.moveToNext()) discarded += rows.getString(0) }
+                        writable.delete("game_artwork", "file_id=? AND pinned=0", arrayOf(fileId))
+                        for (table in listOf("game_metadata", "game_metadata_checks", "game_metadata_guards"))
+                            writable.delete(table, "file_id=?", arrayOf(fileId))
+                        retainedMetadata?.let { GameMetadataStorage.write(writable, fileId, it) }
+                        writable.execSQL("""UPDATE game_entries SET system_id=?,internal_title=NULL,verified_title=NULL,
+                            probe_version=0,dat_version=-1,archive_crc=NULL,dat_crc=NULL,dat_checked=0 WHERE file_id=?""",
+                            arrayOf(detected.id, fileId))
+                    } else {
+                        writable.execSQL("UPDATE game_entries SET probe_version=0 WHERE file_id=?", arrayOf(fileId))
+                    }
+                    refreshQueryFiles(listOf(fileId), configuration)
+                    writable.setTransactionSuccessful()
+                } finally { writable.endTransaction() }
+                preferences.gameLibraryOverrides = (preferences.gameLibraryOverrides.filterNot {
+                    it.sourceId == key.first && it.path == key.second
+                } + choice).takeLast(5000)
+                discarded.forEach(artworkFiles::removePath)
+                changed()
+                true
+            }
+        }
     }
 
     fun setAlsoShowInFiles(id: String, visible: Boolean) {
@@ -1272,6 +1341,7 @@ class GameLibraryRepository @Inject constructor(
                 title = rows.getString(2)?.takeIf(String::isNotBlank),
                 favorite = rows.getInt(3) == 1, lastPlayed = rows.getLong(4),
                 metadata = metadata ?: before?.metadata,
+                systemId = before?.systemId,
             )
             preferences.gameLibraryOverrides = (existing.filterNot {
                 it.sourceId == value.sourceId && it.path == value.path
@@ -1320,6 +1390,10 @@ class GameLibraryRepository @Inject constructor(
             val folderRevision = synchronized(queryLock) { folderFingerprint(folder) }
             val assigned = GameSystems.byId(folder.systemId)
             val previous = existing(folder.id)
+            val manualSystems = if (assigned == null) preferences.gameLibraryOverrides
+                .filter { it.sourceId == folder.sourceId && it.systemId != null }
+                .mapNotNull { state -> state.systemId?.let(GameSystems::byId)?.let { state.path to it.id } }
+                .toMap() else emptyMap()
             fun candidate(entry: FileEntry): Boolean {
                 if (entry.directory) return false
                 if (systemId != null && previous[entry.id]?.systemId?.let { it != systemId } == true) return false
@@ -1379,7 +1453,7 @@ class GameLibraryRepository @Inject constructor(
             // Cartridge files with a compatible extension are safe to publish from listings.
             fun earlySystem(entry: FileEntry): com.ambient.tv.games.GameSystem? {
                 val ext = GameSystems.extension(entry.name)
-                val target = assigned ?: return null
+                val target = assigned ?: manualSystems[entry.path]?.let(GameSystems::byId) ?: return null
                 if (GameSystems.acceptsFile(target, "playlist.m3u") || ext == "iso") return null
                 if (ext in GameSystems.archiveExtensions) {
                     val inner = entry.name.substringBeforeLast('.')
@@ -1479,13 +1553,14 @@ class GameLibraryRepository @Inject constructor(
                                         }
                                         if (refs.isNotEmpty()) descriptors[entry.path] = refs
                                     }
+                                    val targetId = manualSystems[entry.path] ?: folder.systemId
                                     val last = previous[entry.id]
                                     val unchanged = last != null && last.size == entry.size &&
                                         last.modified == entry.modified && entry.modified != 0L
                                     val needsArchiveChecksum = !remote && needsArchiveDatChecksum(entry.name, last,
                                         last?.let { datVersions[it.systemId] } ?: 0L)
                                     val cachedProbe = unchanged && last.probeVersion == probeVersion(last.systemId) &&
-                                        (folder.systemId == "auto" || folder.systemId == last.systemId) && !needsArchiveChecksum
+                                        (targetId == "auto" || targetId == last.systemId) && !needsArchiveChecksum
                                     val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
                                         if (ext == "rar") {
                                             // RAR title inference is filename-only. Don't open 1,000
@@ -1495,7 +1570,7 @@ class GameLibraryRepository @Inject constructor(
                                         } else {
                                             val probed = runCatching {
                                                 reader().open(entry.path).use {
-                                                    GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = archiveChecksumSystems)
+                                                    GameArchives.probe(entry.name, it, targetId.takeUnless { id -> id == "auto" }, checksumSystems = archiveChecksumSystems)
                                                 }
                                             }
                                             // Network/decoder errors must NOT silently delete a
@@ -1513,10 +1588,10 @@ class GameLibraryRepository @Inject constructor(
                                         cachedProbe -> GameSystems.byId(last.systemId)
                                         ext in GameSystems.archiveExtensions -> archive?.innerName?.let { inner ->
                                             val detected = archive.system ?: GameSystems.forSourceFile(inner, entry.path)
-                                            GameSystems.forAssignedFile(inner, folder.systemId, detected,
+                                            GameSystems.forAssignedFile(inner, targetId, detected,
                                                 archive.systemFromHeader)
                                         }
-                                        else -> classify(entry, ::reader, folder.systemId)
+                                        else -> classify(entry, ::reader, targetId)
                                     }
                                     if (system != null && (systemId == null || system.id == systemId)) {
                                         val internal = if (cachedProbe) last.internalTitle
