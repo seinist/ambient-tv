@@ -322,3 +322,12 @@ The matrix now requires strict output correctness replay by default. An explicit
 The diagnostic runner records the active per-frame FPS and sample rate and
 checks the dynamic geometry/rotation/timing schedule across profiles. GPU-backed
 measurements include synchronous GPU completion, not just CPU time.
+
+Input fixtures remain backward compatible. Append `| port:device:index:id:value`
+entries to a frame to specify additional controllers (ports 0–7), keyboard,
+mouse, lightgun, analog and multitouch state. Values use Libretro device and
+button IDs. A sparse record describes a complete frame; unspecified controls
+are released. Keyboard transitions are also delivered through the registered
+Libretro keyboard callback. Set `@controller.1=1` (or another Libretro device ID)
+in options.txt to select an explicit device on a port. These frontend settings
+are included in the existing fixture hashes.

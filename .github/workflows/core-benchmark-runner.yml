@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - scripts/native_core_candidates/core_benchmark_runner.cpp
+      - scripts/native_core_candidates/core_benchmark_input.h
+      - scripts/native_core_candidates/core_benchmark_input_test.cpp
       - scripts/native_core_candidates/core_benchmark_vulkan.h
       - scripts/native_core_candidates/core_benchmark_vulkan_test.cpp
       - scripts/build_core_benchmark_runner.sh
@@ -32,6 +34,8 @@ jobs:
           export VK_DRIVER_FILES=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
           test -n "$VK_DRIVER_FILES"
           "$tmp/test"
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -I"$tmp" scripts/native_core_candidates/core_benchmark_input_test.cpp -o "$tmp/input-test"
+          "$tmp/input-test"
   runner:
     runs-on: ubuntu-latest
     strategy:

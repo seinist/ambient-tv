@@ -5,6 +5,7 @@
  */
 #include <libretro.h>
 #include "core_benchmark_vulkan.h"
+#include "core_benchmark_input.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
@@ -33,12 +34,10 @@ static std::string system_dir, save_dir, content_dir;
 static std::map<std::string,std::string> options, defaults;
 static std::map<std::string,std::string> overrides;
 static std::atomic<bool> unsupported{false}, quit{false};
-static std::atomic<uint16_t> buttons{0};
-struct InputFrame {
-    uint16_t mask=0;
-    std::array<int16_t,7> extra{}; // LX, LY, RX, RY, touch X/Y, pressed
-};
-static std::array<std::atomic<int16_t>,7> input_extra{};
+static std::atomic<const BenchmarkInput*> current_input{nullptr};
+static unsigned input_ports=1;
+static std::map<unsigned,unsigned> controller_devices;
+static retro_keyboard_event_t keyboard_callback=nullptr;
 static retro_hw_render_callback hw{};
 static EGLDisplay display = EGL_NO_DISPLAY;
 static EGLContext context = EGL_NO_CONTEXT;
@@ -155,7 +154,10 @@ static bool env(unsigned cmd, void* data) {
     case RETRO_ENVIRONMENT_GET_CAN_DUPE: *static_cast<bool*>(data)=true; return true;
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS: return true;
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: *static_cast<unsigned*>(data)=2; return true;
-    case RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS: *static_cast<unsigned*>(data)=1; return true;
+    case RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS: *static_cast<unsigned*>(data)=input_ports; return true;
+    case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
+        keyboard_callback=data?static_cast<const retro_keyboard_callback*>(data)->callback:nullptr;
+        return true;
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
         register_options(static_cast<const retro_core_option_definition*>(data));return true;
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL:
@@ -362,20 +364,10 @@ static size_t audio_batch(const int16_t* samples,size_t count) {
 }
 static void poll() {}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
-    if(port)return 0;
-    device &= RETRO_DEVICE_MASK;
-    if(device==RETRO_DEVICE_ANALOG && index<=RETRO_DEVICE_INDEX_ANALOG_RIGHT && id<=RETRO_DEVICE_ID_ANALOG_Y)
-        return input_extra[index*2+id].load(std::memory_order_relaxed);
-    if(device==RETRO_DEVICE_POINTER && !index) {
-        if(id<=RETRO_DEVICE_ID_POINTER_PRESSED)return input_extra[4+id].load(std::memory_order_relaxed);
-        if(id==RETRO_DEVICE_ID_POINTER_COUNT)return input_extra[6].load(std::memory_order_relaxed);
-        return 0;
-    }
-    if(index || device!=RETRO_DEVICE_JOYPAD)return 0;
-    const uint16_t state=buttons.load(std::memory_order_relaxed);
-    if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return static_cast<int16_t>(state);
-    return id<16 ? ((state>>id)&1u) : 0;
+    const auto* frame=current_input.load(std::memory_order_acquire);
+    return frame?frame->state(port,device,index,id):0;
 }
+
 template<class T> static T symbol(void* lib,const char* name) {
     void* p=dlsym(lib,name);
     if(!p)die(name);
@@ -396,36 +388,28 @@ int main(int argc,char** argv) {
     if(!frames)die("No frames");
     const unsigned warmup=argc==10?static_cast<unsigned>(number(argv[9],frames)):0u;
     if(warmup>=frames)die("No measurement frames");
-    std::vector<InputFrame> inputs;
+    std::vector<BenchmarkInput> inputs;
     std::ifstream in(argv[5]);std::string line;
     while(std::getline(in,line)) {
-        std::istringstream row(line);
-        std::string mask;
-        if(!(row>>mask) || inputs.size()>=frames)die("Invalid input fixture");
-        char* end=nullptr; unsigned long n=std::strtoul(mask.c_str(),&end,16);
-        if(*end || n>65535)die("Invalid joypad mask");
-        InputFrame frame{};
-        frame.mask=static_cast<uint16_t>(n);
-        row>>std::ws;
-        if(!row.eof()) {
-            for(size_t i=0;i<frame.extra.size();++i) {
-                int value;
-                if(!(row>>value) || value < -32767 || value > 32767 || (i==6 && value!=0 && value!=1))
-                    die("Invalid analog/pointer fixture");
-                frame.extra[i]=static_cast<int16_t>(value);
-            }
-            row>>std::ws;
-            if(!row.eof())die("Unexpected input fixture fields");
-        }
-        inputs.push_back(frame);
+        if(inputs.size()>=frames)die("Too many input frames");
+        try {
+            inputs.push_back(BenchmarkInput::parse(line));
+            input_ports=std::max(input_ports,inputs.back().ports);
+        } catch(const std::invalid_argument& error){die(error.what());}
     }
     if(inputs.size()!=frames)die("Input fixture must contain exactly one record per frame");
     std::ifstream opt(argv[6]);
     if(!opt)die("Cannot read options fixture");
     while(std::getline(opt,line)) {
         auto p=line.find('=');
-        if(p==std::string::npos || !p || !overrides.emplace(line.substr(0,p),line.substr(p+1)).second)
-            die("Invalid/duplicate option");
+        if(p==std::string::npos || !p)die("Invalid option");
+        const auto key=line.substr(0,p);
+        if(key.rfind("@controller.",0)==0) {
+            const unsigned port=static_cast<unsigned>(number(key.c_str()+12,7));
+            const unsigned device=static_cast<unsigned>(number(line.c_str()+p+1,65535));
+            if(!controller_devices.emplace(port,device).second)die("Duplicate controller option");
+            input_ports=std::max(input_ports,port+1);
+        } else if(!overrides.emplace(key,line.substr(p+1)).second)die("Duplicate option");
     }
     verify_output=std::getenv("AMBIENT_BENCHMARK_VERIFY_OUTPUT")!=nullptr;
     const char* state_input=std::getenv("AMBIENT_BENCHMARK_STATE_INPUT");
@@ -467,7 +451,10 @@ int main(int argc,char** argv) {
         die("Core did not select the explicitly requested renderer");
     if(vulkan && !vk.init())die("Vulkan context negotiation failed");
     if(hardware && hw.context_reset){hw.context_reset();reset_done=true;}
-    set_controller_port_device(0,RETRO_DEVICE_JOYPAD);
+    for(unsigned port=0;port<input_ports;++port) {
+        const auto configured=controller_devices.find(port);
+        set_controller_port_device(port,configured==controller_devices.end()?RETRO_DEVICE_JOYPAD:configured->second);
+    }
     if(state_input) {
         std::ifstream saved(state_input,std::ios::binary|std::ios::ate);
         const auto size=saved.tellg();
@@ -508,6 +495,7 @@ int main(int argc,char** argv) {
         hash_value(av_hash,static_cast<uint32_t>(bits),4);
         hash_value(av_hash,static_cast<uint32_t>(bits>>32),4);
     };
+    const BenchmarkInput neutral{};
     for(unsigned frame=0;frame<frames;++frame) {
         // Snapshot immediately before the first timed measurement frame.
         // Leave the cumulative counters intact: a duplicate of the last
@@ -517,9 +505,8 @@ int main(int argc,char** argv) {
             initial_duplicate=duplicate_frames;
             initial_audio=audio_frames.load(std::memory_order_relaxed);
         }
-        buttons=inputs[frame].mask;
-        for(size_t i=0;i<input_extra.size();++i)
-            input_extra[i].store(inputs[frame].extra[i],std::memory_order_relaxed);
+        current_input.store(&inputs[frame],std::memory_order_release);
+        if(keyboard_callback)inputs[frame].keyboard_events(frame?inputs[frame-1]:neutral,keyboard_callback);
         const auto timing=current_av.timing;
         const auto before_video=video_frames;
         uint64_t start=now();
