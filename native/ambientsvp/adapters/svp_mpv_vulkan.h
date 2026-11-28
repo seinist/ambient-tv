@@ -23,7 +23,7 @@
 
 #define SVP_VK_PHASES 8
 #define SVP_VK_JOBS 4
-#define SVP_VK_FRAMES (2 + SVP_VK_PHASES)
+#define SVP_VK_FRAMES (4 + SVP_VK_PHASES)
 #define SVP_VK_IMAGES (6 + 3*SVP_VK_PHASES)
 struct svp_vk_job {
     VkCommandPool pool;
@@ -40,6 +40,7 @@ struct svp_vk_mpv {
     AmbientSvpVk *(*create_format)(VkInstance,VkPhysicalDevice,VkDevice,PFN_vkGetInstanceProcAddr,uint32_t,uint32_t,uint32_t);
     void (*destroy)(AmbientSvpVk *);
     AmbientSvpVkPair *(*begin)(const AmbientSvpVk *,VkCommandBuffer,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *);
+    AmbientSvpVkPair *(*begin_extended)(const AmbientSvpVk *,VkCommandBuffer,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *);
     int (*render)(AmbientSvpVkPair *,float,uint32_t,VkImageView);
     int (*render_raw)(AmbientSvpVkPair *,float,const VkImageView *,uint32_t);
     int (*hdr_stats)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,uint32_t);
@@ -69,7 +70,8 @@ struct svp_vk_mpv {
     PFN_vkCmdPipelineBarrier2 barrier;
     PFN_vkQueueSubmit submit;
     struct svp_vk_job *jobs[SVP_VK_JOBS];
-    struct mp_image *previous;
+    struct mp_image *previous,*older,*lookahead;
+    unsigned algorithm;
     struct mp_image *outputs[SVP_VK_PHASES];
     unsigned next_output, output_count;
     double origin, source_rate, target_rate;
@@ -508,7 +510,7 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
 static void svp_vk_reset_history(struct svp_vk_mpv *s)
 {
     if (!s) return;
-    mp_image_unrefp(&s->previous);
+    mp_image_unrefp(&s->previous);mp_image_unrefp(&s->older);mp_image_unrefp(&s->lookahead);
     for (unsigned i=0;i<s->output_count;i++) mp_image_unrefp(&s->outputs[i]);
     s->next_output=s->output_count=0;s->tick=0;
     svp_vk_reap(s,false);
@@ -543,7 +545,7 @@ static bool svp_vk_sync_features(const AVVulkanDeviceContext *ctx)
     }
     return timeline && sync2;
 }
-static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double source,double target,const AmbientSvpVkTuning *tuning)
+static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double source,double target,const AmbientSvpVkTuning *tuning,unsigned algorithm)
 {
     if (!library || !svp_vk_eligible(img) || !(source>0 && target>source && target/source<=SVP_VK_PHASES))
         return NULL;
@@ -636,6 +638,12 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
         s->engine=s->create_format(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,s->width,s->height,s->mode);
     } else s->engine=s->create(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,s->width,s->height);
     if (!s->engine) goto fail;
+    if(tuning&&algorithm){
+        int (*select_synthesis)(const AmbientSvpVk *,uint32_t)=dlsym(library,"ambient_svp_vk_set_synthesis");
+        if(!select_synthesis||select_synthesis(s->engine,algorithm))goto fail;
+        s->algorithm=algorithm;
+        s->begin_extended=dlsym(library,"ambient_svp_vk_begin_extended");
+    }
     s->output_hwframes=av_hwframe_ctx_alloc(s->device_ref);
     if (!s->output_hwframes) goto fail;
     AVHWFramesContext *out=(AVHWFramesContext *)s->output_hwframes->data;
@@ -715,7 +723,7 @@ static bool svp_vk_picture(struct svp_vk_mpv *s,struct svp_vk_job *j,
  * are retained by a bounded job until its fence signals. The output AVVkFrame
  * timeline semaphore is advanced before returning it to MPV's renderer. */
 static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp_image *b,
-    const double *times,const float *phases,unsigned count,struct mp_image **outputs)
+    struct mp_image *past,struct mp_image *future,const double *times,const float *phases,unsigned count,struct mp_image **outputs)
 {
     if (!count || count>SVP_VK_PHASES || !svp_vk_matches(s,a) || !svp_vk_matches(s,b)
         || (a->params.repr.sys==PL_COLOR_SYSTEM_RGB)!=(b->params.repr.sys==PL_COLOR_SYSTEM_RGB)
@@ -737,7 +745,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     unsigned order[SVP_VK_FRAMES], unique=0, locked=0;
     VkCommandBuffer cmd=VK_NULL_HANDLE;
     VkImageView dst[SVP_VK_PHASES][3]={{0}};
-    AmbientSvpVkPicture src[2];
+    AmbientSvpVkPicture src[4];
     VkSemaphore sems[SVP_VK_IMAGES];
     uint64_t waits[SVP_VK_IMAGES],signals[SVP_VK_IMAGES];
     VkPipelineStageFlags stages[SVP_VK_IMAGES];
@@ -750,18 +758,34 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         if (!svp_vk_ref(j->frames[i],false,&refs[i])
             || !svp_vk_picture(s,j,&refs[i],svp_vk_chroma(i?b:a),&src[i])) goto fail;
     }
+    bool extended=s->algorithm==23&&s->begin_extended&&past&&future&&
+        svp_vk_matches(s,past)&&svp_vk_matches(s,future)&&
+        svp_vk_matrix(past)==svp_vk_matrix(a)&&svp_vk_matrix(future)==svp_vk_matrix(b)&&
+        past->params.color.transfer==a->params.color.transfer&&future->params.color.transfer==b->params.color.transfer&&
+        past->params.color.primaries==a->params.color.primaries&&future->params.color.primaries==b->params.color.primaries&&
+        svp_vk_chroma(past)==svp_vk_chroma(a)&&svp_vk_chroma(future)==svp_vk_chroma(b);
+    if(extended){
+        struct mp_image *adjacent[]={past,future};
+        for(unsigned i=0;i<2;i++){
+            unsigned k=j->nframes++;
+            j->frames[k]=mp_image_to_av_frame(adjacent[i]);
+            if(!svp_vk_ref(j->frames[k],false,&refs[k])||
+               !svp_vk_picture(s,j,&refs[k],svp_vk_chroma(adjacent[i]),&src[2+i]))goto fail;
+        }
+    }
+    unsigned input_count=j->nframes;
     for (unsigned i=0;i<count;i++) {
         AVFrame *frame=av_frame_alloc();
         j->frames[j->nframes++]=frame;
         if (!frame || av_hwframe_get_buffer(s->output_hwframes,frame,0)<0
-            || !svp_vk_ref(frame,true,&refs[2+i])) goto fail;
+            || !svp_vk_ref(frame,true,&refs[input_count+i])) goto fail;
         if (s->mode>=4) {
             AmbientSvpVkPicture target;
-            if (!svp_vk_picture(s,j,&refs[2+i],svp_vk_chroma(a),&target)) goto fail;
+            if (!svp_vk_picture(s,j,&refs[input_count+i],svp_vk_chroma(a),&target)) goto fail;
             dst[i][0]=target.y;dst[i][1]=target.u;dst[i][2]=target.v;
         } else {
-            if (refs[2+i].count!=1 || refs[2+i].vfc->format[0]!=s->output_format) goto fail;
-            dst[i][0]=svp_vk_view(s,j,refs[2+i].frame->img[0],s->output_format,VK_IMAGE_ASPECT_COLOR_BIT);
+            if (refs[input_count+i].count!=1 || refs[input_count+i].vfc->format[0]!=s->output_format) goto fail;
+            dst[i][0]=svp_vk_view(s,j,refs[input_count+i].frame->img[0],s->output_format,VK_IMAGE_ASPECT_COLOR_BIT);
             if (!dst[i][0]) goto fail;
         }
         outputs[i]=mp_image_from_av_frame(frame);
@@ -840,7 +864,8 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     }
     VkDependencyInfo di={.sType=VK_STRUCTURE_TYPE_DEPENDENCY_INFO,.imageMemoryBarrierCount=nbar,.pImageMemoryBarriers=barriers};
     s->barrier(cmd,&di);
-    j->pair=s->begin(s->engine,cmd,&src[0],&src[1]);
+    if(extended)j->pair=s->begin_extended(s->engine,cmd,&src[2],&src[0],&src[1],&src[3]);
+    if(!j->pair)j->pair=s->begin(s->engine,cmd,&src[0],&src[1]);
     if (!j->pair) goto fail;
     for (unsigned i=0;i<count;i++) {
         int rc=s->mode>=4?s->render_raw(j->pair,phases[i],dst[i],s->mode==4?2:3):
@@ -921,9 +946,10 @@ static struct mp_image *svp_vk_take_output(struct svp_vk_mpv *s)
 static struct mp_image *svp_vk_take_previous(struct svp_vk_mpv *s)
 {
     if (!s) return NULL;
-    struct mp_image *img=s->previous;s->previous=NULL;return img;
+    struct mp_image *img=s->previous;s->previous=s->lookahead;s->lookahead=NULL;
+    mp_image_unrefp(&s->older);return img;
 }
-static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double end)
+static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double end,struct mp_image *future)
 {
     double times[SVP_VK_PHASES];float phases[SVP_VK_PHASES];unsigned count=0;
     double duration=end-s->previous->pts;
@@ -961,7 +987,7 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
             s->outputs[i]=out;
         }
     } else {
-        if (!svp_vk_interpolate(s,s->previous,next,times,phases,count,s->outputs)) return false;
+        if (!svp_vk_interpolate(s,s->previous,next,s->older,future,times,phases,count,s->outputs)) return false;
         s->generated_frames+=count;
     }
     s->tick=tick;s->output_count=count;s->next_output=0;
@@ -974,18 +1000,34 @@ static bool svp_vk_feed(struct svp_vk_mpv *s,struct mp_image *img)
     if (!s->previous) {
         s->previous=img;s->origin=img->pts;s->tick=0;s->input_frames++;return true;
     }
-    double expected=1.0/s->source_rate,delta=img->pts-s->previous->pts;
-    if (fabs(delta-expected)>fmax(0.003,expected*0.25)
-        || !svp_vk_pair_frames(s,img,img->pts)) return false;
+    double expected=1.0/s->source_rate;
+    struct mp_image *last=s->lookahead?s->lookahead:s->previous;
+    double delta=img->pts-last->pts;
+    if(fabs(delta-expected)>fmax(0.003,expected*0.25))return false;
+    if(s->algorithm==23&&s->begin_extended){
+        if(!s->lookahead){s->lookahead=img;s->input_frames++;return true;}
+        if(!svp_vk_pair_frames(s,s->lookahead,s->lookahead->pts,img))return false;
+        mp_image_unrefp(&s->older);s->older=s->previous;
+        s->previous=s->lookahead;s->lookahead=img;s->input_frames++;return true;
+    }
+    if(!svp_vk_pair_frames(s,img,img->pts,NULL))return false;
     mp_image_unrefp(&s->previous);s->previous=img;s->input_frames++;return true;
 }
 static void svp_vk_eof(struct svp_vk_mpv *s)
 {
     if (!s || !s->previous || s->output_count) return;
-    if (svp_vk_pair_frames(s,s->previous,s->previous->pts+1.0/s->source_rate))
+    if(s->lookahead){
+        if(svp_vk_pair_frames(s,s->lookahead,s->lookahead->pts,NULL)){
+            mp_image_unrefp(&s->previous);s->previous=s->lookahead;s->lookahead=NULL;
+            mp_image_unrefp(&s->older);return;
+        }
+        s->outputs[0]=svp_vk_take_previous(s);s->output_count=1;s->next_output=0;return;
+    }
+    if (svp_vk_pair_frames(s,s->previous,s->previous->pts+1.0/s->source_rate,NULL))
         mp_image_unrefp(&s->previous);
     else {
         s->outputs[0]=svp_vk_take_previous(s);s->output_count=1;s->next_output=0;
     }
+    mp_image_unrefp(&s->older);
 }
 #endif
