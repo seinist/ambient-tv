@@ -24,6 +24,7 @@ on:
       - 'gradle/libs.versions.toml'
       - 'scripts/update_external_libraries.py'
       - 'scripts/fetch_moonlight_sources.sh'
+      - 'scripts/tests/test_moonlight_fec_pool.py'
       - 'scripts/patches/moonlight/**'
       - 'gradle/external-versions.properties'
       - 'settings.gradle.kts'
@@ -76,6 +77,10 @@ jobs:
       - name: Fetch exact Moonlight release and verify audited source patches
         shell: bash
         run: bash scripts/fetch_moonlight_sources.sh
+      - name: Stress-test native FEC pool ownership and exhaustion
+        if: matrix.abi == 'arm64-v8a'
+        shell: bash
+        run: python3 scripts/tests/test_moonlight_fec_pool.py third_party/moonlight-android/app/src/main/jni/moonlight-core/moonlight-common-c/src/ControlStream.c
       - name: Verify upstream GameStream native dependencies
         shell: bash
         run: |
