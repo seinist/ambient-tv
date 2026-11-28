@@ -1486,3 +1486,77 @@ actual Android/FEL playback, synchronization validation on physical
 drivers, performance and exact-head CI remain pending. The shared
 RGB search derives luma/chroma from reconstructed RGB, not the
 original YUV planes; bit-exact reference equivalence is not claimed.
+
+
+HDR10+ explicit two-pass player integration
+-------------------------------------------
+The optional native scene-pass API now has capture/replay entry
+points in the MPV Vulkan filter and the Android VLC HDR scheduler/
+libplacebo display. Default playback is unchanged (hdr-pass=0).
+This is an explicit, externally controlled two-pass workflow, NOT
+an automatic content scanner or an app-level restart controller.
+
+An authoring/controller process must provide:
+  - a trusted 64-hex SHA256 identity for the exact media/video track;
+  - a private scene plan and a new private cache path;
+  - authoritative scene cuts mapped to the FINAL output tick grid;
+  - the same stream, source/target frame rate, quality settings,
+    renderer, device, decoder and shader build for both passes.
+
+Scene plan (UTF-8, no comments, each cut is an exclusive output
+frame index, first scene starts at index 0):
+    AMBIENTSVP_SCENE_PLAN_1
+    <64 hexadecimal characters of the trusted source identity>
+    120
+    240
+    480
+
+In this example 480 is the expected output-frame count, not the
+source-frame count. The caller must compute real cut positions and
+the real frame count; these numbers are illustrative only.
+
+MPV filter parameters:
+    hwresident=1:hdr-pass=1:hdr-plan=<private plan path>:hdr-cache=<new cache path>:hdr-key=<SHA256>
+Repeat from the start with hdr-pass=2 and the same paths and
+configuration. Use MPV's documented filter-option escaping for
+paths with separators. The first pass finalizes at drained EOF.
+
+VLC filter parameters (the existing HDR/AHB transport must be enabled):
+    ambientsvp-hdr-pass=1
+    ambientsvp-hdr-plan=<private plan path>
+    ambientsvp-hdr-cache=<new cache path>
+    ambientsvp-hdr-key=<SHA256>
+The Android scheduler carries the plan identity and output index
+in each picture ancillary; the display owns the native session
+and measures the actual output texture. The final scheduled picture
+publishes the cache only after successful capture of every tick.
+Repeat with ambientsvp-hdr-pass=2. A skipped/dropped render tick,
+seek, flush, incompatible metadata or incomplete final interval
+invalidates the pass. The renderer then preserves the source picture
+instead of attaching a partial scene result.
+
+The version-1 single-global-window path uses a shared nine-bin
+percentile specification, scene histogram, brightest-frame reduction
+and FBP. At a supplied scene cut, both passes hold the preceding
+source until the next source tick, rather than mixing two scenes.
+An interval that straddles a planned cut is rejected. Phase-zero
+source pictures are included in capture; VLC measures a GPU copy of
+the source texture. Tone curves are renderer policy, not normative
+authoring output. Version 0, multi-window metadata, SDR, HLG and
+Dolby Vision are outside this two-pass contract.
+
+The cache contains one quantized scene result per planned interval.
+It is identity-, profile- and geometry-bound, bounded in size,
+validated before replay and published with a create-only atomic
+hard link (use app-private storage supporting hard links). No partial
+or overwritten cache is exposed. The identity is provided by the
+trusted controller; neither player independently hashes the media.
+Different renderer/driver configurations intentionally require
+different caches. Do not treat the cache as an authenticated file
+or accept it from untrusted sources.
+
+Native tests cover incomplete sessions, output order, cache identity,
+scene intervals and replay. MPV C fixtures test metadata application.
+Full linked MPV/VLC builds, physical-device runs, exact-head CI,
+automatic scene-plan creation/app orchestration, and independent
+ST 2094-40 normative conformance are separate validation work.
