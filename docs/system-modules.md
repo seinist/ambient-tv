@@ -351,3 +351,43 @@ playback interface refactor. The custom JNI source patch, native package
 binding and preview exclusion have regression tests. Actual pinned
 upstream rebuild, Vulkan/HDR/SVP/PCM compatibility, Android linker
 validation and signed publication remain to be verified.
+
+### SVP, Vulkan Slang and LibretroDroid native candidates
+
+SVP uses a native-only module pinned to the host C header. The Kotlin gate
+selects and checks the actual JNI ABI before enabling interpolation.
+Both the MPV and VLC filters dynamically resolve the already selected
+SONAME; the Rust build requires the exact SONAME, and the module loader
+rejects mismatches. Missing SVP hides the controls without deleting
+stored presets or changing the user's global preference.
+
+The combined Shader package contains the ABI-specific Vulkan-only
+librashader C API plus the Slang preset assets. The host checks the
+header fingerprint and native SONAME, then uses the immutable verified
+preset tree directly. Existing GLES filters remain available in the
+base APK. Legacy asset-only Shader packages are compatible only with
+hosts that still bundle the Vulkan runtime. The shader-only publishing
+job is not a complete native Shader publication pipeline.
+
+LibretroDroid uses the same native-first approach as VLC. The exact
+pinned upstream static initializer is patched after applying the
+existing source patches. The native package is bound to the prepared
+source stamp and the patched JNI Java binding. The worker probes the
+read-only Vulkan frame status before showing the Games sidebar or
+preparing a ROM. The Java/Kotlin frontend, Android resources, and
+any driver hooks/shared dependencies still required by the host
+remain in the APK. Cores and save files remain independent.
+
+The preview APK excludes libambientsvp.so, liblibrashader_capi.so and
+liblibretrodroid.so; the audit rejects leakage. Candidate generation
+uses package_system_modules.py --module svp|shaders|libretrodroid with
+matching Full APKs for all four ABIs and corresponding notices.
+For shaders, passing no APKs generates the legacy asset-only candidate.
+For LibretroDroid, prepare the matching pinned sources first.
+
+The remaining Moonlight integration is not present in the inspected
+PR source graph; reconcile the branch with the Moonlight implementation
+before attempting to omit its runtime. New native candidates are not
+published or validated on Android by these source changes. The shared
+release pipeline, full CI, device linkage and actual APK size measurements
+remain outstanding.
