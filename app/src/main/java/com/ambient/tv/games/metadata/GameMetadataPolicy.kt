@@ -112,6 +112,27 @@ internal fun matchingGameCatalogTitles(hint: String, candidates: List<String>): 
     return compatible.filter { gameDatSearchKey(gameMetadataCatalogBase(it)) == clean }
 }
 
+/** Multiple regional editions can establish one display name without claiming a CRC match
+ * or inventing a provider image namespace. Different game titles require manual selection. */
+internal fun catalogDisplayMetadata(game: LibraryGame, previous: GameMetadata?, titles: List<String>): GameMetadata? {
+    if (!game.verifiedTitle.isNullOrBlank() || !game.customTitle.isNullOrBlank() ||
+        previous?.matchLocked == true || previous?.lockedFields?.contains("title") == true) return null
+    val canonical = titles.map(String::trim).filter(String::isNotBlank).distinct()
+    val display = canonical.map(::gameDisplayTitle).distinct().singleOrNull() ?: return null
+    if (previous != null && previous.title.isNotBlank()) {
+        // Do not replace a real provider or curated sidecar title. Repair only an earlier
+        // automatic Libretro guess that used the ROM header or raw filename as its label.
+        val guessed = listOfNotNull(game.internalTitle, gameCatalogFilename(game.systemId, game.filename))
+            .map(::gameDatSearchKey)
+        if (previous.provider != GameMetadataProviderIds.LIBRETRO ||
+            gameDatSearchKey(previous.title) !in guessed) return null
+    }
+    val title = canonical.singleOrNull() ?: display
+    if (previous?.title == title) return null
+    return previous?.copy(title = title) ?: GameMetadata(title = title,
+        canonicalTitle = canonical.singleOrNull().orEmpty(), provider = GameMetadataProviderIds.LIBRETRO)
+}
+
 /** Includes file version and locale so a previous miss cannot suppress a new ROM/region. */
 internal fun gameMetadataFingerprint(game: LibraryGame, query: GameMetadataQuery): String =
     gameMetadataDigest(listOf(game.fileId, game.modified.toString(), query.systemId,
@@ -124,7 +145,7 @@ internal fun gameMetadataDigest(value: String): String = MessageDigest.getInstan
 
 /** Invalidate previous lookup misses after changing search normalization for all providers. */
 internal fun gameMetadataLookupFingerprint(provider: String, fingerprint: String): String =
-    gameMetadataDigest("rom-search:v4:$provider:$fingerprint")
+    gameMetadataDigest("rom-search:v5:$provider:$fingerprint")
 
 /** A cached success for a query is usable only while its saved identity still answers it. */
 internal fun gameMetadataMatchesQueryIdentity(metadata: GameMetadata, query: GameMetadataQuery): Boolean =

@@ -38,6 +38,28 @@ class GameMetadataPolicyTest {
             listOf("Game (Part I)", "Game (Part II)")))
     }
 
+    @Test fun localCatalogNamesDoNotDependOnArtworkOrClaimChecksumVerification() {
+        val rom = game().copy(customTitle = null, verifiedTitle = null)
+        val european = "Original (Europe)"
+        val american = "Original (USA)"
+        val metadata = catalogDisplayMetadata(rom, null, listOf(european))!!
+        assertEquals(european, metadata.title)
+        assertEquals(european, metadata.canonicalTitle)
+        assertEquals("", metadata.providerGameId)
+        assertFalse(metadata.matchLocked)
+        val shared = catalogDisplayMetadata(rom, null, listOf(european, american))!!
+        assertEquals("Original", shared.title)
+        assertEquals("", shared.canonicalTitle)
+        assertNull(catalogDisplayMetadata(rom, null, listOf(european, "Different Game")))
+        assertNull(catalogDisplayMetadata(game(), null, listOf(european)))
+        assertNull(catalogDisplayMetadata(rom, metadata.copy(matchLocked = true), listOf(american)))
+        assertNull(catalogDisplayMetadata(rom, metadata.copy(lockedFields = setOf("title")), listOf(american)))
+        val guessed = GameMetadata(title = rom.internalTitle!!, provider = "libretro", canonicalTitle = rom.internalTitle!!)
+        val corrected = catalogDisplayMetadata(rom, guessed, listOf(european))!!
+        assertEquals(european, corrected.title)
+        assertEquals(guessed.canonicalTitle, corrected.canonicalTitle)
+    }
+
     @Test fun manualRenameNeverBecomesAutomaticSearchOrCoverIdentity() {
         val query = gameMetadataQuery(game(), null, "de", "eu", "0123ABCD")
         assertEquals("Original (Europe)", query.title)

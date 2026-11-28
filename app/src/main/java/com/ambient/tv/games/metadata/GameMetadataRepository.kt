@@ -282,9 +282,17 @@ class GameMetadataRepository @Inject constructor(
         val options = settings.options()
         if (!options.enabled) return@withGame false
         val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
-        val old = library.metadata(current.fileId)
+        var old = library.metadata(current.fileId)
+        // DAT names are useful even when there is no cover, the provider has no artwork
+        // namespace for this platform, or its server fails. Publish the local title first.
+        val catalog = localCatalogMatches(current, old)
+        catalogDisplayMetadata(current, old, catalog)?.let { named ->
+            currentCoroutineContext().ensureActive()
+            if (!library.saveMetadata(ticket, named)) return@withGame false
+            old = library.metadata(current.fileId)
+        }
         val platformQuery = GameMetadataQuery(current.systemId, current.title, current.filename)
-        val provider = old?.provider?.takeIf { old.matchLocked } ?: GameMetadataPlatforms.automaticProvider(
+        val provider = old?.takeIf { it.matchLocked }?.provider ?: GameMetadataPlatforms.automaticProvider(
             platformQuery, options.provider, providers.availableProviders())
         // A manually identified game must not silently switch sources when its key is removed.
         if (old?.matchLocked == true && provider !in providers.availableProviders())
@@ -316,20 +324,6 @@ class GameMetadataRepository @Inject constructor(
         }
         val candidates = try {
             if (provider == GameMetadataProviderIds.LIBRETRO) {
-                val verified = current.verifiedTitle?.takeIf(String::isNotBlank)
-                val catalog = if (verified != null) listOf(verified)
-                    else if (known?.matchLocked == true) emptyList()
-                    else {
-                        val filename = gameCatalogFilename(current.systemId, current.filename)
-                        val hints = listOfNotNull(filename.takeIf(String::isNotBlank),
-                            current.internalTitle?.takeIf(String::isNotBlank)).distinct()
-                        hints.firstNotNullOfOrNull { hint ->
-                            val queries = listOf(hint, com.ambient.tv.games.library.gameDisplayTitle(hint),
-                                gameMetadataSearchName(hint)).distinct()
-                            val titles = queries.flatMap { library.searchDatTitles(current.systemId, it) }.distinct()
-                            matchingGameCatalogTitles(hint, titles).takeIf { it.isNotEmpty() }
-                        }.orEmpty()
-                    }
                 val lookup = if (catalog.isNotEmpty() && known?.matchLocked != true)
                     query.copy(providerGameId = null) else query
                 GameMetadataPlatforms.libretroCandidates(lookup, catalog)
@@ -365,6 +359,21 @@ class GameMetadataRepository @Inject constructor(
         val status = if (candidates.isNotEmpty() && provider != GameMetadataProviderIds.LIBRETRO) "ambiguous" else "not_found"
         library.saveLookupStatus(ticket, provider, fingerprint, status, System.currentTimeMillis() + MISSING_TTL)
         false
+    }
+
+    /** Exact system-scoped name matches; this never opens a ROM or contacts the network. */
+    private fun localCatalogMatches(game: LibraryGame, previous: GameMetadata?): List<String> {
+        game.verifiedTitle?.takeIf(String::isNotBlank)?.let { return listOf(it) }
+        if (previous?.matchLocked == true) return emptyList()
+        val filename = gameCatalogFilename(game.systemId, game.filename)
+        val hints = listOfNotNull(filename.takeIf(String::isNotBlank),
+            game.internalTitle?.takeIf(String::isNotBlank)).distinct()
+        return hints.firstNotNullOfOrNull { hint ->
+            val queries = listOf(hint, com.ambient.tv.games.library.gameDisplayTitle(hint),
+                gameMetadataCatalogBase(hint), gameMetadataSearchName(hint)).distinct()
+            val titles = queries.flatMap { library.searchDatTitles(game.systemId, it) }.distinct()
+            matchingGameCatalogTitles(hint, titles).takeIf { it.isNotEmpty() }
+        }.orEmpty()
     }
 
     data class NameDatabaseResult(val systemIds: Set<String>, val names: Int) {
