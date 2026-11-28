@@ -55,6 +55,8 @@ adb install -r "$APK"
 adb shell run-as "$PACKAGE" mkdir -p files
 adb shell -T "run-as $PACKAGE sh -c 'cat > files/seek-fixture.mp4'" < "$AUDIT/build/seek-fixture.mp4"
 adb logcat -c
+# Surface native diagnostics immediately when an assertion fails, not only in the artifact.
+trap 'status=$?; if (( status != 0 )); then adb logcat -d -t 1500 | grep -iE "vlc|AMBIENT|AndroidRuntime" || true; fi' EXIT
 result="$(adb shell am instrument -w -e displayFailure true "$PACKAGE/.SeekAudit")"
 printf '%s\n' "$result"
 grep -Fq 'VLC DISPLAY FAILURE RECOVERY PASSED' <<< "$result"

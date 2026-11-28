@@ -34,11 +34,12 @@ class SeekAudit : Instrumentation() {
     private fun auditFailedDisplay(file: File) {
         // Force a real vout-display module selection failure, not a synthetic
         // mock. The shell checks the native failure-path marker in logcat.
-        val lib = LibVLC(targetContext, arrayListOf("--window=wdummy", "--vout=none", "--codec=avcodec", "--avcodec-hw=none", "--no-audio", "--verbose=2"))
+        val lib = LibVLC(targetContext, arrayListOf("--codec=avcodec", "--no-audio", "--verbose=2"))
         try {
             check(!MediaPlayer.ambientOutputQuarantined())
             val player = MediaPlayer(lib)
             try {
+                check(player.ambientAuditHeadless(true)) { "Cannot configure real failed display audit" }
                 repeat(3) {
                     val media = Media(lib, Uri.fromFile(file))
                     try { player.media = media } finally { media.release() }
@@ -80,10 +81,11 @@ class SeekAudit : Instrumentation() {
                 if (accepted && it is VlcTimedMetadataPacket.Message.Epoch) received.offer(it)
                 accepted
             }).use { receiver ->
-                val lib = LibVLC(targetContext, arrayListOf("--window=wdummy", "--vout=dummy", "--codec=avcodec", "--avcodec-hw=none", "--no-audio", "--verbose=2"))
+                val lib = LibVLC(targetContext, arrayListOf("--codec=avcodec", "--no-audio", "--verbose=2"))
                 try {
                     val player = MediaPlayer(lib)
                     try {
+                        check(player.ambientAuditHeadless(false)) { "Cannot configure real dummy display" }
                         val tagged = MediaPlayer::class.java.getMethod("ambientSetTimeWithId", java.lang.Long.TYPE, java.lang.Long.TYPE)
                         val media = Media(lib, Uri.fromFile(file))
                         try {

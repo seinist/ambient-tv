@@ -1,7 +1,7 @@
 diff --git a/libvlc/jni/libvlcjni-mediaplayer.c b/libvlc/jni/libvlcjni-mediaplayer.c
 --- a/libvlc/jni/libvlcjni-mediaplayer.c
 +++ b/libvlc/jni/libvlcjni-mediaplayer.c
-@@ -443,8 +443,31 @@
+@@ -443,8 +443,38 @@
      return libvlc_media_player_set_time(p_obj->u.p_mp, time, fast);
  }
  
@@ -12,6 +12,13 @@ diff --git a/libvlc/jni/libvlcjni-mediaplayer.c b/libvlc/jni/libvlcjni-mediaplay
 +{
 +    (void)env; (void)clazz;
 +    return libvlc_ambient_output_quarantined();
++}
++
++jboolean
++Java_org_videolan_libvlc_MediaPlayer_ambientAuditHeadless(JNIEnv *env, jobject thiz, jboolean fail_display)
++{
++    vlcjni_object *p_obj = VLCJniObject_getInstance(env, thiz);
++    return p_obj && libvlc_media_player_ambient_audit_headless(p_obj->u.p_mp, fail_display);
 +}
 +
 +jlong
@@ -38,7 +45,7 @@ diff --git a/libvlc/jni/libvlcjni-mediaplayer.c b/libvlc/jni/libvlcjni-mediaplay
 diff --git a/libvlc/src/main/java/org/videolan/libvlc/MediaPlayer.java b/libvlc/src/main/java/org/videolan/libvlc/MediaPlayer.java
 --- a/libvlc/src/main/java/org/videolan/libvlc/MediaPlayer.java
 +++ b/libvlc/src/main/java/org/videolan/libvlc/MediaPlayer.java
-@@ -1478,7 +1478,10 @@
+@@ -1478,7 +1478,11 @@
      }
  
      /* JNI */
@@ -46,6 +53,7 @@ diff --git a/libvlc/src/main/java/org/videolan/libvlc/MediaPlayer.java b/libvlc/
 +    public native long nativeSetTime(long time, boolean fast);
 +    public native boolean ambientSetTimeWithId(long time, long requestId);
 +    public native long ambientSeekResult();
++    public native boolean ambientAuditHeadless(boolean failDisplay);
 +    public static native boolean ambientOutputQuarantined();
      public native void nativeSetPosition(float pos, boolean fast);
      private native void nativeNewFromLibVlc(ILibVLC ILibVLC, AWindow window);

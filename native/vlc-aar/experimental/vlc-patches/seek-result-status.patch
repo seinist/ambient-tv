@@ -105,11 +105,19 @@ diff --git a/src/libvlccore.sym b/src/libvlccore.sym
 diff --git a/lib/media_player.c b/lib/media_player.c
 --- a/lib/media_player.c
 +++ b/lib/media_player.c
-@@ -1469,10 +1469,19 @@
+@@ -1469,10 +1469,27 @@
      return vlc_ambient_output_quarantined();
  }
  
 -int libvlc_media_player_ambient_set_time_with_id(libvlc_media_player_t *p_mi,
++/* Instrumentation only: select the real dummy window before playback.
++ * VLC 4 has no global --window option; this is a player-local variable. */
++bool libvlc_media_player_ambient_audit_headless(libvlc_media_player_t *p_mi, bool fail_display)
++{
++    return var_SetString(p_mi, "window", "wdummy") == VLC_SUCCESS &&
++           var_SetString(p_mi, "vout", fail_display ? "none" : "dummy") == VLC_SUCCESS;
++}
++
 +int64_t libvlc_media_player_ambient_seek_result(libvlc_media_player_t *p_mi)
 +{
 +    vlc_player_t *player = p_mi->player;
@@ -130,12 +138,13 @@ diff --git a/lib/media_player.c b/lib/media_player.c
 diff --git a/include/vlc/libvlc_media_player.h b/include/vlc/libvlc_media_player.h
 --- a/include/vlc/libvlc_media_player.h
 +++ b/include/vlc/libvlc_media_player.h
-@@ -1325,7 +1325,9 @@
+@@ -1325,7 +1325,10 @@
   * \param b_fast prefer fast seeking or precise seeking
   * \return 0 on success, -1 on error
   */
 -LIBVLC_API bool libvlc_ambient_output_quarantined(void);
 +LIBVLC_API bool libvlc_ambient_output_quarantined(void);
++LIBVLC_API bool libvlc_media_player_ambient_audit_headless(libvlc_media_player_t *p_mi, bool fail_display);
 +/* Positive request ID: demux succeeded; negative: failed; zero: none. */
 +LIBVLC_API int64_t libvlc_media_player_ambient_seek_result(libvlc_media_player_t *p_mi);
  
@@ -144,7 +153,7 @@ diff --git a/include/vlc/libvlc_media_player.h b/include/vlc/libvlc_media_player
 diff --git a/lib/libvlc.sym b/lib/libvlc.sym
 --- a/lib/libvlc.sym
 +++ b/lib/libvlc.sym
-@@ -174,8 +174,9 @@
+@@ -174,8 +174,10 @@
  libvlc_media_player_set_renderer
  libvlc_media_player_set_role
  libvlc_media_player_set_time
@@ -152,6 +161,7 @@ diff --git a/lib/libvlc.sym b/lib/libvlc.sym
 -libvlc_ambient_output_quarantined
 +libvlc_media_player_ambient_set_time_with_id
 +libvlc_media_player_ambient_seek_result
++libvlc_media_player_ambient_audit_headless
 +libvlc_ambient_output_quarantined
  libvlc_media_player_jump_time
  libvlc_media_player_set_title
