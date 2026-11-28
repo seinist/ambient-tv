@@ -1,0 +1,189 @@
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -1,7 +1,9 @@
+ #include <jni.h>
+ 
+ #include <pthread.h>
+-#include <string.h>
++#include <string.h>
++#include <stdlib.h>
++#include <limits.h>
+ 
+ #include <Limelight.h>
+ 
+@@ -39,7 +41,10 @@
+ static jmethodID BridgeClSetMotionEventStateMethod;
+ static jmethodID BridgeClSetControllerLEDMethod;
+ static jbyteArray DecodedFrameBuffer;
+-static jshortArray DecodedAudioBuffer;
++static jshortArray DecodedAudioBuffer;
++static jshort* DecodedAudioScratch;
++static int DecodedAudioSamples;
++static int DecodedFrameCapacity;
+ 
+ void DetachThread(void* context) {
+     (*JVM)->DetachCurrentThread(JVM);
+@@ -117,8 +122,9 @@
+         return err;
+     }
+ 
+-    // Use a 32K frame buffer that will increase if needed
+-    DecodedFrameBuffer = (*env)->NewGlobalRef(env, (*env)->NewByteArray(env, 32768));
++    // Allocate on first submission and retain geometric capacity for the session.
++    DecodedFrameBuffer = NULL;
++    DecodedFrameCapacity = 0;
+ 
+     return 0;
+ }
+@@ -138,20 +144,40 @@
+ void BridgeDrCleanup(void) {
+     JNIEnv* env = GetThreadEnv();
+ 
+-    (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
+-
+-    (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeDrCleanupMethod);
++    if (DecodedFrameBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
++    DecodedFrameBuffer = NULL;
++    DecodedFrameCapacity = 0;
++
++    (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeDrCleanupMethod);
+ }
+ 
+ int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
+     JNIEnv* env = GetThreadEnv();
+     int ret;
+ 
+-    // Increase the size of our frame data buffer if our frame won't fit
+-    if ((*env)->GetArrayLength(env, DecodedFrameBuffer) < decodeUnit->fullLength) {
+-        (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
+-        DecodedFrameBuffer = (*env)->NewGlobalRef(env, (*env)->NewByteArray(env, decodeUnit->fullLength));
+-    }
++    // Avoid a JNI length lookup each frame and repeated exact-size allocations.
++    if (decodeUnit->fullLength <= 0) return DR_NEED_IDR;
++    if (DecodedFrameCapacity < decodeUnit->fullLength) {
++        int capacity = DecodedFrameCapacity > 0 ? DecodedFrameCapacity : 32768;
++        while (capacity < decodeUnit->fullLength) {
++            if (capacity > INT_MAX / 2) { capacity = decodeUnit->fullLength; break; }
++            capacity *= 2;
++        }
++        jbyteArray local = (*env)->NewByteArray(env, capacity);
++        if (local == NULL) {
++            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
++            return DR_NEED_IDR;
++        }
++        jbyteArray replacement = (*env)->NewGlobalRef(env, local);
++        (*env)->DeleteLocalRef(env, local);
++        if (replacement == NULL) {
++            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
++            return DR_NEED_IDR;
++        }
++        if (DecodedFrameBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
++        DecodedFrameBuffer = replacement;
++        DecodedFrameCapacity = capacity;
++    }
+ 
+     PLENTRY currentEntry;
+     int offset;
+@@ -222,8 +248,23 @@
+             return -1;
+         }
+ 
+-        // We know ahead of time what the buffer size will be for decoded audio, so pre-allocate it
+-        DecodedAudioBuffer = (*env)->NewGlobalRef(env, (*env)->NewShortArray(env, opusConfig->channelCount * opusConfig->samplesPerFrame));
++        // Decode into native session storage, never pin the Java heap across Opus.
++        DecodedAudioSamples = opusConfig->channelCount * opusConfig->samplesPerFrame;
++        DecodedAudioScratch = malloc((size_t)DecodedAudioSamples * sizeof(*DecodedAudioScratch));
++        jshortArray local = (*env)->NewShortArray(env, DecodedAudioSamples);
++        DecodedAudioBuffer = local != NULL ? (*env)->NewGlobalRef(env, local) : NULL;
++        if (local != NULL) (*env)->DeleteLocalRef(env, local);
++        if (DecodedAudioScratch == NULL || DecodedAudioBuffer == NULL) {
++            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
++            free(DecodedAudioScratch);
++            DecodedAudioScratch = NULL;
++            if (DecodedAudioBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
++            DecodedAudioBuffer = NULL;
++            opus_multistream_decoder_destroy(Decoder);
++            Decoder = NULL;
++            (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArCleanupMethod);
++            return -1;
++        }
+     }
+ 
+     return err;
+@@ -246,15 +287,20 @@
+ 
+     opus_multistream_decoder_destroy(Decoder);
+ 
+-    (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
+-
+-    (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArCleanupMethod);
++    (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
++    DecodedAudioBuffer = NULL;
++    free(DecodedAudioScratch);
++    DecodedAudioScratch = NULL;
++    DecodedAudioSamples = 0;
++
++    (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArCleanupMethod);
+ }
+ 
+ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
+     JNIEnv* env = GetThreadEnv();
+ 
+-    jshort* decodedData = (*env)->GetPrimitiveArrayCritical(env, DecodedAudioBuffer, NULL);
++    if (DecodedAudioScratch == NULL) return;
++    jshort* decodedData = DecodedAudioScratch;
+ 
+     int decodeLen = opus_multistream_decode(Decoder,
+                                             (const unsigned char*)sampleData,
+@@ -263,8 +309,13 @@
+                                             OpusConfig.samplesPerFrame,
+                                             0);
+     if (decodeLen > 0) {
+-        // We must release the array elements before making further JNI calls
+-        (*env)->ReleasePrimitiveArrayCritical(env, DecodedAudioBuffer, decodedData, 0);
++        // Java expects the negotiated full frame. Zero any short decode tail.
++        int validSamples = decodeLen * OpusConfig.channelCount;
++        if (validSamples > DecodedAudioSamples) return;
++        if (validSamples < DecodedAudioSamples)
++            memset(decodedData + validSamples, 0, (size_t)(DecodedAudioSamples - validSamples) * sizeof(*decodedData));
++        (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, DecodedAudioSamples, decodedData);
++        if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return; }
+ 
+         (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod, DecodedAudioBuffer);
+         if ((*env)->ExceptionCheck(env)) {
+@@ -272,10 +323,6 @@
+             (*JVM)->DetachCurrentThread(JVM);
+         }
+     }
+-    else {
+-        // We can abort here to avoid the copy back since no data was modified
+-        (*env)->ReleasePrimitiveArrayCritical(env, DecodedAudioBuffer, decodedData, JNI_ABORT);
+-    }
+ }
+ 
+ void BridgeClStageStarting(int stage) {
+diff --git a/app/src/main/jni/moonlight-core/Android.mk b/app/src/main/jni/moonlight-core/Android.mk
+--- a/app/src/main/jni/moonlight-core/Android.mk
++++ b/app/src/main/jni/moonlight-core/Android.mk
+@@ -52,9 +52,17 @@
+ 
+ LOCAL_CFLAGS := -DHAS_SOCKLEN_T=1 -DLC_ANDROID -DHAVE_CLOCK_GETTIME=1
+ 
+-ifeq ($(NDK_DEBUG),1)
+-LOCAL_CFLAGS += -DLC_DEBUG
+-endif
++ifeq ($(NDK_DEBUG),1)
++LOCAL_CFLAGS += -DLC_DEBUG
++else
++# Optimize the locally compiled protocol, JNI, ENet and NanoRS sources together.
++LOCAL_CFLAGS += -O3 -flto=thin
++LOCAL_LDFLAGS += -flto=thin
++ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
++# Tune scheduling for Shield-class Cortex-A57 without raising the ISA baseline.
++LOCAL_CFLAGS += -mtune=cortex-a57
++endif
++endif
+ 
+ LOCAL_LDLIBS := -llog
+ 
