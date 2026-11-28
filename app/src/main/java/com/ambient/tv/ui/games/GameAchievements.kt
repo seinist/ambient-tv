@@ -69,7 +69,7 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
         state = GameAchievementState.Connecting
         job = scope.launch {
             try {
-                val hash = withContext(Dispatchers.IO) { LibretroDroid.computeRomHash(game.file.absolutePath, console) }
+                val hash = withContext(Dispatchers.IO) { RetroCoreRuntime.core.computeRomHash(game.file.absolutePath, console) }
                     ?.takeIf { it.isNotBlank() }
                 val gameId = hash?.let { client.gameId(it) }
                 if (hash == null || gameId == null) {
@@ -121,7 +121,7 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
     fun stop(view: GLRetroView) {
         job?.cancel()
         view.achievementUnlockListener = null
-        if (state is GameAchievementState.Active) view.queueEvent { runCatching { LibretroDroid.clearAchievements() } }
+        if (state is GameAchievementState.Active) view.queueEvent { runCatching { RetroCoreRuntime.core.clearAchievements() } }
     }
 
     private companion object {

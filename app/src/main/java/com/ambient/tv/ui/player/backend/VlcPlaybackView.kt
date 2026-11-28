@@ -634,6 +634,7 @@ class VlcPlaybackController(
                     if (!dvPrimeActive && !desiredPlayWhenReady && pauseAfterRestorePositionMs == null) player.pause()
                     if (desiredPlayWhenReady) armRenderCheck()
                 }
+                else -> Unit
             }
         }
     }

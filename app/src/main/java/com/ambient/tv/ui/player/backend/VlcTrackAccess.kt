@@ -7,7 +7,7 @@ import org.videolan.libvlc.interfaces.IMedia
  * The stable Maven VLC 3 fallback is supported by the same adapter. */
 internal class VlcTrackAccess(player: VlcPlayerPort) : VlcTracksPort {
     private var player: MediaPlayer = (player as VlcNativeEngine.NativePlayer).raw
-    override val modern = player.javaClass.methods.any { it.name == "getSelectedTrack" }
+    override val modern = this.player.javaClass.methods.any { it.name == "getSelectedTrack" }
     private val ids = linkedMapOf<String, Int>()
     override fun rebind(player: VlcPlayerPort) { this.player = (player as VlcNativeEngine.NativePlayer).raw }
     private fun id(raw: Any?): Int = when (raw) {

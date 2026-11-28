@@ -105,7 +105,7 @@ class GameNetplay(
     /** Hosts [game]: announces it and waits for one player. */
     fun host(view: GLRetroView, identity: NetplayIdentity) {
         stop()
-        if (!GameSerializationPolicy(LibretroDroid.getSerializationQuirks()).frameExact) {
+        if (!GameSerializationPolicy(RetroCoreRuntime.core.getSerializationQuirks()).frameExact) {
             state = NetplayState.Failed(NetplayFailure.STATE)
             return
         }
@@ -216,7 +216,7 @@ class GameNetplay(
     /** Joins [peer] as player 2; the game continues from the host's state. */
     fun join(view: GLRetroView, peer: NetplayPeer, identity: NetplayIdentity) {
         stop()
-        if (!GameSerializationPolicy(LibretroDroid.getSerializationQuirks()).frameExact) {
+        if (!GameSerializationPolicy(RetroCoreRuntime.core.getSerializationQuirks()).frameExact) {
             state = NetplayState.Failed(NetplayFailure.STATE)
             return
         }
@@ -273,7 +273,7 @@ class GameNetplay(
         withContext(Dispatchers.Main) {
             view.frameSpeed = 1
             view.rewindEnabled = false
-            LibretroDroid.setNetplayActive(true)
+            RetroCoreRuntime.core.setNetplayActive(true)
             view.netplayTick = { tick(view, output) }
             synchronizing = false
             state = NetplayState.Connected(peer, port + 1)
@@ -332,7 +332,7 @@ class GameNetplay(
             val now = System.nanoTime()
             if (stalledSince == 0L) stalledSince = now
             if (now - stalledSince > WAIT_NOTICE_NS && !waiting) scope.launch { waiting = true }
-            LibretroDroid.renderFrameOnly()
+            RetroCoreRuntime.core.renderFrameOnly()
             return
         }
         if (stalledSince != 0L) {
@@ -352,7 +352,7 @@ class GameNetplay(
     private fun end(reason: NetplayFailure?) {
         view?.let { view ->
             view.netplayTick = null
-            runCatching { LibretroDroid.setNetplayActive(false) }
+            runCatching { RetroCoreRuntime.core.setNetplayActive(false) }
         }
         closeSockets()
         waiting = false
@@ -516,7 +516,7 @@ data class NetplayInput(
 
     /** Hands this frame to the core as player [port]. */
     fun apply(port: Int) {
-        LibretroDroid.setInputPortSnapshot(port, buttons, axis(leftX), axis(leftY), axis(rightX), axis(rightY),
+        RetroCoreRuntime.core.setInputPortSnapshot(port, buttons, axis(leftX), axis(leftY), axis(rightX), axis(rightY),
             pressure(leftTrigger), pressure(rightTrigger))
     }
 

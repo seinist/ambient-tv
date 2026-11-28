@@ -3,7 +3,6 @@ package com.ambient.tv.ui.games
 import com.ambient.tv.modules.SystemModule
 import com.ambient.tv.modules.SystemModuleAvailability
 import com.ambient.tv.modules.SystemModuleHost
-import com.swordfish.libretrodroid.LibretroDroid
 
 /** One process-wide frontend selection; individual libretro cores remain separate. */
 internal object LibretroFrontendAvailability {
@@ -28,7 +27,7 @@ internal object LibretroFrontendAvailability {
                 System.clearProperty("ambient.libretrodroid.native.directory")
             }
             // Read-only atomic status; no core, surface, or audio session is started.
-            LibretroDroid.getVulkanFrameStatus()
+            RetroCoreRuntime.core.getVulkanFrameStatus()
             ready = true
             return true
         } catch (e: Exception) {

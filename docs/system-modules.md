@@ -585,6 +585,17 @@ retains the same LibVLC constructors, callbacks, track-ID handling and release
 ordering. JNI namespace and dependency closure still need verification before
 the concrete implementation and vendor classes may be removed from Modular.
 
+### Libretro core-control boundary
+
+The primitive JNI control/status calls in GamePlayerScreen, the Vulkan
+surface owner, netplay, achievements and startup probe now use the
+host-owned RetroCorePort. Its bundled implementation retains the same
+static native methods, original thread ownership and reusable input arrays.
+View-specific netplay stepping, achievement definitions, GLRetroView,
+shader configurations and virtual files still need their own host contracts
+before the entire LibretroDroid Java implementation can be externalized.
+Tests inspect the host port signatures for leaked vendor types.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

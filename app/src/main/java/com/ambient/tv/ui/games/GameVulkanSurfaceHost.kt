@@ -12,7 +12,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.swordfish.libretrodroid.GLRetroView
-import com.swordfish.libretrodroid.LibretroDroid
 
 /**
  * A separate real Android Vulkan WSI Surface, initially only 1x1 in the UI.
@@ -168,8 +167,8 @@ internal class GameVulkanSurfaceHost(
         if (canProbe) runCatching {
             retro.queueEvent {
                 if (!disposed) {
-                    LibretroDroid.setNativeVulkanIntegerScalingAuto(nativeIntegerScalingAuto)
-                    LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
+                    RetroCoreRuntime.core.setNativeVulkanIntegerScalingAuto(nativeIntegerScalingAuto)
+                    RetroCoreRuntime.core.setNativeVulkanIntegerScaling(nativeIntegerScaling)
                 }
             }
         }
@@ -278,8 +277,8 @@ internal class GameVulkanSurfaceHost(
         if (!canProbe) return
         runCatching { retro.queueEvent {
             try {
-                LibretroDroid.setNativeVulkanFullscreenActive(false)
-                LibretroDroid.setNativeSdrVulkanSurface(null)
+                RetroCoreRuntime.core.setNativeVulkanFullscreenActive(false)
+                RetroCoreRuntime.core.setNativeSdrVulkanSurface(null)
             } finally {
                 surfaceWork.detached()
             }
@@ -292,7 +291,7 @@ internal class GameVulkanSurfaceHost(
         runCatching { retro.queueEvent {
             // The native backend additionally checks success of the exact frame
             // being rendered. A delayed UI status never suppresses a failed frame.
-            LibretroDroid.setNativeVulkanFullscreenActive(
+            RetroCoreRuntime.core.setNativeVulkanFullscreenActive(
                 enabled && !disposed && token == generation && nativeSdrDiagnostic &&
                     fullscreenRequested && fullscreenVisible && fullscreenSurfaceReady,
             )
@@ -317,41 +316,41 @@ internal class GameVulkanSurfaceHost(
                     val eotfs = if (caps.hdr10 || caps.hlg || caps.hdr10Plus || caps.dolbyVision) {
                         1 or (if (caps.hdr10) 2 else 0) or (if (caps.hlg) 4 else 0)
                     } else 0
-                    LibretroDroid.setHdrDisplayInfo(
+                    RetroCoreRuntime.core.setHdrDisplayInfo(
                         caps.peakNits ?: 0f,
                         caps.averageNits ?: 0f,
                         caps.minimumNits ?: 0f,
                         eotfs,
                     )
-                    LibretroDroid.probeVulkanSurfaceFormats(surface).also {
+                    RetroCoreRuntime.core.probeVulkanSurfaceFormats(surface).also {
                         surfaceWork.rememberFormats(revision, caps, it)
                     }
                 }.getOrDefault(0)
                 if (nativeSdrDiagnostic && current()) {
                     runCatching {
                         val attach = surfaceWork.needsAttachment(revision)
-                        if (attach) LibretroDroid.setNativeVulkanFullscreenActive(false)
+                        if (attach) RetroCoreRuntime.core.setNativeVulkanFullscreenActive(false)
                         // The setters retain native compatibility/retirement checks. A
                         // shader, scaling or metadata change is not itself a new window.
-                        LibretroDroid.setNativeVulkanCoreSourceTransfer(
+                        RetroCoreRuntime.core.setNativeVulkanCoreSourceTransfer(
                             confirmedCoreTransfer?.nativeCode ?: 0,
                         )
-                        LibretroDroid.setNativeVulkanIntegerScalingAuto(nativeIntegerScalingAuto)
-                        LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
-                        LibretroDroid.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
-                        LibretroDroid.setNativeVulkanShaderPreset(nativeShaderPreset)
+                        RetroCoreRuntime.core.setNativeVulkanIntegerScalingAuto(nativeIntegerScalingAuto)
+                        RetroCoreRuntime.core.setNativeVulkanIntegerScaling(nativeIntegerScaling)
+                        RetroCoreRuntime.core.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
+                        RetroCoreRuntime.core.setNativeVulkanShaderPreset(nativeShaderPreset)
                         if (attach && current()) {
-                            LibretroDroid.setNativeSdrVulkanSurface(surface)
+                            RetroCoreRuntime.core.setNativeSdrVulkanSurface(surface)
                             // JNI returns void: an absent native window is not an
                             // accepted attachment. A later probe can retry it.
-                            if (LibretroDroid.getNativeSdrVulkanStatus() and 1 != 0) {
+                            if (RetroCoreRuntime.core.getNativeSdrVulkanStatus() and 1 != 0) {
                                 surfaceWork.attached(revision)
                             }
                         }
                     }
                 }
                 val status = GameVulkanSdrStatus(runCatching {
-                    LibretroDroid.getNativeSdrVulkanStatus()
+                    RetroCoreRuntime.core.getNativeSdrVulkanStatus()
                 }.getOrDefault(0))
                 main.post {
                     if (current()) {
