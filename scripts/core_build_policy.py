@@ -22,6 +22,8 @@ PROFILES = {
     "core-hotpaths": ((), ()),
     "optimized": (("-O3", "-flto=thin"), ("-flto=thin",)),
     "optimized-a57": (("-O3", "-flto=thin", "-mtune=cortex-a57"), ("-flto=thin",)),
+    "pgo-generate": (("-O3", "-fprofile-instr-generate"), ("-fprofile-instr-generate",)),
+    "pgo-use": (("-O3", "-fprofile-instr-use=ambient.profdata", "-Werror=profile-instr-out-of-date"), ("-fprofile-instr-use=ambient.profdata",)),
 }
 PUBLIC_EXPERIMENTS = {"optimized", "optimized-a57"}
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86_64", "x86"}
@@ -82,6 +84,11 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         raise ValueError("Unknown comparison matrix")
     if comparison != "none" and (event != "workflow_dispatch" or publish or profile != "baseline"):
         raise ValueError("Paired comparisons require an artifact-only manual dispatch and baseline profile")
+    if profile in {"pgo-generate", "pgo-use"}:
+        if event != "workflow_dispatch" or publish or comparison != "none" or not cores or not abis:
+            raise ValueError("PGO requires an artifact-only manual dispatch with one explicit core and ABI")
+        if "," in cores or "," in abis:
+            raise ValueError("PGO profiles must be trained for exactly one core/ABI")
     # Narrow specialized experiments instead of silently applying them to unrelated cores.
     if profile == "picodrive-sh2":
         if event != "workflow_dispatch" or publish:
@@ -267,12 +274,15 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
     commands = (list(compiler_commands(log, cwd, root, strict=profile != "baseline" or core in AUDITED))
                 if scoped_commands is None else scoped_commands)
     tuning_count = 0
+    pgo_compiles = pgo_links = 0
     codegen_flags = {}
     tracked_flags = {"-funroll-loops", "-fno-unroll-loops", "-ffast-math", "-fno-fast-math", "-fomit-frame-pointer", "-fno-omit-frame-pointer", "-marm", "-mthumb"}
     for args in commands:
         source = compile_source(args)
         if source and re.search(r"\.(?:c|cc|cpp|cxx|C)$", source):
             compile_count += 1
+            pgo_compiles += bool(profile == "pgo-generate" and "-fprofile-instr-generate" in args or
+                                 profile == "pgo-use" and any(flag.startswith("-fprofile-instr-use=") for flag in args))
             for flag in set(args):
                 if flag in tracked_flags or flag.startswith(("-march=", "-mcpu=", "-mtune=", "-mfpu=")):
                     codegen_flags[flag] = codegen_flags.get(flag, 0) + 1
@@ -296,6 +306,8 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
             tuning_count += bool(tune and tune[-1] == "-mtune=cortex-a57")
         elif "-shared" in args:
             link_count += 1
+            pgo_links += bool(profile == "pgo-generate" and "-fprofile-instr-generate" in args or
+                              profile == "pgo-use" and any(flag.startswith("-fprofile-instr-use=") for flag in args))
             lto = [token for token in args if token.startswith("-flto") or token == "-fno-lto"]
             thin_links += bool(lto and lto[-1] == "-flto=thin")
             mode = lto[-1] if lto else "(implicit)"
@@ -312,10 +324,13 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
         raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{compile_count - native_offset_helpers}, link {thin_links}/{link_count}")
     if profile in {"tune-a57", "optimized-a57"} and tuning_count != compile_count:
         raise ValueError(f"Cortex-A57 tuning not effective: {tuning_count}/{compile_count}")
+    if profile in {"pgo-generate", "pgo-use"} and (pgo_compiles != compile_count or pgo_links != link_count):
+        raise ValueError("PGO flags missing from linked compile or link commands")
     acceleration = audit_acceleration(commands, core, abi, profile) if core else {}
     return {"compile_commands": compile_count, "shared_link_commands": link_count,
             "optimization_levels": opt_levels, "codegen_flag_occurrences": codegen_flags, "thinlto_compiles": thin_compiles,
             "thinlto_links": thin_links, "native_offset_helpers": native_offset_helpers, "cortex_a57_compiles": tuning_count,
+            "pgo_compiles": pgo_compiles, "pgo_links": pgo_links,
             "compile_lto_modes": compile_lto_modes, "link_lto_modes": link_lto_modes,
             "shared_link_outputs": shared_outputs, "acceleration": acceleration}
 
@@ -324,7 +339,7 @@ def prepare_cmake(root, core, profile):
     # SwanStation's pin sets IPO unconditionally for Release, overriding cache flags.
     # Preserve the upstream baseline. In explicit candidates disable only the
     # automatic IPO block; the workflow supplies the requested LTO mode itself.
-    if profile not in ({"o3", "thinlto", "o3-thinlto"} | PUBLIC_EXPERIMENTS):
+    if profile not in ({"o3", "thinlto", "o3-thinlto", "pgo-generate", "pgo-use"} | PUBLIC_EXPERIMENTS):
         return
     if core == "panda3ds":
         # ENABLE_USER_BUILD also disables assertions; keep that setting and
@@ -448,9 +463,17 @@ def prepare_ndk(root, core, profile):
     prepare_snes_threading(root)
 
 
-def ndk_flags(path, profile, cppflags):
+def ndk_flags(path, profile, cppflags, profile_data=None):
     # Keep upstream flags; append rather than replace APP_LDFLAGS from Application.mk.
     cflags, ldflags = PROFILES[profile]
+    if profile == "pgo-use":
+        if profile_data is None or not profile_data.is_file():
+            raise ValueError("PGO use requires verified profile data")
+        data = str(profile_data.resolve())
+        if not re.fullmatch(r"[a-zA-Z0-9_./-]+", data):
+            raise ValueError("Unsafe profile path")
+        cflags = tuple(flag.replace("ambient.profdata", data) for flag in cflags)
+        ldflags = tuple(flag.replace("ambient.profdata", data) for flag in ldflags)
     with path.open("a", encoding="utf-8") as stream:
         stream.write("\n# Ambient TV reproducible core build\n")
         if cppflags:
@@ -488,6 +511,7 @@ def main():
     p.add_argument("--application", type=Path, required=True)
     p.add_argument("--profile", choices=PROFILES, required=True)
     p.add_argument("--cppflags", default="")
+    p.add_argument("--profile-data", type=Path)
     p = sub.add_parser("select")
     p.add_argument("--nm", required=True)
     p.add_argument("--root", type=Path, required=True)
@@ -518,7 +542,7 @@ def main():
     elif args.action == "prepare-ndk":
         prepare_ndk(args.root, args.core, args.profile)
     elif args.action == "ndk-flags":
-        ndk_flags(args.application, args.profile, args.cppflags)
+        ndk_flags(args.application, args.profile, args.cppflags, args.profile_data)
     elif args.action == "select":
         print(select_library(args.nm, args.root, args.pattern))
     elif args.action == "report":

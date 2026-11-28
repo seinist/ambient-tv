@@ -15,6 +15,23 @@ class CoreBuildPolicyTest(unittest.TestCase):
     def setUp(self):
         self.catalog = json.loads((Path(__file__).resolve().parents[1] / "cores/cores.json").read_text())
 
+    def test_pgo_is_artifact_only_and_requires_one_explicit_target(self):
+        for profile in ("pgo-generate", "pgo-use"):
+            jobs = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,
+                        cores="mgba", abis="arm64-v8a", profile=profile)["include"]
+            self.assertEqual(len(jobs), 1)
+            self.assertTrue(jobs[0]["artifact"].startswith("candidate-pgo-"))
+            with self.assertRaises(ValueError):
+                plan(self.catalog, "workflow_dispatch", "refs/heads/main", True,
+                     cores="mgba", abis="arm64-v8a", profile=profile)
+            with self.assertRaises(ValueError):
+                plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, profile=profile)
+            flag = jobs[0]["cflags"].split()[1]
+            commands = [["clang", "-O3", flag, "-c", "a.c"], ["clang", flag, "-shared", "a.o"]]
+            self.assertEqual(audit_commands("", profile, scoped_commands=commands)["pgo_compiles"], 1)
+            with self.assertRaises(ValueError):
+                audit_commands("", profile, scoped_commands=[commands[0], ["clang", "-shared", "a.o"]])
+
     def test_release_matrix(self):
         matrix = plan(self.catalog, "push", "refs/heads/main", False)["include"]
         self.assertEqual(len(matrix), sum(len(c.get("abis", self.catalog["abis"])) for c in self.catalog["cores"]))

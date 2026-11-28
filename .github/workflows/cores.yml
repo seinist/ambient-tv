@@ -9,6 +9,9 @@ on:
   pull_request:
     paths:
       - cores/cores.json
+      - scripts/core_*.py
+      - scripts/test_core_*.py
+      - .github/workflows/cores.yml
   workflow_call:
     inputs:
       publish:
@@ -58,8 +61,14 @@ on:
       profile:
         description: Compiler profile (optimized and optimized-a57 are public; other candidates are diagnostic)
         type: choice
-        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
+        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths, pgo-generate, pgo-use]
         default: baseline
+      pgo_run_id:
+        description: Trusted same-repository artifact run ID (pgo-use only)
+        default: ""
+      pgo_sha256:
+        description: SHA-256 of the trained ambient.profdata (pgo-use only)
+        default: ""
       comparison:
         description: Paired builds (artifact-only; select an ABI or core subset for the expanded catalog)
         type: choice
@@ -107,6 +116,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_core_release_incremental.py
           python3 -m unittest discover -s scripts -p test_core_hotpath_patches.py
           python3 -m unittest discover -s scripts -p test_core_hotpath_remaining.py
+          python3 -m unittest discover -s scripts -p test_core_pgo.py
       - id: plan
         env:
           ONLY: ${{ inputs.cores }}
@@ -182,6 +192,9 @@ jobs:
   build:
     needs: plan
     if: needs.plan.outputs.count != '0'
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: ${{ (matrix.core == 'cemu' || matrix.core == 'armsx2' || matrix.core == 'dolphin') && 180 || 60 }}
     strategy:
@@ -247,6 +260,14 @@ jobs:
           fi
           test "$(git -C src rev-parse HEAD)" = "$CORE_COMMIT"
 
+      - name: Download trained PGO profile
+        if: matrix.profile == 'pgo-use'
+        uses: actions/download-artifact@v7
+        with:
+          name: pgo-${{ matrix.core }}-${{ matrix.abi }}
+          path: pgo-input
+          run-id: ${{ inputs.pgo_run_id }}
+          github-token: ${{ github.token }}
       - name: Build and verify
         env:
           ABI: ${{ matrix.abi }}
@@ -261,6 +282,7 @@ jobs:
           CFLAGS_EXTRA: ${{ matrix.cflags }}
           LDFLAGS_EXTRA: ${{ matrix.ldflags }}
           MAKEVARS: ${{ matrix.makevars }}
+          PGO_SHA256: ${{ inputs.pgo_sha256 }}
         run: |
           set -euo pipefail
           mkdir -p out reports
@@ -268,6 +290,14 @@ jobs:
           read -r -a args <<< "$ARGS"
           read -r -a extra_env <<< "$EXTRA_ENV"
           read -r -a makevars <<< "$MAKEVARS"
+          pgo_args=()
+          if [[ "$PROFILE" == pgo-use ]]; then
+            python3 scripts/core_pgo.py verify --directory pgo-input --core "$CORE" --abi "$ABI" --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --sha256 "$PGO_SHA256"
+            pgo_data="$PWD/pgo-input/ambient.profdata"
+            CFLAGS_EXTRA="${CFLAGS_EXTRA//ambient.profdata/$pgo_data}"
+            LDFLAGS_EXTRA="${LDFLAGS_EXTRA//ambient.profdata/$pgo_data}"
+            pgo_args=(--profile-data "$pgo_data")
+          fi
           if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ]]; then
             python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
           fi
@@ -292,7 +322,7 @@ jobs:
             if [ -n "$CFLAGS_EXTRA$CPPFLAGS_EXTRA" ]; then
               flags+=("-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA $CPPFLAGS_EXTRA")
             fi
-            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* ]]; then
+            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* || "$PROFILE" = pgo-* ]]; then
               flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
             fi
             cmake -G "Unix Makefiles" -S src -B build \
@@ -313,7 +343,7 @@ jobs:
           else
             python3 scripts/core_build_policy.py prepare-ndk --root "src/$JNI" --core "$CORE" --profile "$PROFILE"
             python3 scripts/core_build_policy.py ndk-flags \
-              --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
+              --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA" "${pgo_args[@]}"
             build_cwd="$PWD/src/$JNI/jni"
             # BEGIN MUPEN NATIVE OFFSET LAUNCHER
             ndk_ccache="${CORE_CCACHE:-}"
