@@ -33,7 +33,9 @@ internal fun SettingsImageDefaults(state: SettingsUiState, model: SettingsViewMo
         mutableStateOf(profileRendererKey(state.playbackBackendKey))
     }
     val mpvAvailable = rememberMpvAvailable()
-    val effectiveRenderer = if (renderer == "mpv" && !mpvAvailable) "media3" else renderer
+    val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+    val vlcAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.VLC).usable
+    val effectiveRenderer = if ((renderer == "mpv" && !mpvAvailable) || (renderer == "vlc" && !vlcAvailable)) "media3" else renderer
     Column(verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSectionHeader(
             stringResource(R.string.settings_playback_section_renderer),
@@ -42,7 +44,7 @@ internal fun SettingsImageDefaults(state: SettingsUiState, model: SettingsViewMo
         ImageHint(stringResource(R.string.settings_image_filters_in_player))
         ImageChoice(
             R.string.settings_defaults_renderer, effectiveRenderer,
-            listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV").filter { it.first != "mpv" || mpvAvailable },
+            listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV").filter { (it.first != "mpv" || mpvAvailable) && (it.first != "vlc" || vlcAvailable) },
         ) { renderer = it }
         ImageHint(stringResource(R.string.settings_defaults_renderer_hint))
         if (renderer == "mpv" && !mpvAvailable) ImageHint(stringResource(R.string.player_backend_mpv_unavailable))
@@ -63,7 +65,9 @@ internal fun SettingsAudioDefaults(state: SettingsUiState, model: SettingsViewMo
         mutableStateOf(profileRendererKey(state.playbackBackendKey))
     }
     val mpvAvailable = rememberMpvAvailable()
-    val effectiveRenderer = if (renderer == "mpv" && !mpvAvailable) "media3" else renderer
+    val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+    val vlcAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.VLC).usable
+    val effectiveRenderer = if ((renderer == "mpv" && !mpvAvailable) || (renderer == "vlc" && !vlcAvailable)) "media3" else renderer
     // Cached per process and queried off the main thread; no audio session during composition.
     val vlcNightAvailable by produceState(initialValue = false) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { VlcNightProcessing.deviceSupported }
@@ -73,7 +77,7 @@ internal fun SettingsAudioDefaults(state: SettingsUiState, model: SettingsViewMo
         ImageChoice(
             R.string.settings_defaults_renderer,
             effectiveRenderer,
-            listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV").filter { it.first != "mpv" || mpvAvailable },
+            listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV").filter { (it.first != "mpv" || mpvAvailable) && (it.first != "vlc" || vlcAvailable) },
         ) { renderer = it }
         ImageHint(stringResource(R.string.settings_audio_shared))
         // Passthrough is chosen per audio profile ("Audio-Ausgabe"); the former global switch
