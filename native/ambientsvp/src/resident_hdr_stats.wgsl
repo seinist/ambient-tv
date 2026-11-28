@@ -138,7 +138,10 @@ fn summarize(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lan
     let count=atomicLoad(&words[o+4u]);
     for(var j=0u;j<count;j++){
         let pct=atomicLoad(&words[o+5u+j]);
-        let rank=max(1u,(pixels*pct+99u)/100u);
+        // ST 2094-40 section 8.5: 99 denotes the 99.98th percentile.
+        // Quotient/remainder avoids overflowing the pixel-count product.
+        let ordinary=(pixels/100u)*pct+((pixels%100u)*pct+99u)/100u;
+        let rank=max(1u,select(ordinary,pixels-pixels/5000u,pct==99u));
         if rank>starts[lane]&&rank<=starts[lane]+n{
             var acc=starts[lane];
             for(var i=begin;i<end;i++){
