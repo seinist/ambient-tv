@@ -147,6 +147,34 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(listOf(root, child), library.folders())
     }
 
+    @Test fun folderSystemChangePreservesIdentityAndRejectsAnOldMetadataTicket() {
+        seed("one", favorite = true, played = 42, manual = "My game")
+        val library = repository()
+        val before = library.folders().first { it.id == "snes" }
+        val ticket = library.metadataTicket("one")!!
+        val changed = library.changeFolderSystem(before.id, "auto")
+        assertEquals(before.copy(systemId = "auto"), changed)
+        assertFalse(library.saveMetadata(ticket, GameMetadata(title = "Stale")))
+        val game = library.game("one")!!
+        assertEquals("My game", game.title)
+        assertTrue(game.favorite)
+        assertEquals(42L, game.lastPlayed)
+        assertEquals(changed, repository().folders().first { it.id == before.id })
+    }
+
+    @Test fun individualSystemChoiceSurvivesFavouriteEditAndCanBeReset() = runBlocking {
+        seed("one", folder = "root", favorite = true, manual = "My game", verified = "Old name")
+        val library = repository()
+        assertTrue(library.gameSystemChoices("one").any { it.id == "snes" })
+        assertTrue(library.changeGameSystem("one", "snes"))
+        assertEquals("snes", preferences.gameLibraryOverrides.single { it.path.endsWith("one.sfc") }.systemId)
+        library.setFavorite("one", false)
+        assertEquals("snes", preferences.gameLibraryOverrides.single { it.path.endsWith("one.sfc") }.systemId)
+        assertEquals("My game", repository().game("one")!!.title)
+        assertTrue(library.changeGameSystem("one", null))
+        assertNull(preferences.gameLibraryOverrides.single { it.path.endsWith("one.sfc") }.systemId)
+    }
+
     @Test fun folderLimitExplainsThatAnAssignmentMustBeRemoved() {
         preferences.gameLibraryFolders = (0 until 200).map { index ->
             root.copy(id = "folder-$index", path = "Games/$index")
@@ -173,7 +201,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(listOf("other"), library.games(GameLibraryQuery(section = "gba")).map { it.fileId })
         assertTrue(library.games(GameLibraryQuery(section = "favorites")).isEmpty())
         raw().use { db ->
-            assertEquals(8, db.version)
+            assertEquals(9, db.version)
             db.rawQuery("SELECT revision FROM game_dat_versions WHERE system_id='snes'", null).use {
                 assertTrue(it.moveToFirst()); assertEquals(7L, it.getLong(0))
             }
@@ -188,7 +216,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(listOf("Verified DAT name"), library.searchDatTitles("snes", "verified_datname"))
         assertTrue(library.searchDatTitles("gba", "verified").isEmpty())
         raw().use { db ->
-            assertEquals(8, db.version)
+            assertEquals(9, db.version)
             db.rawQuery("SELECT search_title FROM game_dat_entries", null).use { rows ->
                 assertTrue(rows.moveToFirst())
                 assertEquals("verifieddatname", rows.getString(0))
@@ -210,6 +238,8 @@ class GameLibraryRepositoryQueryTest {
             library.searchDatTitles("snes", "SUPER MARIOWORLD", 2))
         assertEquals(3, library.searchDatTitles("snes", "super_mario-world").size)
         assertEquals(listOf("Pokémon (World)"), library.searchDatTitles("snes", "pokemon"))
+        assertEquals(listOf("Pokémon (World)"), library.searchDatTitlePrefixes("snes", "pokemon"))
+        assertTrue(library.searchDatTitlePrefixes("snes", "world").isEmpty())
         assertTrue(library.searchDatTitles("gba", "Mario").isEmpty())
         assertTrue(library.searchDatTitles("snes", "_%").isEmpty())
         assertTrue(library.searchDatTitles("snes", "Mario", 0).isEmpty())
@@ -309,7 +339,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("Super Mario World (USA)", oldLibrary.game("automatic")!!.verifiedTitle)
         assertEquals("INTERNAL NAME", oldLibrary.game("automatic")!!.title)
         raw().use { db ->
-            assertEquals(8, db.version)
+            assertEquals(9, db.version)
             // Reproduce the persisted display policy from the release before this repair.
             GameLibraryQueryIndex.signature(db, gameQueryDigest(listOf("3",
                 prefs.getString("game_library_folders", "[]").orEmpty(),
@@ -430,6 +460,25 @@ class GameLibraryRepositoryQueryTest {
             assertNull(library.game("one")!!.verifiedTitle)
             assertNull(library.game("one")!!.coverPath)
             assertEquals("Super Mario World", repository().game("one")!!.title)
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun automaticMissingCoverDoesNotRepeatNetworkProbesOnEveryScan() = runBlocking {
+        seed("one", filename = "[Release] Super Mario World (Europe).sfc", title = "INTERNAL NAME")
+        val library = repository()
+        library.importDat("snes", """<datafile><game name="Super Mario World (Europe)"><rom crc="AABBCCDD"/></game></datafile>""".byteInputStream())
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            okhttp3.Response.Builder().request(chain.request().also { requests.incrementAndGet() }).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(404).message("Not Found").body(byteArrayOf().toResponseBody()).build()
+        })
+        try {
+            withTimeout(15_000) { metadata.refresh(library.game("one")!!) }
+            val first = requests.get()
+            assertTrue(first > 0)
+            withTimeout(15_000) { metadata.refresh(library.game("one")!!) }
+            assertEquals(first, requests.get())
+            assertEquals("Super Mario World", library.game("one")!!.title)
         } finally { metadata.closeForTests() }
     }
 
@@ -965,7 +1014,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("Online title", library.game("one")!!.title)
         assertEquals(1995, library.game("one")!!.metadataYear)
         assertEquals("Full description", library.metadata("one")!!.summary)
-        raw().use { assertEquals(8, it.version) }
+        raw().use { assertEquals(9, it.version) }
     }
 
     @Test fun metadataLocksAndCanonicalIdentitySurviveTitleAndFavoriteEdits() {
@@ -1072,7 +1121,7 @@ class GameLibraryRepositoryQueryTest {
         val revision = library.revisions.value
         assertEquals(0, library.backfillCoverGeometry { error("An already checked cover must not be reopened") })
         assertEquals(revision, library.revisions.value)
-        raw().use { assertEquals(8, it.version) }
+        raw().use { assertEquals(9, it.version) }
     }
 
     private fun pendingGeometry(fileId: String) = raw().use { db ->

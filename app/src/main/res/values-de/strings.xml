@@ -2496,4 +2496,6 @@
     <string name="svp_transport_standard">Standard (Copy-back)</string>
     <string name="svp_transport_resident">Hardware-resident (experimentell)</string>
     <string name="svp_transport_hint">Bis 1080p mit kompatibler Vulkan-Hardware. Unterstützt SDR sowie kompatibles 10-Bit-HDR10/HLG. MPV kann bei nativer Vulkan-Decodierung auch kompatibles HDR10+ und Dolby Vision verarbeiten; bei wechselnden oder ungeeigneten Metadaten bleiben die Originalbilder erhalten. Nicht unterstützte Pfade nutzen den Fallback. MPV übernimmt Decoderwechsel beim erneuten Öffnen.</string>
+    <string name="game_library_change_system">Systemzuordnung ändern</string>
+    <string name="game_library_change_system_hint">ROMs und persönliche Bibliotheksdaten behalten; Spiele für das neue System erkennen.</string>
 </resources>

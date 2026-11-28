@@ -75,6 +75,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -1906,7 +1907,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 icon = Icons.Filled.Wallpaper, onClick = { openSettingsPanel(GamePanel.PICTURE) })
                             if (availableGameModes.size > 1 || gameDisplayProfile.active) GamePanelChoice(
                                 stringResource(R.string.game_display_title), selected = false,
-                                onClick = { openSettingsPanel(GamePanel.DISPLAY) })
+                                icon = Icons.Filled.Tv, onClick = { openSettingsPanel(GamePanel.DISPLAY) })
                             if (availability.coreOptions) GamePanelChoice(stringResource(R.string.game_panel_core), selected = false,
                                 icon = Icons.Filled.Tune,
                                 onClick = { openSettingsPanel(GamePanel.CORE) })
