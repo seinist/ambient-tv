@@ -152,7 +152,7 @@ jobs:
 
       - name: Restore mpv build cache
         id: cache-mpv
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -194,7 +194,7 @@ jobs:
 
       - name: Restore vlc build cache
         id: cache-vlc
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -206,7 +206,7 @@ jobs:
 
       - name: Restore projectm build cache
         id: cache-projectm
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -218,7 +218,7 @@ jobs:
 
       - name: Restore svp build cache
         id: cache-svp
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -229,7 +229,7 @@ jobs:
 
       - name: Restore shaders build cache
         id: cache-shaders
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -239,7 +239,7 @@ jobs:
 
       - name: Restore monogram build cache
         id: cache-monogram
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -249,7 +249,7 @@ jobs:
 
       - name: Restore spotify build cache
         id: cache-spotify
-        if: github.ref == 'refs/heads/main' && env.SPOTIFY_NATIVE == '1'
+        if: github.ref == 'refs/heads/main' && env.SPOTIFY_NATIVE == '1' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -260,7 +260,7 @@ jobs:
 
       - name: Restore libretrodroid build cache
         id: cache-libretrodroid
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -272,7 +272,7 @@ jobs:
 
       - name: Restore smarttube build cache
         id: cache-smarttube
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -307,7 +307,7 @@ jobs:
           fi
 
       - name: Save mpv build cache
-        if: github.ref == 'refs/heads/main' && steps.cache-mpv.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.cache-mpv.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -348,7 +348,7 @@ jobs:
           key: ${{ steps.cache-mpv.outputs.cache-primary-key }}
 
       - name: Save vlc build cache
-        if: github.ref == 'refs/heads/main' && steps.cache-vlc.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.cache-vlc.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -359,7 +359,7 @@ jobs:
           key: ${{ steps.cache-vlc.outputs.cache-primary-key }}
 
       - name: Save projectm build cache
-        if: github.ref == 'refs/heads/main' && steps.cache-projectm.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.cache-projectm.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -370,7 +370,7 @@ jobs:
           key: ${{ steps.cache-projectm.outputs.cache-primary-key }}
 
       - name: Save svp build cache
-        if: github.ref == 'refs/heads/main' && steps.cache-svp.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.cache-svp.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -380,7 +380,7 @@ jobs:
           key: ${{ steps.cache-svp.outputs.cache-primary-key }}
 
       - name: Save shaders build cache
-        if: github.ref == 'refs/heads/main' && steps.cache-shaders.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.cache-shaders.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -389,7 +389,7 @@ jobs:
           key: ${{ steps.cache-shaders.outputs.cache-primary-key }}
 
       - name: Save monogram build cache
-        if: github.ref == 'refs/heads/main' && steps.cache-monogram.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.cache-monogram.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -398,7 +398,7 @@ jobs:
           key: ${{ steps.cache-monogram.outputs.cache-primary-key }}
 
       - name: Save spotify build cache
-        if: github.ref == 'refs/heads/main' && env.SPOTIFY_NATIVE == '1' && steps.cache-spotify.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && env.SPOTIFY_NATIVE == '1' && steps.cache-spotify.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -408,7 +408,7 @@ jobs:
           key: ${{ steps.cache-spotify.outputs.cache-primary-key }}
 
       - name: Save libretrodroid build cache
-        if: github.ref == 'refs/heads/main' && steps.cache-libretrodroid.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.cache-libretrodroid.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -419,7 +419,7 @@ jobs:
           key: ${{ steps.cache-libretrodroid.outputs.cache-primary-key }}
 
       - name: Save smarttube build cache
-        if: github.ref == 'refs/heads/main' && steps.cache-smarttube.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.cache-smarttube.outputs.cache-hit != 'true' && (inputs.module_candidate == '' || inputs.module_candidate == 'none')
         uses: actions/cache/save@v4
         with:
           path: |
@@ -450,9 +450,9 @@ jobs:
             monogram) ./gradlew :app:exportMonogramAdapterDex -PAPK_ABI=arm64 ;;
             smarttube) ./gradlew :app:exportSmartTubeAdapterDex -PAPK_ABI=arm64 ;;
           esac
-          notices="third_party_licenses/system_modules/$MODULE"
-          if [[ "$MODULE" == svp ]]; then notices=app/src/main/assets/licenses/open-svpflow; fi
-          python3 scripts/prepare_native_module_release.py build --module "$MODULE" --run-id "$GITHUB_RUN_ID" --sha "$GITHUB_SHA" --output module-candidate --dist dist --aapt2 "$ANDROID_HOME/build-tools/37.0.0/aapt2" --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner" --notices "$notices"
+          python3 scripts/module_corresponding_source.py --module "$MODULE" --sha "$GITHUB_SHA" --output source-candidate/corresponding-source.tar.gz --notices source-candidate/notices
+          notices=source-candidate/notices
+          python3 scripts/prepare_native_module_release.py build --module "$MODULE" --run-id "$GITHUB_RUN_ID" --sha "$GITHUB_SHA" --output module-candidate --dist dist --aapt2 "$ANDROID_HOME/build-tools/37.0.0/aapt2" --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner" --notices "$notices" --source source-candidate/corresponding-source.tar.gz
 
       - name: Upload native module candidate
         if: inputs.module_candidate != '' && inputs.module_candidate != 'none'

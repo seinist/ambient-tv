@@ -79,7 +79,13 @@ def verify(root, module, run_id, sha):
     apks = provenance["apks"]
     if len(apks) != 4 or {x["abi"] for x in apks} != set(packages.ABIS) or any(not re.fullmatch(r"[0-9a-f]{64}", x["sha256"]) for x in apks):
         raise ValueError("Missing APK provenance")
-    expected = {"manifest.json", "provenance.json"}
+    source = provenance.get("source")
+    if not isinstance(source, dict) or source.get("asset") != "corresponding-source.tar.gz" or source.get("module") != module or source.get("commit") != sha:
+        raise ValueError("Missing corresponding-source provenance")
+    source_path = root / source["asset"]
+    if not source_path.is_file() or source_path.is_symlink() or not 0 < source["size"] <= 1_800_000_000 or source_path.stat().st_size != source["size"] or digest(source_path) != source["sha256"]:
+        raise ValueError("Corresponding-source hash or size mismatch")
+    expected = {"manifest.json", "provenance.json", source["asset"]}
     for entry in entries:
         abi = entry["abi"]
         asset = f"{module}--{abi}--baseline.zip"
@@ -93,8 +99,12 @@ def verify(root, module, run_id, sha):
             names = archive.namelist()
             if len(names) != len(set(x.lower() for x in names)) or not 0 < len(names) <= 4096 or sum(x.file_size for x in archive.infolist()) > 512 * 1024**2:
                 raise ValueError("Invalid archive bounds")
-            if not any(n.startswith("licenses/") for n in names):
+            if "licenses/notices.zip" not in names:
                 raise ValueError("Missing license notices")
+            import io
+            with zipfile.ZipFile(io.BytesIO(archive.read("licenses/notices.zip"))) as notices:
+                if json.loads(notices.read("corresponding-source.json")) != source:
+                    raise ValueError("Source descriptor is not bound to the signed module payload")
             roots = set(packages.NATIVE_ROOTS.get(module, ("libmonogram_mtproto.so", "libjnidispatch.so") if module == "monogram" else ("libj2v8.so",)))
             native = {n.removeprefix("lib/") for n in names if n.startswith("lib/")}
             if native != roots:
@@ -115,6 +125,11 @@ def build(args):
     if actual != json.loads((args.dist / "update.json").read_text()):
         raise ValueError("Full APK manifest does not match signed APKs")
     notices = args.notices
+    if not args.source or args.source.name != "corresponding-source.tar.gz":
+        raise ValueError("Corresponding source candidate required")
+    source = json.loads((notices / "corresponding-source.json").read_text())
+    if source.get("commit") != args.sha or source.get("module") != args.module or source.get("size") != args.source.stat().st_size or source.get("sha256") != digest(args.source):
+        raise ValueError("Corresponding source candidate does not match notices")
     if not notices.is_dir() or notices.is_symlink():
         raise ValueError(f"Missing reviewed module notices: {notices}")
     files = sorted(p for p in notices.rglob("*") if p.is_file())
@@ -137,8 +152,9 @@ def build(args):
         if args.module == "vlc":
             command += ["--vlc-aar", str(ROOT / "app/libs/libvlc-vulkan.aar")]
         subprocess.run(command, cwd=ROOT, check=True)
+    shutil.copyfile(args.source, args.output / args.source.name)
     (args.output / "provenance.json").write_text(json.dumps({"commit": args.sha, "runId": args.run_id,
-        "module": args.module, "apks": actual["apks"], "versionCode": actual["versionCode"]}, sort_keys=True) + "\n")
+        "module": args.module, "apks": actual["apks"], "versionCode": actual["versionCode"], "source": source}, sort_keys=True) + "\n")
     verify(args.output, args.module, args.run_id, args.sha)
 
 
@@ -153,9 +169,10 @@ def main():
     parser.add_argument("--aapt2", type=Path)
     parser.add_argument("--apksigner", type=Path)
     parser.add_argument("--notices", type=Path)
+    parser.add_argument("--source", type=Path)
     args = parser.parse_args()
     if args.action == "build":
-        if not all((args.dist, args.aapt2, args.apksigner, args.notices)):
+        if not all((args.dist, args.aapt2, args.apksigner, args.notices, args.source)):
             parser.error("build requires APK directory, Android tools and notices")
         build(args)
     else:

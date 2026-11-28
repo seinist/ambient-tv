@@ -458,9 +458,14 @@ The candidate checks archive hashes, payload roots and 16 KiB ELF load alignment
 It does not publish an application release draft. Moonlight is intentionally
 excluded until its final host integration is present.
 
-SVP uses the build-generated resolved-dependency notices. Other modules require
-reviewed notices under third_party_licenses/system_modules/<module>; missing
-notices fail closed. This is not a substitute for corresponding source delivery.
+The source collector packages the exact tracked Ambient TV source, build recipes,
+patched upstream source trees and license notices, including resolved SVP and
+Moonlight notices where present. Reviewed additional notices can be placed under
+third_party_licenses/system_modules/<module>. The source candidate is a separate
+release asset; its SHA-256 descriptor is embedded inside every signed native ZIP.
+Missing sources/notices and inconsistent provenance fail closed. The review must
+still establish completeness for transitive dependencies, generated inputs,
+prebuilt archives and required corresponding-source terms before publication.
 After verifying the exact artifact on devices and arranging required license and
 source distribution, dispatch System module packages on the same main commit
 with publish=true, reviewed=true, native_module and candidate_run_id. The signing
