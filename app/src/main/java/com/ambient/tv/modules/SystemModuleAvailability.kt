@@ -29,7 +29,7 @@ internal object SystemModuleAvailability {
         SystemModule.SMARTTUBE -> BuildConfig.SMARTTUBE_BUNDLED
         SystemModule.MONOGRAM -> BuildConfig.MONOGRAM_NATIVE && BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SPOTIFY -> BuildConfig.SPOTIFY_ENABLED && BuildConfig.MODULE_PACKAGING == "full"
-        SystemModule.PROJECTM, SystemModule.MPV -> BuildConfig.MODULE_PACKAGING == "full"
+        SystemModule.PROJECTM, SystemModule.MPV, SystemModule.SVP -> BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SHADERS -> BuildConfig.MODULE_PACKAGING == "full"
         // These engines are not yet removed from the base build.
         else -> true
