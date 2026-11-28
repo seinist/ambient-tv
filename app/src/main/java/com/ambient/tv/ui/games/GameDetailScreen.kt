@@ -279,6 +279,7 @@ private fun GameDetailInformation(
             TvActionButton(stringResource(R.string.game_detail_play), onClick = onPlay,
                 enabled = !busy, icon = Icons.Filled.PlayArrow,
                 modifier = Modifier.focusRequester(primaryFocus).browseFocusTarget("game-play"))
+            com.ambient.tv.livetv.GameScheduleAction(game, enabled = !busy)
             // Play continues where the game was left, like Resume on other details; this starts over.
             if (game.lastPlayed > 0L) TvActionButton(stringResource(R.string.game_reset), onClick = onPlayFresh,
                 enabled = !busy, icon = Icons.Filled.RestartAlt)
