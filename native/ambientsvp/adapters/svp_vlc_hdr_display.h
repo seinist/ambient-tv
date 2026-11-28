@@ -550,7 +550,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     if(!ambient_svp_hdr_source_load(gpu,log,s,owner,a,pair->a,pair->a_id,raw,dovi)){ambient_svp_scene_config_abort(pair->scene);ambient_svp_hdr_scene_close(gpu,s,true);return false;}
     bool same=pair->a_id==pair->b_id||pair->phase==0.f;
     bool may_discover=pair->scene&&pair->scene->mode==1&&pair->a_id!=pair->b_id;
-    if((!same||may_discover)&&!ambient_svp_hdr_source_load(gpu,log,s,owner,b,pair->b,pair->b_id,raw,dovi)){
+    if(!same&&!ambient_svp_hdr_source_load(gpu,log,s,owner,b,pair->b,pair->b_id,raw,dovi)){
         ambient_svp_scene_config_abort(pair->scene);ambient_svp_hdr_scene_close(gpu,s,true);return false;
     }
     s->has_metadata=a->has_hdrplus;s->metadata_aligned=a->aligned;
@@ -561,7 +561,10 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     s->quality.capture_end=scene&&s->scene_dynamic&&s->scene->mode==1?pair->scene_pair_end:0;
     // Even a group with one phase-zero output must inspect the next
     // source's field during dynamic capture. Synthesis holds A exactly.
-    if(s->quality.capture_end&&may_discover)same=false;
+    if(s->quality.capture_end&&may_discover){
+        if(same&&!ambient_svp_hdr_source_load(gpu,log,s,owner,b,pair->b,pair->b_id,raw,dovi))goto original;
+        same=false;
+    }
     if(scene){
         uint64_t boundary;
         if(s->scene_interval(s->scene_pass,pair->scene_index,&boundary)!=1||

@@ -69,7 +69,7 @@ struct svp_vk_mpv {
     int (*hdr_read_rectangles)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
     AmbientSvpHdrPass *scene_pass;
     unsigned scene_mode,scene_version;
-    bool capture_failed,scene_dynamic;
+    bool capture_failed,scene_dynamic,gpu_stalled;
     int (*scene_is_dynamic)(const AmbientSvpHdrPass *);
     int (*scene_enable_dynamic)(AmbientSvpVkPair *);
     int (*scene_capture_group)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t,uint64_t);
@@ -733,14 +733,17 @@ static void svp_vk_job_free(struct svp_vk_mpv *s,struct svp_vk_job *j)
     free(j);
 }
 static void svp_vk_scene_abort(struct svp_vk_mpv *s);
-static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
+static unsigned svp_vk_reap(struct svp_vk_mpv *s,unsigned wait)
 {
     unsigned outstanding=0;
     if (!s) return 0;
     if (wait) {
         VkFence fences[SVP_VK_JOBS];unsigned count=0;
         for (unsigned i=0;i<SVP_VK_JOBS;i++) if (s->jobs[i]) fences[count++]=s->jobs[i]->fence;
-        if (count) s->wait_fences(s->device,count,fences,VK_TRUE,3000000000ULL);
+        if(count){
+            VkResult rc=s->wait_fences(s->device,count,fences,VK_TRUE,wait==2?250000000ULL:3000000000ULL);
+            if(rc!=VK_SUCCESS)s->gpu_stalled=true;
+        }
     }
     // Consume capture jobs in output tick order, never slot order.
     while(s->scene_pass&&s->scene_mode==1){
@@ -767,7 +770,9 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
             j->pair=NULL;
             s->jobs[i]=NULL;
             // Never pool after device loss or failed fence status.
-            if(j->sealed&&s->idle_count<SVP_VK_JOBS&&s->wait_fences(s->device,1,&j->fence,VK_TRUE,0)==VK_SUCCESS){
+            VkResult status=s->wait_fences(s->device,1,&j->fence,VK_TRUE,0);
+            if(status==VK_ERROR_DEVICE_LOST)s->gpu_stalled=true;
+            if(j->sealed&&s->idle_count<SVP_VK_JOBS&&status==VK_SUCCESS){
                 for(unsigned k=0;k<j->nviews;k++)s->destroy_view(s->device,j->views[k],NULL);
                 for(unsigned k=0;k<j->nframes;k++)av_frame_free(&j->frames[k]);
                 mp_image_unrefp(&j->fallback);
@@ -807,7 +812,7 @@ static void svp_vk_reset_history(struct svp_vk_mpv *s)
         for(unsigned i=0;i<q->count;i++)mp_image_unrefp(&q->outputs[i]);
     }
     memset(s->queued,0,sizeof(s->queued));s->queued_count=0;
-    svp_vk_reap(s,false);
+    if(!svp_vk_reap(s,false)&&!s->gpu_stalled)s->capture_failed=false;
 }
 static bool svp_vk_destroy_state(struct svp_vk_mpv *s)
 {
@@ -1042,8 +1047,11 @@ static bool svp_vk_complete_metadata(struct svp_vk_mpv *s,struct svp_vk_job *j,s
 {
     unsigned count=j->metadata_count;
     {
-        if(!j->sealed||(j->metadata_scene&&!s->scene_pass)||
-            (j->metadata_pending&&s->wait_fences(s->device,1,&j->fence,VK_TRUE,250000000ULL)!=VK_SUCCESS))return false;
+        if(!j->sealed||(j->metadata_scene&&!s->scene_pass))return false;
+        if(j->metadata_pending){
+            VkResult ready=s->wait_fences(s->device,1,&j->fence,VK_TRUE,s->gpu_stalled?0:250000000ULL);
+            if(ready!=VK_SUCCESS){s->gpu_stalled=true;return false;}
+        }
         if(s->scene_pass){
             for(unsigned i=0;i<count;i++){
                 AmbientSvpHdrSceneResult result;
@@ -1102,7 +1110,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     if(was_scene&&!s->scene_pass)return false;
     if(s->scene_pass&&s->scene_mode==1){
         unsigned used=0;for(unsigned i=0;i<SVP_VK_JOBS;i++)used+=s->jobs[i]!=NULL;
-        if(used==SVP_VK_JOBS){svp_vk_reap(s,true);if(!s->scene_pass)return false;}
+        if(used==SVP_VK_JOBS){svp_vk_reap(s,2);if(!s->scene_pass||s->gpu_stalled)return false;}
     }
     unsigned slot=0;while(slot<SVP_VK_JOBS && s->jobs[slot]) slot++;
     if (slot==SVP_VK_JOBS) return false;
@@ -1456,7 +1464,7 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
 // On success consumes img; on rejection caller still owns it.
 static bool svp_vk_feed(struct svp_vk_mpv *s,struct mp_image *img)
 {
-    if (!s || !svp_vk_matches(s,img) || s->output_count) return false;
+    if (!s || s->gpu_stalled || !svp_vk_matches(s,img) || s->output_count) return false;
     if (!s->previous) {
         s->previous=img;s->origin=img->pts;s->tick=0;s->previous_id=++s->input_frames;return true;
     }
@@ -1480,7 +1488,7 @@ static bool svp_vk_feed(struct svp_vk_mpv *s,struct mp_image *img)
 static bool svp_vk_can_prefetch(struct svp_vk_mpv *s)
 {
     if(!s||!s->metadata_job||s->queued_count>=SVP_VK_JOBS-1||!s->previous||
-        s->capture_failed||s->wait_fences(s->device,1,&s->metadata_job->fence,VK_TRUE,0)!=VK_TIMEOUT)return false;
+        s->capture_failed||s->gpu_stalled||s->wait_fences(s->device,1,&s->metadata_job->fence,VK_TRUE,0)!=VK_TIMEOUT)return false;
     for(unsigned i=0;i<SVP_VK_JOBS;i++)if(!s->jobs[i])return true;
     return false;
 }

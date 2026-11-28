@@ -2434,6 +2434,43 @@ mod gpu_tests{
                 assert_eq!(ambient_svp_vk_collect_held_stats(job,1,&mut result,rect.as_mut_ptr(),ellipse.as_mut_ptr(),
                     shift.as_mut_ptr(),1,ptr::null_mut(),0),1);
                 assert_eq!(result.pixels,w*h);
+                // GPU-driven cut capture must hold the preceding source
+                // even at phase .75, then discover the boundary at group end.
+                d.reset_fences(&[fence]).unwrap();d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+                d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()).unwrap();
+                for (i,pixel) in [0.2f32,0.9].into_iter().enumerate(){
+                    let img=images[i].image;
+                    transition(&d,cmd,img,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
+                        vk::AccessFlags::SHADER_READ,vk::AccessFlags::TRANSFER_WRITE,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+                    d.cmd_clear_color_image(cmd,img,vk::ImageLayout::GENERAL,&vk::ClearColorValue{float32:[pixel,pixel,pixel,1.0]},&[range()]);
+                    transition(&d,cmd,img,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
+                        vk::AccessFlags::TRANSFER_WRITE,vk::AccessFlags::SHADER_READ,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+                }
+                d.end_command_buffer(cmd).unwrap();d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+                d.wait_for_fences(&[fence],true,u64::MAX).unwrap();
+                std::fs::create_dir(&directory).unwrap();
+                std::fs::write(&plan,format!("AMBIENTSVP_SCENE_PLAN_2\n{key}\n4\n")).unwrap();
+                let mut pass=TwoPass::open(1,&plan,&cache,&key,"dynamic-test",w,h).unwrap();
+                for i in 0..4u64{
+                    let (handles,count)=if i<2{([images[0].image,images[1].image,images[2].image],3)}
+                        else{([images[1].image,images[2].image,vk::Image::null()],2)};
+                    let waits=&hold[..count];
+                    d.queue_submit(queue,&[vk::SubmitInfo::default().signal_semaphores(waits)],vk::Fence::null()).unwrap();
+                    value+=1;
+                    let mut job=ptr::null_mut();
+                    let phase=if i<2&&i==1{0.75}else{0.0};
+                    assert_eq!(ambient_svp_vk_submit_held_capture(engine,queue,family,handles.as_ptr(),count as u32,waits.as_ptr(),
+                        done,value,phase,&window,ptr::null(),ptr::null(),1,&mut pass,i,&mut job,4),0);
+                    assert_eq!(ambient_svp_vk_retire_held_capture_group(job,1,&mut pass,i,if i<2{2}else{4}),1);
+                }
+                assert_eq!(pass.interval(0).unwrap(),(0,2));pass.finish().unwrap();
+                let mut replay=TwoPass::open(2,&plan,&cache,&key,"dynamic-test",w,h).unwrap();
+                let dark=replay.lookup(0).unwrap();assert_eq!(dark,replay.lookup(1).unwrap());
+                let bright=replay.lookup(2).unwrap();assert_eq!(bright,replay.lookup(3).unwrap());
+                assert!(dark.maxscl[0]<bright.maxscl[0]&&dark.end==2&&bright.first==2);
+                // Each scene must be constant, not a phase-dependent blend.
+                assert_eq!(dark.average,dark.maxscl[0]);assert_eq!(bright.average,bright.maxscl[0]);
+                replay.finish().unwrap();std::fs::remove_dir_all(directory).unwrap();
             }
             ambient_svp_vk_destroy(engine);
             for s in hold{d.destroy_semaphore(s,None);}for group in pipeline_holds{for s in group{d.destroy_semaphore(s,None);}}d.destroy_semaphore(done,None);

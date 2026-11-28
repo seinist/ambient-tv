@@ -243,7 +243,7 @@ static void process(struct mp_filter *f) {
             }
         }
         struct mp_image *out = svp_vk_take_output(p->vk);
-        if(p->vk->capture_failed)p->vk_disabled=true;
+        if(p->vk->capture_failed||p->vk->gpu_stalled)p->vk_disabled=true;
         if (out) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out)); return; }
         if(p->eof&&p->vk->previous){svp_vk_eof(p->vk);mp_filter_internal_mark_progress(f);return;}
         if(p->eof&&p->vk->scene_pass){

@@ -58,7 +58,7 @@ struct svp_placebo_quality {
     int (*retire_capture)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
     int (*retire_capture_group)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t,uint64_t);
     uint64_t capture_end;
-    bool capture_failed,device_lost;
+    bool capture_failed,device_lost,stalled;
     int (*submit_stats)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
         const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
@@ -104,7 +104,7 @@ static inline bool svp_placebo_collect_stats(pl_gpu gpu,struct svp_placebo_quali
         int rc=s->collect_stats(p->job,s->retire_status?2:1,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index);
         if(rc==3)s->device_lost=true;
         if(rc==1||rc==2||rc==3)svp_placebo_remove_pending(gpu,s,i);
-        else p->stats_token=0; // keep GPU ownership, abandon metadata
+        else {p->stats_token=0;s->stalled=true;} // keep GPU ownership, abandon metadata
         return rc==1;
     }
     return false;
@@ -119,7 +119,7 @@ static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality 
     int rc=p->capture&&!s->capture_failed?(p->capture_end&&s->retire_capture_group?
         s->retire_capture_group(p->job,mode,p->capture,p->index,p->capture_end):s->retire_capture(p->job,mode,p->capture,p->index)):
         s->retire_status?s->retire_status(p->job,mode):s->retire(p->job,mode);
-    if(rc!=1&&rc!=2&&rc!=3)return false;
+    if(rc!=1&&rc!=2&&rc!=3){if(wait==2)s->stalled=true;return false;}
     if(rc==3)s->device_lost=true;
     if(rc!=1&&p->capture)s->capture_failed=true;
     svp_placebo_remove_pending(gpu,s,i);
@@ -163,7 +163,7 @@ static inline void svp_placebo_quality_destroy(pl_gpu gpu,struct svp_placebo_qua
 {
     svp_placebo_quality_retire_texture(gpu,s,NULL);
     // Renderer dependencies on the shared timeline may outlive native jobs.
-    if(s->done){if(!s->device_lost)pl_gpu_finish(gpu);pl_vulkan_sem_destroy(gpu,&s->done);}
+    if(s->done){pl_gpu_finish(gpu);pl_vulkan_sem_destroy(gpu,&s->done);}
     if(s->engine)s->destroy(s->engine);
     if(s->lib)dlclose(s->lib);
     *s=(struct svp_placebo_quality){0};
@@ -183,6 +183,13 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
     pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index,bool capture,uint64_t *deferred_token)
 {
     if(deferred_token)*deferred_token=0;
+    // Do not pay a fresh blocking timeout for every output on a stuck
+    // driver. Recover only after nonblocking polling proves retirement.
+    if(s->stalled){
+        while(s->pending_count&&svp_placebo_retire_one(gpu,s,0,0)){}
+        if(s->pending_count)return false;
+        s->stalled=false;
+    }
     if(s->device_lost||!a||!b||!options||!out||(!pass&&a==b)||!isfinite(phase)||phase<0||phase>=1||(!pass&&phase==0)|| (a==b&&phase!=0)||
         a->params.w!=b->params.w||a->params.h!=b->params.h)return false;
     pl_vulkan vk=pl_vulkan_get(gpu);
@@ -298,6 +305,7 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
         // On timeout keep the ticket and its textures alive, and fall back
         // to the original source instead of presenting unmeasured HDR.
         if(result==3)s->device_lost=true;
+        if(result<=0)s->stalled=true;
         ok=ok&&result==1;
     }
 cleanup:

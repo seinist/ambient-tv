@@ -1849,3 +1849,34 @@ snapshot is cached. Adopted scene files outlive their native player and
 are removed after confirmed player retirement, while canceled offscreen
 analysis owns its temporary files until native destruction completes.
 Physical Android driver and full CI validation remain required.
+
+Dynamic V1 planning and validated network input
+-----------------------------------------------
+Plan format 2 retains the mandatory compressed-metadata/timestamp
+boundaries. On a tuned GPU the first capture pass also reads the scene
+cut flag of each source pair. The shader holds the preceding source
+through a detected cut; the final phase registers the boundary with the
+ordered native accumulator. Replay accepts only complete scene results
+whose boundaries include every mandatory plan boundary. This replaces
+separate decoded-luma analysis for V1 on supported builds, using the GPU
+motion-based scene heuristic (not identical to the earlier luma/flash
+heuristic). Legacy multiwindow streams continue to use decoded planning.
+
+HTTP sources with a strong ETag and exact 206 Content-Range responses
+can use an Android read-only proxy file descriptor and an eight-block
+LRU instead of a whole local snapshot. Every new range uses If-Match
+and validates the returned ETag, range and size. The identity key binds
+the URI, request headers and validator; this is a server validator, not
+a cryptographic digest of remote content. Unsupported servers/devices
+fall back to the snapshot route. Repeated passes may re-download blocks
+outside the bounded cache. Device-specific native descriptor support
+and real network throughput require Android testing.
+
+A live readback timeout now prevents repeated blocking waits until
+nonblocking retirement succeeds (shared bridge) or the filter is
+recreated (MPV). Aborted CPU scene accumulators detach all borrowed
+pointers immediately. Successful queue submissions always retain an
+ownership ticket even if seal fails. Final destruction of borrowed
+Vulkan images/device still requires proven completion or device loss;
+a permanently unresponsive external driver cannot safely be forcibly
+freed by the interpolation library.
