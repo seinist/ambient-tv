@@ -726,6 +726,14 @@ fingerprints for both artifacts. Missing source artifacts block candidate
 generation. This does not yet establish native J2V8/V8 source correspondence
 or complete licensing of host-owned Java dependencies.
 
+SmartTube records native J2V8 binary provenance for all four ABIs: exact
+SharedModules commit and Git blob, input and stripped Full APK SHA-256,
+and matching executable .text section SHA-256. Module ZIP payloads are
+checked against that evidence. The declared J2V8 version is not proof of
+native J2V8/V8 source correspondence; that remains explicitly unverified.
+Resolved ASM artifacts are included in the Java source inventory without
+changing host class ownership.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

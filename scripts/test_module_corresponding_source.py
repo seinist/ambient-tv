@@ -94,7 +94,7 @@ class CorrespondingSourceTest(unittest.TestCase):
     def test_collect_exact_smarttube_maven_sources_and_binary_notices(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            identities = sources.SMARTTUBE_MAVEN_REQUIRED | {"net.minidev:accessors-smart"}
+            identities = sources.SMARTTUBE_MAVEN_REQUIRED | {"net.minidev:accessors-smart", "org.ow2.asm:asm"}
             self.maven_fixture(root / "inputs", identities)
             output = sources.collect_smarttube_maven_sources(root / "inputs", root / "sources")
             rows = json.loads((output / "maven-inventory.json").read_text())
@@ -110,6 +110,17 @@ class CorrespondingSourceTest(unittest.TestCase):
             self.maven_fixture(root / "inputs", {"net.minidev:json-smart"})
             with self.assertRaisesRegex(ValueError, "Incomplete"):
                 sources.collect_smarttube_maven_sources(root / "inputs", root / "sources")
+
+    def test_j2v8_text_digest_checks_exact_section(self):
+        import hashlib
+        output = "  [ 4] .text PROGBITS 0000000000001000 000002 000004 00 AX 0 0 4\n"
+        with mock.patch.object(sources.subprocess, "check_output", return_value=output):
+            self.assertEqual(sources.elf_text_digest(b"xxcodeyy"), hashlib.sha256(b"code").hexdigest())
+            with self.assertRaises(ValueError):
+                sources.elf_text_digest(b"xx")
+        with mock.patch.object(sources.subprocess, "check_output", return_value="no text"):
+            with self.assertRaises(ValueError):
+                sources.elf_text_digest(b"xxcodeyy")
 
     def test_all_modules_have_explicit_roots(self):
         self.assertEqual(10, len(sources.ROOTS))

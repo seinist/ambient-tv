@@ -129,7 +129,7 @@ def verify(root, module, run_id, sha):
     if not source_path.is_file() or source_path.is_symlink() or not 0 < source["size"] <= 1_800_000_000 or source_path.stat().st_size != source["size"] or digest(source_path) != source["sha256"]:
         raise ValueError("Corresponding-source hash or size mismatch")
     from module_corresponding_source import validate_source_archive
-    validate_source_archive(source_path, source)
+    j2v8 = validate_source_archive(source_path, source)
     expected = {"manifest.json", "provenance.json", source["asset"]}
     for entry in entries:
         abi = entry["abi"]
@@ -160,6 +160,10 @@ def verify(root, module, run_id, sha):
                 if descriptor.file_size > 512 * 1024 or json.loads(notices.read(descriptor)) != source:
                     raise ValueError("Source descriptor is not bound to the signed module payload")
             native = verify_payload(archive, module, entry)
+            if module == "smarttube":
+                row = next(item for item in j2v8["libraries"] if item["abi"] == abi)
+                if hashlib.sha256(archive.read("lib/libj2v8.so")).hexdigest() != row["apkSha256"]:
+                    raise ValueError("Module J2V8 differs from reviewed Full APK provenance")
             dex_mode = any(n.startswith("code/") for n in names)
             if dex_mode and module in {"vlc", "libretrodroid"}:
                 from check_vlc_shared_native import CORE, JNI, LIBRETRO, require_exports

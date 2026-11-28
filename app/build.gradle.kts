@@ -736,7 +736,7 @@ if (smartTubeBundled) {
                 "com.grack:nanojson", "com.github.florianingerl.util:regex", "com.jakewharton:disklrucache")
             val components = runtime.incoming.resolutionResult.allComponents.mapNotNull {
                 it.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier
-            }.filter { "${it.group}:${it.module}" in required || it.group == "net.minidev" }
+            }.filter { "${it.group}:${it.module}" in required || it.group == "net.minidev" || it.group == "org.ow2.asm" }
             check(components.map { "${it.group}:${it.module}" }.containsAll(required)) {
                 "Missing resolved SmartTube private Maven dependency"
             }
