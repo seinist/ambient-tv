@@ -9,11 +9,13 @@
 #include <vlc_common.h>
 #include <vlc_picture.h>
 #include <vlc_ancillary.h>
+#include "ambientsvp_quality.h"
 #define AMBIENT_SVP_PAIR_ID VLC_FOURCC('S','V','P','2')
 struct ambient_svp_pair {
     picture_t *a,*b;
     uint64_t a_id,b_id;
     float phase;
+    AmbientSvpQuality quality;
 };
 static inline void ambient_svp_pair_free(void *opaque)
 {
@@ -21,12 +23,12 @@ static inline void ambient_svp_pair_free(void *opaque)
     picture_Release(p->a);picture_Release(p->b);free(p);
 }
 static inline bool ambient_svp_attach_pair(picture_t *out,picture_t *a,picture_t *b,
-    uint64_t ai,uint64_t bi,float phase)
+    uint64_t ai,uint64_t bi,float phase,const AmbientSvpQuality *quality)
 {
-    if(!out||!a||!b||!ai||!bi||!isfinite(phase)||phase<0.f||phase>1.f)return false;
+    if(!out||!a||!b||!quality||!ai||!bi||!isfinite(phase)||phase<0.f||phase>1.f)return false;
     struct ambient_svp_pair *p=malloc(sizeof(*p));
     if(!p)return false;
-    *p=(struct ambient_svp_pair){picture_Hold(a),picture_Hold(b),ai,bi,phase};
+    *p=(struct ambient_svp_pair){.a=picture_Hold(a),.b=picture_Hold(b),.a_id=ai,.b_id=bi,.phase=phase,.quality=*quality};
     struct vlc_ancillary *anc=vlc_ancillary_CreateWithFreeCb(p,AMBIENT_SVP_PAIR_ID,ambient_svp_pair_free);
     if(!anc){ambient_svp_pair_free(p);return false;}
     int rc=picture_AttachAncillary(out,anc);
