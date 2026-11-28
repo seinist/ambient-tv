@@ -53,4 +53,7 @@
     <string name="svp_reason_overload">too slow, off for this playback</string>
     <string name="svp_mode_adaptive">Adaptive</string>
     <string name="svp_adaptive_hint">Starts with light analysis and reduces motion analysis quality under load. Frame rate and timestamps stay unchanged.</string>
+    <string name="svp_hdr_two_pass">HDR10+ two-pass (experimental)</string>
+    <string name="svp_hdr_two_pass_on">Analyze and replay</string>
+    <string name="svp_hdr_two_pass_hint">Local HEVC HDR10+ files only. The first playback measures every frame; after a complete run playback restarts from the beginning with scene metadata. Seeking cancels the analysis.</string>
 </resources>
