@@ -61,7 +61,7 @@ fn pq_table()->&'static Vec<u32>{
         table
     })
 }
-pub(super) struct StatsPipelines{collect:Pipeline,reduce:Pipeline,track:Pipeline,proxy:Pipeline,bright:Pipeline,linear:Pipeline,pq:Buffer}
+pub(super) struct StatsPipelines{collect:Pipeline,reduce:Pipeline,track:Pipeline,proxy:Pipeline,bright:Pipeline,linear:Pipeline,scanlines:Pipeline,pq:Buffer}
 impl StatsPipelines{
     pub(super) fn new(core:&Core)->Result<Self>{
         let types=[vk::DescriptorType::SAMPLED_IMAGE,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER];
@@ -74,7 +74,8 @@ impl StatsPipelines{
             track:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"track")?,c"track")?,
             proxy:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"bright_proxy")?,c"bright_proxy")?,
             bright:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"bright_reduce")?,c"bright_reduce")?,
-            linear:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"scene_linear_sum")?,c"scene_linear_sum")?})
+            linear:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"scene_linear_sum")?,c"scene_linear_sum")?,
+            scanlines:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"ellipse_scanlines")?,c"ellipse_scanlines")?})
     }
 }
 struct Buffer{device:ash::Device,buffer:vk::Buffer,memory:vk::DeviceMemory,size:u64}
@@ -136,7 +137,7 @@ pub(super) struct StatsJob{
     device:ash::Device,pool:vk::DescriptorPool,
     hist:Buffer,summary:Buffer,scene_hist:Option<Buffer>,windows:Vec<HdrWindow>,
     pipelines:Arc<StatsPipelines>,set:vk::DescriptorSet,
-    tracking:bool,affine:bool,width:u32,height:u32,step:u32,
+    tracking:bool,affine:bool,scanlines:bool,width:u32,height:u32,step:u32,
 }
 impl Drop for StatsJob{
     fn drop(&mut self){unsafe{self.device.destroy_descriptor_pool(self.pool,None);}}
@@ -175,12 +176,13 @@ impl StatsJob{
             vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
         let scene_hist=if scene{Some(Buffer::new(core,BINS*4*windows.len() as u64,vk::BufferUsageFlags::TRANSFER_DST,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?)}else{None};
-        let static_spans=scene&&tracking.is_some_and(|t|t.1==0.0);
-        let span_words=if static_spans&&windows.len()>1{2*core.height as usize*(windows.len()-1)}else{0};
+        let has_spans=ellipses.is_some()&&windows.len()>1;
+        let static_spans=has_spans&&tracking.is_some_and(|t|t.1==0.0);
+        let span_words=if has_spans{2*core.height as usize*(windows.len()-1)}else{0};
         let summary=Buffer::new(core,((STRIDE*windows.len()+span_words)*4) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
         let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
-            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
+            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),scanlines:has_spans&&!static_spans,width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
         let mut config=vec![0u32;STRIDE*windows.len()+span_words];
         for (i,w) in windows.iter().enumerate(){
             let row=&mut config[i*STRIDE..(i+1)*STRIDE];
@@ -191,14 +193,16 @@ impl StatsJob{
                 if let Some(e)=ellipses{row[64..67].copy_from_slice(&e[i]);row[67]=1;row[68..71].copy_from_slice(&e[i]);}
             }}
         }
-        if static_spans&&windows.len()>1{
+        if has_spans{
             let (tracks,_,_)=tracking.ok_or("missing legacy ellipse tracks")?;
             let axes=ellipses.ok_or("missing legacy ellipse axes")?;
             for i in 1..windows.len(){
                 let offset=STRIDE*windows.len()+2*core.height as usize*(i-1);
-                let spans=ellipse_spans(windows[i].rect,tracks[i].ellipse,axes[i],core.height);
                 config[i*STRIDE+71]=offset as u32;
-                config[offset..offset+spans.len()].copy_from_slice(&spans);
+                if static_spans{
+                    let spans=ellipse_spans(windows[i].rect,tracks[i].ellipse,axes[i],core.height);
+                    config[offset..offset+spans.len()].copy_from_slice(&spans);
+                }
             }
         }
         unsafe{
@@ -241,6 +245,11 @@ impl StatsJob{
             let between=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(read)];
             if self.tracking{
                 self.pipelines.track.dispatch(cmd,self.set,params,self.windows.len() as u32,1);
+                d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::DependencyFlags::empty(),&between,&[],&[]);
+            }
+            if self.scanlines{
+                self.pipelines.scanlines.dispatch(cmd,self.set,params,h.div_ceil(64),self.windows.len() as u32-1);
                 d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::COMPUTE_SHADER,
                     vk::DependencyFlags::empty(),&between,&[],&[]);
             }
@@ -430,7 +439,7 @@ impl StatsJob{
 #[cfg(test)]
 #[test]
 fn hdr_statistics_shaders_compile(){
-    for entry in ["collect","summarize","track","bright_proxy","bright_reduce","scene_linear_sum"]{assert_eq!(spirv(SHADER,UNIFORM,entry).unwrap()[0],0x07230203);}
+    for entry in ["collect","summarize","track","bright_proxy","bright_reduce","scene_linear_sum","ellipse_scanlines"]{assert_eq!(spirv(SHADER,UNIFORM,entry).unwrap()[0],0x07230203);}
 }
 
 // ST 2094-40:2020 section 10.4. Scene-level reducer. A caller must
