@@ -9,7 +9,7 @@
 
 #include "sh2_regcache.h"
 #define AMBIENT_SH2_MAX_OPS 32
-#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 3 + AMBIENT_SH2_REGCACHE_EXTRA)
+#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 4 + AMBIENT_SH2_REGCACHE_EXTRA)
 
 /* Emit a single side-effect-free, one-cycle SH2 instruction into AArch64.
  * x0 points at R[16], x7 at SR; w1..w5 are caller-saved scratch.
@@ -408,7 +408,7 @@ struct AmbientSh2Block {
     uint16_t ops[AMBIENT_SH2_MAX_OPS];
     unsigned count, cycles, hits;
     uint16_t terminal;
-    unsigned has_terminal;
+    unsigned has_terminal, dynamic_exit;
     AmbientMemOp memory;
     AmbientComplexMem complex_memory;
     opcodefunc terminal_handler;
@@ -527,9 +527,13 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
                 if(yabsys.sh2_cache_enabled)
                     for(unsigned j=0;j<block->count;++j)
                         (void)fetch(context,block->pcs[j]);
-                ((void (*)(u32*, u32*))block->code)(context->regs.R, &context->regs.SR.all);
+                u32 next_pc=block->next_pc;
+                if(block->dynamic_exit)
+                    next_pc=((u32 (*)(u32*,u32*))block->code)(context->regs.R,&context->regs.SR.all);
+                else
+                    ((void (*)(u32*,u32*))block->code)(context->regs.R,&context->regs.SR.all);
                 context->instruction = block->ops[block->count-1];
-                context->regs.PC = block->next_pc;
+                context->regs.PC = next_pc;
                 context->cycles += block->cycles;
             }
             if (block->has_terminal) {
@@ -565,7 +569,7 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
     unsigned words = 0, count = 0, cycles = 0;
     u32 addr=pc;
-    block->has_terminal = 0;
+    block->has_terminal = block->dynamic_exit = 0;
     code[words++] = 0xd503245fu; /* BTI c, harmless hint on older ARM64 */
     code[words++] = 0xaa0103e7u; /* MOV x7,x1: SR pointer survives scratch register writes */
     while (count < AMBIENT_SH2_MAX_OPS) {
@@ -605,6 +609,40 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
                 }
             }
         }
+        /* For indirect control transfers, capture the target in w6 before
+         * executing the slot. w6 is reserved across emitted ALU instructions
+         * and the register allocator. In particular RTS must read the old
+         * PR even when the slot overwrites it, and JSR/BRAF may modify Rn. */
+        const unsigned single=op&0xf0ffu;
+        if((single==0x0023 || single==0x0003 || single==0x402b ||
+            single==0x400b || single==0x000b) &&
+           count+2<=AMBIENT_SH2_MAX_OPS && addr<=UINT32_MAX-2) {
+            u16 slot;
+            if(ambient_sh2_peek(context,fetch,addr+2,&slot)) {
+                uint32_t slot_code[16];unsigned slot_cycles;
+                const unsigned n=ambient_sh2_emit_extended(slot,slot_code,ambient_sh2_layout,&slot_cycles);
+                if(n) {
+                    const unsigned offset=single==0x000b?ambient_sh2_layout.pr:
+                        (((op>>8)&15u)*4u);
+                    code[words++]=0xb9400006u|(offset<<8); /* LDR w6,[x0,#offset] */
+                    if(single==0x0023 || single==0x0003 || single==0x400b) {
+                        const u32 pc4=addr+4;
+                        code[words++]=0x52800001u|((pc4&0xffffu)<<5);
+                        code[words++]=0x72a00001u|((pc4>>16)<<5);
+                        if(single==0x0003 || single==0x400b)
+                            code[words++]=0xb9000001u|(ambient_sh2_layout.pr<<8);
+                        if(single==0x0023 || single==0x0003)
+                            code[words++]=0x0b0100c6u; /* ADD w6,w6,w1 */
+                    }
+                    memcpy(code+words,slot_code,(n-1)*sizeof(uint32_t));
+                    words+=n-1;cycles+=2+slot_cycles;
+                    block->pcs[count]=addr;block->ops[count++]=op;
+                    block->pcs[count]=addr+2;block->ops[count++]=slot;
+                    block->dynamic_exit=1;addr+=4;
+                    break;
+                }
+            }
+        }
         unsigned emitted = ambient_sh2_emit_extended(op, code + words, ambient_sh2_layout, &cost);
         if (!emitted) {
             // One terminal instruction may reuse the verified fetch. Never
@@ -634,7 +672,7 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
         block->count = block->cycles = 0;
         return 0;
     }
-    if (!block->has_terminal && count < 4u) {
+    if (!block->has_terminal && !block->dynamic_exit && count < 4u) {
         u16 current;
         if(ambient_sh2_peek(context,fetch,pc,&current)) {
             block->ops[0]=current;
@@ -648,6 +686,7 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     uint32_t optimized[AMBIENT_SH2_MAX_WORDS];
     optimized[0]=code[0];optimized[1]=code[1];
     words=2+ambient_sh2_regcache(code+2,words-2,optimized+2);
+    if(block->dynamic_exit)optimized[words++]=0x2a0603e0u; /* MOV w0,w6, after all writebacks */
     optimized[words++]=0xd65f03c0u;
     const long page = sysconf(_SC_PAGESIZE);
     if (page <= 0 || (size_t)page < words*sizeof(uint32_t)) {

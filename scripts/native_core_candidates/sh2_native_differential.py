@@ -87,6 +87,33 @@ static void test_linked_traces(void) {
     ambient_sh2_clear();
     puts("SH2 fused BRA/BSR traces, register state, chained exits and stale-source invalidation passed");
 }
+static void test_indirect_native_exits(void) {
+    const u16 branches[]={0x0123,0x0103,0x412b,0x410b,0x000b};
+    const u16 slots[]={0x7105,0xe101,0x412a,0x002a,0x0018};
+    const u32 base=0x06000100u;
+    for(unsigned b=0;b<5;++b)for(unsigned s=0;s<5;++s) {
+        u16 program[64];
+        for(unsigned i=0;i<64;++i)program[i]=0x0009;
+        program[0]=0x7101;program[1]=0x7102;program[2]=branches[b];program[3]=slots[s];
+        SH2_struct got,want;
+        setup_program(&got,program,64,base);
+        got.regs.R[1]=base+40;got.regs.PR=base+50;
+        AmbientSh2Block* executed=NULL;
+        for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+            if(ambient_sh2_try_block(&got,100,NULL,&executed))abort();
+        AmbientSh2Block* trace=&ambient_sh2_cache[0][ambient_sh2_slot(base)];
+        if(!trace->code||!trace->dynamic_exit||trace->count!=4)abort();
+        want=got;reference_step(&want);reference_step(&want);reference_step(&want);
+        if(!ambient_sh2_try_block(&got,100,NULL,&executed) ||
+           got.cycles!=want.cycles || got.instruction!=want.instruction ||
+           memcmp(&got.regs,&want.regs,sizeof(got.regs))) {
+            fprintf(stderr,"native indirect exit mismatch %04x/%04x PC %08x/%08x\n",
+                    branches[b],slots[s],got.regs.PC,want.regs.PC);abort();
+        }
+        ambient_sh2_clear();
+    }
+    puts("SH2 native BRAF/BSRF/JMP/JSR/RTS exits: 25 target/slot alias cases passed");
+}
 static void test_resident_cache_traces(void) {
     u16 program[64];
     for(unsigned i=0;i<64;++i)program[i]=0x7101;
@@ -126,6 +153,7 @@ static void test_resident_cache_traces(void) {
 }
 int main(void) {
     test_linked_traces();
+    test_indirect_native_exits();
     test_resident_cache_traces();
     unsigned legal=0, illegal=0, delayed=0;
     u32 seed=0x6a09e667u;

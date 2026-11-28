@@ -37,7 +37,10 @@ compiler build is not proof of correct gameplay or a performance improvement.
   guest register allocation spans the branch, slot and target; BSR updates
   PR before the slot. The native code falls through directly without host
   dispatch. Every non-contiguous source address is checked before execution.
-  Registers are committed at mapped-bus/helper and dynamic-exit boundaries. Cache-enabled SH2 execution uses the same native single-op dispatcher with
+  BRAF/BSRF/JMP/JSR/RTS with pure native delay slots now return their
+  computed target directly from the generated ARM64 trace. The target is
+  captured before the slot (including PR/Rn aliasing), while the register
+  allocator spans the prefix and slot. Registers are committed at mapped-bus/helper and dynamic-exit boundaries. Cache-enabled SH2 execution uses the same native single-op dispatcher with
   exact cache/data-array fetches, including delay slots. Cache-enabled traces
   compile from already resident, cache-use lines only; side-effect-free tag
   peeks verify every instruction before entry. The real fetches are replayed
