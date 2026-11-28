@@ -85,6 +85,20 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
                     -I "$VLC_SOURCE/include" \
                     -fsyntax-only "$VLC_SOURCE/modules/video_output/libplacebo/$module.c"
             done
+            # The linked VLC 32-bit build can use the native 32-bit off_t ABI.
+            # With FILE_OFFSET_BITS=64 the lseek/lseek64 declarations have
+            # compatible types, hiding a late inclusion of Android unistd.h.
+            case "$triple" in
+                armv7a-linux-androideabi|i686-linux-android)
+                    "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
+                        -std=gnu11 -D_GNU_SOURCE -U_FILE_OFFSET_BITS \
+                        -DMODULE_NAME=libplacebo -DAMBIENT_VLC_AHB_EXPERIMENT '-DN_(s)=s' \
+                        -Werror=implicit-function-declaration -Werror=incompatible-pointer-types -Werror=int-conversion \
+                        -I "$TMP/pl-headers" -isystem "$LIBPLACEBO_SOURCE/src/include" \
+                        -I "$VLC_SOURCE/include" \
+                        -fsyntax-only "$VLC_SOURCE/modules/video_output/libplacebo/display.c"
+                    ;;
+            esac
             # Validate the actual decoder and NDK per-buffer metadata reader,
             # rather than relying solely on display/instance syntax checks.
             for module in mediacodec mediacodec_ndk mediacodec_jni; do
