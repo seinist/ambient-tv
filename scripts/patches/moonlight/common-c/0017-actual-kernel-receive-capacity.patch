@@ -17,7 +17,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
  #if defined(__ANDROID__)
      bool useBatch = !useSelect;
      char* batchBuffers[VIDEO_UDP_BATCH] = {0};
-@@ -225,13 +234,35 @@
+@@ -225,16 +234,38 @@
              unsigned int tier = __atomic_load_n(&adaptiveVideoBufferTier, __ATOMIC_RELAXED);
 -            if (tier != appliedTier) {
 +            if (tier != attemptedTier) {
@@ -56,3 +56,6 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
 +                    resizeAttempts++;
 +                    retryResizeAt = PltGetMillis() + 1000 * resizeAttempts;
 +                }
+             }
+         }
+         char* receivedEncryptedBuffer = encryptedBuffer;
