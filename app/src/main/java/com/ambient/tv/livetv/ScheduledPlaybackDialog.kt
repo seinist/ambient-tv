@@ -1,6 +1,8 @@
 package com.ambient.tv.livetv
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -50,7 +52,7 @@ private fun ScheduleAction(title: String, imageUrl: String?, plan: ScheduledPlay
     val existing = entries.firstOrNull { it.id == draft.id }
     var editing by remember(draft.id) { mutableStateOf(false) }
     TvActionButton(stringResource(if (existing == null) R.string.schedule_playback else R.string.schedule_edit),
-        onClick = { editing = true }, enabled = enabled, selected = existing != null)
+        onClick = { editing = true }, enabled = enabled, selected = existing != null, icon = Icons.Filled.Schedule)
     if (editing) ScheduledPlaybackDialog(existing ?: draft, store) { editing = false }
 }
 
@@ -66,7 +68,7 @@ internal fun ScheduledPlaybackDialog(entry: LiveTvReminder, store: LiveTvReminde
     var plan by remember(entry.id, entry.startEpochSeconds) { mutableStateOf(initial) }
     var error by remember(entry.id) { mutableStateOf(false) }
     val candidate = entry.copy(startEpochSeconds = time.toEpochSecond(), due = false, ready = false,
-        snoozedUntilMs = 0L, probeAttempts = 0, plan = plan)
+        snoozedUntilMs = 0L, probeAttempts = 0, plan = plan, automaticAttempted = false)
     val conflict = entries.any { it.id != candidate.id && candidate.overlaps(it) }
     val exists = entries.any { it.id == entry.id }
     val valid = candidate.startEpochSeconds > System.currentTimeMillis() / 1000
@@ -76,15 +78,17 @@ internal fun ScheduledPlaybackDialog(entry: LiveTvReminder, store: LiveTvReminde
                 if (scheduledPlaybackIdentity(context, plan.provider, plan.targetId) == plan.sourceIdentity &&
                     store.putPlan(candidate)) onClose() else error = true
             }, enabled = valid, selected = true)
-            if (exists) TvActionButton(stringResource(R.string.programme_reminder_play), onClick = {
-                val saved = store.find(entry.id)
-                if (saved != null && scheduledPlaybackIdentity(context, initial.provider, initial.targetId) == initial.sourceIdentity) {
-                    store.snooze(saved.id); LiveTvReminderPrompt.launchPlan(saved); onClose()
-                } else error = true
-            })
-            if (exists) TvActionButton(stringResource(R.string.reminder_remove), onClick = { store.remove(entry.id); onClose() })
             TvActionButton(stringResource(R.string.common_back), onClick = onClose)
         }) {
+        if (exists) DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (exists) TvActionButton(stringResource(R.string.programme_reminder_play), onClick = {
+                    val saved = store.find(entry.id)
+                    if (saved != null && scheduledPlaybackIdentity(context, initial.provider, initial.targetId) == initial.sourceIdentity) {
+                        store.snooze(saved.id); LiveTvReminderPrompt.launchPlan(saved); onClose()
+                    } else error = true
+                })
+                if (exists) TvActionButton(stringResource(R.string.reminder_remove), onClick = { store.remove(entry.id); onClose() })
+        }
         Text(time.format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
             .withLocale(Locale.getDefault())))
         DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
