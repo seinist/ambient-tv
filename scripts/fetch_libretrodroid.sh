@@ -29,7 +29,7 @@ remove_dir() {
     rm -rf "$dir"
 }
 
-patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null; cat "$ROOT/scripts/instrument_libretro_trace.py" "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp" "$ROOT/scripts/native_libretro_vulkan/vulkanslanggeometry.h" "$ROOT/scripts/native_rewind/rewindbuffer.h" "$ROOT/scripts/native_rewind/rewindbuffer.cpp" "$ROOT/scripts/native_rewind/rewindtimeline.h" "$ROOT/scripts/native_rewind/rewindcapture.h") | git hash-object --stdin)"
+patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null; cat "$ROOT/scripts/patch_libretrodroid_module_loader.py" "$ROOT/scripts/instrument_libretro_trace.py" "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp" "$ROOT/scripts/native_libretro_vulkan/vulkanslanggeometry.h" "$ROOT/scripts/native_rewind/rewindbuffer.h" "$ROOT/scripts/native_rewind/rewindbuffer.cpp" "$ROOT/scripts/native_rewind/rewindtimeline.h" "$ROOT/scripts/native_rewind/rewindcapture.h") | git hash-object --stdin)"
 marker="$COMMIT $patch_hash recursive"
 if [[ -f "$DEST/.ambient-libretrodroid" && "$(cat "$DEST/.ambient-libretrodroid")" == "$marker" ]]; then
     log "LibretroDroid $COMMIT already prepared"
@@ -66,6 +66,8 @@ for patch in "$PATCHES"/*.patch; do
     (cd "$DEST" && GIT_CEILING_DIRECTORIES="$(dirname "$DEST")" git apply --whitespace=nowarn "$patch") \
         || fail "Patch $(basename "$patch") does not apply"
 done
+python3 "$ROOT/scripts/patch_libretrodroid_module_loader.py" "$DEST/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java" \
+    || fail "LibretroDroid module loader patch failed"
 # Match core-call boundaries after all source patches, independent of neighboring hunks.
 python3 "$ROOT/scripts/instrument_libretro_trace.py" "$DEST/src/main/cpp/libretrodroid.cpp" \
     || fail "Native core tracing layout changed"
