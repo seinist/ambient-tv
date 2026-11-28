@@ -518,8 +518,30 @@ class GameLibraryViewModel @Inject constructor(
                     ?: context.getString(R.string.game_folder_fallback)
             },
             scanProcessed = 0, scanDiscovered = 0, enriching = !scanFiles) }
-        if (scanFiles) library.scan(folder.id, systemId = systemId) { processed, known ->
-            mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+        if (scanFiles) {
+            val assigned = systemId ?: folder.systemId.takeUnless { it == "auto" }
+            // Assigned folders already know their platform: download the catalog before
+            // opening any ROM, so exact checksum identification works in the first scan.
+            if (assigned != null) metadata.prepareNameCatalogs(listOf(assigned), automatic = true)
+            library.scan(folder.id, systemId = systemId) { processed, known ->
+                mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+            }
+            if (assigned == null && library.folders().any { it.id == folder.id }) {
+                // Auto folders discover their platforms from file types. Only newly loaded
+                // checksum catalogs need a targeted second pass, within the same operation.
+                val detected = library.indexedSystems().filter { folder.id in library.foldersWithSystem(it) }
+                val loaded = metadata.prepareNameCatalogs(detected, automatic = true)
+                for (id in loaded.filter(com.ambient.tv.games.metadata.GameNameDatabases::usesChecksums)) {
+                    if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) break
+                    mutable.update { it.copy(scanPhase = GameLibraryScanPhase.MATCHING_NAMES,
+                        scanProcessed = 0, scanDiscovered = 0) }
+                    library.scan(folder.id, systemId = id) { processed, known ->
+                        mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+                    }
+                }
+            }
+            val sizes = library.datCatalogSizes()
+            mutable.update { it.copy(nameCatalogs = sizes) }
         }
         if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) return
         mutable.update { it.copy(enriching = true, scanPhase = GameLibraryScanPhase.METADATA,

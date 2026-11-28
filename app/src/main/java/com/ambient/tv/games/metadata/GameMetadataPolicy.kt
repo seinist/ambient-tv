@@ -1,6 +1,10 @@
 package com.ambient.tv.games.metadata
 
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.library.gameDatSearchKey
+import com.ambient.tv.games.library.gameDisplayTitle
+import com.ambient.tv.games.library.gameTitleRegionLabel
+import com.ambient.tv.games.library.gameTitleLanguageLabel
 import java.security.MessageDigest
 
 /** A user rename is presentation, never a request to identify a different ROM. */
@@ -22,7 +26,7 @@ internal fun gameMetadataQuery(
         ?: matched?.canonicalTitle?.takeIf(String::isNotBlank)
         ?: verified
         ?: game.metadataTitle?.takeIf(String::isNotBlank)
-    val filename = game.filename.substringBeforeLast('.').replace('_', ' ').trim()
+    val filename = gameCatalogFilename(game.systemId, game.filename)
     return GameMetadataQuery(
         systemId = game.systemId,
         title = explicit ?: canonical ?: filename,
@@ -38,10 +42,34 @@ internal fun gameMetadataQuery(
     )
 }
 
+/** Remove known DS release numbering, not genuine numeric names on other platforms. */
+internal fun gameCatalogFilename(systemId: String, filename: String): String {
+    val stem = filename.substringAfterLast('/').substringBeforeLast('.')
+    return (if (systemId == "nds") stem.replace(Regex("""^\d{4,5}\s*[-_.]\s*"""), "") else stem)
+        .replace('_', ' ').trim()
+}
+
+/** Filename/catalog agreement is not a checksum match. Restrict fallback to exact normalized
+ * names, preserving explicit region/language tags and never selecting a partial title. */
+internal fun matchingGameCatalogTitles(hint: String, candidates: List<String>): List<String> {
+    val exact = gameDatSearchKey(hint)
+    if (exact.isEmpty()) return emptyList()
+    val full = candidates.filter { gameDatSearchKey(it) == exact }.distinct()
+    if (full.isNotEmpty()) return full
+    val base = gameDatSearchKey(gameDisplayTitle(hint))
+    val region = gameTitleRegionLabel(hint)?.let(::gameDatSearchKey)
+    val language = gameTitleLanguageLabel(hint)?.let(::gameDatSearchKey)
+    return candidates.filter {
+        gameDatSearchKey(gameDisplayTitle(it)) == base &&
+            (region == null || gameTitleRegionLabel(it)?.let(::gameDatSearchKey) == region) &&
+            (language == null || gameTitleLanguageLabel(it)?.let(::gameDatSearchKey) == language)
+    }.distinct()
+}
+
 /** Includes file version and locale so a previous miss cannot suppress a new ROM/region. */
 internal fun gameMetadataFingerprint(game: LibraryGame, query: GameMetadataQuery): String =
     gameMetadataDigest(listOf(game.fileId, game.modified.toString(), query.systemId,
-        game.datVersion.toString(), game.verifiedTitle.orEmpty(),
+        game.datVersion.toString(), game.verifiedTitle.orEmpty(), game.internalTitle.orEmpty(),
         query.size.toString(), query.title, query.filename, query.crc32.orEmpty(), query.serial.orEmpty(),
         query.language, query.region, query.canonicalTitle.orEmpty(), query.providerGameId.orEmpty()).joinToString("\u0000"))
 
@@ -50,7 +78,7 @@ internal fun gameMetadataDigest(value: String): String = MessageDigest.getInstan
 
 /** Old primary-only Libretro misses must not hide images now available from its mirror. */
 internal fun gameMetadataLookupFingerprint(provider: String, fingerprint: String): String =
-    if (provider == GameMetadataProviderIds.LIBRETRO) gameMetadataDigest("libretro-thumbnails:v2:$fingerprint")
+    if (provider == GameMetadataProviderIds.LIBRETRO) gameMetadataDigest("libretro-thumbnails:v3:$fingerprint")
     else fingerprint
 
 /** A cached success for a query is usable only while its saved identity still answers it. */
