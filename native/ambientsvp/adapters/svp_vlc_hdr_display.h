@@ -34,7 +34,7 @@ struct ambient_svp_hdr_display {
     AmbientSvpHdrPass *scene_pass;
     void *scene_lib;
     int (*scene_interval)(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
-    int (*scene_lookup)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
+    int (*scene_lookup)(AmbientSvpHdrPass *,uint64_t,const uint32_t (*)[9],AmbientSvpHdrSceneResult *);
     int (*scene_finish)(AmbientSvpHdrPass *);
     void (*scene_destroy)(AmbientSvpHdrPass *);
     bool scene_finished;
@@ -76,7 +76,7 @@ static inline bool ambient_svp_hdr_scene_open(pl_gpu gpu,struct ambient_svp_hdr_
             dlsym(s->scene_lib,"ambient_svp_hdr_pass_open_version");
         s->scene_lookup_legacy=dlsym(s->scene_lib,"ambient_svp_hdr_pass_lookup_legacy");
         s->scene_interval=dlsym(s->scene_lib,"ambient_svp_hdr_pass_interval");
-        s->scene_lookup=dlsym(s->scene_lib,"ambient_svp_hdr_pass_lookup");
+        s->scene_lookup=dlsym(s->scene_lib,"ambient_svp_hdr_pass_lookup_v1");
         s->scene_finish=dlsym(s->scene_lib,"ambient_svp_hdr_pass_finish");
         s->scene_destroy=dlsym(s->scene_lib,"ambient_svp_hdr_pass_destroy");
         if(!open||!s->scene_lookup_legacy||!s->scene_interval||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)goto fail;
@@ -319,17 +319,19 @@ static inline bool ambient_svp_hdr_apply_stats(struct ambient_hdrplus *m,
 }
 static inline bool ambient_svp_hdr_scene_compatible(const struct ambient_hdrplus *m)
 {
-    static const unsigned percentages[9]={1,5,10,25,50,75,90,95,99};
     if(!m->metadata_constraints_ok||m->version>1||m->window_count<1||m->window_count>3)return false;
     if(m->version==0)return true;
     if(m->window_count!=1||m->windows[0].histogram_count!=9)return false;
-    for(unsigned j=0;j<9;j++)if(m->windows[0].histogram[j].percentage!=percentages[j])return false;
+    for(unsigned j=0;j<9;j++)if(m->windows[0].histogram[j].percentage>100||
+        (j&&m->windows[0].histogram[j].percentage<=m->windows[0].histogram[j-1].percentage))return false;
     return true;
 }
 static inline bool ambient_svp_hdr_apply_scene(struct ambient_hdrplus *m,const AmbientSvpHdrSceneResult *r)
 {
-    if(!ambient_svp_hdr_scene_compatible(m)||!r||!svp_hdr_scene_values(r->maxscl,r->average,r->percentiles,r->fraction))return false;
+    if(!ambient_svp_hdr_scene_compatible(m)||m->version!=1||!r)return false;
     struct ambient_hdrplus_window *p=&m->windows[0];
+    uint32_t schema[9];for(unsigned j=0;j<9;j++)schema[j]=p->histogram[j].percentage;
+    if(!svp_hdr_scene_values_schema(r->maxscl,r->average,r->percentiles,r->fraction,schema))return false;
     uint32_t peak=0;
     for(unsigned j=0;j<3;j++){if(r->maxscl[j]>100000)return false;p->maxscl[j]=r->maxscl[j]/100000.f;if(r->maxscl[j]>peak)peak=r->maxscl[j];}
     p->average=r->average/100000.f;p->fraction=r->fraction/1000.f;
@@ -382,7 +384,8 @@ static inline bool ambient_svp_hdr_scene_replay(struct ambient_svp_hdr_display *
         return s->scene_lookup_legacy(s->scene_pass,index,&r)==1&&ambient_svp_hdr_apply_legacy_scene(&s->metadata,&r);
     }
     AmbientSvpHdrSceneResult r;
-    return s->scene_lookup(s->scene_pass,index,&r)==1&&ambient_svp_hdr_apply_scene(&s->metadata,&r);
+    uint32_t schema[9];for(unsigned j=0;j<9;j++)schema[j]=s->metadata.windows[0].histogram[j].percentage;
+    return s->scene_lookup(s->scene_pass,index,&schema,&r)==1&&ambient_svp_hdr_apply_scene(&s->metadata,&r);
 }
 static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct ambient_svp_hdr_display *s,struct ambient_ahb_owner *owner,
