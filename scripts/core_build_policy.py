@@ -545,6 +545,7 @@ def main():
     p.add_argument("--ndk", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--build-cwd", type=Path, default=Path.cwd())
+    p.add_argument("--source-recipe", default="")
     args = parser.parse_args()
     if args.action == "plan":
         print(json.dumps(plan(json.loads(args.catalog.read_text()), args.event, args.ref,
@@ -553,7 +554,7 @@ def main():
     elif args.action == "prepare-cmake":
         prepare_cmake(args.root, args.core, args.profile)
     elif args.action == "prepare-hotpaths":
-        if args.profile in {"core-hotpaths", "citra-arm64-jit", "yabause-arm64-jit"} or (args.profile in PUBLIC_EXPERIMENTS and args.core in HOTPATH_CORES):
+        if args.profile in {"core-hotpaths", "citra-arm64-jit", "yabause-arm64-jit"} or (args.profile in PUBLIC_EXPERIMENTS | {"pgo-generate", "pgo-use"} and args.core in HOTPATH_CORES):
             prepare_hotpaths(args.root, args.core)
     elif args.action == "prepare-ndk":
         prepare_ndk(args.root, args.core, args.profile)
@@ -573,7 +574,7 @@ def main():
         if link_evidence["unresolved_local_inputs"]:
             raise ValueError(f"Core has unaudited local linker inputs: {link_evidence['unresolved_local_inputs']}")
         report = {**identity, **link_evidence, "needed_libraries": dependencies, "core": args.core, "abi": args.abi, "commit": args.commit,
-                  "ndk": args.ndk, "profile": args.profile,
+                  "ndk": args.ndk, "profile": args.profile, "source_recipe": args.source_recipe,
                   "requested_cflags": PROFILES[args.profile][0],
                   "requested_ldflags": PROFILES[args.profile][1],
                   "binary_sha256": file_digest(args.binary),

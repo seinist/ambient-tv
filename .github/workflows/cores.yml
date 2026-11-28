@@ -301,14 +301,18 @@ jobs:
           read -r -a extra_env <<< "$EXTRA_ENV"
           read -r -a makevars <<< "$MAKEVARS"
           pgo_args=()
+          source_recipe=""
+          if [[ "$PROFILE" == pgo-generate || "$PROFILE" == pgo-use ]]; then
+            source_recipe=$(python3 scripts/core_pgo.py recipe --root "$PWD" --core "$CORE")
+          fi
           if [[ "$PROFILE" == pgo-use ]]; then
-            python3 scripts/core_pgo.py verify --directory pgo-input --core "$CORE" --abi "$ABI" --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --sha256 "$PGO_SHA256"
+            python3 scripts/core_pgo.py verify --directory pgo-input --core "$CORE" --abi "$ABI" --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --sha256 "$PGO_SHA256" --source-recipe "$source_recipe"
             pgo_data="$PWD/pgo-input/ambient.profdata"
             CFLAGS_EXTRA="${CFLAGS_EXTRA//ambient.profdata/$pgo_data}"
             LDFLAGS_EXTRA="${LDFLAGS_EXTRA//ambient.profdata/$pgo_data}"
             pgo_args=(--profile-data "$pgo_data")
           fi
-          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 || "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ]]; then
+          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 || "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit || "$PROFILE" == pgo-generate || "$PROFILE" == pgo-use ]]; then
             python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
           fi
           if [[ "$PROFILE" == citra-arm64-jit ]]; then
@@ -377,7 +381,7 @@ jobs:
           python3 scripts/check_elf_pages.py "$target"
           python3 scripts/core_build_policy.py report --nm "$bin/llvm-nm" --readelf "$bin/llvm-readelf" --binary "$target" --linked-library "$lib" \
             --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
-            --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --build-cwd "$build_cwd" --output reports/build.json
+            --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --source-recipe "$source_recipe" --build-cwd "$build_cwd" --output reports/build.json
           cat reports/build.json
           if [ -n "${CORE_CCACHE:-}" ]; then ccache --show-stats || true; fi
 
