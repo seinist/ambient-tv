@@ -1006,6 +1006,7 @@ mod tests{
             assert_eq!(super::quality_spirv(mode,t,"analyse").unwrap()[0],0x07230203);
             assert_eq!(super::quality_spirv(mode,t,"scene").unwrap()[0],0x07230203);
             assert_eq!(super::quality_spirv(mode,t,"snapshot").unwrap()[0],0x07230203);
+            for entry in ["clear","scatter","finish"]{assert_eq!(super::mask_spirv(mode,t,entry).unwrap()[0],0x07230203);}
             let out=if mode==0{super::spirv(&super::tuned_synthesis(super::SYNTHESIS,t).unwrap(),
                 "@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")}
                 else if mode>=4{super::raw_synthesis_config(mode,Some(t))}else{super::high_synthesis_config(mode,Some(t))};
