@@ -328,11 +328,11 @@ typedef struct {
 } AmbientSh2SinglePage;
 /* A single immutable W^X slab serves 256 encodings; no executable mapping
  * per delay slot or cold PC, and no code-cache dependence on guest addresses. */
-static AmbientSh2SinglePage ambient_sh2_single[256];
+static AmbientSh2SinglePage ambient_sh2_single[2][256];
 
 static int ambient_sh2_single_emit(SH2_struct* sh, uint16_t op)
 {
-    AmbientSh2SinglePage* page=&ambient_sh2_single[op>>8];
+    AmbientSh2SinglePage* page=&ambient_sh2_single[sh->isslave?1:0][op>>8];
     const unsigned index=op&255u;
     if(page->failed)return 0;
     if(!page->code) {
@@ -397,7 +397,8 @@ static void ambient_sh2_delay_native(SH2_struct* sh, u32 addr)
 #define AMBIENT_SH2_SLOTS 64
 #define AMBIENT_SH2_HOT 4
 
-typedef struct {
+typedef struct AmbientSh2Block AmbientSh2Block;
+struct AmbientSh2Block {
     uint32_t pc;
     uint16_t ops[AMBIENT_SH2_MAX_OPS];
     unsigned count, cycles, hits;
@@ -408,7 +409,9 @@ typedef struct {
     opcodefunc terminal_handler;
     void* code;
     size_t bytes;
-} AmbientSh2Block;
+    struct { uint32_t pc; AmbientSh2Block* target; } edges[2];
+    unsigned next_edge;
+};
 static AmbientSh2Block ambient_sh2_cache[2][AMBIENT_SH2_SLOTS];
 static int ambient_sh2_disabled[2];
 
@@ -420,8 +423,10 @@ static void ambient_sh2_clear(void)
             if (b->code) munmap(b->code, b->bytes);
         }
     }
-    for(unsigned i=0;i<256;++i)
-        if(ambient_sh2_single[i].code)munmap(ambient_sh2_single[i].code,ambient_sh2_single[i].bytes);
+    for(unsigned cpu=0;cpu<2;++cpu)
+        for(unsigned i=0;i<256;++i)
+            if(ambient_sh2_single[cpu][i].code)
+                munmap(ambient_sh2_single[cpu][i].code,ambient_sh2_single[cpu][i].bytes);
     memset(ambient_sh2_single,0,sizeof(ambient_sh2_single));
     memset(ambient_sh2_cache, 0, sizeof(ambient_sh2_cache));
     memset(ambient_sh2_disabled, 0, sizeof(ambient_sh2_disabled));
@@ -439,7 +444,13 @@ static int ambient_sh2_eligible(const SH2_struct* context)
 #endif
 }
 
-static int ambient_sh2_try(SH2_struct* context, u32 budget)
+static unsigned ambient_sh2_slot(uint32_t pc)
+{
+    return (pc>>1 ^ pc>>9)&(AMBIENT_SH2_SLOTS-1);
+}
+
+static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
+                                 AmbientSh2Block* linked, AmbientSh2Block** executed)
 {
     if (!ambient_sh2_eligible(context) || context->cycles >= budget ||
         budget - context->cycles < 4)
@@ -452,7 +463,10 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
     if (fetch != FetchBios && fetch != FetchLWram && fetch != FetchHWram) return 0;
     const unsigned cpu = context->isslave ? 1 : 0;
     if (ambient_sh2_disabled[cpu]) return 0;
-    AmbientSh2Block* block = &ambient_sh2_cache[cpu][(pc >> 1 ^ pc >> 9) & (AMBIENT_SH2_SLOTS-1)];
+    AmbientSh2Block* block = linked ? linked : &ambient_sh2_cache[cpu][ambient_sh2_slot(pc)];
+    /* A cache slot is stable, but its translation may have been replaced.
+     * Linked targets never bypass guest-code, fetch or cycle-budget checks. */
+    if(linked && (block->pc!=pc || (!block->code && !block->has_terminal)))return 0;
     if (block->pc == pc && (block->code || block->has_terminal) &&
         block->cycles <= budget - context->cycles &&
         (!block->has_terminal || block->cycles < budget - context->cycles)) {
@@ -484,13 +498,14 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
                 else if (!ambient_sh2_native_one(context,block->terminal))
                     block->terminal_handler(context); /* illegal opcode or W^X failure */
             }
+            *executed=block;
             return 1;
         }
         if (block->code) munmap(block->code, block->bytes);
         memset(block, 0, sizeof(*block));
         block->pc = pc;
     }
-    if ((block->code || block->has_terminal) && block->pc == pc) return 0; /* insufficient cycle budget */
+    if (linked || ((block->code || block->has_terminal) && block->pc == pc)) return 0; /* insufficient cycle budget or invalidated link */
     if (block->pc != pc) {
         if (block->code) munmap(block->code, block->bytes);
         memset(block, 0, sizeof(*block));
@@ -565,7 +580,37 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
     block->bytes = (size_t)page;
     block->count = count;
     block->cycles = cycles;
-    return 0; /* interpreter executes this iteration; next hot entry uses translation */
+    return 0; /* cold execution uses the native single-op path */
+}
+
+/* Two cached outgoing edges per block accommodate taken/not-taken branches.
+ * Never patch RX pages. Chained entry uses the exact same validation as an
+ * ordinary cache hit and writes back architectural state before helpers.
+ */
+static int ambient_sh2_try(SH2_struct* context,u32 budget)
+{
+    AmbientSh2Block* current=NULL;
+    if(!ambient_sh2_try_block(context,budget,NULL,&current))return 0;
+    for(unsigned chain=1;chain<16 && ambient_sh2_eligible(context) &&
+        context->cycles<budget;++chain) {
+        const uint32_t pc=context->regs.PC;
+        const unsigned cpu=context->isslave?1:0;
+        AmbientSh2Block* target=NULL;
+        for(unsigned i=0;i<2;++i)
+            if(current->edges[i].target && current->edges[i].pc==pc) {
+                target=current->edges[i].target;break;
+            }
+        if(!target) {
+            target=&ambient_sh2_cache[cpu][ambient_sh2_slot(pc)];
+            if(target->pc!=pc || (!target->code && !target->has_terminal))break;
+            const unsigned i=current->next_edge++&1u;
+            current->edges[i].pc=pc;current->edges[i].target=target;
+        }
+        AmbientSh2Block* completed=NULL;
+        if(!ambient_sh2_try_block(context,budget,target,&completed))break;
+        current=completed;
+    }
+    return 1;
 }
 #endif
 #endif
