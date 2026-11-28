@@ -44,7 +44,7 @@ struct ambient_svp_pair {
     float phase;
     AmbientSvpQuality quality;
     struct ambient_svp_scene_config *scene;
-    uint64_t scene_index;
+    uint64_t scene_index,scene_pair_end;
     bool scene_final;
 };
 static inline void ambient_svp_pair_free(void *opaque)
