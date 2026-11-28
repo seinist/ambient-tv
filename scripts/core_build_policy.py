@@ -52,27 +52,44 @@ def selection(raw, available, label):
     return values
 
 
-def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", comparison="none"):
-    if profile not in PROFILES:
-        raise ValueError("Unknown build profile")
+def validate_update_ref(ref):
+    if ref == "HEAD":
+        return
+    if (not isinstance(ref, str) or not re.fullmatch(r"refs/heads/[A-Za-z0-9._/-]+", ref)
+            or ".." in ref or "//" in ref or ref.endswith(("/", "."))
+            or any(part.startswith(".") or part.endswith(".lock") for part in ref.split("/"))):
+        raise ValueError(f"Invalid core update ref: {ref}")
+
+
+def validate_catalog(catalog):
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("abis"), list) or not isinstance(catalog.get("cores"), list):
+        raise ValueError("Invalid core catalog structure")
     declared_abis = catalog["abis"]
     if not declared_abis or len(set(declared_abis)) != len(declared_abis) or not set(declared_abis) <= ABIS:
         raise ValueError("Invalid ABI catalog")
     entries = catalog["cores"]
+    if any(not isinstance(entry, dict) or not {"core", "repo", "commit", "build"} <= entry.keys() for entry in entries):
+        raise ValueError("Incomplete core catalog entry")
     ids = [entry["core"] for entry in entries]
     if not ids or len(set(ids)) != len(ids):
         raise ValueError("Empty or duplicate core catalog")
     for entry in entries:
         if not re.fullmatch(r"[a-z0-9_]+", entry["core"]):
             raise ValueError("Unsafe core id")
-        if not re.fullmatch(r"https://github\.com/[\w.-]+/[\w.-]+", entry["repo"]):
+        if not re.fullmatch(r"https://github\.com/[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", entry["repo"], re.ASCII):
             raise ValueError("Invalid upstream repository")
         if not re.fullmatch(r"[0-9a-f]{40}", entry["commit"]):
             raise ValueError("Expected a full pinned commit")
+        update_ref = entry.get("update_ref", "HEAD")
+        validate_update_ref(update_ref)
+        for field in ("args", "cppflags", "env", "jni"):
+            if field in entry and (not isinstance(entry[field], str) or any(c in entry[field] for c in "\r\n\x00")):
+                raise ValueError(f"Invalid core build field: {field}")
         supported = entry.get("abis", declared_abis)
         if not supported or len(set(supported)) != len(supported) or not set(supported) <= set(declared_abis):
             raise ValueError("Invalid core ABI list")
-        if not set(entry.get("abi_args", {})) <= set(supported):
+        overrides = entry.get("abi_args", {})
+        if not isinstance(overrides, dict) or any(not isinstance(x, str) or any(c in x for c in "\r\n\x00") for x in overrides.values()) or not set(overrides) <= set(supported):
             raise ValueError("Invalid ABI-specific build arguments")
         if entry["build"] not in {"ndk", "cmake"}:
             raise ValueError("Unknown build system")
@@ -80,6 +97,13 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
             jni = Path(entry["jni"])
             if jni.is_absolute() or ".." in jni.parts:
                 raise ValueError("Unsafe JNI path")
+    return declared_abis, entries, ids
+
+
+def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", comparison="none"):
+    if profile not in PROFILES:
+        raise ValueError("Unknown build profile")
+    declared_abis, entries, ids = validate_catalog(catalog)
     if event not in {"push", "pull_request", "workflow_dispatch"}:
         raise ValueError("Unsupported build event")
     if comparison not in {"none", "baseline-thinlto", "o3-o3-thinlto"}:
@@ -189,7 +213,7 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         if abi not in entry.get("abis", declared_abis):
             continue
         cflags, ldflags = PROFILES[variant]
-        recipe = {k: v for k, v in entry.items() if k not in {"abis", "abi_args", "extended"}}
+        recipe = {k: v for k, v in entry.items() if k not in {"abis", "abi_args", "extended", "update_ref"}}
         if entry.get("abi_args", {}).get(abi):
             recipe["args"] = " ".join(filter(None, (recipe.get("args", ""), entry["abi_args"][abi])))
         matrix.append({**recipe, "abi": abi, "profile": variant,

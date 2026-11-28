@@ -116,7 +116,7 @@ def fingerprint(job, ndk, root=ROOT):
         build_recipe = build_recipe.replace('NDK_CCACHE="$ndk_ccache"', 'NDK_CCACHE="${CORE_CCACHE:-}"')
     # The matrix can already carry its publication fingerprint. Do not
     # hash the fingerprint recursively when deriving a compiler-cache key.
-    job = {k: v for k, v in job.items() if k != "fingerprint"}
+    job = {k: v for k, v in job.items() if k not in {"fingerprint", "update_ref"}}
     payload = {"schema": 2, "ndk": ndk, "job": job,
                "build": digest(build_recipe.encode()), "files": files}
     return digest(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())

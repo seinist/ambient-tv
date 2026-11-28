@@ -266,3 +266,10 @@ updates must pass production patch preflight on an exact disposable checkout;
 CI tests the catalog pin. Incompatible candidates keep their existing pin.
 Use `./build.sh cores --profile citra-arm64-jit` or `--profile yabause-arm64-jit`
 to build artifacts. Main-only signing still requires the dedicated validation gate.
+
+Audit hardening: the updater shares the build planner's catalog validation
+before any remote request; source patch checks include NDK/CMake recipes for
+Mupen64Plus, Snes9x2010, Citra, Panda3DS and SwanStation. Blocked candidates
+are reported separately from current pins. Updater-only branch metadata is
+excluded from binary fingerprints. Manual validation shards have distinct
+concurrency keys; an independent updater-policy CI job validates shell dispatch.

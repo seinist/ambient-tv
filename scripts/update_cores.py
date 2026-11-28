@@ -15,6 +15,7 @@ import urllib.parse
 
 from update_external_libraries import get_bytes, github_repo
 from svp_dependency import apply_files
+from core_build_policy import validate_catalog, validate_update_ref
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,8 +26,9 @@ def cores_path() -> Path:
 
 def remote_head(repo: str, ref: str = "HEAD") -> str:
     # git ls-remote instead of the GitHub API: one call per core would exhaust the 60/h limit.
-    if ref != "HEAD" and not re.fullmatch(r"refs/heads/[A-Za-z0-9._/-]+", ref):
-        raise ValueError(f"Invalid core update ref: {ref}")
+    validate_update_ref(ref)
+    if not re.fullmatch(r"https://github\.com/[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", repo, re.ASCII):
+        raise ValueError("Invalid upstream repository")
     out = subprocess.run(["git", "ls-remote", "--exit-code", repo, ref], capture_output=True, text=True, timeout=120,
                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
     lines = [line.split() for line in out.stdout.splitlines() if line.strip()]
@@ -46,6 +48,7 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
     """
     from core_hotpath_patches import prepare_hotpaths, SUPPORTED
     from core_hotpath_remaining import PATCHES
+    from core_build_policy import prepare_cmake, prepare_ndk
 
     name = core["core"]
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
@@ -72,6 +75,13 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
     else:
         files = {"mednafen/state.h", "mednafen/state.cpp" if name == "mednafen_lynx" else "mednafen/state.c",
                  "libretro.cpp" if name in {"mednafen_vb", "mednafen_lynx"} else "libretro.c"}
+    # Match the actual optimized profile's additional build-system recipes.
+    if name == "mupen64plus_next_gles3":
+        files.update({"libretro/jni/Android.mk", "libretro-common/libco/amd64.c"})
+    elif name == "snes9x2010":
+        files.update({"jni/Android.mk", "build/Makefile.common"})
+    elif name in {"panda3ds", "swanstation"}:
+        files.add("CMakeLists.txt")
     upstream = github_repo(core["repo"])
     try:
         with tempfile.TemporaryDirectory(prefix="ambient-core-update-") as directory:
@@ -82,6 +92,10 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
                 url = f"https://raw.githubusercontent.com/{upstream}/{revision}/{urllib.parse.quote(relative, safe='/')}"
                 path.write_bytes(get_bytes(url))
             prepare_hotpaths(root, name)
+            if name in {"mupen64plus_next_gles3", "snes9x2010"}:
+                prepare_ndk(root / core["jni"], name, "optimized")
+            elif name in {"panda3ds", "swanstation"}:
+                prepare_cmake(root, name, "optimized")
     except (OSError, ValueError) as error:
         print(f"  MANUAL: {name} remains at {core['commit']}: candidate {revision} source preflight failed ({error}).")
         return False
@@ -92,6 +106,7 @@ def preflight_jit_core(core: dict, revision: str) -> None:
     from core_hotpath_patches import prepare_hotpaths
     from core_yabause_arm64 import prepare as prepare_yabause
     from core_citra_arm64 import prepare as prepare_citra
+    from core_build_policy import prepare_cmake
 
     github_repo(core["repo"])
     with tempfile.TemporaryDirectory(prefix="ambient-jit-update-") as directory:
@@ -108,9 +123,11 @@ def preflight_jit_core(core: dict, revision: str) -> None:
             raise ValueError("Candidate checkout pin mismatch")
         prepare_hotpaths(root, core["core"])
         (prepare_citra if core["core"] == "citra2018" else prepare_yabause)(root)
+        if core["core"] == "citra2018":
+            prepare_cmake(root, "citra2018", "citra-arm64-jit")
 
 
-def cores_latest(cores: list[dict]) -> dict[str, str]:
+def cores_latest(cores: list[dict], withheld: dict[str, str] | None = None) -> dict[str, str]:
     # Resolve each explicit branch separately; shared same-branch variants
     # (VICE) keep one snapshot. Never collapse independently pinned variants.
     def source(c):
@@ -132,6 +149,10 @@ def cores_latest(cores: list[dict]) -> dict[str, str]:
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         compatible = list(pool.map(lambda c: core_candidate_compatible(c, heads[source(c)]), candidates))
     blocked = {source(c) for c, ok in zip(candidates, compatible) if not ok}
+    if withheld is not None:
+        for c in cores:
+            if c["commit"] != heads[source(c)] and (len(pins[source(c)]) > 1 or source(c) in blocked):
+                withheld[c["core"]] = heads[source(c)]
     return {c["core"]: c["commit"] if len(pins[source(c)]) > 1 or source(c) in blocked
             else heads[source(c)] for c in cores}
 
@@ -153,8 +174,8 @@ def main() -> int:
     path = cores_path()
     original = path.read_bytes()
     catalog = json.loads(original)
-    entries = catalog["cores"]
-    ids = {c["core"] for c in entries}
+    _, entries, all_ids = validate_catalog(catalog)
+    ids = set(all_ids)
     requested = args.cores.split(",") if args.cores else list(ids)
     if len(set(requested)) != len(requested) or not set(requested) <= ids:
         parser.error("Unknown, empty or duplicate core ID")
@@ -162,13 +183,19 @@ def main() -> int:
     # a VICE variant therefore also checks its sibling variants.
     sources = {(c["repo"], c.get("update_ref", "HEAD")) for c in entries if c["core"] in requested}
     selected = [c for c in entries if (c["repo"], c.get("update_ref", "HEAD")) in sources]
-    latest = cores_latest(selected)
+    withheld = {}
+    latest = cores_latest(selected, withheld)
     changed = [c["core"] for c in selected if c["commit"] != latest[c["core"]]]
     print("Managed Libretro cores:")
     for c in selected:
         name, old = c["core"], c["commit"]
         new = latest[name]
-        print(f"  {name:24} {old} -> {new} [{'UPDATE' if old != new else 'kept'}]")
+        status = "UPDATE" if old != new else "BLOCKED" if name in withheld else "CURRENT"
+        print(f"  {name:24} {old} -> {withheld.get(name, new)} [{status}]")
+    print(f"Summary: {len(changed)} compatible updates, {len(withheld)} blocked, "
+          f"{len(selected)-len(changed)-len(withheld)} current.")
+    if withheld:
+        print("Manual review required (pins retained): " + ", ".join(sorted(withheld)))
     if changed and args.apply:
         apply_files({path: render_cores(catalog, latest)}, {path: original})
         print("Updated core pins: " + ", ".join(changed))

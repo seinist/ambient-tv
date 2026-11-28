@@ -26,6 +26,16 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         fp = fingerprint(job, self.ndk)
         self.assertEqual(fp, fingerprint(dict(job, fingerprint=fp), self.ndk))
 
+    def test_update_branch_is_not_a_binary_build_input(self):
+        from copy import deepcopy
+        catalog = deepcopy(self.catalog)
+        catalog["cores"][0]["update_ref"] = "refs/heads/another-branch"
+        changed = plan(catalog, "push", "refs/heads/main", False)
+        self.assertEqual(changed, self.matrix)
+        job = self.matrix["include"][0]
+        self.assertEqual(fingerprint(job, self.ndk),
+                         fingerprint(dict(job, update_ref="refs/heads/another-branch"), self.ndk))
+
     def test_no_changes_skips_entire_release(self):
         result = select(self.matrix, self.records, self.keys, "baseline", self.ndk)
         self.assertFalse(result["publish"])

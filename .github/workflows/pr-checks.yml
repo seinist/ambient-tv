@@ -76,8 +76,19 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_core_hotpath_patches.py'
           python3 -m unittest discover -s scripts -p 'test_core_hotpath_remaining.py'
 
+  updater-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate updater scripts and independent shell dispatch
+        run: |
+          bash -n build.sh
+          python3 -m py_compile scripts/update_cores.py scripts/update_external_libraries.py scripts/update_maven_dependencies.py
+          python3 -m unittest discover -s scripts/tests -p 'test_*updates.py'
+
   unit-tests:
-    needs: core-policy
+    needs: [core-policy, updater-policy]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

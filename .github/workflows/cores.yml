@@ -77,7 +77,7 @@ on:
         default: none
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || format('pr-{0}-{1}', inputs.profile || 'baseline', inputs.abis || 'smoke'))) }}
+  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}-{1}-{2}', github.run_id, inputs.profile || 'baseline', inputs.abis || 'all') || format('pr-{0}-{1}', inputs.profile || 'baseline', inputs.abis || 'smoke'))) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

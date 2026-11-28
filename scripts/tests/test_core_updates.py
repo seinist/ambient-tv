@@ -140,6 +140,44 @@ class CoreUpdateTest(unittest.TestCase):
             self.assertEqual(updater.cores_latest(cores), {"yabause": NEW, "yabasanshiro": "d"*40})
             self.assertEqual(head.call_count, 2)
 
+    def test_invalid_catalog_fails_before_network(self):
+        from copy import deepcopy
+        original = json.loads(self.cores.read_text())
+        for fields in ({"repo": "file:///tmp/evil"}, {"update_ref": "refs/heads/a..b"},
+                       {"commit": "HEAD"}, {"abis": ["invalid"]}, {"build": "unknown"}):
+            catalog = deepcopy(original)
+            catalog["cores"][-1].update(fields)
+            self.cores.write_text(json.dumps(catalog))
+            with mock.patch.object(updater, "ROOT", self.root), mock.patch.object(
+                    updater, "remote_head") as remote, mock.patch.object(
+                    sys, "argv", ["updater", "--check", original["cores"][0]["core"]]):
+                with self.assertRaises(ValueError):
+                    updater.main()
+                remote.assert_not_called()
+
+    def test_blocked_candidates_are_reported_separately(self):
+        cores = [{"core": "first", "repo": "https://github.com/a/b", "commit": "a"*40}]
+        withheld = {}
+        with mock.patch.object(updater, "remote_head", return_value=NEW), mock.patch.object(
+                updater, "core_candidate_compatible", return_value=False):
+            self.assertEqual(updater.cores_latest(cores, withheld), {"first": "a"*40})
+        self.assertEqual(withheld, {"first": NEW})
+
+    def test_build_system_preflight_runs_production_helpers(self):
+        from core_hotpath_remaining import PATCHES
+        for name, jni, required, helper in (
+                ("mupen64plus_next_gles3", "libretro", {"libretro/jni/Android.mk", "libretro-common/libco/amd64.c"}, "prepare_ndk"),
+                ("snes9x2010", ".", {"jni/Android.mk", "build/Makefile.common"}, "prepare_ndk"),
+                ("panda3ds", ".", {"CMakeLists.txt"}, "prepare_cmake"),
+                ("swanstation", ".", {"CMakeLists.txt"}, "prepare_cmake")):
+            core = {"core": name, "jni": jni, "repo": "https://github.com/a/b", "commit": "a"*40}
+            with mock.patch.object(updater, "get_bytes", return_value=b"source") as fetch, mock.patch(
+                    "core_hotpath_patches.prepare_hotpaths"), mock.patch(
+                    "core_build_policy."+helper, side_effect=ValueError("incompatible build recipe")) as prepare:
+                self.assertFalse(updater.core_candidate_compatible(core, NEW))
+                self.assertTrue(required <= {call.args[0].split(NEW+"/", 1)[1] for call in fetch.call_args_list})
+                prepare.assert_called_once()
+
     def test_candidate_anchor_preflight(self):
         from core_hotpath_remaining import PATCHES
         path, old, _ = PATCHES["picodrive"][0]
