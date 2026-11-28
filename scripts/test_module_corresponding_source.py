@@ -3,6 +3,8 @@ from pathlib import Path
 import unittest
 from unittest import mock
 import json
+import io
+import tarfile
 import module_corresponding_source as sources
 
 
@@ -45,6 +47,37 @@ class CorrespondingSourceTest(unittest.TestCase):
                 workspace = output / entry["workspace"]
                 self.assertEqual((workspace / "Cargo.lock").read_text(), f"lock-{index}")
                 self.assertEqual((workspace / "cargo-source-config.toml").read_text(), 'directory = "vendor"\n')
+
+    def source_fixture(self, directory, files, counts=(2, 1)):
+        path = directory / "corresponding-source.tar.gz"
+        inventory = {"schema": 1, "module": "svp", "commit": "a" * 40,
+                     "roots": [{"root": "native/ambientsvp", "files": counts[0], "notices": counts[1]}],
+                     "reviewRequired": True}
+        with tarfile.open(path, "w:gz") as archive:
+            sources.add_bytes(archive, "ambient-tv-source.tar", b"host source")
+            sources.add_bytes(archive, "source-inventory.json", json.dumps(inventory).encode())
+            for name in files:
+                sources.add_bytes(archive, name, b"source")
+        return path, {**inventory, "asset": path.name, "size": path.stat().st_size, "sha256": sources.digest(path)}
+
+    def test_source_archive_checks_declared_roots_and_counts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path, descriptor = self.source_fixture(Path(temp), [
+                "upstream/native/ambientsvp/src/lib.rs", "upstream/native/ambientsvp/LICENSE"])
+            sources.validate_source_archive(path, descriptor)
+            path, descriptor = self.source_fixture(Path(temp), [
+                "upstream/native/ambientsvp/src/lib.rs"])
+            with self.assertRaisesRegex(ValueError, "count mismatch"):
+                sources.validate_source_archive(path, descriptor)
+
+    def test_source_archive_rejects_duplicate_and_unsafe_members(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for names in (["upstream/native/ambientsvp/LICENSE"] * 2,
+                          ["upstream/native/ambientsvp/../LICENSE", "upstream/native/ambientsvp/LICENSE"],
+                          ["unexpected/source", "upstream/native/ambientsvp/LICENSE"]):
+                path, descriptor = self.source_fixture(Path(temp), names)
+                with self.assertRaises(ValueError):
+                    sources.validate_source_archive(path, descriptor)
 
     def test_all_modules_have_explicit_roots(self):
         self.assertEqual(10, len(sources.ROOTS))

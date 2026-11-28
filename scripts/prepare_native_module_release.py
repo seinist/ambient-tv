@@ -128,6 +128,8 @@ def verify(root, module, run_id, sha):
     source_path = root / source["asset"]
     if not source_path.is_file() or source_path.is_symlink() or not 0 < source["size"] <= 1_800_000_000 or source_path.stat().st_size != source["size"] or digest(source_path) != source["sha256"]:
         raise ValueError("Corresponding-source hash or size mismatch")
+    from module_corresponding_source import validate_source_archive
+    validate_source_archive(source_path, source)
     expected = {"manifest.json", "provenance.json", source["asset"]}
     for entry in entries:
         abi = entry["abi"]

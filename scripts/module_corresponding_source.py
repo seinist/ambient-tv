@@ -43,6 +43,8 @@ EXCLUDED_DIRS = {".git", ".gradle", ".cxx", ".idea", "__pycache__", "target", "o
 EXCLUDED_SUFFIXES = {".apk", ".aar", ".dex", ".so", ".a", ".o", ".class", ".jks", ".keystore", ".p12", ".pfx", ".key"}
 NOTICE = re.compile(r"^(license|licence|copying|notice|copyright|unlicense|authors)([._ -].*|$)", re.I)
 MAX_SOURCE_BYTES = 1_800_000_000
+MAX_SOURCE_FILES = 500_000
+MAX_INVENTORY_BYTES = 512 * 1024
 
 
 def digest(path):
@@ -71,6 +73,82 @@ def source_files(root):
             if not safe_path(relative) or path.is_symlink() or not path.is_file():
                 continue
             yield path, relative
+
+
+def validate_source_archive(path, descriptor):
+    """Independently verify the collected source tree before signing a release.
+
+    Stream regular tar members without extracting them. A matching compressed
+    digest alone does not establish that the candidate contains its declared
+    source roots, build recipes or inventory.
+    """
+    if not isinstance(descriptor, dict) or descriptor.get("schema") != 1 or descriptor.get("reviewRequired") is not True:
+        raise ValueError("Invalid source descriptor")
+    module = descriptor.get("module")
+    commit = descriptor.get("commit")
+    rows = descriptor.get("roots")
+    if module not in ROOTS or not isinstance(commit, str) or not re.fullmatch(r"[a-f0-9]{40}", commit) or not isinstance(rows, list) or not rows:
+        raise ValueError("Invalid source inventory identity")
+    expected = {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"root", "files", "notices"}:
+            raise ValueError("Invalid source root inventory")
+        name, count, notices = row["root"], row["files"], row["notices"]
+        if not isinstance(name, str) or not safe_archive_name(name) or name in expected or type(count) is not int or type(notices) is not int or not 0 <= notices <= count <= MAX_SOURCE_FILES or count == 0:
+            raise ValueError("Invalid source root inventory")
+        expected[name] = (count, notices)
+    if not set(ROOTS[module]) <= expected.keys() or sum(count for count, _ in expected.values()) > MAX_SOURCE_FILES:
+        raise ValueError("Missing or oversized source roots")
+    if not path.is_file() or path.is_symlink() or path.name != descriptor.get("asset") or type(descriptor.get("size")) is not int or not 0 < path.stat().st_size <= MAX_SOURCE_BYTES or path.stat().st_size != descriptor["size"] or digest(path) != descriptor.get("sha256"):
+        raise ValueError("Corresponding-source hash or size mismatch")
+
+    seen = set()
+    actual = {name: [0, 0] for name in expected}
+    # Longest first avoids ambiguity for nested workspace roots.
+    prefixes = sorted(expected, key=len, reverse=True)
+    total = 0
+    inventory = None
+    with gzip.open(path, "rb") as stream, tarfile.open(fileobj=stream, mode="r|") as archive:
+        for member in archive:
+            name = member.name
+            if (not member.isreg() or member.issparse() or not safe_archive_name(name)
+                    or name in seen or len(seen) >= MAX_SOURCE_FILES + 2):
+                raise ValueError("Unsafe or duplicate source archive member")
+            seen.add(name)
+            total += member.size
+            if member.size < 0 or total > MAX_SOURCE_BYTES + MAX_INVENTORY_BYTES:
+                raise ValueError("Source archive expansion exceeds bounds")
+            if name == "ambient-tv-source.tar":
+                if member.size == 0:
+                    raise ValueError("Empty host source archive")
+            elif name == "source-inventory.json":
+                if not 0 < member.size <= MAX_INVENTORY_BYTES:
+                    raise ValueError("Oversized source inventory")
+                inventory = json.load(archive.extractfile(member))
+            else:
+                root = next((root for root in prefixes if name.startswith(f"upstream/{root}/")), None)
+                if root is None:
+                    raise ValueError("Unexpected source archive member")
+                actual[root][0] += 1
+                if NOTICE.match(name.rsplit("/", 1)[-1]) and 0 < member.size <= 4 * 1024 * 1024:
+                    actual[root][1] += 1
+        # Consume the remaining gzip stream, including its checksum, rather
+        # than accepting an archive truncated after the tar end marker.
+        trailing = 0
+        while chunk := stream.read(64 * 1024):
+            trailing += len(chunk)
+            if trailing > 1024 * 1024 or any(chunk):
+                raise ValueError("Unexpected source archive trailing data")
+    if "ambient-tv-source.tar" not in seen or inventory != {key: descriptor[key] for key in ("schema", "module", "commit", "roots", "reviewRequired")}:
+        raise ValueError("Source archive inventory mismatch")
+    if any(tuple(actual[name]) != expected[name] for name in expected):
+        raise ValueError("Source root file or notice count mismatch")
+
+
+def safe_archive_name(name):
+    return bool(name) and len(name) <= 4096 and "\\" not in name and not any(
+        part in ("", ".", "..") or any(ord(char) < 32 or ord(char) == 127 for char in part)
+        for part in name.split("/"))
 
 
 def add_file(archive, path, name, budget):
@@ -221,6 +299,7 @@ def collect(module, commit, output, notices, extra_roots=()):
         if output.stat().st_size > MAX_SOURCE_BYTES:
             raise ValueError("Compressed corresponding-source archive exceeds release bounds")
         descriptor = {"asset": output.name, "size": output.stat().st_size, "sha256": digest(output), **info}
+        validate_source_archive(output, descriptor)
         (notices / "corresponding-source.json").write_text(json.dumps(descriptor, sort_keys=True) + "\n")
         return descriptor
     except BaseException:

@@ -712,6 +712,12 @@ inspection uses a bounded temporary file, removed after inspection; it is
 never loaded as native code. Shared libraries are explicitly loaded once in
 dependency-first order (Android resolves host-only linker cycles).
 
+Corresponding-source candidates are independently streamed and validated
+before release signing: the compressed digest, regular-member paths, unique
+members, declared root inventory, notice counts and bounded expansion must
+agree. This validates package integrity and declared coverage, not legal
+completeness or reproducibility of every third-party build.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
