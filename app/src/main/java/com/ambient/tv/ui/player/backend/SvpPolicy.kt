@@ -173,6 +173,7 @@ internal fun svpResidentRequested(options: SvpOptions, width: Int? = null, heigh
 internal fun svpProbeOptions(options: SvpOptions): SvpOptions = SvpOptions(
     rateDivisor = options.rateDivisor, backend = options.backend, threads = options.threads,
     maxHeight = options.maxHeight, filmOnly = options.filmOnly, hardwareResident = options.hardwareResident,
+    hdrTwoPass = options.hdrTwoPass,
 ).normalized()
 
 /**
