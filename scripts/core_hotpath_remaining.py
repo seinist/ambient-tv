@@ -533,6 +533,11 @@ PATCHES = {
       "src/libretro/render/software.cpp",
       "    for (uint32_t y = start.y; y < end.y; y++) {\n        for (uint32_t x = start.x; x < end.x; x++) {\n            // TODO: Replace with SIMD (does GLM have a SIMD version of this?)\n            uint32_t& pixel = buffer[uvec2(x, y)];\n            pixel = (0xFFFFFF - pixel) | 0xFF000000;\n        }\n    }",
       "    // Contiguous rows let Clang vectorize the exact RGB inversion without\n    // repeating address calculations. The alpha byte remains forced to 0xff.\n    for (uint32_t y = start.y; y < end.y; y++) {\n        uint32_t* row = buffer[y];\n        for (uint32_t x = start.x; x < end.x; x++)\n            row[x] = ~row[x] | 0xFF000000u;\n    }"
+    ],
+    [
+      "src/libretro/render/software.cpp",
+      "    buffer.Clear();\n    ScreenLayout layout = screenLayout.Layout();",
+      "    ScreenLayout layout = screenLayout.Layout();\n\n    // A tightly packed full-screen copy overwrites every pixel. Avoid clearing\n    // the same memory first, but preserve blank regions for all other layouts.\n    if ((layout == ScreenLayout::TopOnly || layout == ScreenLayout::BottomOnly) &&\n        LayoutSupportsDirectCopy(layout) &&\n        buffer.Width() == NDS_SCREEN_WIDTH && buffer.Height() == NDS_SCREEN_HEIGHT) {\n        const auto translation = layout == ScreenLayout::TopOnly\n            ? screenLayout.GetTopScreenTranslation() : screenLayout.GetBottomScreenTranslation();\n        if (translation.x == 0 && translation.y == 0) {\n            buffer.CopyDirect(layout == ScreenLayout::TopOnly ? topBuffer.data() : bottomBuffer.data(), translation);\n            return;\n        }\n    }\n\n    buffer.Clear();"
     ]
   ],
   "ppsspp": [

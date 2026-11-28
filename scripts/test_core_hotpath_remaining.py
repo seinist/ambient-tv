@@ -19,7 +19,7 @@ def replacement(core, needle):
 class RemainingCoreHotpathTests(unittest.TestCase):
     def test_exact_anchor_application_and_atomic_rejection(self):
         self.assertEqual(len(PATCHES), 39)
-        self.assertEqual(sum(map(len, PATCHES.values())), 99)
+        self.assertEqual(sum(map(len, PATCHES.values())), 100)
         for core, changes in PATCHES.items():
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -45,6 +45,72 @@ class RemainingCoreHotpathTests(unittest.TestCase):
                 self.assertEqual(expected, {name: (root / name).read_bytes().decode() for name in files})
                 with self.assertRaises(ValueError):
                     prepare_hotpaths(root, core)
+
+    def test_melonds_full_screen_copy_skips_clear_only_when_safe(self):
+        compiler = shutil.which("c++")
+        self.assertIsNotNone(compiler)
+        _, candidate = replacement("melondsds", "buffer.Clear();")
+        source = r"""
+#include <cassert>
+#include <cstdint>
+#include <vector>
+#include <algorithm>
+enum class ScreenLayout { TopOnly, BottomOnly, Other };
+struct Point { unsigned x, y; };
+constexpr unsigned NDS_SCREEN_WIDTH = 4, NDS_SCREEN_HEIGHT = 3;
+static bool direct = true;
+bool LayoutSupportsDirectCopy(ScreenLayout) { return direct; }
+struct Layout {
+    ScreenLayout layout;
+    Point top, bottom;
+    ScreenLayout LayoutValue() const { return layout; }
+    ScreenLayout GetTopScreenTranslation() const { return top; }
+    ScreenLayout GetBottomScreenTranslation() const { return bottom; }
+};
+struct Buffer {
+    unsigned width, height, clears, copies;
+    std::vector<uint32_t> pixels;
+    unsigned Width() const { return width; }
+    unsigned Height() const { return height; }
+    void Clear() { ++clears; std::fill(pixels.begin(), pixels.end(), 0); }
+    void CopyDirect(const uint32_t* src, Point p) {
+        assert(p.x == 0 && p.y == 0);
+        ++copies;
+        std::copy(src, src + NDS_SCREEN_WIDTH * NDS_SCREEN_HEIGHT, pixels.begin());
+    }
+};
+void combine(Buffer& buffer, const Layout& screenLayout,
+             const std::vector<uint32_t>& topBuffer, const std::vector<uint32_t>& bottomBuffer) {
+""" + candidate.replace("screenLayout.Layout()", "screenLayout.LayoutValue()") + r"""
+}
+int main() {
+    const std::vector<uint32_t> top(12, 0x11223344), bottom(12, 0x55667788);
+    for (auto layout : {ScreenLayout::TopOnly, ScreenLayout::BottomOnly, ScreenLayout::Other})
+        for (unsigned w : {4u, 5u})
+            for (unsigned h : {3u, 4u})
+                for (unsigned x : {0u, 1u})
+                    for (unsigned y : {0u, 1u})
+                        for (bool supports : {false, true}) {
+                            direct = supports;
+                            Buffer b{w, h, 0, 0, std::vector<uint32_t>(w*h, 0xffffffff)};
+                            combine(b, Layout{layout, {x,y}, {x,y}}, top, bottom);
+                            const bool full = layout != ScreenLayout::Other && w == 4 && h == 3 && !x && !y && supports;
+                            assert(b.copies == unsigned(full));
+                            assert(b.clears == unsigned(!full));
+                            if (full)
+                                assert(b.pixels == (layout == ScreenLayout::TopOnly ? top : bottom));
+                            else
+                                for (auto pixel : b.pixels) assert(pixel == 0);
+                        }
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "melonds.cpp"
+            binary = path.with_suffix("")
+            path.write_text(source)
+            subprocess.run([compiler, "-std=c++11", "-O2", "-fsanitize=undefined",
+                            str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
 
     def test_noods_direct_save_writer(self):
         compiler = shutil.which("c++")
