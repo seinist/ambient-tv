@@ -3,6 +3,7 @@ import io
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -38,6 +39,32 @@ class CoreUpdateTest(unittest.TestCase):
     @staticmethod
     def new_head(repo, ref="HEAD"):
         return "d"*40 if ref == "refs/heads/yabasanshiro" else NEW
+
+    def test_build_sh_dispatches_independent_updaters(self):
+        # Exercise the actual shell entrypoint with stub Python scripts:
+        # no network, Gradle invocation or source checkout is needed.
+        shutil.copyfile(updater.ROOT / "build.sh", self.root / "build.sh")
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        for name in ("update_cores.py", "update_external_libraries.py", "update_maven_dependencies.py"):
+            (scripts / name).write_text(
+                "import json, sys; from pathlib import Path; print(json.dumps([Path(__file__).name, *sys.argv[1:]]))\n")
+        cases = [
+            (["cores-check"], ["update_cores.py", "--check"]),
+            (["cores-update", "ppsspp,citra2018"], ["update_cores.py", "--apply", "ppsspp,citra2018"]),
+            (["libs-check"], ["update_external_libraries.py", "--check"]),
+            (["libs-update", "libretro"], ["update_external_libraries.py", "--apply", "--only", "libretro"]),
+            (["deps-check", "media3"], ["update_maven_dependencies.py", "--check", "media3"]),
+            (["deps-update"], ["update_maven_dependencies.py", "--apply"]),
+            (["update-deps", "media3"], ["update_maven_dependencies.py", "--apply", "media3"]),
+            (["libs-check", "cores"], ["update_cores.py", "--check"]),
+        ]
+        for argv, expected in cases:
+            with self.subTest(argv=argv):
+                result = subprocess.run(["bash", str(self.root / "build.sh"), *argv],
+                                        text=True, capture_output=True, check=True)
+                output = next(line for line in result.stdout.splitlines() if line.startswith("["))
+                self.assertEqual(json.loads(output), expected)
 
     def test_check_is_read_only(self):
         before = self.cores.read_bytes()

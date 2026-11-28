@@ -106,6 +106,31 @@ The next build checks pin/shader/lockfile consistency, runs portable SVP regress
 
 Always review the diff and run playback/login regression tests after an update. Upstream API changes can require a compatibility patch even when the upstream release itself is stable.
 
+## Emulator core updates
+
+Emulator cores have their own updater, independent of the native library
+updater and Maven dependency updater:
+
+```bash
+./build.sh cores-check
+./build.sh cores-update
+./build.sh cores-check ppsspp,citra2018
+./build.sh cores-update ppsspp
+```
+
+With no IDs, all catalog cores are checked. Selecting a variant sharing an
+upstream repository and branch (for example VICE) also checks its siblings
+to keep their source pins consistent. Incompatible patch candidates remain
+pinned. `cores-update` writes only `cores/cores.json`, with no native build;
+review the diff and push to main to trigger incremental signed core builds.
+Yabause and YabaSanshiro have separate branch pins. LibretroDroid itself
+remains managed by `libs-check libretro` and `libs-update libretro`.
+
+Use `deps-check` / `deps-update` for Maven dependencies; the previous
+`check-deps` / `update-deps` spellings remain aliases. The old
+`libs-check cores` / `libs-update cores` spellings also remain aliases for
+the dedicated core updater.
+
 ## Manual overrides
 
 The existing environment variables still take precedence for one-off testing, including `MPV_ANDROID_REF`, `PROJECTM_REF`, `RUSTY_REF`, `SMARTTUBE_MEDIA_SERVICE_REF` and `SMARTTUBE_SHARED_MODULES_REF`. Those overrides do not rewrite the project pins unless `libs-update` is used.
@@ -123,6 +148,6 @@ App-owned native engines (mpv, projectM, Spotify/Rusty, Open-SVPFlow) are built 
 
 - **LibretroDroid** — the Argosy launcher's fork (GPL-3.0), pinned in `gradle/external-versions.properties` (`LIBRETRODROID_*`), fetched and patched by `scripts/fetch_libretrodroid.sh` (`scripts/patches/libretrodroid`: core options v2, netplay sticks). Moving the pin: change the commit, run the script, check that the patches still apply.
 - **librashader Vulkan Slang runtime** — [SnowflakePowered/librashader](https://github.com/SnowflakePowered/librashader) 0.12.1, pinned to `LIBRASHADER_COMMIT` in `gradle/external-versions.properties`. The C header is vendored as build-only source under `scripts/native_libretro_vulkan/`, while `scripts/build_librashader_android.sh` builds a **Vulkan-only** `liblibrashader_capi.so` for each Android ABI and checks 16-KiB ELF alignment. Upstream licenses: MPL-2.0 OR GPL-3.0-only (check the exact distribution and static dependency license obligations before release); the host C++ glue is GPL-3.0-or-later. Rust static dependencies and notices require a third-party attribution audit in production packaging. The runtime is not downloaded as executable code by the app. Regular native shader APKs include the ABI-specific `.so` (ARM64 stripped CI size ~6.7 MB before APK compression); `SKIP_LIBRASHADER_NATIVE=1` makes a GLES-only APK and explicitly excludes leftover `.so` files from packaging. This is **experimental SDR output only**, not tested HDR passthrough.
-- **libretro cores** — never bundled. Pinned in `cores/cores.json`, built by `.github/workflows/cores.yml` into a signed `cores-*` release (or loaded from the libretro buildbot, see the core source setting). Update a core by changing its commit.
+- **libretro cores** — never bundled. Pinned in `cores/cores.json`, built by `.github/workflows/cores.yml` into a signed `cores-*` release (or loaded from the libretro buildbot, see the core source setting). Update cores with `./build.sh cores-update` (optionally specify core IDs).
 - **Libretro pixel-art shaders** — eight authentic filter families from pinned [glsl-shaders](https://github.com/libretro/glsl-shaders) and [slang-shaders](https://github.com/libretro/slang-shaders): ScaleFX, SABR v3, xBR Level 2, xBRZ Freescale, 2xSaL, Super 2xSaI, SuperEagle and ScaleHQ 2x. The GLES sources, file hashes and generator live in `third_party_assets/game_shaders/` and `scripts/import_game_upscalers.py`; the Vulkan subset and its provenance are under `app/src/main/assets/games/slang/upstream/`. Original notices and MIT/GPL license terms are retained. Only the selected shader chain is compiled, with no additional native runtime or automatic download. ScaleFX requires floating-point render targets and bounded multipass support; unsupported configurations retain a safe picture fallback.
 - **Apache Commons Compress** (Apache-2.0) with **XZ for Java** (0BSD) for ZIP/7z, **junrar** (UnRAR licence, extraction only) for RAR4 — versions in `gradle/libs.versions.toml`.

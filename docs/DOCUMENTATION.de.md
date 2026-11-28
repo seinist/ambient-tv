@@ -1058,7 +1058,10 @@ Unter **App & Daten › Diagnose** (Fehlerprotokoll für Release-Builds):
 ./build.sh deps-update    # nur Maven-Pins aktualisieren
 ./build.sh deps-update media3 # optional nur Media3
 ./build.sh libs-check     # Updates gepinnter Engines prüfen
-./build.sh libs-update    # Pins aktualisieren (ohne Build)
+./build.sh libs-update    # Bibliotheks-Pins aktualisieren (ohne Build)
+./build.sh cores-check    # alle Emulator-Core-Pins prüfen
+./build.sh cores-update   # nur Core-Pins aktualisieren
+./build.sh cores-update ppsspp # optionale Core-Auswahl
 ./build.sh gen-keystore   # keystore/release.jks anlegen
 ```
 
