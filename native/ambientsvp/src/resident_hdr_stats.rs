@@ -262,6 +262,40 @@ impl StatsJob{
         if self.windows.len()!=1{return Err("expected one global scene window".into());}
         Ok(self.scene_frames()?.remove(0).frame)
     }
+    // Fingerprint exact quantized selector inputs and measured pixel count.
+    // This is a replay consistency check, not an authentication primitive.
+    pub(super) fn geometry_signature(&self)->Result<u64>{
+        let mut rows=vec![0u32;STRIDE*self.windows.len()];
+        unsafe{
+            let mapped=self.summary.map()?;
+            std::ptr::copy_nonoverlapping(mapped,rows.as_mut_ptr(),rows.len());
+            self.device.unmap_memory(self.summary.memory);
+        }
+        let mut hash=0xcbf29ce484222325u64;
+        let mut add=|value:u32|{
+            for b in value.to_le_bytes(){hash^=u64::from(b);hash=hash.wrapping_mul(0x100000001b3);}
+        };
+        add(self.width);add(self.height);add(self.windows.len() as u32);
+        for (i,w) in self.windows.iter().enumerate(){
+            let row=&rows[i*STRIDE..(i+1)*STRIDE];
+            if row[39]==0||row[0]>=row[2]||row[1]>=row[3]||row[2]>self.width||row[3]>self.height||
+                row[39]>(row[2]-row[0])*(row[3]-row[1]){return Err("invalid replay geometry".into());}
+            for &v in &row[..4]{add(v);}
+            add(row[39]);add(w.count);
+            for &p in &w.percentages[..w.count as usize]{add(p);}
+            if i>0{
+                let x=i64::from(row[52])+i64::from(row[41] as i32);
+                let y=i64::from(row[53])+i64::from(row[42] as i32);
+                if x<0||y<0||x>=i64::from(self.width)||y>=i64::from(self.height)||
+                    row[67]!=1||row[68]==0||row[69]==0||row[69]>row[68]||row[68]>65535||row[70]>180{
+                    return Err("invalid replay ellipse".into());
+                }
+                add(x as u32);add(y as u32);
+                for &v in &row[68..71]{add(v);}
+            }
+        }
+        Ok(hash)
+    }
     pub(super) fn scene_frames(&self)->Result<Vec<SceneWindowFrame>>{
         let hist=self.scene_hist.as_ref().ok_or("scene capture not recorded")?;
         let mut rows=vec![0u32;STRIDE*self.windows.len()];
@@ -693,7 +727,7 @@ fn valid_v1_values(r:&SceneResult,p:&[u32;9])->bool{
 const MAX_SCENES:usize=100_000;
 pub(super) struct TwoPass{
     mode:u32,version:u32,key:String,profile:String,width:u32,height:u32,ends:Vec<u64>,
-    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,legacy_results:Vec<LegacySceneResult>,legacy_current:Option<LegacyScene>,schemas:Vec<[u32;9]>,current_schema:Option<[u32;9]>,failed:bool,
+    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,legacy_results:Vec<LegacySceneResult>,legacy_current:Option<LegacyScene>,geometry:Vec<u64>,schemas:Vec<[u32;9]>,current_schema:Option<[u32;9]>,failed:bool,
 }
 fn read_bounded(path:&std::path::Path,max:u64)->Result<String>{
     use std::io::Read;
@@ -730,8 +764,9 @@ impl TwoPass{
             ends.push(end);first=end;
         }
         if ends.is_empty(){return Err("empty scene plan".into());}
+        if version==0&&*ends.last().unwrap()>1_000_000{return Err("legacy geometry cache frame limit".into());}
         let mut s=Self{mode,version,key:key.into(),profile:profile.into(),width:w,height:h,ends,path:cache.into(),
-            next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,schemas:Vec::new(),current_schema:None,failed:false};
+            next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,geometry:Vec::new(),schemas:Vec::new(),current_schema:None,failed:false};
         if mode==2{s.read_cache()?;}
         else if cache.exists(){return Err("scene cache already exists".into());}
         Ok(s)
@@ -744,8 +779,16 @@ impl TwoPass{
         let header=self.header();
         let body=contents.strip_prefix(&header).ok_or("scene cache identity mismatch")?;
         if self.version==0{
+            let mut lines=body.lines();
+            let frames=*self.ends.last().unwrap() as usize;
+            for _ in 0..frames{
+                let line=lines.next().ok_or("missing legacy geometry record")?;
+                let hex=line.strip_prefix("G ").ok_or("legacy cache requires replay geometry")?;
+                if hex.len()!=16{return Err("invalid legacy geometry record".into());}
+                self.geometry.push(u64::from_str_radix(hex,16).map_err(|_|"invalid legacy geometry hash")?);
+            }
             let mut start=0;
-            for l in body.lines(){
+            for l in lines{
                 if self.legacy_results.len()>=self.ends.len(){return Err("extra legacy scene".into());}
                 let mut f=l.split_ascii_whitespace();
                 let first=parse_num(f.next())?;let end=parse_num(f.next())?;let count:u32=parse_num(f.next())?;
@@ -801,7 +844,9 @@ impl TwoPass{
     pub(super) fn version(&self)->u32{self.version}
     pub(super) fn mode(&self)->u32{self.mode}
     pub(super) fn abort(&mut self){self.failed=true;}
-    pub(super) fn capture_legacy(&mut self,index:u64,frames:Vec<SceneWindowFrame>)->Result<()>{
+    #[cfg(test)]
+    pub(super) fn capture_legacy(&mut self,index:u64,frames:Vec<SceneWindowFrame>)->Result<()>{self.capture_legacy_geometry(index,frames,0)}
+    pub(super) fn capture_legacy_geometry(&mut self,index:u64,frames:Vec<SceneWindowFrame>,geometry:u64)->Result<()>{
         let result=(||->Result<()>{
             if self.version!=0||self.mode!=1||self.failed||index!=self.next||self.legacy_results.len()>=self.ends.len(){
                 return Err("legacy scene capture order".into());
@@ -809,11 +854,19 @@ impl TwoPass{
             let end=self.ends[self.legacy_results.len()];
             if self.legacy_current.is_none(){self.legacy_current=Some(LegacyScene::new(index,end,&frames)?);}
             self.legacy_current.as_mut().unwrap().push(index,frames,self.width,self.height)?;
+            self.geometry.push(geometry);
             self.next+=1;
             if self.next==end{self.legacy_results.push(self.legacy_current.take().unwrap().finish()?);}
             Ok(())
         })();
         if result.is_err(){self.abort();}result
+    }
+    pub(super) fn verify_geometry(&mut self,index:u64,signature:u64)->Result<()>{
+        if self.version!=0||self.mode!=2||self.failed||index!=self.next||
+            self.geometry.get(index as usize)!=Some(&signature){
+            self.abort();return Err("legacy replay geometry mismatch".into());
+        }
+        Ok(())
     }
     pub(super) fn lookup_legacy(&mut self,index:u64)->Result<LegacySceneResult>{
         if self.version!=0||self.mode!=2||self.failed||index!=self.next||index>=*self.ends.last().unwrap(){
@@ -856,7 +909,7 @@ impl TwoPass{
     pub(super) fn finish(&mut self)->Result<()>{
         use std::io::Write;
         if self.failed||self.next!=*self.ends.last().unwrap()||
-            (if self.version==0{self.legacy_results.len()!=self.ends.len()||self.legacy_current.is_some()}
+            (if self.version==0{self.legacy_results.len()!=self.ends.len()||self.legacy_current.is_some()||self.geometry.len() as u64!=self.next}
                 else{self.results.len()!=self.ends.len()||self.current.is_some()}){
             return Err("incomplete two-pass run".into());
         }
@@ -872,6 +925,10 @@ impl TwoPass{
             write!(&mut data," {}",r.fraction).map_err(|_|"cache formatting")?;
             if schema!=&PASS_P{for v in schema{write!(&mut data," {}",v).map_err(|_|"cache formatting")?;}}
             data.push('\n');
+        }
+        for g in &self.geometry{
+            use std::fmt::Write as _;
+            writeln!(&mut data,"G {g:016x}").map_err(|_|"geometry formatting")?;
         }
         for r in &self.legacy_results{
             use std::fmt::Write as _;
@@ -976,6 +1033,7 @@ mod legacy_scene_cache_tests{
         p.finish().unwrap();
         assert!(TwoPass::open_version(2,1,&plan,&cache,&key,"fixture",4,1).is_err());
         let mut p=TwoPass::open_version(2,0,&plan,&cache,&key,"fixture",4,1).unwrap();
+        assert!(p.verify_geometry(0,0).is_ok());
         let r=p.lookup_legacy(0).unwrap();
         assert_eq!(r.windows[1].average,300);
         assert_eq!(r.windows[0].percentiles[1],100);
