@@ -29,6 +29,8 @@ def validate_workload(results, warmup=None, measured=None):
         if (row["width"], row["height"], row["hardware"]) != (
                 baseline["width"], baseline["height"], baseline["hardware"]):
             raise ValueError("Incomparable render geometry or hardware mode")
+        if (row.get("av_hash"), row.get("sample_rate")) != (baseline.get("av_hash"), baseline.get("sample_rate")):
+            raise ValueError("Incomparable dynamic A/V configuration")
         for actual, expected, tolerance in zip(counts(row), counts(baseline), (0.01, 0.01, 0.02)):
             # Allow modest asynchronous boot/scheduling variation, not
             # skipped frames, half-rate rendering or silent audio.
@@ -136,7 +138,8 @@ def matrix(args):
     result["state_hash_diagnostic"]={"valid_runs":sum(x["state_valid"] for x in results),
                                      "distinct_hashes":len(hashes)}
     # Optional strict deterministic correctness replay, outside the timed rounds.
-    if config.get("verify_output") or config.get("verify_states"):
+    result["correctness_verified"]=False
+    if config.get("verify_output",True) or config.get("verify_states"):
         def correctness(profile, target, state_input=None, export_state=False):
             record=profiles[profile]
             run(SimpleNamespace(
@@ -152,6 +155,11 @@ def matrix(args):
             meta=json.loads((target/"metadata.json").read_text())
             summary=json.loads((target/"capture-summary.json").read_text())
             if (meta["build"]["binary_sha256"]!=result["profiles"][profile]["binary_sha256"] or
+                any(meta["build"].get(k)!=identity[k] for k in ("core","abi","commit","ndk")) or
+                meta["build"].get("profile")!=profile or
+                meta["device_serial"]!=initial_fixture["device_serial"] or
+                meta["content_sha256"]!=identity["content_sha256"] or
+                meta.get("verify_output") is not True or
                 meta["device_fingerprint"]!=identity["device_fingerprint"] or
                 meta["fixture_files"]!=initial_fixture["files"] or meta["bios_files"]!=initial_fixture["bios"] or
                 meta["runner_sha256"]!=initial_fixture["runner"] or meta["runtime_sha256"]!=initial_fixture["runtime"] or
@@ -185,6 +193,7 @@ def matrix(args):
                 base=correctness("baseline",out/("restore-base-from-"+p),state_input=candidate_state)
                 reverse[p]=compare_replay({"baseline":base,p:own},state_loaded=True)
             result["reverse_state_interchange"]=reverse
+        result["correctness_verified"]=True
     (out/"comparison.json").write_text(json.dumps(result,indent=2)+"\n")
 
 if __name__=="__main__":

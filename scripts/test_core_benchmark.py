@@ -19,6 +19,16 @@ class BenchmarkTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_output_proofs({"baseline":hw},require_video=True,state_loaded=True)
 
+    def test_dynamic_av_configuration(self):
+        from benchmark_core_matrix import validate_workload
+        base=dict(round=1,profile="baseline",video_frames=60,fresh_frames=60,
+                  duplicate_frames=0,audio_frames=44100,width=320,height=240,hardware=False,
+                  av_hash="a"*16,sample_rate=44100)
+        validate_workload([base,dict(base,profile="optimized")])
+        for change in (dict(av_hash="b"*16),dict(sample_rate=48000)):
+            with self.assertRaisesRegex(ValueError,"dynamic A/V"):
+                validate_workload([base,dict(base,profile="optimized",**change)])
+
     def test_workload_rejects_missing_output(self):
         from benchmark_core_matrix import validate_workload
         base = dict(round=1, profile="baseline", video_frames=1000, fresh_frames=900,

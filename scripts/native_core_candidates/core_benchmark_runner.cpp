@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <map>
@@ -53,6 +54,17 @@ static std::atomic<uint64_t> audio_frames{0};
 static unsigned width = 0, height = 0;
 static retro_pixel_format pixel_format=RETRO_PIXEL_FORMAT_0RGB1555;
 static bool verify_output=false;
+static retro_system_av_info current_av{};
+static unsigned rotation=0;
+static bool valid_timing(const retro_system_timing& timing) {
+    return std::isfinite(timing.fps) && timing.fps>=1 && timing.fps<=240 &&
+           std::isfinite(timing.sample_rate) && timing.sample_rate>0 && timing.sample_rate<=384000;
+}
+static bool valid_geometry(const retro_game_geometry& geometry) {
+    return geometry.base_width && geometry.base_height &&
+           geometry.base_width<=16384 && geometry.base_height<=16384 &&
+           std::isfinite(geometry.aspect_ratio) && geometry.aspect_ratio>=0;
+}
 static constexpr uint64_t hash_offset=14695981039346656037ull;
 static uint64_t video_hash=hash_offset, audio_hash=hash_offset;
 static std::mutex audio_hash_mutex;
@@ -225,13 +237,26 @@ static bool env(unsigned cmd, void* data) {
         return *static_cast<const retro_hw_render_interface**>(data)!=nullptr;
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
         *static_cast<unsigned*>(data)=preferred_renderer; return true;
-    case RETRO_ENVIRONMENT_SET_GEOMETRY:
-    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+    case RETRO_ENVIRONMENT_SET_GEOMETRY: {
+        const auto* geometry=static_cast<const retro_game_geometry*>(data);
+        if(!geometry || !valid_geometry(*geometry))return false;
+        current_av.geometry.base_width=geometry->base_width;
+        current_av.geometry.base_height=geometry->base_height;
+        current_av.geometry.aspect_ratio=geometry->aspect_ratio;
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: {
+        const auto* av=static_cast<const retro_system_av_info*>(data);
+        if(!av || !valid_geometry(av->geometry) || !valid_timing(av->timing))return false;
+        current_av=*av;return true;
+    }
+    case RETRO_ENVIRONMENT_SET_ROTATION:
+        if(!data || *static_cast<const unsigned*>(data)>3)return false;
+        rotation=*static_cast<const unsigned*>(data);return true;
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
     case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
     case RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL:
-    case RETRO_ENVIRONMENT_SET_ROTATION:
         return true;
     case RETRO_ENVIRONMENT_SHUTDOWN: quit=true; return true;
     default: return false;
@@ -453,7 +478,8 @@ int main(int argc,char** argv) {
             die("Core rejected interchange save state");
     }
     retro_system_av_info av{};get_system_av_info(&av);
-    if(!(av.timing.fps>=1 && av.timing.fps<=240))die("Invalid core FPS");
+    if(!valid_timing(av.timing) || !valid_geometry(av.geometry))die("Invalid core A/V info");
+    current_av=av;
     // Discard any output produced during load/reset/unserialize, before the
     // deterministic input replay starts. The actual timing path stays unchanged.
     if(verify_output) {
@@ -465,7 +491,7 @@ int main(int argc,char** argv) {
     FILE* csv=std::fopen((prefix+".csv").c_str(),"w");
     FILE* thermal=std::fopen((prefix+"-thermal.csv").c_str(),"w");
     if(!csv || !thermal)die("Cannot write benchmark files");
-    std::fprintf(csv,"name,ts,dur\n");std::fprintf(thermal,"ts,status\n");
+    std::fprintf(csv,"name,ts,dur,fps,sample_rate\n");std::fprintf(thermal,"ts,status\n");
     // Android API 30+ thermal service, optional on older systems.
     void* android=dlopen("libandroid.so",RTLD_NOW|RTLD_LOCAL);
     using acquire_t=void*(*)();using status_t=int(*)(void*);using release_t=void(*)(void*);
@@ -476,6 +502,12 @@ int main(int argc,char** argv) {
     // Sample per second rather than frame, including slow cores.
     uint64_t last_thermal=0;
     uint64_t initial_video=0,initial_fresh=0,initial_duplicate=0,initial_audio=0;
+    uint64_t av_hash=hash_offset;
+    auto hash_double=[&](double value) {
+        uint64_t bits=0;std::memcpy(&bits,&value,sizeof(bits));
+        hash_value(av_hash,static_cast<uint32_t>(bits),4);
+        hash_value(av_hash,static_cast<uint32_t>(bits>>32),4);
+    };
     for(unsigned frame=0;frame<frames;++frame) {
         // Snapshot immediately before the first timed measurement frame.
         // Leave the cumulative counters intact: a duplicate of the last
@@ -488,6 +520,8 @@ int main(int argc,char** argv) {
         buttons=inputs[frame].mask;
         for(size_t i=0;i<input_extra.size();++i)
             input_extra[i].store(inputs[frame].extra[i],std::memory_order_relaxed);
+        const auto timing=current_av.timing;
+        const auto before_video=video_frames;
         uint64_t start=now();
         if(manager && (!last_thermal || start-last_thermal>=1000000000ull)) {
             int value=status(manager);
@@ -498,13 +532,30 @@ int main(int argc,char** argv) {
         // Both hardware backends are synchronous for each measured frame.
         // Do not attribute deferred GPU work to a later frame or teardown.
         if(hardware && !vulkan)glFinish();
+        // A core can submit work without calling video_refresh on a frame.
+        // Include that work in the same frame's timing, not the next sample.
+        if(vulkan && before_video==video_frames)vk.idle();
         uint64_t end=now();
-        std::fprintf(csv,"AmbientTV:Libretro/retro_run,%llu,%llu\n",
-                     (unsigned long long)start,(unsigned long long)(end-start));
+        std::fprintf(csv,"AmbientTV:Libretro/retro_run,%llu,%llu,%.17g,%.17g\n",
+                     (unsigned long long)start,(unsigned long long)(end-start),
+                     timing.fps,timing.sample_rate);
+        if(frame>=warmup) {
+            hash_double(timing.fps);hash_double(timing.sample_rate);
+            hash_value(av_hash,current_av.geometry.base_width,4);
+            hash_value(av_hash,current_av.geometry.base_height,4);
+            hash_double(current_av.geometry.aspect_ratio);
+            hash_value(av_hash,rotation,4);
+        }
         if(quit || unsupported || (vulkan && !vk.good()))die("Core requested early termination or GPU failed");
     }
     if(vulkan)vk.idle();
     else if(hardware)glFinish();
+    if(manager) {
+        const auto ts=now();
+        const int value=status(manager);
+        if(value>=0 && value<=6)std::fprintf(thermal,"%llu,%d\n",(unsigned long long)ts,value);
+    }
+    if(vulkan && !vk.good())die("GPU failed during final synchronization");
     // Snapshot workload before serialization or shutdown can emit callbacks.
     const uint64_t captured_video=video_frames-initial_video, captured_fresh=fresh_frames-initial_fresh,
                    captured_duplicate=duplicate_frames-initial_duplicate,
@@ -549,10 +600,11 @@ int main(int argc,char** argv) {
     FILE* summary=std::fopen((prefix+"-summary.json").c_str(),"w");
     if(!summary)die("Cannot write benchmark summary");
     std::fprintf(summary,"{\"frames\":%u,\"warmup_frames\":%u,\"measured_frames\":%u,\"fps\":%.9g,\"video_frames\":%llu,\"fresh_frames\":%llu,\"duplicate_frames\":%llu,\"audio_frames\":%llu,"
-                         "\"width\":%u,\"height\":%u,\"hardware\":%s,\"renderer\":\"%s\",\"state_hash\":\"%016llx\",\"state_valid\":%s}\n",
+                         "\"width\":%u,\"height\":%u,\"hardware\":%s,\"renderer\":\"%s\",\"state_hash\":\"%016llx\",\"state_valid\":%s,\"av_hash\":\"%016llx\",\"sample_rate\":%.17g}\n",
                  frames,warmup,frames-warmup,av.timing.fps,(unsigned long long)captured_video,(unsigned long long)captured_fresh,
                  (unsigned long long)captured_duplicate,(unsigned long long)captured_audio,
-                 captured_width,captured_height,hardware?"true":"false",vulkan?"vulkan-sync-headless":hardware?"gles-sync-pbuffer":"software",(unsigned long long)state_hash,state_ok?"true":"false");
+                 captured_width,captured_height,hardware?"true":"false",vulkan?"vulkan-sync-headless":hardware?"gles-sync-pbuffer":"software",(unsigned long long)state_hash,state_ok?"true":"false",
+                  (unsigned long long)av_hash,av.timing.sample_rate);
     if(std::fclose(summary))die("Summary output failed");
     // Deliberately keep the DSO loaded until normal process exit so the
     // compiler instrumentation runtime can emit LLVM_PROFILE_FILE.

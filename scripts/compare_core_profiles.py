@@ -44,6 +44,7 @@ def compare(manifest, directory):
     repetitions = {}
     kinds = set()
     binaries = {}
+    schedules = set()
     for run in manifest["runs"]:
         profile = run["profile"]
         if profile not in profiles:
@@ -76,7 +77,13 @@ def compare(manifest, directory):
                 continue
             start, duration = int(row["ts"]), int(row["dur"])
             if duration >= 0:
-                matching.append((start, duration))
+                has_timing = bool(row.get("fps")) or bool(row.get("sample_rate"))
+                rate = float(row["fps"]) if has_timing else fps
+                sample_rate = float(row["sample_rate"]) if has_timing else None
+                if not math.isfinite(rate) or not 1 <= rate <= 240 or (
+                        sample_rate is not None and (not math.isfinite(sample_rate) or not 0 < sample_rate <= 384000)):
+                    raise ValueError("Invalid dynamic A/V timing")
+                matching.append((start, duration, rate, sample_rate))
         matching.sort()
         measured = matching[warmup:warmup+count]
         if len(measured) != count:
@@ -86,7 +93,8 @@ def compare(manifest, directory):
         thermals = sorted((int(row["ts"]), int(row["status"])) for row in rows(directory / run["thermal"]))
         # Demand matching, recent, non-throttled thermal readings throughout.
         cursor = -1
-        for start, duration in measured:
+        schedules.add(tuple((rate, samples) for _, _, rate, samples in measured))
+        for start, duration, _, _ in measured:
             while cursor+1 < len(thermals) and thermals[cursor+1][0] <= start:
                 cursor += 1
             if cursor < 0 or thermals[cursor][1] not in (0, 1):
@@ -100,17 +108,19 @@ def compare(manifest, directory):
                 previous = ts
             if start + duration - previous > 5_000_000_000:
                 raise ValueError("Missing/stale or throttled thermal evidence")
-        durations = sorted(d for _, d in measured)
+        durations = sorted(d for _, d, _, _ in measured)
         key = (int(run["round"]), profile)
         if key in repetitions:
             raise ValueError("Duplicate profile/round")
         repetitions[key] = {"p50_ms": percentile(durations, 50)/1e6,
                             "p95_ms": percentile(durations, 95)/1e6,
                             "p99_ms": percentile(durations, 99)/1e6,
-                            "overruns": sum(d > 1e9/fps for d in durations),
+                            "overruns": sum(d > 1e9/rate for _, d, rate, _ in measured),
                             "trace_sha256": sha(directory/run["slices"]),
                             "thermal_sha256": sha(directory/run["thermal"]),
                             "build_report_sha256": sha(report_path)}
+    if len(schedules) != 1:
+        raise ValueError("Incomparable dynamic A/V timing schedule")
     rounds = sorted({round_id for round_id, _ in repetitions})
     if len(kinds) != 1 or len(rounds) < 3 or set(repetitions) != {(n,p) for n in rounds for p in profiles}:
         raise ValueError("Need at least three complete, comparable paired rounds")
@@ -128,7 +138,8 @@ def compare(manifest, directory):
         result[profile] = {"binary_sha256": binaries[profile], "median": med, "runs": stats}
     return {"identity": {key: manifest[key] for key in required}, "trace_kind": next(iter(kinds)),
             "warmup_frames": warmup, "measured_frames": count, "rounds": rounds,
-            "profiles": result, "measurement": "Core-call time only; not end-to-end input latency"}
+            "profiles": result, "measurement": ("Core-call plus synchronous GPU work; not end-to-end input latency"
+                 if next(iter(kinds)) == "direct" else "App core-call trace; not end-to-end input latency")}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

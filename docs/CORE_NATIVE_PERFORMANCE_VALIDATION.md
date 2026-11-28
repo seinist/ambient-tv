@@ -316,3 +316,9 @@ width. Idle compute workers outside that width do not claim new global work;
 pinned/private tasks still run, and growing the width wakes newly eligible
 workers when global work is queued. Width changes and global claims use the
 same mutex, without cancelling running tasks or changing stable worker IDs.
+
+The matrix now requires strict output correctness replay by default. An explicit
+`"verify_output": false` opts out and marks the report as not correctness-verified.
+The diagnostic runner records the active per-frame FPS and sample rate and
+checks the dynamic geometry/rotation/timing schedule across profiles. GPU-backed
+measurements include synchronous GPU completion, not just CPU time.
