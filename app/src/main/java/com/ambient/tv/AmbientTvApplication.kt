@@ -192,6 +192,9 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             com.ambient.tv.youtube.SmartTubeModuleRuntime.probe()
         }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.ambient.tv.ui.games.LibretroFrontendAvailability.probe()
+        }
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
