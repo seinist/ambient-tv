@@ -27,6 +27,17 @@ class GameMetadataProvidersTest {
         assertFalse(choices.first().exactMatch)
     }
 
+    @Test fun unsupportedPreferredProviderUsesOnlyAnAlreadyConfiguredCompatibleService() {
+        val libretro = GameMetadataProviderIds.LIBRETRO
+        val gamesDb = GameMetadataProviderIds.THEGAMESDB
+        val available = listOf(libretro, gamesDb)
+        assertEquals(gamesDb, GameMetadataPlatforms.automaticProvider(query("c128"), libretro, available))
+        assertEquals(libretro, GameMetadataPlatforms.automaticProvider(query("c128"), libretro, listOf(libretro)))
+        assertEquals(libretro, GameMetadataPlatforms.automaticProvider(query("psp"), libretro, available))
+        assertTrue(GameMetadataPlatforms.forQuery(query("psp")).single().gamesDbNames.contains("sonyplaystationportable"))
+        assertFalse(GameMetadataPlatforms.supports(query("cbm2"), libretro))
+    }
+
     @Test fun combinedSystemsUseTheRomExtensionAndNeverDefaultToUnrelatedPlatforms() {
         assertEquals(listOf(10), GameMetadataPlatforms.forQuery(query(filename = "Mario.gbc")).map { it.screenScraper })
         assertEquals(listOf(9), GameMetadataPlatforms.forQuery(query()).map { it.screenScraper })
