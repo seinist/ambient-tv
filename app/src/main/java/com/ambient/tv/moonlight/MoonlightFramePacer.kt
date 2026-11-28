@@ -10,6 +10,8 @@ internal class MoonlightFramePacer(private val mode: String, fps: Int) {
     fun shouldDrain(ptsUs: Long, nowNs: Long): Boolean =
         window == 0L || nowNs / 1000L - ptsUs > window * interval / 1000L
 
+    fun reset() { lastTarget = 0L }
+
     fun presentationTime(nowNs: Long): Long {
         val target = if (window == 0L || lastTarget == 0L || lastTarget <= nowNs - interval * 2)
             nowNs else (lastTarget + interval).coerceIn(nowNs, nowNs + interval * window)
@@ -24,8 +26,14 @@ internal class MoonlightLatencyHistogram {
     private val counts = AtomicLongArray(limits.size)
     fun recordUs(us: Long) {
         if (us < 0L || us > 10_000_000L) return
-        val index = limits.indexOfFirst { us <= it * 1000L }
-        if (index >= 0) counts.incrementAndGet(index)
+        // Binary search avoids scanning every bucket on the decoder hot path.
+        var low = 0
+        var high = limits.lastIndex
+        while (low < high) {
+            val mid = (low + high) ushr 1
+            if (us <= limits[mid] * 1000L) high = mid else low = mid + 1
+        }
+        counts.incrementAndGet(low)
     }
     fun p95Ms(): Int? {
         val snapshot = LongArray(limits.size) { counts.get(it) }
