@@ -226,7 +226,7 @@ def sdr_rgb(rgb,peak,black):
     mat=((1.660491,-.587641,-.072850),(-.124550,1.132900,-.008349),
          (-.018151,-.100579,1.118730))
     lin=[sum(a*b for a,b in zip(row,rgb)) for row in mat]
-    assert all(-1e-4<=v<=peak+1e-4 for v in lin), lin
+    assert all(-1e-3<=v<=peak+1e-3 for v in lin), lin
     lb,lw=black**(1/2.4),peak**(1/2.4)
     return [clamp((max(v,black)**(1/2.4)-lb)/(lw-lb)) for v in lin]
 

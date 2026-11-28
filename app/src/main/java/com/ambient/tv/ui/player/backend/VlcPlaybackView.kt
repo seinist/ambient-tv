@@ -963,7 +963,7 @@ class VlcPlaybackController(
 
     fun attach(view: SurfaceView) {
         if (audioOnly && !audioVisualizationEnabled) return
-        if (released || restartStopFailed) return
+        if (released || restartStopFailed || VlcNativeRetirement.isQuarantined) return
         // A request to keep the current surface supersedes a queued replacement.
         if (attachedView === view) {
             pendingAttachView = null
@@ -1158,8 +1158,9 @@ class VlcPlaybackController(
             // Disable vout before its surface disappears; audio and demuxing keep running.
             player.setVideoTrackEnabled(false)
         }
-        // The window still must be detached even while the native player is stopping.
-        player.vlcVout.detachViews()
+        // Detach on ordinary asynchronous stop, but never enter the JNI
+        // owner again after an uncertain native timeout.
+        if (!VlcNativeRetirement.isQuarantined) player.vlcVout.detachViews()
         attachedView = null
         invalidateVulkanProbe()
         renderSurfaceSize = null
@@ -1170,7 +1171,7 @@ class VlcPlaybackController(
         if (released) return
         val view = attachedView
         if (view != null) detach(view)
-        else if (!restartStopFailed && !vulkanFallbackPosted && restartStop == null && !dvRetirementPending)
+        else if (!nativeCommandsBlocked())
             player.setVideoTrackEnabled(false)
     }
 
@@ -1425,7 +1426,24 @@ class VlcPlaybackController(
                         errorMessage = context.getString(R.string.audio_output_release_failed)
                         return@post
                     }
-                    libVlc = createLibVlc(); player = MediaPlayer(libVlc)
+                    val replacement = runCatching {
+                        val library = createLibVlc()
+                        try { library to MediaPlayer(library) }
+                        catch (failure: Throwable) {
+                            // No new player owns output yet. Keep native destruction
+                            // off the UI thread, and fail closed on uncertainty.
+                            kotlin.concurrent.thread(name = "vlc-create-failure-release", isDaemon = true) {
+                                runCatching { VlcNativeRetirement.releaseLibrary(retiringPlayer, library) { library.release() } }
+                            }
+                            throw failure
+                        }
+                    }.getOrElse { failure ->
+                        restartStopFailed = true
+                        Timber.e(failure, "VLC replacement creation failed")
+                        errorMessage = context.getString(R.string.audio_output_release_failed)
+                        return@post
+                    }
+                    libVlc = replacement.first; player = replacement.second
                     rebuildRetirement = null
                     trackAccess.rebind(player); configurePlayer()
                     ahbFallbackPending = false
