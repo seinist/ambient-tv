@@ -744,3 +744,81 @@ int main() {
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_panda_shader_cache_collision_accuracy_and_eviction(self):
+        compiler = shutil.which("c++")
+        self.assertIsNotNone(compiler)
+        changes = PATCHES["panda3ds"]
+        header = next(new for path, _, new in changes if path.endswith("shader_rec.hpp"))
+        implementation = next(new for path, _, new in changes if path.endswith("shader_rec.cpp"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "PICA/dynapica"
+            folder.mkdir(parents=True)
+            (folder/"shader_rec.hpp").write_text(header)
+            (root/"PICA/shader.hpp").write_text(r"""
+#pragma once
+#include <array>
+#include <cstddef>
+#include <cstdint>
+using u32 = uint32_t;
+struct PICAShader {
+    using Hash = uint64_t;
+    static constexpr size_t maxInstructionCount=4096;
+    std::array<u32,maxInstructionCount> loadedShader{};
+    std::array<u32,128> operandDescriptors{};
+    u32 entrypoint=0, pc=0;
+    Hash getCodeHash(){return 7;} // deliberate collisions
+    Hash getOpdescHash(){return 9;}
+    unsigned result=0;
+};
+""")
+            (folder/"shader_rec_emitter_arm64.hpp").write_text(r"""
+#pragma once
+#include "PICA/shader.hpp"
+struct ShaderEmitter {
+    inline static unsigned compiled=0, alive=0;
+    using InstructionCallback=unsigned;
+    using PrologueCallback=void(*)(PICAShader&,unsigned);
+    bool accurate; unsigned value=0;
+    ShaderEmitter(bool a):accurate(a){++alive;}
+    ~ShaderEmitter(){--alive;}
+    void compile(const PICAShader& shader){++compiled; value=shader.loadedShader[0]+shader.operandDescriptors[0]+(accurate?10000:0);}
+    InstructionCallback getInstructionCallback(u32 pc){return value+pc;}
+    PrologueCallback getPrologueCallback(){return [](PICAShader& s,unsigned v){s.result=v;};}
+};
+""")
+            (root/"shader_rec.cpp").write_text(implementation)
+            (root/"test.cpp").write_text(r"""
+#include <cassert>
+#include "PICA/dynapica/shader_rec.hpp"
+int main() {
+    PICAShader shader;
+    ShaderJIT jit;
+    shader.loadedShader[0]=1;
+    jit.prepare(shader); jit.run(shader); assert(shader.result==1 && ShaderEmitter::compiled==1);
+    shader.entrypoint=3;
+    jit.prepare(shader); jit.run(shader); assert(shader.result==4 && ShaderEmitter::compiled==1);
+    shader.loadedShader[0]=2;
+    jit.prepare(shader); jit.run(shader); assert(shader.result==5 && ShaderEmitter::compiled==2);
+    shader.operandDescriptors[0]=5;
+    jit.prepare(shader); jit.run(shader); assert(shader.result==10 && ShaderEmitter::compiled==3);
+    jit.setAccurateMul(true);
+    jit.prepare(shader); jit.run(shader); assert(shader.result==10010 && ShaderEmitter::compiled==4);
+    jit.setAccurateMul(false);
+    jit.prepare(shader); jit.run(shader); assert(shader.result==10 && ShaderEmitter::compiled==4);
+    for(unsigned i=3;i<200;++i) {
+        shader.loadedShader[0]=i;
+        jit.prepare(shader); jit.run(shader);
+        assert(shader.result==i+8 && ShaderEmitter::alive<=64);
+    }
+    shader.loadedShader[0]=1;shader.operandDescriptors[0]=0;
+    jit.prepare(shader);jit.run(shader);assert(shader.result==4 && ShaderEmitter::alive<=64);
+    jit.reset(); assert(ShaderEmitter::alive==0);
+}
+""")
+            subprocess.run([compiler,"-std=c++20","-O2","-Wall","-Wextra","-Werror",
+                            "-DPANDA3DS_DYNAPICA_SUPPORTED","-DPANDA3DS_ARM64_HOST",
+                            "-I",str(root),str(root/"shader_rec.cpp"),str(root/"test.cpp"),
+                            "-o",str(root/"test")],check=True)
+            subprocess.run([str(root/"test")],check=True)
