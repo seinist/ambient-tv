@@ -23,6 +23,20 @@ class GameRomTitlesTest {
         assertEquals("GOLDENSUN", GameRomTitles.extract("gba", "golden.gba", reader(gba)))
     }
 
+    @Test fun dsReadsBannerInsteadOfAbbreviatedHeaderAndRejectsMissingBanner() {
+        val rom = ByteArray(0x2000)
+        "SHORTCODE".toByteArray(StandardCharsets.US_ASCII).copyInto(rom)
+        val banner = 0x1000
+        ByteBuffer.wrap(rom).order(ByteOrder.LITTLE_ENDIAN).putInt(0x68, banner)
+        rom[banner] = 1
+        "A Full Game Title\nPublisher".toByteArray(StandardCharsets.UTF_16LE)
+            .copyInto(rom, banner + 0x240 + 0x100)
+        assertEquals("A Full Game Title", GameRomTitles.extract("nds", "game.nds", reader(rom)))
+        assertNull(GameRomTitles.extract("nds", "game.nds", reader(rom.copyOf(512))))
+        ByteBuffer.wrap(rom).order(ByteOrder.LITTLE_ENDIAN).putInt(0x68, -1)
+        assertNull(GameRomTitles.extract("nds", "game.nds", reader(rom)))
+    }
+
     @Test fun megaDrivePrefersInternationalLabel() {
         val rom = ByteArray(0x200)
         "JAPANESE NAME".toByteArray(StandardCharsets.US_ASCII).copyInto(rom, 0x120)
