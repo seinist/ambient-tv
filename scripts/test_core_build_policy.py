@@ -83,7 +83,9 @@ class CoreBuildPolicyTest(unittest.TestCase):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
         self.assertLessEqual(len(matrix), 256)
         self.assertEqual({item["core"] for item in matrix if item["profile"] == "core-hotpaths"},
-                         {core["core"] for core in self.catalog["cores"] if not core.get("extended")})
+                         {core["core"] for core in self.catalog["cores"] if not core.get("extended")} - {"picodrive", "snes9x2010"})
+        self.assertIn(("picodrive", "picodrive-sh2"), {(j["core"], j["profile"]) for j in matrix})
+        self.assertIn(("snes9x2010", "snes9x2010-threaded"), {(j["core"], j["profile"]) for j in matrix})
         for core in self.catalog["cores"]:
             if core.get("extended"):
                 actual = {(item["abi"], item["profile"]) for item in matrix if item["core"] == core["core"]}

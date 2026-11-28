@@ -62,7 +62,9 @@ compiler build is not proof of correct gameplay or a performance improvement.
   lookup and deletion retain the same exact PC identity checks.
 * Snes9x2010: vectorize the in-place RGB565 HD Mode 7 NTSC downsample with
   NEON deinterleaving and bit-exact halving arithmetic. Dedicated and combined
-  optimized profiles receive the same pin-checked source patches.
+  optimized profiles receive the same pin-checked source patches. The PR gate
+  uses their dedicated builds instead of redundant source-only jobs to stay
+  below GitHub Actions' 256-job matrix limit.
 * NooDS: ARM NEON pixel doubling for integer 2x screen scaling, with scalar
   tails and unchanged layouts; cross-compile and pixel-equivalence tests.
 * Panda3DS: reuse exact-match native shader callbacks for consecutive draws

@@ -152,7 +152,9 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
                  for variant in ("o3", "o3-thinlto")]
         jobs += [(core, "arm64-v8a", "baseline")
                  for core in ("parallel_n64", "mednafen_psx_hw", "swanstation")]
-        jobs += [(core, "arm64-v8a", variant) for core in sorted(HOTPATH_CORES)
+        # The two dedicated candidates already apply the same source patches;
+        # avoid duplicate source-only builds at the 256-job Actions limit.
+        jobs += [(core, "arm64-v8a", variant) for core in sorted(HOTPATH_CORES - {"picodrive", "snes9x2010"})
                  if not next(entry for entry in entries if entry["core"] == core).get("extended")
                  for variant in ("baseline", "core-hotpaths")]
         jobs += [("pcsx_rearmed", "x86_64", "baseline"),
