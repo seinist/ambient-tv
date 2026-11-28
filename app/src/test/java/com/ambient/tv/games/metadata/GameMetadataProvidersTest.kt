@@ -13,6 +13,20 @@ class GameMetadataProvidersTest {
         GameMetadataQuery(system, "Tetris", filename, language = "de", region = "eu")
     private fun payload(raw: String): JsonObject = Json.parseToJsonElement(raw).jsonObject
 
+    @Test fun dsAndDsiUseOfficialThumbnailNamespacesAndPspUsesCanonicalCatalogNames() {
+        val ds = GameMetadataPlatforms.forQuery(query("nds", "Game.nds"))
+        assertEquals(listOf("Nintendo - Nintendo DS", "Nintendo - Nintendo DSi"), ds.map { it.libretro })
+        assertEquals("Nintendo - Nintendo DSi",
+            GameMetadataPlatforms.forQuery(query("nds", "Game.dsi")).first().libretro)
+        val title = "Ridge Racer (Europe)"
+        val choices = GameMetadataPlatforms.libretroCandidates(
+            query("psp", "Ridge Racer.cso").copy(title = "Ridge Racer"), listOf(title))
+        assertEquals(title, choices.first().metadata.canonicalTitle)
+        assertEquals(listOf("Sony - PlayStation Portable", "Named_Boxarts", "$title.png"),
+            choices.first().metadata.coverUrl!!.toHttpUrl().pathSegments)
+        assertFalse(choices.first().exactMatch)
+    }
+
     @Test fun combinedSystemsUseTheRomExtensionAndNeverDefaultToUnrelatedPlatforms() {
         assertEquals(listOf(10), GameMetadataPlatforms.forQuery(query(filename = "Mario.gbc")).map { it.screenScraper })
         assertEquals(listOf(9), GameMetadataPlatforms.forQuery(query()).map { it.screenScraper })
