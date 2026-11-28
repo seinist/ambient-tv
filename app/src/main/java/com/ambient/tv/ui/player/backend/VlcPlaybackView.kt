@@ -199,7 +199,7 @@ class VlcPlaybackController(
         hdrSceneAttempted = true
         hdrSceneJob = hdrSceneScope.launch {
             val result = try {
-                HdrScenePlanner.scan(url, target, true, File(context.noBackupFilesDir, "hdr-scene"))
+                HdrScenePlanner.scan(url, source, target, true, File(context.noBackupFilesDir, "hdr-scene"))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { Timber.w(e, "VLC HDR scene plan unavailable"); null }
             if (result == null) { Timber.i("VLC automatic HDR10+ scene plan not supported for this file"); return@launch }
@@ -1099,7 +1099,13 @@ class VlcPlaybackController(
         val effectiveDeinterlaceMode = if (preserveHdrSource) "off" else deinterlaceMode
         val effectiveDeinterlace = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
         val desiredResident = wantsResident(effectiveImage, effectiveDeinterlaceMode)
-        if (hdrSceneSession != null && (!desiredResident || hdrSceneSession?.plan?.target != targetRate)) cancelHdrScenePass()
+        if (hdrSceneSession != null && (!desiredResident || hdrSceneSession?.plan?.target != targetRate)) {
+            cancelHdrScenePass()
+            // Recompute the HDR gate after cancellation, never carry a
+            // stale resident decision into ordinary HDR10+ playback.
+            prepare(resumePositionMs, resumePlaying)
+            return
+        }
         val desiredSceneMode = hdrSceneSession?.mode ?: 0
         val reattach = if (configuredHdrSceneMode != desiredSceneMode || configuredResident != desiredResident || configuredSoftwareProcessing != effectiveImage.softwareProcessing ||
             configuredSvpOptions != effectiveImage.svp || configuredSvpMode != effectiveImage.svpMode || svpTargetChanged(effectiveImage.svpMode, configuredSvpRate, targetRate) ||
@@ -1474,7 +1480,7 @@ class VlcPlaybackController(
                 !com.ambient.tv.ui.player.PlaybackOutputTransition.active()) {
                 val now = android.os.SystemClock.elapsedRealtime()
                 val frames = SvpNative.residentOutputsOrNull()
-                if (residentLastProgressMs == 0L || frames != residentLastOutput) {
+                if (hdrSceneSession != null || residentLastProgressMs == 0L || frames != residentLastOutput) {
                     residentLastOutput = frames
                     residentLastProgressMs = now
                 } else if (now - residentLastProgressMs > VLC_SVP_STALL_MS) {
@@ -1485,7 +1491,7 @@ class VlcPlaybackController(
                 }
             } else residentLastProgressMs = 0L
             val wanted = wantsResident(effective, if (preserveHdrSource) "off" else deinterlaceMode)
-            if (outputReady && !hdrSceneRestartPending && (configuredHdrSceneMode != (hdrSceneSession?.mode ?: 0) || wanted != configuredResident || effectiveMode != configuredSvpMode ||
+            if (outputReady && !ended && !openingOrRestarting && !hdrSceneRestartPending && (configuredHdrSceneMode != (hdrSceneSession?.mode ?: 0) || wanted != configuredResident || effectiveMode != configuredSvpMode ||
                     svpTargetChanged(effectiveMode, configuredSvpRate, svpOutputFps(svpDisplayFps(context), imageOptions.svp))))
                 refreshEffectiveOverrides(player.isSeekable)
         }
@@ -1505,6 +1511,7 @@ class VlcPlaybackController(
         // Live no longer means unseekable: YouTube HLS/DASH can advertise a real DVR window.
         // Still reject streams without a native seek index (ordinary live channels).
         if (released || (liveStream && !canSeekNow())) return
+        if (imageOptions.svp.hdrTwoPass) hdrSceneAttempted = true
         if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePass()
         val duration = player.length
         val length = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
