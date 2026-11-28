@@ -1181,6 +1181,24 @@ mod synthesis_tests;
 #[cfg(test)]
 mod tests{
     #[test]
+    fn common_player_quality_resolves_presets_and_rejects_invalid_options(){
+        use super::ResidentOptions;
+        let (t,w,algo)=ResidentOptions::default().resolve(1920,1080).unwrap();
+        assert_eq!((t.block,t.overlap,t.pel,algo),(32,0,1,13));
+        assert_eq!((w.filter,w.lambda,w.lsad,w.pnew,w.pzero,w.pglobal,w.pnbour,w.preverse),
+            (0,320000,256000,50,100,50,50,0));
+        let q=ResidentOptions{preset:3,artifacts:3,..Default::default()};
+        let (t,_,algo)=q.resolve(1920,1080).unwrap();
+        assert_eq!((t.block,t.overlap,t.pel,t.artifacts,algo),(16,4,2,3,23));
+        for algo in [1,2,11,13,21,22,23]{
+            let (_,_,selected)=ResidentOptions{algorithm:algo,..q}.resolve(1920,1080).unwrap();
+            assert_eq!(selected,algo);
+        }
+        assert!(ResidentOptions{algorithm:12,..q}.resolve(1920,1080).is_none());
+        assert!(ResidentOptions{pel:3,..q}.resolve(1920,1080).is_none());
+        assert!(ResidentOptions{block:32,..q}.resolve(16,16).is_none());
+    }
+    #[test]
     fn resident_native_shaders_compile_to_spirv(){
         let t=super::ResidentTuning{block:16,overlap:4,pel:4,radius:2,satd:1,chroma:1,lambda:64,pnew:50,scene:50,artifacts:2};
         assert!(t.valid());
@@ -1414,7 +1432,7 @@ mod gpu_tests{
     fn native_resident_commands_keep_images_on_shared_device(){
         unsafe{
             let entry=ash::Entry::load().unwrap();
-            let app=vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_1);
+            let app=vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_2);
             let instance=entry.create_instance(&vk::InstanceCreateInfo::default().application_info(&app),None).unwrap();
             let (physical,family)=instance.enumerate_physical_devices().unwrap().into_iter()
                 .find_map(|p|instance.get_physical_device_queue_family_properties(p).iter().position(|q|
@@ -1423,7 +1441,8 @@ mod gpu_tests{
             let queues=[vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
             let extended=instance.get_physical_device_features(physical).shader_storage_image_extended_formats!=0;
             let features=vk::PhysicalDeviceFeatures::default().shader_storage_image_extended_formats(extended);
-            let d=instance.create_device(physical,&vk::DeviceCreateInfo::default().queue_create_infos(&queues).enabled_features(&features),None).unwrap();
+            let mut timeline_feature=vk::PhysicalDeviceTimelineSemaphoreFeatures::default().timeline_semaphore(true);
+            let d=instance.create_device(physical,&vk::DeviceCreateInfo::default().queue_create_infos(&queues).enabled_features(&features).push_next(&mut timeline_feature),None).unwrap();
             let queue=d.get_device_queue(family,0);
             let props=instance.get_physical_device_memory_properties(physical);
             let (w,h)=(66u32,34u32);
@@ -1810,6 +1829,60 @@ mod gpu_tests{
                     for img in raw{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
                 }
             }
+            // Exercise the exact libplacebo held-image ABI with binary
+            // producer semaphores and timeline publication of the result.
+            let quality=ResidentOptions{preset:2,algorithm:11,..Default::default()};
+            let engine=ambient_svp_vk_create_quality(instance.handle(),physical,d.handle(),
+                Some(entry.static_fn().get_instance_proc_addr),w,h,3,&quality);
+            assert!(!engine.is_null());
+            let held=[
+                image(&d,&props,w,h,vk::Format::R16G16B16A16_SFLOAT,src),
+                image(&d,&props,w,h,vk::Format::R16G16B16A16_SFLOAT,src),
+                image(&d,&props,w,h,vk::Format::R16G16B16A16_SFLOAT,out),
+            ];
+            let hold=std::array::from_fn::<_,3,_>(|_|d.create_semaphore(&vk::SemaphoreCreateInfo::default(),None).unwrap());
+            let mut ty=vk::SemaphoreTypeCreateInfo::default().semaphore_type(vk::SemaphoreType::TIMELINE);
+            let done=d.create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut ty),None).unwrap();
+            d.reset_fences(&[fence]).unwrap();
+            d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+            for (i,img) in held.iter().enumerate(){
+                transition(&d,cmd,img.image,vk::ImageLayout::UNDEFINED,vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::empty(),if i<2{vk::AccessFlags::TRANSFER_WRITE}else{vk::AccessFlags::SHADER_WRITE},
+                    vk::PipelineStageFlags::TOP_OF_PIPE,if i<2{vk::PipelineStageFlags::TRANSFER}else{vk::PipelineStageFlags::COMPUTE_SHADER});
+                if i<2{d.cmd_clear_color_image(cmd,img.image,vk::ImageLayout::GENERAL,
+                    &vk::ClearColorValue{float32:[0.5,0.5,0.5,1.0]},&[range()]);}
+            }
+            d.end_command_buffer(cmd).unwrap();
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd]).signal_semaphores(&hold)],fence).unwrap();
+            let handles=held.each_ref().map(|img|img.image);
+            assert_eq!(ambient_svp_vk_render_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,1,0.5),0);
+            assert_eq!(d.get_semaphore_counter_value(done).unwrap(),1);
+            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            d.reset_fences(&[fence]).unwrap();
+            d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+            transition(&d,cmd,held[2].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
+                vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+            d.cmd_copy_image_to_buffer(cmd,held[2].image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,readback,&region);
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),&host,&[],&[]);
+            d.end_command_buffer(cmd).unwrap();
+            let values=[1u64];let sems=[done];let stages=[vk::PipelineStageFlags::TRANSFER];let commands=[cmd];
+            let mut timeline=vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values);
+            let submit=vk::SubmitInfo::default().push_next(&mut timeline).wait_semaphores(&sems).wait_dst_stage_mask(&stages).command_buffers(&commands);
+            d.queue_submit(queue,&[submit],fence).unwrap();
+            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            let mapped=d.map_memory(readback_memory,0,bytes*2,vk::MemoryMapFlags::empty()).unwrap();
+            for pixel in std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*2) as usize).chunks_exact(8){
+                for channel in pixel[..6].chunks_exact(2){assert_eq!(u16::from_ne_bytes(channel.try_into().unwrap()),0x3800);}
+                assert_eq!(u16::from_ne_bytes(pixel[6..8].try_into().unwrap()),0x3c00);
+            }
+            d.unmap_memory(readback_memory);
+            ambient_svp_vk_destroy(engine);
+            for sem in hold{d.destroy_semaphore(sem,None);}d.destroy_semaphore(done,None);
+            for img in held{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
             d.destroy_fence(fence,None);d.destroy_command_pool(pool,None);
             d.destroy_buffer(readback,None);d.free_memory(readback_memory,None);
             for img in images{
