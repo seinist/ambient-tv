@@ -120,7 +120,7 @@ class SidebarViewModel @Inject constructor(
             trailersConfigured = appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
             systemOrder = appPreferences.sidebarSystemOrder,
             filesEnabled = appPreferences.filesEnabled,
-            gamesAvailable = gameLibrary.hasConfiguredFolders(),
+            gamesAvailable = gameLibrary.hasConfiguredFolders() && com.ambient.tv.ui.games.LibretroFrontendAvailability.isAvailable,
             gameSystemIds = configuredGameSystemIds(),
             networkFileSources = networkFileSourcesFromStore(),
             dlnaServers = dlnaStore.servers(),
@@ -217,7 +217,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.radioEnabled) add("radio")
             if (com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && appPreferences.telegramEnabled) add("telegram")
             if (appPreferences.filesEnabled) add("files")
-            if (gameLibrary.hasConfiguredFolders()) add("games")
+            if (gameLibrary.hasConfiguredFolders() && com.ambient.tv.ui.games.LibretroFrontendAvailability.isAvailable) add("games")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
             if (appPreferences.isRommConfigured) add("romm")
         }
@@ -322,7 +322,7 @@ class SidebarViewModel @Inject constructor(
             catch (_: Exception) { configuredGameSystemIds() }
             _uiState.update { state -> state.copy(
                 networkFileSources = networkFileSourcesFromStore(),
-                gamesAvailable = gameLibrary.hasConfiguredFolders(),
+                gamesAvailable = gameLibrary.hasConfiguredFolders() && com.ambient.tv.ui.games.LibretroFrontendAvailability.isAvailable,
                 gameSystemIds = systems,
             ) }
         }
@@ -477,7 +477,7 @@ class SidebarViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 filesEnabled = appPreferences.filesEnabled,
-                gamesAvailable = gameLibrary.hasConfiguredFolders(),
+                gamesAvailable = gameLibrary.hasConfiguredFolders() && com.ambient.tv.ui.games.LibretroFrontendAvailability.isAvailable,
                 networkFileSources = networkFileSourcesFromStore(),
                 dlnaServers = dlnaStore.servers(),
                 systemOrder = appPreferences.sidebarSystemOrder,
