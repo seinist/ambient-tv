@@ -14,7 +14,7 @@ from export_monogram_adapter import ownership
 
 def definitions(data):
     size = len(data)
-    if not 112 <= size <= 256 * 1024**2 or data[:8] not in {
+    if not 112 <= size <= 256 * 1024**2 or bytes(data[:8]) not in {
         b"dex\n035\0", b"dex\n037\0", b"dex\n038\0", b"dex\n039\0", b"dex\n040\0"
     }:
         raise ValueError("Unsupported standalone DEX format")
