@@ -20,6 +20,13 @@ internal class ModuleDexOwnership(
     fun accepts(definitions: Set<String>): Boolean = definitions.containsAll(required) &&
         definitions.all(::owns) && requiredPrefixes.all { prefix -> definitions.any { it.startsWith(prefix) } }
 
+    fun acceptsReferences(definitions: Set<String>, references: Set<String>): Boolean {
+        val foreign = listOf(SMARTTUBE, LIBRETRODROID, VLC, MONOGRAM).filter { it !== this }
+        return references.none { name ->
+            (owns(name) && name !in definitions) || foreign.any { it.owns(name) }
+        }
+    }
+
     companion object {
         val SMARTTUBE = ModuleDexOwnership(
             setOf("com.liskovsoft.", "com.eclipsesource.v8.",

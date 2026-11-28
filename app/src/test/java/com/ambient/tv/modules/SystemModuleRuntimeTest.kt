@@ -173,6 +173,16 @@ class SystemModuleRuntimeTest {
         assertEquals(listOf(dependency, selected), order)
     }
 
+    @Test fun dexReferencesCannotEscapeAdapterOwnership() {
+        val owner = ModuleDexOwnership.VLC
+        val privateType = "org.videolan.libvlc.PrivateHelper"
+        val defined = setOf(privateType)
+        assertTrue(owner.acceptsReferences(defined, defined + "android.view.Surface"))
+        assertTrue(owner.acceptsReferences(defined, setOf("com.swordfish.libretrodroid.R\$id")))
+        assertFalse(owner.acceptsReferences(emptySet(), defined))
+        assertFalse(owner.acceptsReferences(defined, setOf("com.swordfish.libretrodroid.GLRetroView")))
+    }
+
     @Test fun crossModuleDependenciesRequireExplicitHostPermission() {
         val pkg = packageFile(dependencies = listOf(SystemModuleDependency("shaders", 2)))
         assertFalse(SystemModuleRuntime.dependenciesAllowed(SystemModuleRuntime.Contract(assetOnly = true), pkg.build))

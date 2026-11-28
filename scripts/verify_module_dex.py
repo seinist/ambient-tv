@@ -90,8 +90,10 @@ def inspect(data):
         if index >= len(names):
             raise ValueError("Invalid DEX class type")
         name, is_class = names[index]
-        if not is_class or name in classes:
-            raise ValueError("Invalid or duplicate DEX definition")
+        if not is_class:
+            raise ValueError("Invalid DEX definition")
+        if name in classes:
+            raise ValueError("Duplicate DEX definition")
         classes.add(name)
     return classes, {name for name, _ in names if name is not None}
 

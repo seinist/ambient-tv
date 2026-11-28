@@ -26,6 +26,7 @@ internal object SystemModuleMaterializer {
         val native: Map<String, SystemModuleBinary.Native>,
         val hashes: Map<String, String>,
         val dexClasses: Set<String> = emptySet(),
+        val dexReferences: Set<String> = emptySet(),
     ) {
         fun library(name: String): File {
             if (name !in native) throw SystemModuleTrustException("Unknown module library")
@@ -43,6 +44,7 @@ internal object SystemModuleMaterializer {
         try {
             val dex = mutableListOf<File>()
             val dexClasses = mutableSetOf<String>()
+            val dexReferences = mutableSetOf<String>()
             val native = linkedMapOf<String, SystemModuleBinary.Native>()
             val hashes = linkedMapOf<String, String>()
             var expanded = 0L
@@ -102,7 +104,10 @@ internal object SystemModuleMaterializer {
                         "code" -> {
                             if (parts.size != 2 || !Regex("classes([2-9]|[1-9][0-9]+)?[.]dex").matches(target.name))
                                 throw SystemModuleTrustException("Invalid module DEX file")
-                            for (name in SystemModuleBinary.dex(target)) {
+                            if (dex.size >= 64) throw SystemModuleTrustException("Too many module DEX files")
+                            val info = SystemModuleBinary.inspectDex(target)
+                            dexReferences.addAll(info.references)
+                            for (name in info.definitions) {
                                 if (!dexClasses.add(name)) throw SystemModuleTrustException("Duplicate class across module DEX files")
                             }
                             dex += target
@@ -122,7 +127,7 @@ internal object SystemModuleMaterializer {
                     if (it == 0) "classes.dex" else "classes${it + 1}.dex"
                 }) throw SystemModuleTrustException("Non-contiguous module DEX sequence")
             validateNativeDependencies(native, hostLibraries)
-            val result = Materialized(pkg.build, dir, orderedDex, native.toMap(), hashes.toMap(), dexClasses.toSet())
+            val result = Materialized(pkg.build, dir, orderedDex, native.toMap(), hashes.toMap(), dexClasses.toSet(), dexReferences.toSet())
             complete = true
             return result
         } finally {
