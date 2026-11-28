@@ -2,9 +2,34 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from run_core_benchmark import fixture_identity
 from compare_core_profiles import compare
 
 class BenchmarkTests(unittest.TestCase):
+    def test_fixture_identity_tracks_runtime_and_all_content(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)
+            content, system = path/"content", path/"bios"
+            content.mkdir()
+            system.mkdir()
+            rom = content/"game.rom"
+            rom.write_bytes(b"game")
+            (content/"track.bin").write_bytes(b"track")
+            (system/"bios.bin").write_bytes(b"bios")
+            args = SimpleNamespace(**{key:path/key for key in ("runner","input","options","runtime")})
+            for file in vars(args).values():
+                file.write_bytes(b"original")
+            before = fixture_identity(args, content, system, rom)
+            self.assertEqual(len(before["fixture_files"]), 2)
+            args.runtime.write_bytes(b"new runtime")
+            self.assertNotEqual(before, fixture_identity(args, content, system, rom))
+            args.runtime.write_bytes(b"original")
+            self.assertEqual(before, fixture_identity(args, content, system, rom))
+            (content/"track.bin").write_bytes(b"changed")
+            self.assertNotEqual(before, fixture_identity(args, content, system, rom))
+
+
     def test_paired_runs_and_rejection(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)

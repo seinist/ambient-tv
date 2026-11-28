@@ -57,7 +57,9 @@ def matrix(args):
             common.update({key:meta[key] for key in ("device_fingerprint","content_sha256","input_sha256","settings_sha256")})
             common.update({"app_commit":meta["runner_sha256"],"renderer":summary["renderer"],
                            "fps":summary["fps"]})
-            fixture={"files":meta["fixture_files"],"bios":meta["bios_files"],"runner":meta["runner_sha256"]}
+            fixture={"files":meta["fixture_files"],"bios":meta["bios_files"],
+                     "runner":meta["runner_sha256"],"runtime":meta["runtime_sha256"],
+                     "device_serial":meta["device_serial"]}
             if identity is None:
                 identity=common
                 initial_fixture=fixture

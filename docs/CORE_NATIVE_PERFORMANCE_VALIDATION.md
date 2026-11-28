@@ -76,7 +76,10 @@ to the intended supported set including baseline.
       --output reports/mgba-shield --rounds 3
 
 The output includes complete raw samples, thermal evidence, file digests,
-build reports, per-round results and comparison.json. The comparison rejects
+build reports, per-round results and comparison.json. The runner pins the ADB
+serial, checks transferred runner/input/options/runtime hashes and rejects local
+fixture mutations during capture. Paired rounds also require an identical
+runtime digest and device serial. The comparison rejects
 incomplete paired rounds, mismatched device/fixture/renderer, absent or stale
 thermal evidence and thermal throttling. Save-state fingerprints are
 diagnostic because some cores have nondeterministic state metadata. Do not

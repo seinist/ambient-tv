@@ -16,8 +16,17 @@ def sha(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
+def fixture_identity(args, content, system, rom):
+    def tree(folder):
+        return {str(p.relative_to(folder)):sha(p) for p in sorted(folder.rglob("*")) if p.is_file()}
+    return {"content_sha256":sha(rom), "input_sha256":sha(args.input),
+            "settings_sha256":sha(args.options), "runner_sha256":sha(args.runner),
+            "runtime_sha256":sha(args.runtime) if args.runtime else None,
+            "fixture_files":tree(content), "bios_files":tree(system)}
+
 def run(args):
-    build = json.loads(args.report.read_text())
+    report_text = args.report.read_text()
+    build = json.loads(report_text)
     if sha(args.binary) != build["binary_sha256"]:
         raise ValueError("Core binary does not match verified build report")
     if args.training and build["profile"] != "pgo-generate":
@@ -34,7 +43,14 @@ def run(args):
             raise ValueError("Fixture directory must exist and contain no symlinks")
     if len(args.input.read_text().splitlines()) != args.frames:
         raise ValueError("Input must contain exactly one mask per frame")
-    adb = ["adb", "-s", args.serial] if args.serial else ["adb"]
+    identity = fixture_identity(args, content, system, rom)
+    # Resolve once: reconnects or a changed default ADB target must not mix devices.
+    selection = ["adb", "-s", args.serial] if args.serial else ["adb"]
+    serial = subprocess.run([*selection, "get-serialno"], check=True, text=True,
+                            capture_output=True).stdout.strip()
+    if not serial or serial == "unknown":
+        raise ValueError("No unique ADB device")
+    adb = ["adb", "-s", serial]
     def cmd(*items, capture=False):
         result = subprocess.run([*adb,*map(str,items)],check=True,text=True,capture_output=capture)
         return result.stdout.strip() if capture else None
@@ -60,6 +76,12 @@ def run(args):
             raise ValueError("Transferred core digest mismatch")
         if args.runtime:
             cmd("push",args.runtime,remote+"/libc++_shared.so")
+        for name, digest in (("runner", identity["runner_sha256"]),
+                             ("input.txt", identity["input_sha256"]),
+                             ("options.txt", identity["settings_sha256"]),
+                             ("libc++_shared.so", identity["runtime_sha256"])):
+            if digest is not None and shell("sha256sum", remote+"/"+name, capture=True).split()[0] != digest:
+                raise ValueError("Transferred fixture digest mismatch: "+name)
         prefix=remote+"/capture"
         shell("env","AMBIENT_BENCHMARK_RENDERER="+getattr(args,"renderer","auto"),"LD_LIBRARY_PATH="+remote,"LLVM_PROFILE_FILE="+remote+"/training-%p-%m.profraw",
               remote+"/runner",remote+"/core.so",remote+"/content/"+str(rom.relative_to(content)),
@@ -78,13 +100,13 @@ def run(args):
                 cmd("pull",name,local)
                 if not local.stat().st_size:
                     raise ValueError("Empty profile data")
-        metadata={"build":build,"device_fingerprint":fingerprint,"content_sha256":sha(rom),
-                  "input_sha256":sha(args.input),"settings_sha256":sha(args.options),
-                  "runner_sha256":sha(args.runner),"frames":args.frames,
-                  "fixture_files":{str(p.relative_to(content)):sha(p) for p in sorted(content.rglob("*")) if p.is_file()},
-                  "bios_files":{str(p.relative_to(system)):sha(p) for p in sorted(system.rglob("*")) if p.is_file()}}
+        if (fixture_identity(args, content, system, rom) != identity or
+                sha(args.binary) != build["binary_sha256"] or args.report.read_text() != report_text):
+            raise ValueError("Local fixture or build changed during capture")
+        metadata={"build":build,"device_fingerprint":fingerprint,"device_serial":serial,
+                  "frames":args.frames,**identity}
         (out/"metadata.json").write_text(json.dumps(metadata,indent=2)+"\n")
-        (out/"build.json").write_text(args.report.read_text())
+        (out/"build.json").write_text(report_text)
     finally:
         shell("rm","-rf",remote)
 
