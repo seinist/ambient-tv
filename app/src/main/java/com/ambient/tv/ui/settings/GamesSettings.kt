@@ -69,6 +69,8 @@ internal fun GameCoreSource.titleRes(): Int = when (this) {
     GameCoreSource.BUILDBOT -> R.string.games_core_source_buildbot
     GameCoreSource.OPTIMIZED -> R.string.games_core_source_optimized
     GameCoreSource.OPTIMIZED_A57 -> R.string.games_core_source_optimized_a57
+    GameCoreSource.CITRA_ARM64_JIT -> R.string.games_core_source_citra_jit
+    GameCoreSource.YABAUSE_ARM64_JIT -> R.string.games_core_source_yabause_jit
     else -> error("Expected a regular core source")
 }
 
@@ -418,6 +420,7 @@ internal fun GamesCores(onlyCoreId: String? = null, system: com.ambient.tv.games
                         R.string.games_core_source_ambient_hint else R.string.games_core_source_unavailable)
                     GameCoreSource.OPTIMIZED -> stringResource(R.string.games_core_source_optimized_hint)
                     GameCoreSource.OPTIMIZED_A57 -> stringResource(R.string.games_core_source_a57_hint)
+                    GameCoreSource.CITRA_ARM64_JIT, GameCoreSource.YABAUSE_ARM64_JIT -> stringResource(R.string.games_core_source_jit_hint)
                     else -> null
                 },
                 options = GameCoreSource.regular.map { option ->

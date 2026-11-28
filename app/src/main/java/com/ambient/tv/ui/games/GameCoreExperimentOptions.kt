@@ -27,6 +27,8 @@ import kotlinx.coroutines.withContext
 internal val GameCoreSource.experimentTitle: Int get() = when (this) {
     GameCoreSource.OPTIMIZED -> R.string.games_core_source_optimized
     GameCoreSource.OPTIMIZED_A57 -> R.string.games_core_source_optimized_a57
+    GameCoreSource.CITRA_ARM64_JIT -> R.string.games_core_source_citra_jit
+    GameCoreSource.YABAUSE_ARM64_JIT -> R.string.games_core_source_yabause_jit
     GameCoreSource.HOTPATHS -> R.string.games_core_test_hotpaths
     GameCoreSource.O3 -> R.string.games_core_test_o3
     GameCoreSource.THINLTO -> R.string.games_core_test_thinlto

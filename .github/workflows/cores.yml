@@ -135,8 +135,9 @@ jobs:
           set -euo pipefail
           if [ "$PUBLISH_EXPERIMENTAL" = true ]; then
             [[ ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) && "$GITHUB_REF" == refs/heads/main &&
-               "$PUBLISH" != true && ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && "$COMPARISON" == none ]] ||
-              { echo "::error::Experimental publishing requires main, optimized or optimized-a57, and no production publish/comparison"; exit 1; }
+               "$PUBLISH" != true && ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ||
+                 ( "$GITHUB_EVENT_NAME" == workflow_dispatch && ( "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ) ) ) && "$COMPARISON" == none ]] ||
+              { echo "::error::Experimental publishing requires main, a permitted profile, and no production publish/comparison"; exit 1; }
           fi
           if [[ "$GITHUB_EVENT_NAME" == push && "$PROFILE" != baseline && "$PUBLISH_EXPERIMENTAL" != true ]]; then
             echo "::error::Automatic non-baseline builds require explicit experimental channel"
@@ -410,7 +411,7 @@ jobs:
       (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.plan.outputs.count == '0')) &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish && inputs.profile == 'baseline') ||
-       ((github.event_name == 'workflow_dispatch' || github.event_name == 'push') && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57') && inputs.comparison == 'none') ||
+       ((github.event_name == 'workflow_dispatch' || github.event_name == 'push') && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57' || (github.event_name == 'workflow_dispatch' && (inputs.profile == 'citra-arm64-jit' || inputs.profile == 'yabause-arm64-jit'))) && inputs.comparison == 'none') ||
        (github.event_name == 'push' && !inputs.publish_experimental && (inputs.profile || 'baseline') == 'baseline'))
     runs-on: ubuntu-latest
     steps:
@@ -447,7 +448,8 @@ jobs:
             git archive FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
                 .github/workflows/cores.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
                 scripts/core_link_evidence.py scripts/check_elf_pages.py scripts/core_release_incremental.py \
-                scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py | tar -xf - -C "$current"
+                scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py scripts/core_citra_arm64.py \
+                scripts/core_yabause_arm64.py scripts/native_core_candidates | tar -xf - -C "$current"
             if ! python3 scripts/core_release_incremental.py assert-current \
                 --profile "$PROFILE" --ndk "$NDK_VERSION" --current-root "$current"; then
               rm -rf "$current"
@@ -457,9 +459,17 @@ jobs:
             rm -rf "$current"
           }
           assert_current_recipe
+          if [[ "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/core-jit-candidates.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=100" |
+              jq -e --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '
+                any(.workflow_runs[]; .event=="workflow_dispatch" and .head_branch=="main" and
+                    .head_sha==$sha and .head_repository.full_name==$repo and .conclusion=="success")' >/dev/null ||
+              { echo "::error::JIT publication requires successful dedicated main-commit validation"; exit 1; }
+          fi
           # Require every planned artifact, and ensure the profile cannot cross channels.
           if [ "$EXPERIMENT" = true ]; then
-            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) ]] || exit 1
+            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) ||
+               "$GITHUB_EVENT_NAME" == workflow_dispatch && ( "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ) ]] || exit 1
             prefix="candidate-$PROFILE-"
             tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           else

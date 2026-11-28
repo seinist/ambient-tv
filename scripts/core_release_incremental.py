@@ -98,8 +98,14 @@ def fingerprint(job, ndk, root=ROOT):
     end = workflow.index("      - uses: actions/upload-artifact", start)
     files = {p: digest((root / "scripts" / p).read_bytes()) for p in SHARED if p != "core_build_policy.py"}
     files["core_build_policy.py"] = policy_fingerprint(job, root)
-    if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57"}:
+    if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57", "citra-arm64-jit", "yabause-arm64-jit"}:
         files["hotpath"] = hotpath_fingerprint(job["core"], root)
+    if job["profile"] in {"citra-arm64-jit", "yabause-arm64-jit"}:
+        kind = "citra" if job["profile"].startswith("citra") else "yabause"
+        files["jit_recipe"] = digest((root/"scripts"/f"core_{kind}_arm64.py").read_bytes())
+        headers = (root/"scripts/native_core_candidates").glob("citra_*.h" if kind=="citra" else "sh2_*.h")
+        for path in sorted(headers):
+            files[path.name] = digest(path.read_bytes())
     build_recipe = workflow[start:end]
     if not (job["core"] == "mupen64plus_next_gles3" and "-flto=thin" in job["cflags"].split()):
         # This source-specific launcher does not change any other build recipe.
@@ -120,7 +126,8 @@ def profile_snapshot(root, profile, ndk):
         raise ValueError("Core NDK version changed on main")
     matrix = json.loads(subprocess.check_output(
         [sys.executable, str(root / "scripts/core_build_policy.py"), "plan",
-         "--catalog", str(root / "cores/cores.json"), "--event", "push",
+         "--catalog", str(root / "cores/cores.json"), "--event",
+         "workflow_dispatch" if profile in {"citra-arm64-jit", "yabause-arm64-jit"} else "push",
          "--ref", "refs/heads/main", "--publish", "true" if profile == "baseline" else "false",
          "--profile", profile], cwd=root,
         env={"PATH": os.defpath, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1"}, text=True))
@@ -210,7 +217,7 @@ def signed_history(repo, profile, desired, root=ROOT):
 def select(matrix, records, latest_keys, profile, ndk, force=False, root=ROOT):
     desired = {key(j) for j in matrix["include"]}
     build, reuse = [], []
-    complete_snapshot = profile in {"baseline", "optimized", "optimized-a57"}
+    complete_snapshot = profile in {"baseline", "optimized", "optimized-a57", "citra-arm64-jit", "yabause-arm64-jit"}
     for job in matrix["include"]:
         job = dict(job)
         fp = fingerprint(job, ndk, root)
@@ -260,7 +267,7 @@ def main():
         p.add_argument("--" + flag, required=True)
     p.add_argument("--force", action="store_true")
     p = sub.add_parser("assert-current")
-    p.add_argument("--profile", required=True, choices=("baseline", "optimized", "optimized-a57"))
+    p.add_argument("--profile", required=True, choices=("baseline", "optimized", "optimized-a57", "citra-arm64-jit", "yabause-arm64-jit"))
     p.add_argument("--ndk", required=True)
     p.add_argument("--current-root", type=Path, required=True)
     p = sub.add_parser("reuse")

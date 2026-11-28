@@ -2492,4 +2492,7 @@
     <string name="game_library_scanning">Spiele werden eingelesen…</string>
     <string name="game_library_scan_progress">%1$d von %2$d gefundenen Dateien geprüft</string>
     <string name="game_library_scan_cancel">Einlesen abbrechen</string>
+    <string name="games_core_source_citra_jit">Citra ARM64 JIT</string>
+    <string name="games_core_source_yabause_jit">Yabause ARM64 JIT</string>
+    <string name="games_core_source_jit_hint">Experimenteller nativer Recompiler für den passenden ARM64-Core. Ohne signierten Build wird der optimierte Core verwendet.</string>
 </resources>
