@@ -56,6 +56,7 @@ struct svp_vk_mpv {
     AmbientSvpHdrPass *scene_pass;
     unsigned scene_mode,scene_version;
     int (*scene_stats_legacy)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],float,uint32_t);
+    int (*scene_verify_geometry)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
     int (*scene_lookup_legacy)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
     int (*scene_stats)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,uint32_t);
     int (*scene_interval)(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
@@ -878,13 +879,14 @@ static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_ima
         dlsym(lib,"ambient_svp_hdr_pass_open_version");
     s->scene_stats_legacy=dlsym(lib,"ambient_svp_vk_hdr_stats_scene_legacy_tracked");
     s->scene_lookup_legacy=dlsym(lib,"ambient_svp_hdr_pass_lookup_legacy");
+    s->scene_verify_geometry=dlsym(lib,"ambient_svp_hdr_pass_verify_geometry");
     s->scene_stats=dlsym(lib,"ambient_svp_vk_hdr_stats_scene");
     s->scene_interval=dlsym(lib,"ambient_svp_hdr_pass_interval");
     s->scene_capture=dlsym(lib,"ambient_svp_hdr_pass_capture");
     s->scene_lookup=dlsym(lib,"ambient_svp_hdr_pass_lookup_v1");
     s->scene_finish=dlsym(lib,"ambient_svp_hdr_pass_finish");
     s->scene_destroy=dlsym(lib,"ambient_svp_hdr_pass_destroy");
-    if(!open||!s->scene_stats_legacy||!s->scene_lookup_legacy||!s->scene_stats||!s->scene_interval||!s->scene_capture||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)return false;
+    if(!open||!s->scene_verify_geometry||!s->scene_stats_legacy||!s->scene_lookup_legacy||!s->scene_stats||!s->scene_interval||!s->scene_capture||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)return false;
     PFN_vkGetPhysicalDeviceProperties props=(PFN_vkGetPhysicalDeviceProperties)s->vkdev->get_proc_addr(s->vkdev->inst,"vkGetPhysicalDeviceProperties");
     if(!props)return false;
     VkPhysicalDeviceProperties device;props(s->vkdev->phys_dev,&device);
@@ -1191,7 +1193,8 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
                 if(s->scene_mode==1){if(s->scene_capture(s->scene_pass,j->pair,i,s->tick+i)!=1)goto submitted_fail;}
                 else if(s->scene_version==0){
                     AmbientSvpHdrLegacyScene legacy;
-                    if(s->scene_lookup_legacy(s->scene_pass,s->tick+i,&legacy)!=1||
+                    if(s->scene_verify_geometry(s->scene_pass,j->pair,i,s->tick+i)!=1||
+                        s->scene_lookup_legacy(s->scene_pass,s->tick+i,&legacy)!=1||
                         !svp_vk_scene_legacy_metadata(outputs[i],&legacy))goto submitted_fail;
                 }else{
                     const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)svp_vk_hdr10plus(outputs[i])->data;
