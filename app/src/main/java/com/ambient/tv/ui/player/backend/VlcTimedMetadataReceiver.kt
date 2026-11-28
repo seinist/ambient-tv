@@ -14,7 +14,7 @@ import kotlin.concurrent.thread
 internal class VlcTimedMetadataReceiver private constructor(
     val socketName: String,
     private val server: LocalServerSocket,
-    private val onEvent: (VlcTimedMetadataPacket.Message) -> Unit,
+    private val onEvent: (VlcTimedMetadataPacket.Message) -> Boolean,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val connectionLock = Any()
@@ -40,14 +40,15 @@ internal class VlcTimedMetadataReceiver private constructor(
                         it.soTimeout = 500
                         val event = VlcTimedMetadataPacket.read(it.inputStream)
                         if (!closed.get()) {
-                            onEvent(event)
-                            if (!closed.get()) {
+                            val accepted = onEvent(event)
+                            if (accepted && !closed.get()) {
                                 val epoch = when (event) {
                                     is VlcTimedMetadataPacket.Message.Epoch -> event.epoch
                                     is VlcTimedMetadataPacket.Message.Event -> event.event.seekEpoch
                                 }
                                 // One connection carries one event. ACK only after handing it
-                                // to the inbox; a lost ACK may cause a bounded duplicate retry.
+                                // to the inbox (or recognizing an accepted duplicate).
+                                // A stale/rejected epoch must not be acknowledged as applied.
                                 VlcTimedMetadataPacket.acknowledgeEpoch(it.outputStream, epoch)
                             }
                         }
@@ -69,7 +70,7 @@ internal class VlcTimedMetadataReceiver private constructor(
     }
 
     companion object {
-        fun open(onEvent: (VlcTimedMetadataPacket.Message) -> Unit): VlcTimedMetadataReceiver? = runCatching {
+        fun open(onEvent: (VlcTimedMetadataPacket.Message) -> Boolean): VlcTimedMetadataReceiver? = runCatching {
             val name = "ambient-fel-" + UUID.randomUUID().toString().replace("-", "")
             VlcTimedMetadataReceiver(name, LocalServerSocket(name), onEvent).also { it.start() }
         }.getOrNull()

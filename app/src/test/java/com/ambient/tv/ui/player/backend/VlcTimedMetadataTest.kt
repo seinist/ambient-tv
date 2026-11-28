@@ -51,6 +51,20 @@ class VlcTimedMetadataTest {
         assertTrue(runCatching { VlcTimedMetadataPacket.read(barrier(2, 8).inputStream()) }.isFailure)
     }
 
+    @Test fun acknowledgmentsRequireAcceptedEpochOrKnownDuplicate() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        inbox.clearForSeek(1000L, 7L)
+        assertFalse(inbox.offer(session, VlcTimedMetadataPacket.Message.Epoch(1L, 1000L, 6L)))
+        assertTrue(inbox.offer(session, VlcTimedMetadataPacket.Message.Epoch(2L, 1000L, 7L)))
+        val event = readEvent(packet(2).inputStream()).copy(seekTargetUs = 1000L, seekRequestId = 7L, packetId = 1L)
+        assertTrue(inbox.offer(session, event))
+        assertTrue(inbox.offer(session, event))
+        assertEquals(1, inbox.events.value.size)
+        assertFalse(inbox.offer(session, event.copy(seekEpoch = 1L)))
+        assertFalse(inbox.offer(session - 1L, event))
+    }
+
     @Test fun epochAcknowledgmentPreservesUnsignedWireValue() {
         val out = ByteArrayOutputStream()
         VlcTimedMetadataPacket.acknowledgeEpoch(out, 0xfedcba98L)

@@ -41,6 +41,28 @@ class StreamUrlRenewalPolicyTest {
         }
     }
 
+    @Test fun waitingRequestTimesOutWithoutCancellingSharedRefresh() {
+        val entered = CountDownLatch(1)
+        val unblock = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        val policy = StreamUrlRenewalPolicy(waiterTimeoutMs = 25L) {
+            entered.countDown()
+            check(unblock.await(5, TimeUnit.SECONDS))
+            "fresh"
+        }
+        try {
+            val owner = executor.submit<String?> { policy.replacement("old", "old") }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            assertNull(policy.replacement("old", "old"))
+            assertFalse(owner.isDone)
+            unblock.countDown()
+            assertEquals("fresh", owner.get(5, TimeUnit.SECONDS))
+        } finally {
+            unblock.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     @Test fun failedRenewalHasCooldownAndDoesNotPoisonOtherUrls() {
         val calls = AtomicInteger()
         val policy = StreamUrlRenewalPolicy {

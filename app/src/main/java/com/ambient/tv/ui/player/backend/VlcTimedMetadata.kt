@@ -155,12 +155,11 @@ internal class VlcTimedMetadataInbox {
         }
     }
 
-    @Synchronized fun offer(session: Long, message: VlcTimedMetadataPacket.Message) {
+    @Synchronized fun offer(session: Long, message: VlcTimedMetadataPacket.Message): Boolean =
         when (message) {
             is VlcTimedMetadataPacket.Message.Epoch -> advanceEpoch(session, message.epoch, message.seekTargetUs, message.seekRequestId)
             is VlcTimedMetadataPacket.Message.Event -> offer(session, message.event)
         }
-    }
 
     private fun advanceEpoch(session: Long, incoming: Long, targetUs: Long?, requestId: Long): Boolean {
         if (session != generation || incoming < epoch || incoming <= discardedThroughEpoch) return false
@@ -180,12 +179,12 @@ internal class VlcTimedMetadataInbox {
         return true
     }
 
-    @Synchronized fun offer(session: Long, event: VlcTimedMetadata) {
-        if (!advanceEpoch(session, event.seekEpoch, event.seekTargetUs, event.seekRequestId)) return
-        if (event.box.size > VlcTimedMetadataPacket.MAX_BOX) return
+    @Synchronized fun offer(session: Long, event: VlcTimedMetadata): Boolean {
+        if (event.box.size > VlcTimedMetadataPacket.MAX_BOX) return false
+        if (!advanceEpoch(session, event.seekEpoch, event.seekTargetUs, event.seekRequestId)) return false
         // AFM4 identity is per occurrence, not per content. Legacy AFM1-3
         // cannot distinguish retries from valid repeated identical boxes.
-        if (event.packetId != 0L && mutable.value.any { it.packetId == event.packetId }) return
+        if (event.packetId != 0L && mutable.value.any { it.packetId == event.packetId }) return true
         val next = mutable.value.toMutableList()
         while (next.isNotEmpty() && (next.size >= 64 || bytes + event.box.size > 4 * 1024 * 1024)) {
             bytes -= next.removeAt(0).box.size
@@ -193,5 +192,6 @@ internal class VlcTimedMetadataInbox {
         next.add(event)
         bytes += event.box.size
         mutable.value = next
+        return true
     }
 }

@@ -1,7 +1,11 @@
 package com.ambient.tv.ui.player
 
 /** Shared bounded per-player URL renewal state, independent of the selected HTTP transport. */
-internal class StreamUrlRenewalPolicy(private val renew: (String) -> String?) {
+internal class StreamUrlRenewalPolicy(
+    private val waiterTimeoutMs: Long = 30_000L,
+    private val renew: (String) -> String?,
+) {
+    init { require(waiterTimeoutMs > 0) }
     private val replacements = LinkedHashMap<String, String>()
     private val attempted = LinkedHashMap<String, Long>()
     private val inFlight = HashMap<String, java.util.concurrent.CompletableFuture<String?>>()
@@ -32,9 +36,12 @@ internal class StreamUrlRenewalPolicy(private val renew: (String) -> String?) {
             }
         }
         val fresh = try {
-            flight.get()
+            flight.get(waiterTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
+            return null
+        } catch (_: java.util.concurrent.TimeoutException) {
+            // Do not cancel the shared refresh or start a duplicate provider request.
             return null
         } catch (_: java.util.concurrent.ExecutionException) {
             return null

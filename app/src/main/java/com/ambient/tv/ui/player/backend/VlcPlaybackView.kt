@@ -998,6 +998,8 @@ class VlcPlaybackController(
             val retiringLibVlc = libVlc
             libVlcRelease.retiring(retiringLibVlc)
             dvRetirementPending = true
+            // Do not hand the new player a Surface until the old native owner retires.
+            pendingAttachView = view
             val retirement = nativeAudioReleases.beginRelease()
             pendingSeekHandler.postDelayed({
                 if (!released && dvRetirementPending && !retirement.isDone) {
@@ -1027,6 +1029,7 @@ class VlcPlaybackController(
                     }
                 }
             }
+            return
         }
         attachedView = view
         hdrOutput.attach(view)
@@ -1931,12 +1934,14 @@ class VlcPlaybackController(
         if (!seekState.shouldSubmit(prepared && !openingOrRestarting && player.isSeekable, now)) return
         val target = pendingRestorePositionMs ?: return
         // Precise seeking avoids exposing a preceding keyframe as the requested landing.
-        if (metadataSeekId == 0L) metadataSeekId = ++nextMetadataSeekId
         val tagged = if (timedMetadataReceiver != null && seekResultMethod != null) taggedSeekMethod else null
+        // Every native submission has a distinct identity. Never interpret a
+        // completed earlier attempt as the result of a newly queued control.
+        if (tagged != null || metadataSeekId == 0L) metadataSeekId = ++nextMetadataSeekId
         // Never encode an ID into an ordinary playback timestamp. Older AARs
         // still seek normally, but cannot prove post-seek metadata identity.
         val metadataFence = timedMetadataInbox.clearForSeek(
-            target.coerceAtMost(Long.MAX_VALUE / 1000L) * 1000L, metadataSeekId)
+            target.coerceAtMost(Long.MAX_VALUE / 1000L) * 1000L, if (tagged != null) metadataSeekId else 0L)
         val accepted = runCatching {
             if (tagged != null) tagged.invoke(player, target, metadataSeekId) == true
             else player.setTime(target, false) >= 0L
