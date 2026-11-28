@@ -46,7 +46,8 @@ static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_qual
     pl_vulkan vk=pl_vulkan_get(gpu);
     // hold_ex submits on GRAPHICS. Restrict to a common compute-capable
     // family to avoid relying on undocumented external ownership barriers.
-    if(!vk||!vk->lock_queue||!vk->unlock_queue||!vk->queue_compute.count||
+    if(!vk||!vk->get_proc_addr||!vk->lock_queue||!vk->unlock_queue||!vk->queue_compute.count||
+        vk->queue_compute.flags||vk->queue_graphics.flags||
         vk->queue_compute.index!=vk->queue_graphics.index)return false;
     if(!s->lib){
         s->lib=dlopen("libambientsvp.so",RTLD_NOW|RTLD_LOCAL);
@@ -89,11 +90,16 @@ static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_qual
     PFN_vkGetDeviceProcAddr gdpa=(PFN_vkGetDeviceProcAddr)vk->get_proc_addr(vk->instance,"vkGetDeviceProcAddr");
     PFN_vkGetDeviceQueue get_queue=gdpa?(PFN_vkGetDeviceQueue)gdpa(vk->device,"vkGetDeviceQueue"):NULL;
     VkQueue queue=VK_NULL_HANDLE;uint32_t family=vk->queue_compute.index;
-    if(!get_queue)goto cleanup;
+    PFN_vkQueueWaitIdle wait_idle=gdpa?(PFN_vkQueueWaitIdle)gdpa(vk->device,"vkQueueWaitIdle"):NULL;
+    if(!get_queue||!wait_idle)goto cleanup;
     get_queue(vk->device,family,0,&queue);
     if(!queue)goto cleanup;
     vk->lock_queue(vk,family,0);
     int rc=s->render(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase);
+    // Defensive panic recovery: if the native boundary could not
+    // establish its own retirement, prove queue retirement here before
+    // releasing any renderer texture. Never free an in-flight image.
+    if(rc==-2){VkResult status;do{status=wait_idle(queue);}while(status!=VK_SUCCESS&&status!=VK_ERROR_DEVICE_LOST);}
     vk->unlock_queue(vk,family,0);
     if(rc==0){s->value++;ok=true;}
 cleanup:
