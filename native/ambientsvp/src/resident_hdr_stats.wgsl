@@ -183,27 +183,64 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
         atomicStore(&words[o+42u],bitcast<u32>(shift.y));
     }
 }
-// Exact cardinal-angle boundary test, including pixels on the ellipse.
-// Arbitrary-angle windows use the same normalized evaluation in both
-// reductions. Static legacy windows use the higher-precision CPU spans.
+// Q30 rotations use the same coefficient table as the CPU scanline
+// selector. All intermediate terms fit 128 bits at the allowed UHD
+// dimensions and 16-bit ellipse axes, even without shaderInt64.
+fn wide_neg(a:vec2u)->vec2u{return wide_add(~a,vec2u(1u,0u));}
+fn signed_product(a:i32,b:i32)->vec2u{
+    let p=wide_mul(u32(abs(a)),u32(abs(b)));
+    return select(p,wide_neg(p),(a<0)!=(b<0));
+}
+fn wide_abs(a:vec2u)->vec2u{return select(a,wide_neg(a),(a.y&0x80000000u)!=0u);}
+fn quad_add(a:vec4u,b:vec4u)->vec4u{
+    var out=vec4u(0u);var carry=0u;
+    for(var i=0u;i<4u;i++){
+        let lo=a[i]+b[i];let hi=lo+carry;
+        carry=select(0u,1u,lo<a[i]||hi<lo);out[i]=hi;
+    }
+    return out;
+}
+fn quad_square(a:vec2u)->vec4u{
+    let p=wide_mul(a.x,a.x);let q=wide_mul(a.x,a.y);let r=wide_mul(a.y,a.y);
+    let cross=vec4u(0u,q.x,q.y,0u);
+    return quad_add(quad_add(vec4u(p,0u,0u),vec4u(0u,0u,r)),quad_add(cross,cross));
+}
+fn quad_mul_word(a:vec4u,b:u32)->vec4u{
+    var out=vec4u(0u);var carry=0u;
+    for(var i=0u;i<4u;i++){
+        let p=wide_mul(a[i],b);
+        let low=p.x+carry;
+        carry=p.y+select(0u,1u,low<p.x);out[i]=low;
+    }
+    return out;
+}
+fn quad_le(a:vec4u,b:vec4u)->bool{
+    for(var i=4u;i>0u;i--){
+        if a[i-1u]!=b[i-1u]{return a[i-1u]<b[i-1u];}
+    }
+    return true;
+}
 fn ellipse_contains(id:vec2u,o:u32)->bool{
     let center=vec2i(i32(atomicLoad(&words[o+52u])),i32(atomicLoad(&words[o+53u])))+
         vec2i(bitcast<i32>(atomicLoad(&words[o+41u])),bitcast<i32>(atomicLoad(&words[o+42u])));
     let axes=vec2u(atomicLoad(&words[o+68u]),atomicLoad(&words[o+69u]));
     if any(axes==vec2u(0u)){return false;}
     let angle=atomicLoad(&words[o+70u]);
+    if angle>180u{return false;}
     let delta=vec2i(id)-center;
+    let a2=axes.x*axes.x;let b2=axes.y*axes.y;
     if angle==0u||angle==90u||angle==180u{
         let d=vec2u(abs(select(delta,delta.yx,angle==90u)));
-        let a2=axes.x*axes.x;let b2=axes.y*axes.y;
         let lhs=wide_add(wide_mul(d.x*d.x,b2),wide_mul(d.y*d.y,a2));
         let rhs=wide_mul(a2,b2);
         return lhs.y<rhs.y||(lhs.y==rhs.y&&lhs.x<=rhs.x);
     }
-    let rotation=f32(angle)*0.017453292519943295;
-    let q=vec2f(dot(vec2f(delta),vec2f(cos(rotation),sin(rotation)))/f32(axes.x),
-        dot(vec2f(delta),vec2f(-sin(rotation),cos(rotation)))/f32(axes.y));
-    return dot(q,q)<=1.0;
+    let trig=bitcast<vec2i>(pq_table[30722u+angle].xy);
+    let u=wide_abs(wide_add(signed_product(delta.x,trig.x),signed_product(delta.y,trig.y)));
+    let v=wide_abs(wide_add(signed_product(-delta.x,trig.y),signed_product(delta.y,trig.x)));
+    let lhs=quad_add(quad_mul_word(quad_square(u),b2),quad_mul_word(quad_square(v),a2));
+    let rhs=quad_mul_word(quad_mul_word(vec4u(0u,268435456u,0u,0u),a2),b2);
+    return quad_le(lhs,rhs);
 }
 @compute @workgroup_size(8,8)
 fn collect(@builtin(global_invocation_id) id:vec3u){
