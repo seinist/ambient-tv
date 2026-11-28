@@ -1591,3 +1591,44 @@ display with usable luminance capabilities. Its scene route must
 not select the competing Android SurfaceControl SVP transport.
 Normal builds lacking the extended marker retain normal playback.
 Full linked player/device and CI validation remains necessary.
+
+
+Extended automatic HDR10+ analysis
+---------------------------------
+The experimental app controller now attempts a separate, unpaced
+MediaCodec content scan with a bounded 16x9 luma signature and flash
+suppression, combining detected cuts with stable metadata transitions.
+Every decoded PTS must correspond to an extracted source sample.
+This is content-based scene estimation, not authoritative edit data.
+
+Local files, readable content URIs, and finite HTTP(S) VOD including
+the existing NAS file bridge are supported by the scanner. Network
+and SAF sources are staged as a private immutable snapshot with a
+known length, a 64 GiB limit and a 512 MiB free-space reserve. Both
+passes use the same bytes. Redirects, unknown lengths, adaptive/live
+manifests, incomplete transfers and insufficient storage fail closed.
+
+The app attempts a separate drained ImageReader output with MPV's
+untimed, no-audio Vulkan renderer, or a VLC AHB/libplacebo player
+at requested 4x speed with frame dropping disabled. No offscreen
+run is accepted without the native complete cache. Unsupported
+devices fall back to the original visible first-pass workflow.
+The main player may have started while the initial source scan
+runs; capture itself uses the private offscreen surface.
+
+UHD HDR geometry up to 3840x2160 is gated by the explicit 4K
+two-pass selection, Vulkan descriptor/image limits and a bounded
+motion-grid budget. Automatic quality presets choose 32-pixel
+blocks at UHD; incompatible explicit block/overlap choices are
+rejected rather than silently altered. The 5:1 proxy stays on GPU.
+Scene average MaxRGB is now accumulated at 1e-9 fixed-point
+precision before quantization to the metadata unit, using
+portable two-word GPU sums and u128 scene accumulation. Both
+adapters reject invalid scene values and reserved markers.
+
+Scope: version 1, one global window, recommended nine percentiles;
+device/linked build/CI, exact numerical conformance against
+independent reference vectors and formal standard certification
+are still required. Estimated scene boundaries, finite precision
+PQ/FP16 shader inputs, and unsupported version-0/multi-window
+two-pass authoring are not claimed to be fully normative.
