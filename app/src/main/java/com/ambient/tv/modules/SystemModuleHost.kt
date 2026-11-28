@@ -31,7 +31,14 @@ internal object SystemModuleHost {
             hostBindingSha256 = BuildConfig.SVP_MODULE_BINDING_SHA256,
             requireSoname = true,
         ),
-        SystemModule.SHADERS to SystemModuleRuntime.Contract(assetOnly = true),
+        SystemModule.SHADERS to SystemModuleRuntime.Contract(
+            nativeRoots = setOf("liblibrashader_capi.so"),
+            bundledOverrides = setOf("liblibrashader_capi.so"),
+            hostBindingSha256 = BuildConfig.SHADER_MODULE_BINDING_SHA256,
+            requireSoname = true,
+            dexAlternative = if (BuildConfig.SHADER_RUNTIME_BUNDLED)
+                SystemModuleRuntime.Contract(assetOnly = true) else null,
+        ),
         SystemModule.SPOTIFY to SystemModuleRuntime.Contract(
             nativeRoots = setOf("libspotify_receiver_core.so"),
             hostLibraries = setOf("libc++_shared.so"),
