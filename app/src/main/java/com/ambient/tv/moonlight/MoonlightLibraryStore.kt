@@ -52,6 +52,8 @@ class MoonlightLibraryStore @Inject constructor(
     // Access time is separate from download freshness (lastModified).
     private val artworkAccess = object : android.util.LruCache<String, Long>(4096) {}
     private val negativeArtwork = LinkedHashMap<String, Long>()
+    private data class IndexedArtwork(val file: File?, val checkedAt: Long)
+    private val artworkIndex = android.util.LruCache<String, IndexedArtwork>(4096)
     private val mutableAvailability = MutableStateFlow(0L)
     val availabilityRevisions = mutableAvailability.asStateFlow()
     private val mutableArtworkChanges = MutableStateFlow<Map<String, Long>>(emptyMap())
@@ -238,13 +240,22 @@ class MoonlightLibraryStore @Inject constructor(
     fun artworkFile(hostId: String, appId: Int): File? {
         if (!validMoonlightHostId(hostId) || appId <= 0) return null
         val identity = trust.identity(hostId) ?: return null
-        val directory = File(artworkDir, "$hostId/$identity/$appId")
-        directory.listFiles()?.filter { it.isFile && it.extension == "img" && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
-            ?.maxByOrNull(File::lastModified)?.let { return it }
-        val target = File(artworkDir, "$hostId/$identity/$appId.img")
-        return target.takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
-            ?: File(artworkDir, "$hostId-$identity-$appId.img")
-                .takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+        val key = artworkKey(hostId, appId, identity)
+        return synchronized(artworkLock) {
+            if (trust.identity(hostId) != identity) return@synchronized null
+            val now = android.os.SystemClock.elapsedRealtime()
+            artworkIndex.get(key)?.let {
+                if (now - it.checkedAt in 0 until 30_000L && (it.file == null || it.file.isFile))
+                    return@synchronized it.file
+            }
+            val directory = File(artworkDir, "$hostId/$identity/$appId")
+            val file = directory.listFiles()?.filter { it.isFile && it.extension == "img" && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+                ?.maxByOrNull(File::lastModified)
+                ?: File(artworkDir, "$hostId/$identity/$appId.img").takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+                ?: File(artworkDir, "$hostId-$identity-$appId.img").takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+            artworkIndex.put(key, IndexedArtwork(file, now))
+            file
+        }
     }
 
     private val artworkBounds = object : android.util.LruCache<String, MoonlightArtwork>(1024) {}
@@ -288,6 +299,7 @@ class MoonlightLibraryStore @Inject constructor(
             val directory = File(artworkDir, "$hostId/$expectedIdentity/$appId").apply { mkdirs() }
             val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
             val target = File(directory, "$digest.img")
+            artworkIndex.remove(artworkKey(hostId, appId, expectedIdentity))
             if (target.isFile && target.length() == bytes.size.toLong()) {
                 target.setLastModified(System.currentTimeMillis())
                 negativeArtwork.remove(artworkKey(hostId, appId, expectedIdentity))
@@ -352,6 +364,7 @@ class MoonlightLibraryStore @Inject constructor(
                 artworkDir.listFiles()?.filter { it.isFile && legacy.matches(it.name) &&
                     (current == null || !it.name.startsWith("$hostId-$current-")) }?.forEach(File::delete)
                 negativeArtwork.keys.removeAll { it.startsWith("$hostId:") }
+                artworkIndex.snapshot().keys.filter { it.startsWith("$hostId:") }.forEach { artworkIndex.remove(it) }
                 artworkBytes = -1L
             }
         }
@@ -369,6 +382,8 @@ class MoonlightLibraryStore @Inject constructor(
                 artworkBytes -= length
                 artworkAccess.remove(file.absolutePath)
                 artworkBounds.remove(file.absolutePath)
+                // Rare eviction pass: invalidate file lookup snapshots as well.
+                artworkIndex.evictAll()
                 val parts = file.relativeTo(artworkDir).invariantSeparatorsPath.split('/')
                 val item = when (parts.size) {
                     4 -> parts[0] + ":" + parts[2]

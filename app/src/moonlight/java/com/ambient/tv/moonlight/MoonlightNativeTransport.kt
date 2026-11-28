@@ -32,6 +32,18 @@ class MoonlightNativeTransport @Inject constructor(
     private val clientIdentity: MoonlightKeystoreCryptoProvider,
 ) {
     private val pairingMutex = Mutex()
+    private data class ArtworkProof(val target: MoonlightVerifiedHost, val at: Long)
+    private val artworkProofs = android.util.LruCache<String, ArtworkProof>(32)
+    private val artworkProofLocks = Array(16) { Mutex() }
+
+    private suspend fun artworkHost(hostId: String): MoonlightVerifiedHost =
+        artworkProofLocks[(hostId.hashCode() and Int.MAX_VALUE) % artworkProofLocks.size].withLock {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val cached = artworkProofs.get(hostId)
+            if (cached != null && now - cached.at in 0 until 15_000L && current(cached.target))
+                return@withLock cached.target
+            verifiedHost(hostId).also { artworkProofs.put(hostId, ArtworkProof(it, android.os.SystemClock.elapsedRealtime())) }
+        }
 
     fun pairingPin(): String = PairingManager.generatePinString()
 
@@ -124,7 +136,7 @@ class MoonlightNativeTransport @Inject constructor(
     /** Only pinned and size-limited art; decoding dimensions are checked by the cache. */
     suspend fun loadArtwork(hostId: String, appId: Int): ByteArray {
         require(appId > 0)
-        val host = verifiedHost(hostId)
+        val host = artworkHost(hostId)
         val data = withHttp(host.profile, host.pinnedCertificate, host.httpsPort) { http ->
             http.getBoxArt(com.limelight.nvstream.http.NvApp("Moonlight", appId, false)).use { stream ->
                 val output = java.io.ByteArrayOutputStream(16 * 1024)
@@ -195,11 +207,12 @@ class MoonlightNativeTransport @Inject constructor(
     }
 
     /** Device-local forget. Does NOT terminate the active game or send remote unpair commands. */
-    fun forgetHost(hostId: String) = trust.clear(hostId)
+    fun forgetHost(hostId: String) { artworkProofs.remove(hostId); trust.clear(hostId) }
 
     suspend fun resetClientIdentity() = pairingMutex.withLock {
         withContext(Dispatchers.IO) {
             // Revoke local trust first. A partial Keystore failure never leaves accepted old pins.
+            artworkProofs.evictAll()
             prefs.moonlightHosts.forEach { trust.clear(it.id) }
             clientIdentity.resetIdentity()
             prefs.resetMoonlightDeviceId()

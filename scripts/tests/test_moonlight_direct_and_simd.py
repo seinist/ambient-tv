@@ -28,6 +28,8 @@ typedef int jint;
 typedef int64_t jlong;
 typedef void *jobject;
 typedef void *jclass;
+typedef void *jbyteArray;
+typedef signed char jbyte;
 typedef struct LENTRY {
     struct LENTRY *next;
     char *data;
@@ -39,10 +41,21 @@ typedef struct { unsigned char *address; jlong capacity; } Buffer;
 typedef struct JNITable {
     void *(*GetDirectBufferAddress)(const struct JNITable **env, jobject obj);
     jlong (*GetDirectBufferCapacity)(const struct JNITable **env, jobject obj);
+    jint (*GetArrayLength)(const struct JNITable **env, jbyteArray obj);
+    void (*SetByteArrayRegion)(const struct JNITable **env, jbyteArray obj, jint start, jint length, const jbyte *src);
+    jboolean (*ExceptionCheck)(const struct JNITable **env);
 } const *JNIEnv;
 static void *address(JNIEnv *env, jobject obj) { (void)env; return ((Buffer*)obj)->address; }
 static jlong capacity(JNIEnv *env, jobject obj) { (void)env; return ((Buffer*)obj)->capacity; }
-static struct JNITable table = { address, capacity };
+static bool failWrite, callbackFailed;
+static jint arrayLength(JNIEnv *env, jbyteArray obj) { (void)env; return (jint)((Buffer*)obj)->capacity; }
+static void arrayWrite(JNIEnv *env, jbyteArray obj, jint start, jint length, const jbyte *src) {
+    (void)env;
+    if (!failWrite) memcpy(((Buffer*)obj)->address + start, src, (size_t)length);
+}
+static jboolean exceptionCheck(JNIEnv *env) { (void)env; return failWrite; }
+static void recordCallbackFailure(JNIEnv *env) { (void)env; callbackFailed = true; failWrite = false; }
+static struct JNITable table = { address, capacity, arrayLength, arrayWrite, exceptionCheck };
 static JNIEnv mock = &table;
 #define MAX_RTP_HEADER_SIZE 32
 """
@@ -73,6 +86,15 @@ static void testCopy(void) {
     assert(!pthread_join(thread, NULL));
     assert(Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(&mock, NULL, &target, 5));
     assert(!memcmp(output, "abcde", 5) && output[5] == 0);
+    memset(output, 0, sizeof(output));
+    assert(Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureArray(&mock, NULL, &target, 5));
+    assert(!memcmp(output, "abcde", 5));
+    target.capacity = 4;
+    assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureArray(&mock, NULL, &target, 5));
+    target.capacity = sizeof(output);
+    failWrite = true;
+    assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureArray(&mock, NULL, &target, 5));
+    assert(callbackFailed && !failWrite);
     second.length = 6;
     assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(&mock, NULL, &target, 5));
     activePictureUnit = NULL;

@@ -84,7 +84,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
      bool useBatch = !useSelect;
      char* batchBuffers[VIDEO_UDP_BATCH] = {0};
      struct mmsghdr messages[VIDEO_UDP_BATCH];
-@@ -145,8 +169,19 @@
+@@ -145,8 +169,25 @@
      unsigned int batchCount = 0, batchIndex = 0;
  #endif
      while (!PltIsThreadInterrupted(&receiveThread)) {
@@ -97,7 +97,13 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
 +            if (tier != appliedTier) {
 +                int bytes = videoReceiveBufferBytes(StreamConfig.bitrate, StreamConfig.fps, StreamConfig.packetSize, tier);
 +                if (setsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&bytes, sizeof(bytes)) == 0) {
-+                    Limelog("Adjusted video UDP receive capacity: %d bytes requested\n", bytes);
++                    int effective = 0;
++                    socklen_t effectiveLen = sizeof(effective);
++                    if (getsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&effective, &effectiveLen) == 0) {
++                        // Linux reports double the requested size (kernel overhead accounting).
++                        // Log both; do not assume the kernel accepted the requested capacity.
++                        Limelog("Video UDP receive capacity: %d requested, %d kernel-reported bytes\n", bytes, effective);
++                    }
 +                }
 +                appliedTier = tier; // Avoid repeated syscalls if the OS rejects the request.
 +            }
@@ -106,7 +112,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
  #if defined(__ANDROID__)
          // A rejected plaintext datagram retains its original slot allocation.
          if (useBatch && !encrypted && buffer != NULL && batchIndex != 0) {
-@@ -414,7 +449,7 @@
+@@ -414,7 +455,7 @@
      }
  
      rtpSocket = bindUdpSocket(RemoteAddr.ss_family, &LocalAddr, AddrLen,
