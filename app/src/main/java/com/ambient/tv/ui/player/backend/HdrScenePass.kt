@@ -11,6 +11,50 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
+/** Small, app-private persistent analysis artifacts. Never retain video
+ * snapshots here. Exact source SHA, clock, APK/device identity and capture
+ * profile separate incompatible plans and native caches. */
+internal object HdrSceneReuse {
+    private val lock = Any()
+    private const val MAX_BYTES = 128L*1024*1024
+    private const val MAX_ENTRIES = 12
+
+    fun key(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 255) }
+
+    fun copyIn(directory: File, name: String, destination: File, limit: Long): Boolean = synchronized(lock) {
+        val file = File(directory,name)
+        runCatching {
+            if (!file.isFile || file.length() !in 1..limit || destination.exists()) return@synchronized false
+            file.copyTo(destination,overwrite=false)
+            file.setLastModified(System.currentTimeMillis())
+            true
+        }.getOrElse { destination.delete(); false }
+    }
+
+    fun store(directory: File, name: String, source: File, limit: Long) = synchronized(lock) {
+        runCatching {
+            if (!source.isFile || source.length() !in 1..limit || !directory.exists()&&!directory.mkdirs()) return@synchronized
+            val tmp = File.createTempFile("analysis-", ".tmp", directory)
+            try {
+                source.copyTo(tmp,overwrite=true)
+                java.nio.file.Files.move(tmp.toPath(),File(directory,name).toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            } finally { tmp.delete() }
+            val entries = directory.listFiles().orEmpty().filter { it.isFile && (it.name.endsWith(".plan")||it.name.endsWith(".stats")) }
+                .sortedByDescending { it.lastModified() }
+            var bytes=0L
+            for ((i,entry) in entries.withIndex()) {
+                bytes+=entry.length()
+                if (i>=MAX_ENTRIES||bytes>MAX_BYTES) entry.delete()
+            }
+        }
+        Unit
+    }
+
+    fun invalidate(directory: File, name: String) = synchronized(lock) { File(directory,name).delete() }
+}
+
 /**
  * Automatic plan for finite HEVC VOD. Remote media is frozen in a private
  * snapshot for both passes; decoded luma changes complement stable metadata runs.
@@ -294,6 +338,32 @@ internal object HdrScenePlanner {
             }
         }
         val key = hex(digest.digest())
+        val reuse = File(context.cacheDir,"hdr-scene-analysis-v2")
+        val apk = File(context.applicationInfo.sourceDir)
+        val reuseKey = HdrSceneReuse.key("plan-v2|$key|${source.toBits()}|${target.toBits()}|$vlc|${android.os.Build.FINGERPRINT}|${apk.length()}|${apk.lastModified()}")
+        val planCopy = File(run,"cached-plan")
+        val reused = if (HdrSceneReuse.copyIn(reuse,"$reuseKey.plan",planCopy,2_000_000L)) {
+            try {
+                runCatching {
+                    val lines = planCopy.readLines()
+                    if (lines.size !in 4..MAX_SCENES+3 || lines[0]!="HDR_PLAN_CACHE_2" || lines[1]!=key) return@runCatching null
+                    val version = lines[2].toIntOrNull()?.takeIf { it in 0..1 } ?: return@runCatching null
+                    val ends = lines.drop(3).map { it.toLongOrNull() ?: return@runCatching null }
+                    if (ends.first()<=0||ends.last()>=1_000_000_000L||ends.zipWithNext().any { it.first>=it.second }||
+                        version==0&&ends.last()>1_000_000L) return@runCatching null
+                    version to Plan(ends,source,target)
+                }.getOrNull()
+            } finally { planCopy.delete() }
+        } else null
+        if (reused != null) {
+            currentCoroutineContext().ensureActive()
+            if (file.length()!=length||file.lastModified()!=modified) return null
+            val manifest=File(run,"plan")
+            manifest.writeText(buildString {
+                appendLine("AMBIENTSVP_SCENE_PLAN_1");appendLine(key);reused.second.ends.forEach { appendLine(it) }
+            })
+            return HdrSceneSession(file,length,modified,key,reused.second,manifest,File(run,"cache"),local==null,reused.first,reuse,reuseKey)
+        }
         val samples = ArrayList<Sample>()
         val known = HashMap<String,String>()
         // Parse compressed HDR metadata from the same extractor samples
@@ -317,7 +387,12 @@ internal object HdrScenePlanner {
                 appendLine("AMBIENTSVP_SCENE_PLAN_1");appendLine(key)
                 plan.ends.forEach { appendLine(it) }
             })
-            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null,version.toInt())
+            planCopy.writeText(buildString {
+                appendLine("HDR_PLAN_CACHE_2");appendLine(key);appendLine(version);plan.ends.forEach { appendLine(it) }
+            })
+            HdrSceneReuse.store(reuse,"$reuseKey.plan",planCopy,2_000_000L)
+            planCopy.delete()
+            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null,version.toInt(),reuse,reuseKey)
         } catch (e: Exception) { run.deleteRecursively();throw e }
     }
 }
@@ -332,9 +407,23 @@ internal class HdrSceneSession(
     private val cache: File,
     private val staged: Boolean = false,
     private val version: Int = 1,
+    private val reuseDirectory: File? = null,
+    private val reuseKey: String? = null,
 ) {
-    var mode: Int = 1
+    @Volatile var mode: Int = 1
         private set
+    private fun captureName(profile: String): String? = reuseKey?.let { HdrSceneReuse.key("capture-v2|$it|$profile")+".stats" }
+    suspend fun restoreCapture(profile: String): Boolean = withContext(Dispatchers.IO) {
+        val dir=reuseDirectory ?: return@withContext false
+        val name=captureName(profile) ?: return@withContext false
+        if (mode!=1||!valid()||!HdrSceneReuse.copyIn(dir,name,cache,32_000_000L)) return@withContext false
+        if (advance()) true else { cache.delete();HdrSceneReuse.invalidate(dir,name);false }
+    }
+    suspend fun persistCapture(profile: String) = withContext(Dispatchers.IO) {
+        val dir=reuseDirectory ?: return@withContext
+        val name=captureName(profile) ?: return@withContext
+        if (mode==2&&valid()) HdrSceneReuse.store(dir,name,cache,32_000_000L)
+    }
     fun analysisPath(): String = sourceFile.path
     fun discardIncompleteCapture() { if (mode == 1) cache.delete() }
     fun playbackPath(): String? = sourceFile.path.takeIf { staged && valid() }

@@ -1895,13 +1895,15 @@ internal class MpvPlaybackEngine(
                 held = true
                 if (!trySetProperty("pause", "yes")) return@launch
                 val capture = base.removeSuffix(":hwresident=1") + result.mpvOptions() + ":hwresident=1"
+                val device = VideoAccelerationRuntime.capabilities.value.device.device
+                val profile = "mpv|$base|${acceleration.hwdec}|$device"
                 val analyzed = try {
-                    HdrOffscreenAnalysis.mpv(result,capture,acceleration.hwdec,
-                        VideoAccelerationRuntime.capabilities.value.device.device)
+                    result.restoreCapture(profile) || HdrOffscreenAnalysis.mpv(result,capture,acceleration.hwdec,device)
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                 catch (e: Exception) { Timber.w(e,"MPV offscreen HDR capture unavailable"); false }
                 coroutineContext.ensureActive()
                 if (!analyzed) { result.discardIncompleteCapture(); return@launch }
+                result.persistCapture(profile)
                 if (released || ended || !attached || !fileReady || !result.valid() || !imageOptions.svp.hdrTwoPass ||
                     activeCpuImageFilters["plex-svp"] != base) return@launch
                 // Offscreen renderer has retired. Restart uses the latest user play intent.

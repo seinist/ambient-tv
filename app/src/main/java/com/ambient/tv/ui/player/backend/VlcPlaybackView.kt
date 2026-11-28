@@ -247,11 +247,13 @@ class VlcPlaybackController(
                 hdrSceneHold.acquire()
                 held = true
                 visiblePlayer.pause()
-                val analyzed = try { HdrOffscreenAnalysis.vlc(context,result,options) }
+                val profile = "vlc|$effective|$target|${route.joinToString("|")}"
+                val analyzed = try { result.restoreCapture(profile) || HdrOffscreenAnalysis.vlc(context,result,options) }
                     catch (e: kotlinx.coroutines.CancellationException) { throw e }
                     catch (e: Exception) { Timber.w(e,"VLC offscreen HDR capture unavailable"); false }
                 coroutineContext.ensureActive()
                 if (!analyzed) { result.discardIncompleteCapture(); return@launch }
+                result.persistCapture(profile)
                 if (released || ended || player !== visiblePlayer || !prepared || openingOrRestarting || imageOptions != settings ||
                     attachedView?.holder?.surface?.isValid != true || !result.valid()) return@launch
                 hdrSceneHold.release()
