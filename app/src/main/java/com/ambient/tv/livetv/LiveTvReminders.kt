@@ -60,6 +60,7 @@ data class LiveTvReminder(
     val probeAttempts: Int = 0,
     val plan: ScheduledPlayback? = null,
     val sessionEnd: Boolean = false,
+    val automaticAttempted: Boolean = false,
 ) {
     val id: String get() = if (sessionEnd) "session-end:$sourceId:$eventId:$startEpochSeconds" else if (plan != null) "plan:${plan.provider}:${plan.targetId}" else if (youtube) "youtube:$eventId" else "$sourceId|$eventId"
     fun route(): String = plan?.route() ?: if (youtube) Destinations.youtubePlayer(eventId)
@@ -219,7 +220,8 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
     fun snooze(id: String) = synchronized(lock) {
         val current = load()
         val reminder = current.firstOrNull { it.id == id } ?: return@synchronized
-        val updated = reminder.copy(due = false, ready = false, snoozedUntilMs = maxOf(System.currentTimeMillis() + 5 * 60_000L,
+        val updated = reminder.copy(due = false, ready = false, automaticAttempted = reminder.automaticAttempted || reminder.plan != null,
+            snoozedUntilMs = maxOf(System.currentTimeMillis() + 5 * 60_000L,
             if (!reminder.due) LiveTvReminderScheduler.alarmAt(context, reminder) else 0L))
         save(current.map { if (it.id == id) updated else it })
         context.getSystemService(NotificationManager::class.java)?.cancel(id, 0)
@@ -268,7 +270,7 @@ object LiveTvReminderScheduler {
         reminder.alarmAtMs(if (reminder.sessionEnd) 0 else reminder.plan?.leadMinutes ?: leadMinutes(context, reminder.youtube), shouldAutoSwitch(context, reminder))
 
     fun shouldAutoSwitch(context: Context, reminder: LiveTvReminder): Boolean =
-        !reminder.sessionEnd && (reminder.plan?.automatic ?: autoSwitch(context, reminder.youtube))
+        !reminder.sessionEnd && !reminder.automaticAttempted && (reminder.plan?.automatic ?: autoSwitch(context, reminder.youtube))
 
     private fun pending(context: Context, reminder: LiveTvReminder, create: Boolean): PendingIntent? =
         PendingIntent.getBroadcast(
@@ -406,6 +408,7 @@ fun LiveTvReminderPromptDialog() {
             LiveTvReminderScheduler.cancel(context, it)
         }
         store.refresh()
+        LiveTvReminderScheduler.rescheduleAll(context)
     }
     val nextProbe = reminders.filter { it.youtube && it.due && !it.ready }.minByOrNull { it.startEpochSeconds }
     LaunchedEffect(resumed, nextProbe) {
