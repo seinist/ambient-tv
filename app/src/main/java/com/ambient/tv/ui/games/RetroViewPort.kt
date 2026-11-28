@@ -51,7 +51,7 @@ internal interface RetroViewPort {
     var integerScalingAuto: Boolean
     var integerScaling: Boolean
     var sdrToHdrReferenceWhiteNits: Int
-    var achievementUnlockListener: ((Int) -> Unit)?
+    var achievementUnlockListener: ((Long) -> Unit)?
     var netplayTick: (() -> Unit)?
     fun pauseEmulation(): Unit
     fun resumeEmulation(): Unit

@@ -68,7 +68,7 @@ internal class BundledRetroView(context: Context, config: RetroViewConfig) : Ret
     override var sdrToHdrReferenceWhiteNits: Int
         get() = raw.sdrToHdrReferenceWhiteNits
         set(value) { raw.sdrToHdrReferenceWhiteNits = value }
-    override var achievementUnlockListener: ((Int) -> Unit)?
+    override var achievementUnlockListener: ((Long) -> Unit)?
         get() = raw.achievementUnlockListener
         set(value) { raw.achievementUnlockListener = value }
     override var netplayTick: (() -> Unit)?

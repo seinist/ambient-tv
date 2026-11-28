@@ -43,7 +43,7 @@ internal interface RetroCorePort {
     fun initAchievements(achievements: List<RetroAchievementDefinition>, console: Int)
 }
 
-internal data class RetroAchievementDefinition(val id: Int, val memory: String)
+internal data class RetroAchievementDefinition(val id: Long, val memory: String)
 
 internal object RetroCoreRuntime {
     @Volatile private var selected: RetroFrontendPort? = null

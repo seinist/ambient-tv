@@ -54,7 +54,7 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
         }
     private var job: Job? = null
 
-    fun start(view: RetroViewPort, game: PreparedGame, enabled: Boolean, hardcoreRequested: Boolean) {
+    internal fun start(view: RetroViewPort, game: PreparedGame, enabled: Boolean, hardcoreRequested: Boolean) {
         job?.cancel()
         val account = client.account
         val console = RaConsoles.forGame(game.system, GameSystems.extension(game.file.name))
@@ -115,7 +115,7 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
         }
     }
 
-    fun stop(view: RetroViewPort) {
+    internal fun stop(view: RetroViewPort) {
         job?.cancel()
         view.achievementUnlockListener = null
         if (state is GameAchievementState.Active) view.queueEvent { runCatching { RetroCoreRuntime.core.clearAchievements() } }

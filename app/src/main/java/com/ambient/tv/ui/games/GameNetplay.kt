@@ -101,7 +101,7 @@ class GameNetplay(
     val deviceName: String = Build.MODEL.ifBlank { "Ambient TV" }
 
     /** Hosts [game]: announces it and waits for one player. */
-    fun host(view: RetroViewPort, identity: NetplayIdentity) {
+    internal fun host(view: RetroViewPort, identity: NetplayIdentity) {
         stop()
         if (!GameSerializationPolicy(RetroCoreRuntime.core.getSerializationQuirks()).frameExact) {
             state = NetplayState.Failed(NetplayFailure.STATE)
@@ -212,7 +212,7 @@ class GameNetplay(
     }
 
     /** Joins [peer] as player 2; the game continues from the host's state. */
-    fun join(view: RetroViewPort, peer: NetplayPeer, identity: NetplayIdentity) {
+    internal fun join(view: RetroViewPort, peer: NetplayPeer, identity: NetplayIdentity) {
         stop()
         if (!GameSerializationPolicy(RetroCoreRuntime.core.getSerializationQuirks()).frameExact) {
             state = NetplayState.Failed(NetplayFailure.STATE)

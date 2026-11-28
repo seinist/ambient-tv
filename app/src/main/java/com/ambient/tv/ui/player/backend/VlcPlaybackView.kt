@@ -226,7 +226,7 @@ class VlcPlaybackController(
     /** A DV-surface swap retires a player asynchronously; its LibVLC must outlive it. */
     private val libVlcRelease = VlcLibraryReleaseGate<VlcLibraryPort> { it.release() }
     private var player = libVlc.createPlayer()
-    private val trackAccess = engine.createTracks(player)
+    internal val trackAccess = engine.createTracks(player)
     // libVLC has no option for HTTP credentials (`:http-user`/`:http-pwd` are silently ignored)
     // and writes every MRL to its log, so they must never reach it. An authenticated TVHeadend
     // stream is opened through a loopback relay that adds the header inside the app instead.
