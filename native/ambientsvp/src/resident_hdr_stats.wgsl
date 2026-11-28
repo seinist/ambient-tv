@@ -182,7 +182,11 @@ fn collect(@builtin(global_invocation_id) id:vec3u){
         let lo=vec2u(atomicLoad(&words[o]),atomicLoad(&words[o+1u]));
         let hi=vec2u(atomicLoad(&words[o+2u]),atomicLoad(&words[o+3u]));
         var inside=true;
-        if atomicLoad(&words[o+67u])==1u{
+        let span_base=atomicLoad(&words[o+71u]);
+        if span_base!=0u{
+            let span=span_base+2u*id.y;
+            inside=id.x>=atomicLoad(&words[span])&&id.x<atomicLoad(&words[span+1u]);
+        }else if atomicLoad(&words[o+67u])==1u{
             let center=vec2f(f32(atomicLoad(&words[o+52u])),f32(atomicLoad(&words[o+53u])))+
                 vec2f(f32(bitcast<i32>(atomicLoad(&words[o+41u]))),f32(bitcast<i32>(atomicLoad(&words[o+42u]))));
             let axes=vec2f(f32(atomicLoad(&words[o+68u])),f32(atomicLoad(&words[o+69u])));
@@ -326,7 +330,11 @@ fn scene_linear_sum(@builtin(global_invocation_id) id:vec3u,@builtin(local_invoc
         var value=0u;
         if valid{
         var inside=true;
-        if atomicLoad(&words[o+67u])==1u{
+        let span_base=atomicLoad(&words[o+71u]);
+        if span_base!=0u{
+            let span=span_base+2u*id.y;
+            inside=id.x>=atomicLoad(&words[span])&&id.x<atomicLoad(&words[span+1u]);
+        }else if atomicLoad(&words[o+67u])==1u{
             let center=vec2f(f32(atomicLoad(&words[o+52u])),f32(atomicLoad(&words[o+53u])))+
                 vec2f(f32(bitcast<i32>(atomicLoad(&words[o+41u]))),f32(bitcast<i32>(atomicLoad(&words[o+42u]))));
             let axes=vec2f(f32(atomicLoad(&words[o+68u])),f32(atomicLoad(&words[o+69u])));
