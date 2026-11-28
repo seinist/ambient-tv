@@ -995,6 +995,63 @@ fn sample_probe(@builtin(global_invocation_id) id:vec3u){
                 drop(data);read.unmap();
             }
         }
+
+        // Match the reference f32 division followed by f64 multiplication
+        // and truncation, including near-zero SAD and signed penalties.
+        let t=super::ResidentTuning{block:16,overlap:4,pel:2,radius:2,satd:1,chroma:1,lambda:64,pnew:50,scene:50,artifacts:2};
+        let mut weights=super::ResidentSearchWeights::legacy(t);
+        weights.lambda=80000;weights.lsad=64000;
+        weights.pzero=-100;weights.pglobal=50;weights.pnbour=-32;weights.preverse=0;
+        weights.plevel_q16=98304;weights.levels=4;
+        let mut source=super::quality_source(0,t,weights).unwrap();
+        source.push_str(r#"
+@compute @workgroup_size(64)
+fn weight_probe(@builtin(global_invocation_id) id:vec3u){
+    let sad=select(id.x*1531u,id.x,id.x<1024u);
+    fields[id.x]=vec4i(i32(adapt_lambda(sad)),i32(penalized(sad,PZERO)),
+        i32(penalized(sad,PGLOBAL)),i32(penalized(sad,PNBOUR)));
+}
+"#);
+        let module=device.create_shader_module(wgpu::ShaderModuleDescriptor{
+            label:Some("upstream weight probe"),source:wgpu::ShaderSource::Wgsl(source.into())});
+        let pipeline=device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{
+            label:None,layout:None,module:&module,entry_point:Some("weight_probe"),
+            compilation_options:Default::default(),cache:None});
+        let size=4096*16;
+        let output=device.create_buffer(&wgpu::BufferDescriptor{label:None,size,
+            usage:wgpu::BufferUsages::STORAGE|wgpu::BufferUsages::COPY_SRC,mapped_at_creation:false});
+        let read=device.create_buffer(&wgpu::BufferDescriptor{label:None,size,
+            usage:wgpu::BufferUsages::MAP_READ|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false});
+        let bind=device.create_bind_group(&wgpu::BindGroupDescriptor{label:None,
+            layout:&pipeline.get_bind_group_layout(0),entries:&[
+                wgpu::BindGroupEntry{binding:6,resource:output.as_entire_binding()}]});
+        let mut encoder=device.create_command_encoder(&Default::default());
+        {
+            let mut pass=encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);pass.set_bind_group(0,&bind,&[]);
+            pass.dispatch_workgroups(64,1,1);
+        }
+        encoder.copy_buffer_to_buffer(&output,0,&read,0,size);
+        queue.submit([encoder.finish()]);
+        let slice=read.slice(..);
+        let (tx,rx)=std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read,move |r|{let _=tx.send(r);});
+        let _=device.poll(wgpu::Maintain::Wait);
+        rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap().unwrap();
+        let data=slice.get_mapped_range();
+        let lambda=weights.scaled_lambda(t.pel,0);
+        for i in 0..4096u32{
+            let sad=if i<1024{i}else{i*1531};
+            let ratio=weights.lsad as f32/(weights.lsad+(sad>>1)) as f32;
+            let k=f64::from(ratio)*f64::from(ratio);
+            let penalty=|p:i32| sad as i32+((p*sad as i32)>>8);
+            let expected=[(f64::from(lambda)*k) as i32,penalty(weights.pzero),
+                penalty(weights.pglobal),penalty(weights.pnbour)];
+            let row=&data[i as usize*16..(i as usize+1)*16];
+            let actual: [i32;4]=std::array::from_fn(|j|i32::from_le_bytes(row[j*4..j*4+4].try_into().unwrap()));
+            assert_eq!(actual,expected,"weight probe SAD {sad}");
+        }
+        drop(data);read.unmap();
     }
 
 }
