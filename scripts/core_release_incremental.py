@@ -279,7 +279,10 @@ def verify_build_artifacts(matrix, directory, ndk):
                 not isinstance(report.get("needed_libraries"), list) or
                 not set(report["needed_libraries"]) <= ALLOWED_NEEDED):
             raise ValueError(f"{core}/{abi}: incomplete native verification evidence")
-        evidence[artifact] = {"binary_sha256": actual, "build_report_sha256": digest(report_bytes), "report": report}
+        # Retain exact UTF-8 bytes as a JSON string so independent auditors
+        # can reproduce the signed report digest without guessing formatting.
+        evidence[artifact] = {"binary_sha256": actual, "build_report_sha256": digest(report_bytes),
+                              "report_json": report_bytes.decode("utf-8")}
     return evidence
 
 

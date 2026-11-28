@@ -249,3 +249,8 @@ The signed manifest binds a persistent build-evidence.json asset, containing
 new build reports and the originating signed entries of reused binaries.
 The ARM64 differential gate also applies the production Yabause hotpath and
 JIT source patchers to the actual pinned checkout before approving a candidate.
+
+ELF page checking reads only the program header table, verifies file and
+memory segment bounds, rejects malformed alignments and requires congruent
+file/virtual addresses in addition to the 16 KiB minimum. Build evidence
+retains each report's exact UTF-8 representation for independent hash checks.

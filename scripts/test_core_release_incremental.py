@@ -235,6 +235,32 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         self.assertIn("force_rebuild: ${{ inputs.force_rebuild || false }}", all_profiles)
         self.assertFalse((root / "cores-experimental.yml").exists())
 
+    def test_elf_program_header_bounds_and_congruence(self):
+        from check_elf_pages import load_alignments
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "core.so"
+            for elfclass, header_size, ph_size, code in ((2, 64, 56, "IIQQQQQQ"), (1, 52, 32, "IIIIIIII")):
+                for endian, tag in (("<", 1), (">", 2)):
+                    header = bytearray(header_size)
+                    header[:7] = b"\x7fELF" + bytes((elfclass, tag, 1))
+                    if elfclass == 2:
+                        struct.pack_into(endian+"Q", header, 32, header_size)
+                        struct.pack_into(endian+"HH", header, 54, ph_size, 1)
+                        def entry(offset=0, address=0, filesz=32, memsz=32, align=16384):
+                            return struct.pack(endian+code, 1, 5, offset, address, 0, filesz, memsz, align)
+                    else:
+                        struct.pack_into(endian+"I", header, 28, header_size)
+                        struct.pack_into(endian+"HH", header, 42, ph_size, 1)
+                        def entry(offset=0, address=0, filesz=32, memsz=32, align=16384):
+                            return struct.pack(endian+code, 1, offset, address, 0, filesz, memsz, 5, align)
+                    path.write_bytes(header + entry())
+                    self.assertEqual(load_alignments(path), [16384])
+                    for bad in (entry(address=4096), entry(align=24576), entry(filesz=4096, memsz=4096),
+                                entry(filesz=32, memsz=16), entry()[:-1]):
+                        path.write_bytes(header + bad)
+                        with self.assertRaises(ValueError):
+                            load_alignments(path)
+
     def test_publication_rechecks_downloaded_binary_and_report(self):
         from core_build_policy import REQUIRED_EXPORTS
         job = next(j for j in self.matrix["include"] if j["abi"] == "arm64-v8a")
@@ -264,6 +290,8 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             matrix = {"include": [job]}
             result = verify_build_artifacts(matrix, directory, self.ndk)
             self.assertEqual(result[job["artifact"]]["binary_sha256"], report["binary_sha256"])
+            self.assertEqual(result[job["artifact"]]["report_json"].encode(), path.read_bytes())
+            self.assertEqual(result[job["artifact"]]["build_report_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
             for changed in (dict(profile="optimized"), dict(fingerprint="0"*64),
                             dict(unresolved_local_inputs=["bad.o"]), dict(needed_libraries=["unknown.so"])):
                 path.write_text(json.dumps({**report, **changed}))
