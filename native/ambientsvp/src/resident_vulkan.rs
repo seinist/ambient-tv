@@ -970,6 +970,8 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
                 }
             }
             if !pass.is_null()&&(&*pass).mode()==1&&ambient_svp_hdr_pass_capture(pass,pair,0,index)!=1{return Err("scene pass capture failed".into());}
+            if !pass.is_null()&&(&*pass).mode()==2&&(&*pass).version()==0&&
+                ambient_svp_hdr_pass_verify_geometry(pass,pair,0,index)!=1{return Err("scene replay geometry mismatch".into());}
             Ok(())
         })();
         if submitted{
@@ -1378,13 +1380,26 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_capture(pass:*mut TwoPass,pair:*co
         let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
         if (&*pass).version()==0{
             let Ok(frames)=job.scene_frames()else{return -1;};
-            return (&mut *pass).capture_legacy(index,frames).map_or(-1,|_|1);
+            let Ok(signature)=job.geometry_signature()else{return -1;};
+            return (&mut *pass).capture_legacy_geometry(index,frames,signature).map_or(-1,|_|1);
         }
         let Ok(mut frames)=job.scene_frames()else{return -1;};
         if frames.len()!=1||frames[0].count!=9{return -1;}
         let frame=frames.remove(0);
         let schema:[u32;9]=frame.percentages[..9].try_into().unwrap();
         (&mut *pass).capture_v1(index,frame.frame,schema).map_or(-1,|_|1)
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_verify_geometry(pass:*mut TwoPass,pair:*const VulkanPair,phase:u32,index:u64)->i32{
+    if pass.is_null()||pair.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let p=&*pair;let i=phase as usize;
+        if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
+        match p.core.device.get_fence_status(p.fence){Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
+        let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        let Ok(signature)=job.geometry_signature()else{return -1;};
+        (&mut *pass).verify_geometry(index,signature).map_or(-1,|_|1)
     })).unwrap_or(-1)
 }
 #[unsafe(no_mangle)]
