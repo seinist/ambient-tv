@@ -1437,3 +1437,52 @@ construction are implemented, but end-to-end bit-exact parity
 still depends on matching upstream field generation/geometry,
 border and chroma reconstruction, scene classification, exact
 source sampling and complete player/device validation.
+
+
+Shared quality core in VLC and reconstructed FEL renderers
+---------------------------------------------------------
+The optional create_quality ABI resolves existing player preset,
+block, overlap, pel, search, artifact, scene and algorithm
+settings centrally. Direct MPV Vulkan and Android SurfaceControl
+sessions now use that same weighted motion/synthesis setup.
+Legacy create/create_format and explicit tuning APIs remain
+available.
+
+Both independent libplacebo motion/synthesis implementations
+(MPV FEL and VLC metadata-aware HDR/FEL) have been removed.
+The existing complete BL/EL and Dolby reshaping/reconstruction
+runs first, producing canonical FP16 RGB. A shared bridge unwraps
+actual RGBA16F images, obtains libplacebo holds with binary
+semaphores, calls the common native Vulkan kernel on the same
+device, and releases the images with a timeline semaphore value.
+No CPU pixel copies. Only a common unprotected graphics/compute
+queue family is accepted. A native fence is waited synchronously
+before releasing the images; this is a correctness-first bridge
+and does not yet cache analysis across renderer phases or pipeline
+the submissions asynchronously. Unsupported devices/formats
+retain the original reconstructed source or normal FEL mapping.
+The generated RGB frame never reapplies RPU/EL metadata.
+
+For algorithm 23, MPV FEL and the experimental VLC HDR scheduler
+retain actual past/current/next/future source references and
+monotonic IDs. Their four-texture reconstruction caches reuse
+matching source IDs and pass real adjacent pictures to the common
+extended analysis; unavailable neighbors downgrade to algorithm 21.
+The SurfaceControl path likewise primes two input jobs, queues
+one future picture, retains the four imported source conversions
+through the output fence, and uses an independently bounded
+eight-job import budget only for extended sessions. At EOF or
+transport failure the remaining delayed originals are preserved
+in timestamp order; the last incomplete pair is not interpolated
+in these three lookahead schedulers. HDR/FEL metadata rules and
+output lease/fence handling are retained.
+
+Build staging and fingerprints include the common quality ABI
+and libplacebo bridge. Added preset resolution regression tests,
+a Mesa binary-hold/timeline-release held-image execution fixture,
+a pinned libplacebo public-header syntax check and a configured
+Android physical-device preflight test. Full linked MPV/VLC builds,
+actual Android/FEL playback, synchronization validation on physical
+drivers, performance and exact-head CI remain pending. The shared
+RGB search derives luma/chroma from reconstructed RGB, not the
+original YUV planes; bit-exact reference equivalence is not claimed.
