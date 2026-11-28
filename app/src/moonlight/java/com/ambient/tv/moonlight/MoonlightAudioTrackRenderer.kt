@@ -41,6 +41,8 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
     private var lastSnapshotNanos = 0L
     private var localQueuedMs = 0.0
     private var lastQueueEstimateNanos = 0L
+    private var lastObservedHead = 0L
+    private var playbackAdvancing = false
     private var nativeQueuedMs = 0
     @Volatile private var snapshot = MoonlightAudioMetrics()
     private val audioTimestamp = android.media.AudioTimestamp()
@@ -211,6 +213,8 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     if (head < lastHead && lastHead - head > 0x80000000L) headEpoch += 0x100000000L
                     lastHead = head
                     val playbackHead = headEpoch + head
+                    playbackAdvancing = playbackHead > lastObservedHead && t.playState == AudioTrack.PLAYSTATE_PLAYING
+                    lastObservedHead = playbackHead
                     // Query the device timestamp only four times a second on the existing PCM
                     // owner. Between timestamp samples use the continuously sampled head.
                     localQueuedMs = ((writtenFrames - playbackHead).coerceAtLeast(0L) * 1000.0 / rate)
@@ -233,8 +237,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                 } else if (lastQueueEstimateNanos != 0L) {
                     // Project normal playback between hardware queries, then account for
                     // every successful write below. The next hardware sample corrects drift.
-                    localQueuedMs = (localQueuedMs - (now - lastQueueEstimateNanos).coerceAtLeast(0L) / 1_000_000.0)
-                        .coerceAtLeast(0.0)
+                    localQueuedMs = moonlightEstimateQueuedAudio(localQueuedMs, now - lastQueueEstimateNanos, playbackAdvancing)
                     lastQueueEstimateNanos = now
                 }
                 // The device may impose a larger hardware floor. Account for both queues
@@ -248,6 +251,10 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                 if (pendingLength > 0) {
                     val n = t.write(pending, pendingOffset, pendingLength, AudioTrack.WRITE_NON_BLOCKING)
                     if (n < 0) { handleWriteError(n); lostSamples.addAndGet(length.toLong()); return }
+                    if (!moonlightValidPcmWrite(n, pendingLength, outputChannels)) {
+                        invalidWrite(length)
+                        return
+                    }
                     writtenFrames += n / outputChannels
                     localQueuedMs = (localQueuedMs + n * 1000.0 / outputChannels / rate).coerceAtMost(1000.0)
                     pendingOffset += n
@@ -260,13 +267,17 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     if (bytes < 0) bytes
                     else if (bytes > length * 2 || bytes % (outputChannels * 2) != 0) {
                         // Do not continue with a channel-shifted PCM stream.
-                        onError("Moonlight audio device returned an invalid PCM write size")
+                        invalidWrite(length)
                         return
                     } else bytes / 2
                 } else t.write(checkNotNull(data), 0, length, AudioTrack.WRITE_NON_BLOCKING)
                 if (written < 0) {
                     lostSamples.addAndGet(length.toLong())
                     handleWriteError(written)
+                    return
+                }
+                if (!moonlightValidPcmWrite(written, length, outputChannels)) {
+                    invalidWrite(length)
                     return
                 }
                 failures = 0
@@ -310,6 +321,12 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
             } catch (_: Exception) {
                 if (++failures >= 3) onError("Moonlight audio device failed")
             }
+    }
+
+    private fun invalidWrite(samples: Int) {
+        // A partial channel frame cannot be repaired by concatenating the next PCM packet.
+        lostSamples.addAndGet(samples.toLong())
+        handleWriteError(AudioTrack.ERROR_DEAD_OBJECT)
     }
 
     private fun discardPending() {
@@ -376,6 +393,8 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         lastSnapshotNanos = 0L
         localQueuedMs = 0.0
         lastQueueEstimateNanos = 0L
+        lastObservedHead = 0L
+        playbackAdvancing = false
         nativeQueuedMs = 0
         timestampBacked = false
         queueReductionMs = 0

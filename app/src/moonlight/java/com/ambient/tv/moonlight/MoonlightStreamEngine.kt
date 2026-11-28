@@ -313,10 +313,10 @@ class MoonlightStreamEngine @Inject constructor(
     private fun enqueueInput(owner: Any, key: Any? = null, operation: () -> Unit) {
         val session = synchronized(lock) { active?.takeIf { it.owner === owner && !it.cancelled } } ?: return
         val offeredAt = System.nanoTime()
-        val offer = session.inputMailbox.offer(key) {
+        val offer = session.inputMailbox.offerTimed(key, offeredAt) { queuedAt ->
             synchronized(inputGate) {
                 if (isOwned(session)) {
-                    session.inputLatency.recordUs((System.nanoTime() - offeredAt) / 1000L)
+                    session.inputLatency.recordUs((System.nanoTime() - queuedAt) / 1000L)
                     operation()
                 }
             }
@@ -717,7 +717,7 @@ class MoonlightStreamEngine @Inject constructor(
                             adaptNetworkQuality = true)
                         break
                     }
-                    backlogSeconds = if (pendingVideo >= moonlightVideoBacklogThreshold(session.profile.fps)) backlogSeconds + 1 else 0
+                    backlogSeconds = if (pendingVideo >= moonlightVideoBacklogThreshold(video.fps.takeIf { it > 0 } ?: session.profile.fps)) backlogSeconds + 1 else 0
                     noPresentationSeconds = if (lastPresented > 0 && video.presented == lastPresented && video.rendered > lastFrames)
                         noPresentationSeconds + 1 else 0
                     if (noOutputSeconds == 3 || backlogSeconds == 3 || noPresentationSeconds == 3) session.video?.requestRecovery()

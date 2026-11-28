@@ -45,4 +45,12 @@ class MoonlightAvQueuePolicyTest {
             assertNull(policy.sample(now, audio(now - 1_100_000_000L), video(now), 0).differenceMs)
         }
     }
+
+    @org.junit.Test fun pcmWriteAlignmentAndConservativeQueueProjection() {
+        org.junit.Assert.assertTrue(moonlightValidPcmWrite(12, 24, 6))
+        org.junit.Assert.assertFalse(moonlightValidPcmWrite(13, 24, 6))
+        org.junit.Assert.assertFalse(moonlightValidPcmWrite(30, 24, 6))
+        org.junit.Assert.assertEquals(30.0, moonlightEstimateQueuedAudio(30.0, 10_000_000L, false), 0.0)
+        org.junit.Assert.assertEquals(20.0, moonlightEstimateQueuedAudio(30.0, 10_000_000L, true), 0.0)
+    }
 }

@@ -5,19 +5,21 @@ internal class MoonlightInputMailbox(private val capacity: Int = 256) {
     enum class Offer { START, QUEUED, OVERFLOW, CLOSED }
     private data class Relative(val kind: String, val x: Int, val y: Int, val limit: Int,
                                 val dispatch: (Int, Int) -> Unit)
-    private data class Pending(val key: Any?, val action: (() -> Unit)? = null, val relative: Relative? = null)
+    private data class Pending(val key: Any?, val action: ((Long) -> Unit)? = null, val relative: Relative? = null, val queuedAt: Long = 0L)
     private val queue = ArrayDeque<Pending>()
     private var draining = false
     private var closed = false
 
-    @Synchronized fun offer(key: Any?, action: () -> Unit): Offer {
+    fun offer(key: Any?, action: () -> Unit): Offer = offerTimed(key, System.nanoTime()) { action() }
+
+    @Synchronized fun offerTimed(key: Any?, queuedAt: Long, action: (Long) -> Unit): Offer {
         if (closed) return Offer.CLOSED
         if (key != null && queue.lastOrNull()?.key == key) {
-            queue.removeLast()
-            queue.addLast(Pending(key, action))
+            val previous = queue.removeLast()
+            queue.addLast(Pending(key, action, queuedAt = previous.queuedAt))
             return Offer.QUEUED
         }
-        return append(Pending(key, action))
+        return append(Pending(key, action, queuedAt = queuedAt))
     }
 
     /**
@@ -61,7 +63,7 @@ internal class MoonlightInputMailbox(private val capacity: Int = 256) {
     @Synchronized fun take(): (() -> Unit)? {
         val next = queue.removeFirstOrNull()
         if (next == null) draining = false
-        return next?.action ?: next?.relative?.let { movement ->
+        return next?.action?.let { action -> { action(next.queuedAt) } } ?: next?.relative?.let { movement ->
             { movement.dispatch(movement.x, movement.y) }
         }
     }

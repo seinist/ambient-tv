@@ -227,7 +227,20 @@ class MoonlightMediaCodecRenderer(
         frameHostProcessingLatency: Char, receiveTimeUs: Long, enqueueTimeUs: Long,
     ): Int = submitUnit(data, length, type, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs)
 
+    private var fallbackPicture = ByteArray(0)
+
     override fun supportsDirectPicture(): Boolean = true
+
+    // Some vendor codecs expose non-direct buffers. Copy via one bounded reusable
+    // array only on that compatibility path, inside the synchronous native callback.
+    private fun copyPicture(buffer: java.nio.ByteBuffer, length: Int): Boolean {
+        if (buffer.isReadOnly) return false
+        if (buffer.isDirect && MoonBridge.copyActivePictureData(buffer, length)) return true
+        if (fallbackPicture.size < length) fallbackPicture = ByteArray(length)
+        if (!MoonBridge.copyActivePictureArray(fallbackPicture, length)) return false
+        buffer.put(fallbackPicture, 0, length)
+        return true
+    }
 
     override fun submitDirectPicture(length: Int, frameNumber: Int, frameType: Int,
         hostLatency: Char, receiveTimeUs: Long, enqueueTimeUs: Long): Int =
@@ -287,7 +300,7 @@ class MoonlightMediaCodecRenderer(
         ptsUs = timestamp
         val flags = if (idr) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
         if (queueInput(length, timestamp, flags) { buffer ->
-                if (data == null) MoonBridge.copyActivePictureData(buffer, length)
+                if (data == null) copyPicture(buffer, length)
                 else { buffer.put(data, 0, length); true }
             }) MoonBridge.DR_OK
         else { dropped.incrementAndGet(); MoonBridge.DR_NEED_IDR }
@@ -439,6 +452,7 @@ class MoonlightMediaCodecRenderer(
             if (!releaseCodecLocked()) return false
             presentationThread?.quitSafely()
             presentationThread = null
+            fallbackPicture = ByteArray(0)
             return true
         }
     }

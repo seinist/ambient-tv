@@ -77,3 +77,11 @@ internal class MoonlightAvQueuePolicy {
         return Balance(difference, reduction)
     }
 }
+
+/** Validate sample counts before advancing queue ownership or channel position. */
+internal fun moonlightValidPcmWrite(written: Int, requested: Int, channels: Int): Boolean =
+    channels > 0 && written in 0..requested && written % channels == 0
+
+/** Do not extrapolate playback during startup, underruns or a paused sink. */
+internal fun moonlightEstimateQueuedAudio(queuedMs: Double, elapsedNanos: Long, advancing: Boolean): Double =
+    if (!advancing) queuedMs else (queuedMs - elapsedNanos.coerceIn(0L, 20_000_000L) / 1_000_000.0).coerceAtLeast(0.0)

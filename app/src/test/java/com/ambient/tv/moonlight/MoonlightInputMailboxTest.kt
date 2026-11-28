@@ -54,4 +54,13 @@ class MoonlightInputMailboxTest {
         assertNotEquals(key(1, 100), key(1, 0))
         assertNotEquals(key(1, 100), key(1, -100))
     }
+
+    @org.junit.Test fun coalescedStateRetainsOldestDispatchTimestamp() {
+        val mailbox = MoonlightInputMailbox()
+        var age = -1L
+        mailbox.offerTimed("axis", 10L) { error("superseded") }
+        mailbox.offerTimed("axis", 30L) { age = it }
+        mailbox.take()!!.invoke()
+        org.junit.Assert.assertEquals(10L, age)
+    }
 }
