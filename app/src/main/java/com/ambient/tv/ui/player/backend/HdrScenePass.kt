@@ -110,79 +110,105 @@ internal object HdrScenePlanner {
         }.concatToString()
     }
 
-    // Extract the registered user-data SEI message from HEVC NAL units. Accept
-    // Annex B or four-byte length prefixes only; reject inconsistent payloads.
+    // Extract registered HDR10+ SEI from single-layer HEVC. A four-byte
+    // length of 256..511 can look like a three-byte Annex B start code.
+    // Validate the entire framing, and reject conflicting interpretations.
     internal fun metadata(sample: ByteArray): String? {
+        if (sample.size !in 3..MAX_SAMPLE) return null
+        data class Parsed(val metadata: String?)
         fun start(i: Int): Int = when {
             i + 3 < sample.size && sample[i] == 0.toByte() && sample[i+1] == 0.toByte() &&
                 sample[i+2] == 0.toByte() && sample[i+3] == 1.toByte() -> 4
             i + 2 < sample.size && sample[i] == 0.toByte() && sample[i+1] == 0.toByte() && sample[i+2] == 1.toByte() -> 3
             else -> 0
         }
-        var result: String? = null
-        fun nal(lo: Int, hi: Int): Boolean {
-            if (hi-lo < 2) return false
-            val type = (sample[lo].toInt() ushr 1) and 63
-            if (type != 39 && type != 40) return true
-            val rbsp = ByteArray(hi-lo-2)
-            var n = 0
-            var zeros = 0
-            for (i in lo+2 until hi) {
-                val v = sample[i].toInt() and 255
-                if (zeros >= 2 && v == 3) { zeros = 0; continue }
-                rbsp[n++] = sample[i]
-                zeros = if (v == 0) zeros+1 else 0
-            }
-            var p = 0
-            fun field(): Int? {
-                var value = 0
+        fun parse(annex: Boolean): Parsed? {
+            var result: String? = null
+            val digest = MessageDigest.getInstance("SHA-256")
+            fun nal(lo: Int, hi: Int): Boolean {
+                if (hi-lo < 2) return false
+                val first = sample[lo].toInt() and 255
+                val second = sample[lo+1].toInt() and 255
+                // Forbidden bit, unsupported nonzero layer ID, invalid temporal ID.
+                if (first and 129 != 0 || second and 248 != 0 || second and 7 == 0) return false
+                val type = (first ushr 1) and 63
+                if (type != 39 && type != 40) return true
+                val rbsp = ByteArray(hi-lo-2)
+                var n = 0
+                var zeros = 0
+                for (i in lo+2 until hi) {
+                    val v = sample[i].toInt() and 255
+                    if (zeros >= 2) {
+                        if (v == 3) {
+                            if (i+1 >= hi || (sample[i+1].toInt() and 255) > 3) return false
+                            zeros = 0
+                            continue
+                        }
+                        if (v < 3) return false // unescaped start-code-like bytes
+                    }
+                    rbsp[n++] = sample[i]
+                    zeros = if (v == 0) zeros+1 else 0
+                }
+                var p = 0
+                fun field(): Int? {
+                    var value = 0
+                    while (p < n) {
+                        val v = rbsp[p++].toInt() and 255
+                        if (value > MAX_SAMPLE-v) return null
+                        value += v
+                        if (v != 255) return value
+                    }
+                    return null
+                }
                 while (p < n) {
-                    val v = rbsp[p++].toInt() and 255
-                    if (value > MAX_SAMPLE-v) return null
-                    value += v
-                    if (v != 255) return value
+                    if (rbsp[p] == 0x80.toByte() && p == n-1) return true
+                    val kind = field() ?: return false
+                    val size = field() ?: return false
+                    if (size > n-p) return false
+                    if (kind == 4 && size >= 6 &&
+                        (rbsp[p].toInt() and 255) == 0xb5 && rbsp[p+1] == 0.toByte() &&
+                        rbsp[p+2] == 0x3c.toByte() && rbsp[p+3] == 0.toByte() &&
+                        rbsp[p+4] == 1.toByte() && rbsp[p+5] == 4.toByte()) {
+                        // Do not silently ignore unsupported versions alongside valid data.
+                        if (size !in 7..1024 || rbsp[p+6] !in 0.toByte()..1.toByte()) return false
+                        digest.update(rbsp,p,size)
+                        val hash = "${rbsp[p+6]}:" + hex(digest.digest())
+                        if (result != null && result != hash) return false
+                        result = hash
+                    }
+                    p += size
                 }
-                return null
+                return false // Missing rbsp_trailing_bits.
             }
-            while (p < n && !(rbsp[p] == 0x80.toByte() && p == n-1)) {
-                val kind = field() ?: return false
-                val size = field() ?: return false
-                if (size > n-p) return false
-                if (kind == 4 && size >= 7 &&
-                    (rbsp[p].toInt() and 255) == 0xb5 && rbsp[p+1] == 0.toByte() &&
-                    rbsp[p+2] == 0x3c.toByte() && rbsp[p+3] == 0.toByte() &&
-                    rbsp[p+4] == 1.toByte() && rbsp[p+5] == 4.toByte() && (rbsp[p+6] == 0.toByte() || rbsp[p+6] == 1.toByte())) {
-                    val hash = "${rbsp[p+6]}:" + hex(MessageDigest.getInstance("SHA-256").digest(rbsp.copyOfRange(p,p+size)))
-                    if (result != null && result != hash) return false
-                    result = hash
+            var i = 0
+            while (i < sample.size) {
+                if (annex) {
+                    val prefix = start(i)
+                    if (prefix == 0) return null
+                    val lo = i+prefix
+                    var end = lo+2
+                    while (end < sample.size && start(end) == 0) end++
+                    // Annex B permits trailing_zero_8bits between units and at EOF.
+                    var hi = end.coerceAtMost(sample.size)
+                    while (hi > lo+2 && sample[hi-1] == 0.toByte()) hi--
+                    if (!nal(lo,hi)) return null
+                    i = end
+                } else {
+                    if (sample.size-i < 4) return null
+                    var len = 0L
+                    repeat(4) { len = (len shl 8) or (sample[i++].toLong() and 255L) }
+                    if (len < 2 || len > sample.size-i) return null
+                    val end = i+len.toInt()
+                    if (!nal(i,end)) return null
+                    i = end
                 }
-                p += size
             }
-            return true
+            return Parsed(result)
         }
-        var i = 0
-        if (start(0) != 0) {
-            while (i < sample.size) {
-                val prefix = start(i)
-                if (prefix == 0) return null
-                val lo = i+prefix
-                var end = lo+2
-                while (end < sample.size && start(end) == 0) end++
-                if (!nal(lo,end.coerceAtMost(sample.size))) return null
-                i = end
-            }
-        } else {
-            while (i < sample.size) {
-                if (sample.size-i < 4) return null
-                var len = 0L
-                repeat(4) { len = (len shl 8) or (sample[i++].toLong() and 255L) }
-                if (len < 2 || len > sample.size-i) return null
-                val end = i+len.toInt()
-                if (!nal(i,end)) return null
-                i = end
-            }
-        }
-        return result
+        val annex = if (start(0) != 0) parse(true) else null
+        val length = parse(false)
+        if (annex != null && length != null && annex != length) return null
+        return (annex ?: length)?.metadata
     }
 
     /** Same constant output grid as both adapters. Use the actual PTS of every

@@ -41,6 +41,25 @@ class HdrScenePassTest {
         assertNull(HdrScenePlanner.metadata(annex + byteArrayOf(0,0,1)+sei(value=21)))
     }
 
+    @Test fun distinguishesLengthPrefixFromAnnexBAndRejectsMalformedSei() {
+        val nal = sei()
+        fun lengthPrefixed(bytes: ByteArray) = java.nio.ByteBuffer.allocate(4+bytes.size)
+            .putInt(bytes.size).put(bytes).array()
+        val annex = byteArrayOf(0,0,1)+nal
+        val expected = HdrScenePlanner.metadata(annex)
+        assertNotNull(expected)
+        // 256-byte non-SEI NAL begins with length 00 00 01 00.
+        val slice = ByteArray(256) { 0x55.toByte() }.apply { this[0]=0x26;this[1]=1 }
+        assertEquals(expected,HdrScenePlanner.metadata(lengthPrefixed(slice)+lengthPrefixed(nal)))
+        assertEquals(expected,HdrScenePlanner.metadata(annex+byteArrayOf(0,0,0)))
+        assertNull(HdrScenePlanner.metadata(annex.copyOf(annex.size-1)))
+        assertNull(HdrScenePlanner.metadata(annex+byteArrayOf(0,0,1)+sei(version=2)))
+        assertNull(HdrScenePlanner.metadata(byteArrayOf(0,0,1)+nal.copyOf().apply { this[1]=0 }))
+        // A 03 escape followed by 04 is not legal emulation prevention.
+        val invalid = byteArrayOf(0x4e,1,4,11,0xb5.toByte(),0,0x3c,0,1,4,1,0,0,3,4,0x80.toByte())
+        assertNull(HdrScenePlanner.metadata(lengthPrefixed(invalid)))
+    }
+
     private fun samples(): List<HdrScenePlanner.Sample> = (0 until 8).map {
         HdrScenePlanner.Sample(kotlin.math.round(it*1_000_000.0/24).toLong(),if(it<4)"a" else "b")
     }
