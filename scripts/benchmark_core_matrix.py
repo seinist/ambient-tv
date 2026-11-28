@@ -1,0 +1,96 @@
+"""Run all available profiles in rotated, paired rounds on one Android device."""
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+from types import SimpleNamespace
+from run_core_benchmark import run, sha
+from compare_core_profiles import compare, PUBLIC
+
+def matrix(args):
+    config=json.loads(args.fixture.read_text())
+    root=args.fixture.resolve().parent
+    def resolve(value):
+        return (root/value).resolve()
+    profiles=config["profiles"]
+    expected=config.get("required_profiles",list(PUBLIC))
+    if set(expected)!=set(profiles) or "baseline" not in profiles:
+        raise ValueError("Missing or unexpected requested profile")
+    if len(profiles)!=len(expected) or any(not re.fullmatch(r"[a-z0-9-]+",p) for p in profiles):
+        raise ValueError("Invalid profile list")
+    if args.rounds<3 or args.cooldown<0:
+        raise ValueError("At least three paired rounds required")
+    warmup=int(config.get("warmup_frames",300))
+    measured=int(config.get("frames",1800))
+    if warmup<0 or measured<60:
+        raise ValueError("Invalid measurement window")
+    out=args.output.resolve()
+    out.mkdir(parents=True,exist_ok=False)
+    identity=None
+    runs=[]
+    results=[]
+    ordered=list(expected)
+    # Rotate first position to avoid systematically giving baseline the
+    # coolest device. A fixed delay is not a substitute for thermal evidence.
+    for i in range(args.rounds):
+        order=ordered[i%len(ordered):]+ordered[:i%len(ordered)]
+        if (i//len(ordered))%2:
+            order.reverse()
+        for profile in order:
+            record=profiles[profile]
+            name=f"round-{i+1:02d}-{profile}"
+            target=out/name
+            run(SimpleNamespace(
+                runner=resolve(config["runner"]),binary=resolve(record["binary"]),
+                report=resolve(record["report"]),content=resolve(config["content"]),
+                system=resolve(config["system"]),input=resolve(config["input"]),
+                options=resolve(config["options"]),output=target,
+                runtime=resolve(config["runtime"]) if config.get("runtime") else None,
+                rom=config["rom"],serial=args.serial,frames=warmup+measured,training=False))
+            meta=json.loads((target/"metadata.json").read_text())
+            summary=json.loads((target/"capture-summary.json").read_text())
+            build=meta["build"]
+            if build["profile"]!=profile or summary["frames"]!=warmup+measured or not summary["video_frames"]:
+                raise ValueError("Incorrect profile or incomplete rendered workload")
+            common={key:build[key] for key in ("core","abi","commit","ndk")}
+            common.update({key:meta[key] for key in ("device_fingerprint","content_sha256","input_sha256","settings_sha256")})
+            common.update({"app_commit":meta["runner_sha256"],"renderer":"gles-pbuffer" if summary["hardware"] else "software",
+                           "fps":summary["fps"]})
+            fixture={"files":meta["fixture_files"],"bios":meta["bios_files"],"runner":meta["runner_sha256"]}
+            if identity is None:
+                identity=common
+                initial_fixture=fixture
+            if common!=identity or fixture!=initial_fixture:
+                raise ValueError("Fixture, device, renderer or build changed between measurements")
+            runs.append({**common,"round":i+1,"profile":profile,
+                         "binary_sha256":build["binary_sha256"],
+                         "build_report":name+"/build.json","slices":name+"/capture.csv",
+                         "thermal":name+"/capture-thermal.csv"})
+            results.append({"round":i+1,"profile":profile,**summary})
+            manifest={**identity,"profiles":ordered,"warmup_frames":warmup,"frames":measured,"runs":runs}
+            (out/"manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
+            (out/"workload-results.json").write_text(json.dumps(results,indent=2)+"\n")
+            if args.cooldown:
+                time.sleep(args.cooldown)
+    result=compare(manifest,out)
+    result["runner_mode"]=True
+    result["fixture"]=initial_fixture
+    # Save-state hashes are diagnostic, not a universal correctness gate:
+    # some cores include nondeterministic metadata or do not serialize.
+    hashes={x["state_hash"] for x in results if x["state_valid"]}
+    result["state_hash_diagnostic"]={"valid_runs":sum(x["state_valid"] for x in results),
+                                     "distinct_hashes":len(hashes)}
+    (out/"comparison.json").write_text(json.dumps(result,indent=2)+"\n")
+
+if __name__=="__main__":
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--fixture",required=True,type=Path)
+    p.add_argument("--output",required=True,type=Path)
+    p.add_argument("--serial")
+    p.add_argument("--rounds",type=int,default=3)
+    p.add_argument("--cooldown",type=float,default=30)
+    matrix(p.parse_args())

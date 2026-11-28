@@ -1,0 +1,107 @@
+name: Core PGO training (trusted Android runner)
+on:
+  workflow_dispatch:
+    inputs:
+      core:
+        description: Core ID from the pgo-generate build report
+        required: true
+      abi:
+        description: Android ABI
+        required: true
+      build_run_id:
+        description: Same-repository pgo-generate artifact run ID
+        required: true
+      runner_run_id:
+        description: Same-repository diagnostic runner artifact run ID
+        required: true
+      fixture:
+        description: Local fixture identifier under AMBIENT_BENCHMARK_FIXTURES
+        required: true
+      frames:
+        description: Number of input frames
+        type: number
+        default: 2100
+permissions:
+  contents: read
+  actions: read
+jobs:
+  train:
+    # Never run arbitrary pull-request code or untrusted fork artifacts on a
+    # device runner. Configure this environment with protected main/approval.
+    if: github.ref == 'refs/heads/main'
+    environment: core-device-validation
+    runs-on: [self-hosted, ambient-core-benchmark]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate selection and trusted fixture
+        env:
+          CORE: ${{ inputs.core }}
+          ABI: ${{ inputs.abi }}
+          FIXTURE: ${{ inputs.fixture }}
+          BUILD_RUN: ${{ inputs.build_run_id }}
+          RUNNER_RUN: ${{ inputs.runner_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$CORE" =~ ^[a-z0-9_]+$ && "$ABI" =~ ^(arm64-v8a|armeabi-v7a|x86_64|x86)$ ]]
+          [[ "$FIXTURE" =~ ^[a-zA-Z0-9_-]+$ && "$BUILD_RUN" =~ ^[0-9]+$ && "$RUNNER_RUN" =~ ^[0-9]+$ ]]
+          test -d "${AMBIENT_BENCHMARK_FIXTURES:?}/$FIXTURE"
+          # Both inputs must be successful main-branch workflow runs, not PR artifacts.
+          for pair in "$BUILD_RUN:cores.yml" "$RUNNER_RUN:core-benchmark-runner.yml"; do
+            id="${pair%%:*}"; workflow="${pair#*:}"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" |
+              jq -e --arg workflow "$workflow" '.head_branch=="main" and .conclusion=="success" and (.path | endswith("/"+$workflow))'
+          done
+      - uses: actions/download-artifact@v7
+        with:
+          name: candidate-pgo-generate-${{ inputs.core }}-${{ inputs.abi }}
+          path: candidate
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: report-candidate-pgo-generate-${{ inputs.core }}-${{ inputs.abi }}
+          path: report
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: core-benchmark-runner-${{ inputs.abi }}
+          path: runner
+          run-id: ${{ inputs.runner_run_id }}
+          github-token: ${{ github.token }}
+      - name: Train on connected device
+        env:
+          CORE: ${{ inputs.core }}
+          ABI: ${{ inputs.abi }}
+          FIXTURE: ${{ inputs.fixture }}
+          FRAMES: ${{ inputs.frames }}
+        run: |
+          set -euo pipefail
+          fixture="$AMBIENT_BENCHMARK_FIXTURES/$FIXTURE"
+          rom=$(cat "$fixture/rom.txt")
+          [[ "$FRAMES" =~ ^[0-9]+$ ]]
+          jq -e --arg c "$CORE" --arg a "$ABI" '.core==$c and .abi==$a and .profile=="pgo-generate" and .ndk=="30.0.16248370"' report/build.json
+          ndk="${ANDROID_NDK_HOME:?}"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          case "$ABI" in
+            arm64-v8a) triple=aarch64-linux-android ;;
+            armeabi-v7a) triple=arm-linux-androideabi ;;
+            x86_64) triple=x86_64-linux-android ;;
+            x86) triple=i686-linux-android ;;
+          esac
+          runtime="$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$triple/libc++_shared.so"
+          python3 scripts/run_core_benchmark.py --runner runner/core-benchmark-runner \
+            --binary "candidate/${CORE}_libretro_android.so" --report report/build.json \
+            --content "$fixture/content" --system "$fixture/bios" --rom "$rom" \
+            --input "$fixture/input.txt" --options "$fixture/options.txt" \
+            --runtime "$runtime" --frames "$FRAMES" --output training --training
+          python3 scripts/core_pgo.py merge --llvm-profdata "$bin/llvm-profdata" \
+            --directory trained --report report/build.json training/*.profraw
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pgo-${{ inputs.core }}-${{ inputs.abi }}
+          path: trained/
+          if-no-files-found: error
+          retention-days: 14
