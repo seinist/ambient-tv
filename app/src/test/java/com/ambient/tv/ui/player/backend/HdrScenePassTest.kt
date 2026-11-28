@@ -96,6 +96,29 @@ class HdrScenePassTest {
         }
     }
 
+    @Test fun vlcPlanUsesActualNativeFloatClockOverLongDurations() {
+        // At this particular boundary an unrounded Double clock counts
+        // a different number of output ticks than VLC's promoted float.
+        val source = 24.0
+        val target = 59.94
+        val boundary = 42_599
+        val frames = 43_000
+        val input = (0 until frames).map { i ->
+            HdrScenePlanner.Sample(kotlin.math.round(i*1_000_000.0/source).toLong(),
+                if (i<boundary) "a" else "b")
+        }
+        val plan = HdrScenePlanner.plan(input,source,target,true)!!
+        assertEquals(target,plan.target,0.0)
+        assertEquals(106391L,plan.ends.first())
+        // Independently enumerate the native integer-microsecond output
+        // timestamps for the final interval, with the same EOF duration.
+        val end = input.last().ptsUs+kotlin.math.round(1_000_000.0/source).toLong()-1
+        val nativeRate = target.toFloat().toDouble()
+        val expected = generateSequence(0L) { it+1 }
+            .takeWhile { kotlin.math.round(it*1_000_000.0/nativeRate).toLong()<end }.count().toLong()
+        assertEquals(expected,plan.ends.last())
+    }
+
     @Test fun rejectsAmbiguousOrDiscontinuousInputs() {
         val input = samples()
         assertNull(HdrScenePlanner.plan(input.mapIndexed { i,s -> s.copy(metadata=i.toString()) },24.0,60.0,false))

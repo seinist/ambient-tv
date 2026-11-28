@@ -220,6 +220,12 @@ internal object HdrScenePlanner {
         val origin = sorted.first().ptsUs
         if (origin < 0 || sorted.last().ptsUs-origin > 86_400_000_000L) return null
         if (contentCuts != null && !sorted.map { it.ptsUs }.toHashSet().containsAll(contentCuts)) return null
+        // VLC's var_InheritFloat returns binary32 even though the native
+        // scheduler stores the promoted value in a double. Use that exact
+        // clock for tick enumeration, retaining the requested target for
+        // UI policy and configuration comparisons.
+        val clockTarget = if (vlc) target.toFloat().toDouble() else target
+        if (clockTarget <= source || clockTarget/source > 5.000001) return null
         val expected = 1_000_000.0/source
         val ends = ArrayList<Long>()
         var tick = 0L
@@ -233,8 +239,8 @@ internal object HdrScenePlanner {
             // The native scene schedulers reserve a 1 us boundary tolerance.
             // In particular, rounding the final source duration and then
             // adding it to a rounded PTS can move the endpoint by one tick.
-            while (if (vlc) (tick*1_000_000.0/target).roundToLong() < end-1L
-                else tick*1_000_000.0/target < end-1.0) {
+            while (if (vlc) (tick*1_000_000.0/clockTarget).roundToLong() < end-1L
+                else tick*1_000_000.0/clockTarget < end-1.0) {
                 if (++tick-first > 8 || tick >= 1_000_000_000L) return null
             }
             if (tick == first) return null
