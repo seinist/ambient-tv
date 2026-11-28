@@ -172,8 +172,13 @@ static bool svp_hdr_window_lerp(AVHDRPlusColorTransformParams *o,
 #define Q(field,unit,limit) if(!svp_hdr_lerp_q(&o->field,a->field,b->field,t,unit,limit))return false
     if (local) {
         if (a->overlap_process_option!=b->overlap_process_option || a->overlap_process_option>1 ||
-            a->rotation_angle!=b->rotation_angle || a->rotation_angle>180) return false;
+            a->rotation_angle>180 || b->rotation_angle>180) return false;
         if(width<2||height<2)return false;
+        // Ellipse orientation is axial (period 180), not directional.
+        int delta=(int)b->rotation_angle-(int)a->rotation_angle;
+        if(delta>90)delta-=180;
+        if(delta< -90)delta+=180;
+        o->rotation_angle=(uint8_t)(((int)lround(a->rotation_angle+t*delta)+180)%180);
         Q(window_upper_left_corner_x,width-1,1);Q(window_upper_left_corner_y,height-1,1);
         Q(window_lower_right_corner_x,width-1,1);Q(window_lower_right_corner_y,height-1,1);
         if (o->window_upper_left_corner_x.num>=o->window_lower_right_corner_x.num ||
@@ -217,6 +222,16 @@ static bool svp_hdrplus_lerp(AVDynamicHDRPlus *out,const AVBufferRef *x,const AV
         a->application_version>1||a->application_version!=b->application_version||
         a->targeted_system_display_actual_peak_luminance_flag!=b->targeted_system_display_actual_peak_luminance_flag||
         a->mastering_display_actual_peak_luminance_flag!=b->mastering_display_actual_peak_luminance_flag)return false;
+    // ST 2094-40:2020 section 9.4 prohibits local windows and
+    // display grids for application version 1. Do not silently downgrade.
+    if(a->application_version==1 &&
+       (a->num_windows!=1 || a->targeted_system_display_actual_peak_luminance_flag ||
+        a->mastering_display_actual_peak_luminance_flag ||
+        a->params[0].color_saturation_mapping_flag || b->params[0].color_saturation_mapping_flag ||
+        a->params[0].num_distribution_maxrgb_percentiles!=9 ||
+        b->params[0].num_distribution_maxrgb_percentiles!=9 ||
+        a->params[0].num_bezier_curve_anchors>9 || b->params[0].num_bezier_curve_anchors>9))
+        return false;
     *out=*a;
     if(!svp_hdr_lerp_q(&out->targeted_system_display_maximum_luminance,
         a->targeted_system_display_maximum_luminance,b->targeted_system_display_maximum_luminance,t,1,10000))return false;
@@ -431,10 +446,10 @@ static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResu
             p->knee_point_y=(AVRational){curve.knee_y,4095};
             memset(p->bezier_curve_anchors,0,sizeof(p->bezier_curve_anchors));
             for(unsigned j=0;j<curve.count;j++)p->bezier_curve_anchors[j]=(AVRational){curve.anchors[j],1023};
-            // Preserve the reserved zero value of application version 1.
-            // Legacy statistics count ties at the quantized maximum.
-            p->fraction_bright_pixels=(AVRational){m->application_version==1?0:
-                (int)(((uint64_t)r->brightest*1000+r->pixels/2)/r->pixels),1000};
+            // Section 10 requires spatial smoothing and scene-wide
+            // weighting. Peak-bin ties are not that measurement.
+            // Zero explicitly signals an uncalculated value in both versions.
+            p->fraction_bright_pixels=(AVRational){0,1000};
         }
         struct pl_hdr_metadata *hdr=&img->params.color.hdr;
         memset(hdr->scene_max,0,sizeof(hdr->scene_max));hdr->scene_avg=hdr->max_pq_y=hdr->avg_pq_y=0;
