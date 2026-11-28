@@ -319,11 +319,15 @@ class GameMetadataRepository @Inject constructor(
                         val hints = listOfNotNull(filename.takeIf(String::isNotBlank),
                             current.internalTitle?.takeIf(String::isNotBlank)).distinct()
                         hints.firstNotNullOfOrNull { hint ->
-                            matchingGameCatalogTitles(hint, library.searchDatTitles(current.systemId, hint))
-                                .takeIf { it.isNotEmpty() }
+                            val clean = com.ambient.tv.games.library.gameDisplayTitle(hint)
+                            val titles = library.searchDatTitles(current.systemId, hint) +
+                                if (clean != hint) library.searchDatTitles(current.systemId, clean) else emptyList()
+                            matchingGameCatalogTitles(hint, titles).takeIf { it.isNotEmpty() }
                         }.orEmpty()
                     }
-                GameMetadataPlatforms.libretroCandidates(query, catalog)
+                val lookup = if (catalog.isNotEmpty() && known?.matchLocked != true)
+                    query.copy(providerGameId = null) else query
+                GameMetadataPlatforms.libretroCandidates(lookup, catalog)
             } else providers.search(query, provider)
         }
         catch (error: GameMetadataProviderException) {
