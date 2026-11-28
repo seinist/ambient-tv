@@ -900,6 +900,15 @@ before the expensive native matrix. Core update preflight now covers
 build-only Snes9x2010; its tests use real reviewed core fixtures, and the
 conflicting redundant JsonPath keep rule was removed.
 
+A further CI audit separates the fast script suite from Android SDK setup
+and the native/JVM job so a Python assertion no longer conceals Android
+failures. J2V8 has an independent source-preflight job before its native
+matrix; actual host ELF fixtures exercise wrong ABI, insufficient segment
+alignment, missing JNI exports and forbidden shared STL dependencies.
+After GN generation, the effective libraries and linker flags are checked
+before Ninja compilation and retained in build evidence. Native Android
+build and runtime checks remain mandatory.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

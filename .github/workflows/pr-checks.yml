@@ -76,6 +76,20 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_core_hotpath_patches.py'
           python3 -m unittest discover -s scripts -p 'test_core_hotpath_remaining.py'
 
+  script-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Script checks
+        run: |
+          bash -n build.sh
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+          python3 -m unittest discover -s scripts -p 'test_instrument_libretro_trace.py'
+          python3 -m unittest discover -s scripts -p 'test_libretro_perf_tools.py'
+          python3 scripts/import_game_system_icons.py --check
+          python3 scripts/import_input_controller_artwork.py --check
+
   unit-tests:
     needs: core-policy
     runs-on: ubuntu-latest
@@ -108,15 +122,6 @@ jobs:
           fi
 
       - uses: gradle/actions/setup-gradle@v4
-
-      - name: Script checks
-        run: |
-          bash -n build.sh
-          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-          python3 -m unittest discover -s scripts -p 'test_instrument_libretro_trace.py'
-          python3 -m unittest discover -s scripts -p 'test_libretro_perf_tools.py'
-          python3 scripts/import_game_system_icons.py --check
-          python3 scripts/import_input_controller_artwork.py --check
 
       - name: Fetch LibretroDroid
         # The games frontend (pinned Argosy fork plus scripts/patches/libretrodroid).

@@ -117,6 +117,18 @@ def patch_android_cxx_runtime(source):
     return re.sub(r'(["\'])c\+\+_shared\1', lambda match: match[1] + "c++_static" + match[1], source)
 
 
+def verify_gn_link_plan(libs, ldflags):
+    # Reject effective GN config regressions before hours of Ninja work.
+    # This supplements, but never replaces, the final ELF validation.
+    if "c++_shared" in libs or "c++_shared" in ldflags:
+        raise ValueError("GN still selects a shared C++ runtime")
+    if "-static-libstdc++" not in ldflags:
+        raise ValueError("GN omits static C++ runtime selection")
+    sizes = re.findall(r"max-page-size=(\d+)", ldflags)
+    if not sizes or any(size != "16384" for size in sizes):
+        raise ValueError(f"GN has conflicting Android page alignment: {sizes}")
+
+
 def jni_exports(path, readelf="readelf"):
     text = run([readelf, "--dyn-syms", "--wide", path], capture=True)
     symbols = set()
@@ -196,6 +208,9 @@ def build(work, output, shared, abi, jobs):
     args = (j2v8 / "v8" / ABI_CONFIGS[abi] / "args.gn").read_text()
     (out / "args.gn").write_text(args)
     run([depot / "gn", "gen", out], cwd=v8, env=env)
+    link_libs = run([depot / "gn", "desc", out, "//:ambient_j2v8", "libs"], cwd=v8, env=env, capture=True)
+    link_flags = run([depot / "gn", "desc", out, "//:ambient_j2v8", "ldflags"], cwd=v8, env=env, capture=True)
+    verify_gn_link_plan(link_libs, link_flags)
     run([depot / "ninja", "-C", out, "-j", jobs, "ambient_j2v8"], cwd=v8, env=env)
     candidate = out / "libj2v8.so"
     legacy = shared / f"j2v8/src/main/jniLibs/{abi}/libj2v8.so"
@@ -204,6 +219,8 @@ def build(work, output, shared, abi, jobs):
     shutil.copyfile(candidate, output / "libj2v8.so")
     (output / "args.gn").write_text(args)
     (output / "bridge.gn").write_text(BRIDGE)
+    (output / "link-libs.txt").write_text(link_libs)
+    (output / "link-flags.txt").write_text(link_flags)
     shutil.copyfile(compiler_config, output / "compiler-config.gn")
     shutil.copyfile(android_config, output / "android-config.gn")
     shutil.copyfile(bridge / cpp, output / cpp)
@@ -221,6 +238,8 @@ def build(work, output, shared, abi, jobs):
         "jniCompatibilityPatch": "v8-handle-to-local-122-windows-pragmas-5",
         "compilerConfigSha256": sha(output / "compiler-config.gn"),
         "androidConfigSha256": sha(output / "android-config.gn"),
+        "linkLibsSha256": sha(output / "link-libs.txt"),
+        "linkFlagsSha256": sha(output / "link-flags.txt"),
         "native": row, "deviceValidated": False, "publicationApproved": False,
     }, indent=2, sort_keys=True) + "\n")
 
@@ -252,7 +271,9 @@ def stage_candidates(inputs, output, shared):
                             ("com_eclipsesource_v8_V8Impl.cpp", "jniSourceSha256"),
                             ("com_eclipsesource_v8_V8Impl.h", "jniHeaderSha256"),
                             ("compiler-config.gn", "compilerConfigSha256"),
-                            ("android-config.gn", "androidConfigSha256")):
+                            ("android-config.gn", "androidConfigSha256"),
+                            ("link-libs.txt", "linkLibsSha256"),
+                            ("link-flags.txt", "linkFlagsSha256")):
             path = root / name
             if (not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= 16 * 1024**2
                     or sha(path) != evidence.get(field)):
@@ -260,6 +281,7 @@ def stage_candidates(inputs, output, shared):
         if (evidence.get("jniCompatibilityPatch") != "v8-handle-to-local-122-windows-pragmas-5"
                 or re.search(r"\bHandle\s*<", (root / "com_eclipsesource_v8_V8Impl.cpp").read_text())):
             raise ValueError(f"Unexpected JNI source compatibility patch: {abi}")
+        verify_gn_link_plan((root / "link-libs.txt").read_text(), (root / "link-flags.txt").read_text())
         if (root / "bridge.gn").read_text() != BRIDGE:
             raise ValueError(f"Unexpected JNI build recipe: {abi}")
         candidate = root / "libj2v8.so"
