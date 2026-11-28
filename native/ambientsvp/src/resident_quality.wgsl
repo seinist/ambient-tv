@@ -217,9 +217,62 @@ fn motion_cost(mv:vec2i)->u32{
     let fraction=lo*(block_lambda>>8u)+(lo*(block_lambda&255u)>>8u);
     return min(0x7fffffffu-whole,fraction)+whole;
 }
+// Exact 32x32 -> 64 bit product using 16-bit limbs. No shaderInt64 or
+// shaderFloat64 device feature is required.
+fn wide_mul(a:u32,b:u32)->vec2u{
+    let a0=a&65535u;let a1=a>>16u;
+    let b0=b&65535u;let b1=b>>16u;
+    let w=a0*b0;
+    let t=a1*b0+(w>>16u);
+    let z=a0*b1+(t&65535u);
+    return vec2u((z<<16u)|(w&65535u),a1*b1+(t>>16u)+(z>>16u));
+}
+// Reference computes a rounded f32 ratio, squares that ratio in f64,
+// multiplies by lambda in f64, and truncates. Reproduce the rounding
+// using integer mantissas so mobile Vulkan does not require Float64.
 fn adapt_lambda(sad:u32)->u32{
-    let ratio=f32(LSAD)/f32(LSAD+(sad>>1u));
-    return u32(f32(LAMBDA)*ratio*ratio);
+    if LAMBDA==0u{return 0u;}
+    let denominator=LSAD+(sad>>1u);
+    if denominator==LSAD{return LAMBDA;}
+    var n=LSAD;
+    var exponent=127u;
+    // The bounded SAD and LSAD are exactly representable f32 integers.
+    // Normalize the rational and generate 23 fractional mantissa bits.
+    while n<denominator{n*=2u;exponent-=1u;}
+    var rem=n-denominator;
+    var mantissa=1u<<23u;
+    for(var bit=23u;bit>0u;bit-=1u){
+        rem*=2u;
+        if rem>=denominator{
+            rem-=denominator;mantissa|=1u<<(bit-1u);
+        }
+    }
+    let twice=rem*2u;
+    if twice>denominator||(twice==denominator&&(mantissa&1u)!=0u){mantissa+=1u;}
+    if mantissa==(1u<<24u){mantissa>>=1u;exponent+=1u;}
+    // 48-bit exact square, then multiply by the bounded lambda.
+    let square=wide_mul(mantissa,mantissa);
+    let low=wide_mul(square.x,LAMBDA);
+    let high=wide_mul(square.y,LAMBDA);
+    var product=vec3u(low.x,low.y+high.x,high.y);
+    if product.y<low.y{product.z+=1u;}
+    // f64 rounding discards at most 23 low bits for this product.
+    // Add half-minus-one plus the retained LSB (round ties to even).
+    var length=32u-countLeadingZeros(product.x);
+    if product.y!=0u{length=64u-countLeadingZeros(product.y);}
+    if product.z!=0u{length=96u-countLeadingZeros(product.z);}
+    if length>53u{
+        let drop=length-53u;
+        let add=(1u<<(drop-1u))-1u+((product.x>>drop)&1u);
+        let before=product.x;product.x+=add;
+        if product.x<before{product.y+=1u;if product.y==0u{product.z+=1u;}}
+    }
+    let shift=2u*(150u-exponent);
+    if shift>=96u{return 0u;}
+    if shift>=64u{return product.z>>(shift-64u);}
+    // shift >= 46 for ratio <= 1, so only middle/high limbs matter.
+    let offset=shift-32u;
+    return (product.y>>offset)|(product.z<<(32u-offset));
 }
 fn clamp_mv(v:vec2i)->vec2i{return clamp(v,vec2i(-64*PEL),vec2i(64*PEL));}
 fn snapshot_base(n:u32)->u32{return 2u*n+1u;}
