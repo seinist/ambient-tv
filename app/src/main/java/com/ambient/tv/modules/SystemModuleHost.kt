@@ -46,7 +46,7 @@ internal object SystemModuleHost {
             hostLibraries = setOf("libc++_shared.so"),
             bundledOverrides = setOf("libprojectM-4.so", "libambientprojectm.so"),
         ),
-    ) + mapOf(SystemModule.MONOGRAM to monogramContract()) + smartTubeContracts()
+    ) + mapOf(SystemModule.MONOGRAM to monogramContract()) + smartTubeContracts() + vlcContracts()
 
     // During this migration the host still supplies the pinned Android resource
     // and shared-library graph. A build without those wrappers cannot load this format.
@@ -60,6 +60,16 @@ internal object SystemModuleHost {
             )
         ) else emptyMap()
     
+    private fun vlcContracts(): Map<SystemModule, SystemModuleRuntime.Contract> =
+        if (BuildConfig.VLC_MODULE_BINDING_SHA256.isNotBlank()) mapOf(
+            SystemModule.VLC to SystemModuleRuntime.Contract(
+                nativeRoots = setOf("libvlc.so", "libvlcjni.so"),
+                hostLibraries = setOf("libc++_shared.so"),
+                bundledOverrides = setOf("libvlc.so", "libvlcjni.so"),
+                hostBindingSha256 = BuildConfig.VLC_MODULE_BINDING_SHA256,
+            )
+        ) else emptyMap()
+
     private fun monogramContract(): SystemModuleRuntime.Contract {
         val dex = SystemModuleRuntime.Contract(
             entryClass = "com.ambient.tv.data.telegram.MonogramModuleAdapter",
