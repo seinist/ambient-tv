@@ -38,6 +38,8 @@ struct ambient_svp_hdr_display {
     int (*scene_finish)(AmbientSvpHdrPass *);
     void (*scene_destroy)(AmbientSvpHdrPass *);
     bool scene_finished;
+    unsigned scene_version;
+    int (*scene_lookup_legacy)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
 };
 static inline void ambient_svp_hdr_scene_close(struct ambient_svp_hdr_display *s,bool abort)
 {
@@ -48,13 +50,14 @@ static inline void ambient_svp_hdr_scene_close(struct ambient_svp_hdr_display *s
     s->scene=NULL;s->scene_pass=NULL;s->scene_lib=NULL;s->scene_finished=false;
 }
 static inline bool ambient_svp_hdr_scene_open(pl_gpu gpu,struct ambient_svp_hdr_display *s,
-    const struct ambient_svp_pair *pair,int w,int h)
+    const struct ambient_svp_pair *pair,int w,int h,unsigned version)
 {
     if(s->scene!=pair->scene){
         ambient_svp_hdr_scene_close(s,true);
         if(!pair->scene)return true;
         s->scene=pair->scene;ambient_svp_scene_config_hold(s->scene);
-        if(pair->scene_index!=0||atomic_load(&s->scene->aborted))goto fail;
+        if(pair->scene_index!=0||version>1||atomic_load(&s->scene->aborted))goto fail;
+        s->scene_version=version;
         pl_vulkan vk=pl_vulkan_get(gpu);
         if(!vk||!vk->get_proc_addr)goto fail;
         PFN_vkGetPhysicalDeviceProperties props=(PFN_vkGetPhysicalDeviceProperties)vk->get_proc_addr(vk->instance,"vkGetPhysicalDeviceProperties");
@@ -69,17 +72,18 @@ static inline bool ambient_svp_hdr_scene_open(pl_gpu gpu,struct ambient_svp_hdr_
         if(n<=0||(size_t)n>=sizeof(profile))goto fail;
         s->scene_lib=dlopen("libambientsvp.so",RTLD_NOW|RTLD_LOCAL);
         if(!s->scene_lib)goto fail;
-        AmbientSvpHdrPass *(*open)(uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t)=
-            dlsym(s->scene_lib,"ambient_svp_hdr_pass_open");
+        AmbientSvpHdrPass *(*open)(uint32_t,uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t)=
+            dlsym(s->scene_lib,"ambient_svp_hdr_pass_open_version");
+        s->scene_lookup_legacy=dlsym(s->scene_lib,"ambient_svp_hdr_pass_lookup_legacy");
         s->scene_interval=dlsym(s->scene_lib,"ambient_svp_hdr_pass_interval");
         s->scene_lookup=dlsym(s->scene_lib,"ambient_svp_hdr_pass_lookup");
         s->scene_finish=dlsym(s->scene_lib,"ambient_svp_hdr_pass_finish");
         s->scene_destroy=dlsym(s->scene_lib,"ambient_svp_hdr_pass_destroy");
-        if(!open||!s->scene_interval||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)goto fail;
-        s->scene_pass=open(s->scene->mode,s->scene->plan,s->scene->cache,s->scene->key,profile,w,h);
+        if(!open||!s->scene_lookup_legacy||!s->scene_interval||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)goto fail;
+        s->scene_pass=open(s->scene->mode,version,s->scene->plan,s->scene->cache,s->scene->key,profile,w,h);
         if(!s->scene_pass)goto fail;
     }
-    return !s->scene||(s->scene_pass&&!s->scene_finished&&!atomic_load(&s->scene->aborted));
+    return !s->scene||(s->scene_version==version&&s->scene_pass&&!s->scene_finished&&!atomic_load(&s->scene->aborted));
 fail:
     ambient_svp_hdr_scene_close(s,true);return false;
 }
@@ -316,7 +320,9 @@ static inline bool ambient_svp_hdr_apply_stats(struct ambient_hdrplus *m,
 static inline bool ambient_svp_hdr_scene_compatible(const struct ambient_hdrplus *m)
 {
     static const unsigned percentages[9]={1,5,10,25,50,75,90,95,99};
-    if(!m->metadata_constraints_ok||m->version!=1||m->window_count!=1||m->windows[0].histogram_count!=9)return false;
+    if(!m->metadata_constraints_ok||m->version>1||m->window_count<1||m->window_count>3)return false;
+    if(m->version==0)return true;
+    if(m->window_count!=1||m->windows[0].histogram_count!=9)return false;
     for(unsigned j=0;j<9;j++)if(m->windows[0].histogram[j].percentage!=percentages[j])return false;
     return true;
 }
@@ -337,6 +343,46 @@ static inline bool ambient_svp_hdr_apply_scene(struct ambient_hdrplus *m,const A
     for(unsigned j=0;j<curve.count;j++)p->anchors[j]=curve.anchors[j]/1023.f;
     return ambient_hdrplus_distribution_ordered(p,m->version)&&
         (!p->tone_mapping||ambient_hdrplus_usable_curve(p,m->target_nits));
+}
+static inline bool ambient_svp_hdr_apply_legacy_scene(struct ambient_hdrplus *m,const AmbientSvpHdrLegacyScene *r)
+{
+    if(!ambient_svp_hdr_scene_compatible(m)||m->version!=0||!r||r->count!=m->window_count)return false;
+    struct ambient_hdrplus updated=*m;
+    for(unsigned w=0;w<r->count;w++){
+        struct ambient_hdrplus_window *p=&updated.windows[w];
+        const AmbientSvpHdrLegacyWindow *v=&r->windows[w];
+        if(v->count>15||v->count!=p->histogram_count||v->fraction)return false;
+        uint32_t peak=0,last=0;
+        for(unsigned c=0;c<3;c++){
+            if(v->maxscl[c]>100000)return false;
+            if(v->maxscl[c]>peak)peak=v->maxscl[c];
+            p->maxscl[c]=v->maxscl[c]/100000.f;
+        }
+        if(v->average>peak)return false;
+        p->average=v->average/100000.f;p->fraction=0.f;
+        for(unsigned j=0;j<v->count;j++){
+            if(v->percentages[j]!=p->histogram[j].percentage||v->percentiles[j]<last||v->percentiles[j]>peak)return false;
+            last=v->percentiles[j];p->histogram[j].percentile=last/100000.f;
+        }
+        SvpHdrCurve curve={0};
+        if(!isfinite(updated.target_nits)||updated.target_nits<0||
+            (updated.target_nits&&!svp_hdr_curve(peak,v->average,v->count?last:peak,updated.target_nits,&curve)))return false;
+        p->tone_mapping=curve.count!=0;p->anchor_count=curve.count;
+        p->knee_x=curve.knee_x/4095.f;p->knee_y=curve.knee_y/4095.f;
+        memset(p->anchors,0,sizeof(p->anchors));
+        for(unsigned j=0;j<curve.count;j++)p->anchors[j]=curve.anchors[j]/1023.f;
+        if(!ambient_hdrplus_distribution_ordered(p,0)||(p->tone_mapping&&!ambient_hdrplus_usable_curve(p,updated.target_nits)))return false;
+    }
+    *m=updated;return true;
+}
+static inline bool ambient_svp_hdr_scene_replay(struct ambient_svp_hdr_display *s,uint64_t index)
+{
+    if(s->scene_version==0){
+        AmbientSvpHdrLegacyScene r;
+        return s->scene_lookup_legacy(s->scene_pass,index,&r)==1&&ambient_svp_hdr_apply_legacy_scene(&s->metadata,&r);
+    }
+    AmbientSvpHdrSceneResult r;
+    return s->scene_lookup(s->scene_pass,index,&r)==1&&ambient_svp_hdr_apply_scene(&s->metadata,&r);
 }
 static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct ambient_svp_hdr_display *s,struct ambient_ahb_owner *owner,
@@ -364,7 +410,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     if(s->has_metadata)s->metadata=a->hdrplus;
     int w=a->texture->params.w,h=a->texture->params.h;
     bool scene=pair->scene!=NULL;
-    if(!ambient_svp_hdr_scene_open(gpu,s,pair,w,h))goto original;
+    if(!ambient_svp_hdr_scene_open(gpu,s,pair,w,h,a->has_hdrplus?a->hdrplus.version:2))goto original;
     if(scene){
         uint64_t boundary;
         if(s->scene_interval(s->scene_pass,pair->scene_index,&boundary)!=1||
@@ -373,7 +419,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     }
     if(scene&&(!s->has_metadata||!a->aligned||dovi||a->color.transfer!=PL_COLOR_TRC_PQ||
         a->color.primaries!=PL_COLOR_PRIM_BT_2020||!ambient_svp_hdr_scene_compatible(&a->hdrplus)||
-        (!same&&(!b->has_hdrplus||!ambient_svp_hdr_scene_compatible(&b->hdrplus)))))goto original;
+        (!same&&(!b->has_hdrplus||!ambient_svp_hdr_scene_compatible(&b->hdrplus)||b->hdrplus.version!=s->scene_version))))goto original;
     if(same){
         *img=ambient_pl_rgb_frame(a->texture,a->color);
         if(scene){
@@ -384,9 +430,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
                         &s->output,0.f,&pair->quality,&job,s->scene_pass,pair->scene_index))goto original;
                 *img=ambient_pl_rgb_frame(s->output,a->color);
             }else{
-                AmbientSvpHdrSceneResult result;
-                if(s->scene_lookup(s->scene_pass,pair->scene_index,&result)!=1||
-                    !ambient_svp_hdr_apply_scene(&s->metadata,&result))goto original;
+                if(!ambient_svp_hdr_scene_replay(s,pair->scene_index))goto original;
                 vlc_video_hdr_dynamic_metadata_t global;
                 ambient_hdrplus_project_global(&global,&s->metadata);
                 vlc_placebo_HdrMetadata(&global,&img->color.hdr);
@@ -415,7 +459,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     bool capture=scene&&s->scene->mode==1;
     bool per_frame=s->has_metadata&&!scene;
     if((s->has_metadata&&(a->color.transfer!=PL_COLOR_TRC_PQ||a->color.primaries!=PL_COLOR_PRIM_BT_2020||
-            !ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,&b->hdrplus,w,h)))||
+            !ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,scene?&a->hdrplus:&b->hdrplus,w,h)))||
         !svp_placebo_quality_render_pass(gpu,&s->quality,a->texture,b->texture,
         extended?s->sources[2].texture:NULL,extended?s->sources[3].texture:NULL,
         &s->output,pair->phase,&pair->quality,(capture||per_frame)?&job:NULL,capture?s->scene_pass:NULL,pair->scene_index)||
@@ -426,9 +470,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     }
     if(scene){
         if(!capture){
-            AmbientSvpHdrSceneResult result;
-            if(s->scene_lookup(s->scene_pass,pair->scene_index,&result)!=1||
-                !ambient_svp_hdr_apply_scene(&s->metadata,&result))goto original;
+            if(!ambient_svp_hdr_scene_replay(s,pair->scene_index))goto original;
         }
         if(!ambient_svp_hdr_scene_end(s,pair))goto original;
     }
