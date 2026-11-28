@@ -273,3 +273,11 @@ Mupen64Plus, Snes9x2010, Citra, Panda3DS and SwanStation. Blocked candidates
 are reported separately from current pins. Updater-only branch metadata is
 excluded from binary fingerprints. Manual validation shards have distinct
 concurrency keys; an independent updater-policy CI job validates shell dispatch.
+
+The benchmark runner accepts an optional warm-up frame count; its summary
+counters exclude the warm-up interval and include explicit window metadata.
+Matrix comparisons reject old or mismatching runner summaries. Timing slices
+still retain all frames for consistent warm-up exclusion. PGO artifact builds
+can be dispatched with `./build.sh cores mgba --abis arm64-v8a --profile pgo-generate`
+and `./build.sh cores mgba --abis arm64-v8a --profile pgo-use --pgo-run-id ID --pgo-sha256 HASH`.
+The latter requires the validated training artifact; both remain artifact-only.

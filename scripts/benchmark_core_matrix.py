@@ -8,9 +8,11 @@ from types import SimpleNamespace
 from run_core_benchmark import run
 from compare_core_profiles import compare, PUBLIC
 
-def validate_workload(results):
+def validate_workload(results, warmup=None, measured=None):
     """Reject apparent speedups caused by less rendering or missing audio."""
     def counts(row):
+        if warmup is not None and (row.get("warmup_frames"), row.get("measured_frames"), row.get("frames")) != (warmup, measured, warmup+measured):
+            raise ValueError("Missing or incorrect measured workload window")
         values = [row[k] for k in ("video_frames", "fresh_frames", "duplicate_frames", "audio_frames")]
         if any(type(n) is not int or n < 0 for n in values):
             raise ValueError("Invalid workload counters")
@@ -76,11 +78,14 @@ def matrix(args):
                 system=resolve(config["system"]),input=resolve(config["input"]),
                 options=resolve(config["options"]),output=target,
                 runtime=resolve(config["runtime"]) if config.get("runtime") else None,
-                rom=config["rom"],serial=args.serial,frames=warmup+measured,training=False,renderer=config.get("renderer","auto")))
+                rom=config["rom"],serial=args.serial,frames=warmup+measured,warmup_frames=warmup,training=False,renderer=config.get("renderer","auto")))
             meta=json.loads((target/"metadata.json").read_text())
             summary=json.loads((target/"capture-summary.json").read_text())
             build=meta["build"]
-            if build["profile"]!=profile or summary["frames"]!=warmup+measured or not summary["video_frames"]:
+            if (build["profile"]!=profile or summary["frames"]!=warmup+measured
+                    or summary.get("warmup_frames")!=warmup or summary.get("measured_frames")!=measured
+                    or meta.get("warmup_frames")!=warmup or meta.get("measured_frames")!=measured
+                    or not summary["video_frames"]):
                 raise ValueError("Incorrect profile or incomplete rendered workload")
             common={key:build[key] for key in ("core","abi","commit","ndk")}
             common.update({key:meta[key] for key in ("device_fingerprint","content_sha256","input_sha256","settings_sha256")})
@@ -104,7 +109,7 @@ def matrix(args):
             (out/"workload-results.json").write_text(json.dumps(results,indent=2)+"\n")
             if args.cooldown:
                 time.sleep(args.cooldown)
-    validate_workload(results)
+    validate_workload(results,warmup,measured)
     result=compare(manifest,out)
     result["runner_mode"]=True
     result["fixture"]=initial_fixture

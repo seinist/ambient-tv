@@ -216,12 +216,14 @@ static unsigned long number(const char* value,unsigned long max) {
     return n;
 }
 int main(int argc,char** argv) {
-    if(argc!=9)die("usage: runner CORE CONTENT SYSTEM_DIR SAVE_DIR INPUT OPTIONS FRAMES OUTPUT_PREFIX");
+    if(argc!=9 && argc!=10)die("usage: runner CORE CONTENT SYSTEM_DIR SAVE_DIR INPUT OPTIONS FRAMES OUTPUT_PREFIX [WARMUP_FRAMES]");
     system_dir=argv[3];save_dir=argv[4];content_dir=argv[2];
     auto slash=content_dir.find_last_of('/');
     content_dir=slash==std::string::npos?".":content_dir.substr(0,slash);
     unsigned frames=static_cast<unsigned>(number(argv[7],1000000));
     if(!frames)die("No frames");
+    const unsigned warmup=argc==10?static_cast<unsigned>(number(argv[9],frames)):0u;
+    if(warmup>=frames)die("No measurement frames");
     std::vector<uint16_t> inputs;
     std::ifstream in(argv[5]);std::string line;
     while(std::getline(in,line)) {
@@ -290,7 +292,16 @@ int main(int argc,char** argv) {
     void* manager=acquire && status && release?acquire():nullptr;
     // Sample per second rather than frame, including slow cores.
     uint64_t last_thermal=0;
+    uint64_t initial_video=0,initial_fresh=0,initial_duplicate=0,initial_audio=0;
     for(unsigned frame=0;frame<frames;++frame) {
+        // Snapshot immediately before the first timed measurement frame.
+        // Leave the cumulative counters intact: a duplicate of the last
+        // warm-up frame is still a valid duplicate in the measured window.
+        if(frame==warmup) {
+            initial_video=video_frames;initial_fresh=fresh_frames;
+            initial_duplicate=duplicate_frames;
+            initial_audio=audio_frames.load(std::memory_order_relaxed);
+        }
         buttons=inputs[frame];
         uint64_t start=now();
         if(manager && (!last_thermal || start-last_thermal>=1000000000ull)) {
@@ -310,9 +321,9 @@ int main(int argc,char** argv) {
     if(vulkan)vk.idle();
     else if(hardware)glFinish();
     // Snapshot workload before serialization or shutdown can emit callbacks.
-    const uint64_t captured_video=video_frames, captured_fresh=fresh_frames,
-                   captured_duplicate=duplicate_frames,
-                   captured_audio=audio_frames.load(std::memory_order_relaxed);
+    const uint64_t captured_video=video_frames-initial_video, captured_fresh=fresh_frames-initial_fresh,
+                   captured_duplicate=duplicate_frames-initial_duplicate,
+                   captured_audio=audio_frames.load(std::memory_order_relaxed)-initial_audio;
     const unsigned captured_width=width,captured_height=height;
     uint64_t state_hash=14695981039346656037ull;
     const size_t size=serialize_size();
@@ -334,9 +345,9 @@ int main(int argc,char** argv) {
     }
     FILE* summary=std::fopen((prefix+"-summary.json").c_str(),"w");
     if(!summary)die("Cannot write benchmark summary");
-    std::fprintf(summary,"{\"frames\":%u,\"fps\":%.9g,\"video_frames\":%llu,\"fresh_frames\":%llu,\"duplicate_frames\":%llu,\"audio_frames\":%llu,"
+    std::fprintf(summary,"{\"frames\":%u,\"warmup_frames\":%u,\"measured_frames\":%u,\"fps\":%.9g,\"video_frames\":%llu,\"fresh_frames\":%llu,\"duplicate_frames\":%llu,\"audio_frames\":%llu,"
                          "\"width\":%u,\"height\":%u,\"hardware\":%s,\"renderer\":\"%s\",\"state_hash\":\"%016llx\",\"state_valid\":%s}\n",
-                 frames,av.timing.fps,(unsigned long long)captured_video,(unsigned long long)captured_fresh,
+                 frames,warmup,frames-warmup,av.timing.fps,(unsigned long long)captured_video,(unsigned long long)captured_fresh,
                  (unsigned long long)captured_duplicate,(unsigned long long)captured_audio,
                  captured_width,captured_height,hardware?"true":"false",vulkan?"vulkan-sync-headless":hardware?"gles-sync-pbuffer":"software",(unsigned long long)state_hash,state_ok?"true":"false");
     if(std::fclose(summary))die("Summary output failed");

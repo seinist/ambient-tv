@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -65,6 +66,29 @@ class CoreUpdateTest(unittest.TestCase):
                                         text=True, capture_output=True, check=True)
                 output = next(line for line in result.stdout.splitlines() if line.startswith("["))
                 self.assertEqual(json.loads(output), expected)
+
+    def test_pgo_cli_dispatch_is_artifact_only_and_requires_identity(self):
+        shutil.copyfile(updater.ROOT / "build.sh", self.root / "build.sh")
+        stub = self.root / "gh"
+        stub.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+        stub.chmod(0o755)
+        env = {**os.environ, "PATH": str(self.root) + os.pathsep + os.environ["PATH"]}
+        def run(*args):
+            return subprocess.run(["bash", str(self.root / "build.sh"), "cores", *args],
+                                  env=env, text=True, capture_output=True)
+        common = ("mgba", "--abis", "arm64-v8a")
+        generation = run(*common, "--profile", "pgo-generate")
+        self.assertEqual(generation.returncode, 0, generation.stderr)
+        self.assertIn("profile=pgo-generate", generation.stdout)
+        self.assertIn("publish=false", generation.stdout)
+        use = run(*common, "--profile", "pgo-use", "--pgo-run-id", "123", "--pgo-sha256", "a"*64)
+        self.assertEqual(use.returncode, 0, use.stderr)
+        self.assertIn("pgo_run_id=123", use.stdout)
+        self.assertIn("pgo_sha256="+"a"*64, use.stdout)
+        for args in (("--profile", "pgo-generate"), (*common, "--profile", "pgo-use"),
+                     (*common, "--profile", "pgo-generate", "--publish-experimental"),
+                     (*common, "--profile", "optimized", "--pgo-run-id", "123")):
+            self.assertNotEqual(run(*args).returncode, 0)
 
     def test_check_is_read_only(self):
         before = self.cores.read_bytes()

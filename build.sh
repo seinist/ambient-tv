@@ -1315,7 +1315,7 @@ run_cores_command() {
         cores)
             shift
             local -a inputs=(-f publish=false)
-            local selected="" profile="baseline" abis="" comparison="none" core_ref="main" publish_experimental=false force_rebuild=false
+            local selected="" profile="baseline" abis="" comparison="none" core_ref="main" publish_experimental=false force_rebuild=false pgo_run_id="" pgo_sha256=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --profile)
@@ -1324,6 +1324,12 @@ run_cores_command() {
                     --abis)
                         [[ $# -ge 2 ]] || fail "--abis requires a comma-separated ABI list"
                         abis="$2"; shift 2 ;;
+                    --pgo-run-id)
+                        [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || fail "--pgo-run-id requires a numeric training workflow run ID"
+                        pgo_run_id="$2"; shift 2 ;;
+                    --pgo-sha256)
+                        [[ $# -ge 2 && "$2" =~ ^[0-9a-f]{64}$ ]] || fail "--pgo-sha256 requires the exact lowercase profile SHA-256"
+                        pgo_sha256="$2"; shift 2 ;;
                     --publish-experimental)
                         publish_experimental=true; shift ;;
                     --force)
@@ -1341,7 +1347,20 @@ run_cores_command() {
                         selected="$1"; shift ;;
                 esac
             done
-            case "$profile" in baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit) ;; *) fail "Unknown core profile: $profile" ;; esac
+            case "$profile" in baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit|pgo-generate|pgo-use) ;; *) fail "Unknown core profile: $profile" ;; esac
+            if [[ "$profile" == pgo-generate || "$profile" == pgo-use ]]; then
+                [[ "$selected" =~ ^[a-z0-9_]+$ && "$abis" =~ ^(arm64-v8a|armeabi-v7a|x86_64|x86)$ &&
+                   "$publish_experimental" == false && "$comparison" == none ]] ||
+                    fail "PGO requires one explicit core and ABI; artifact-only, no comparison"
+                if [[ "$profile" == pgo-use ]]; then
+                    [[ -n "$pgo_run_id" && -n "$pgo_sha256" ]] || fail "pgo-use requires --pgo-run-id and --pgo-sha256"
+                    inputs+=(-f "pgo_run_id=$pgo_run_id" -f "pgo_sha256=$pgo_sha256")
+                else
+                    [[ -z "$pgo_run_id$pgo_sha256" ]] || fail "pgo-generate does not accept a training artifact"
+                fi
+            else
+                [[ -z "$pgo_run_id$pgo_sha256" ]] || fail "PGO artifact options require --profile pgo-use"
+            fi
             if [[ -n "$selected" ]]; then inputs+=(-f "cores=$selected"); fi
             if [[ -n "$abis" ]]; then inputs+=(-f "abis=$abis"); fi
             if [[ "$profile" != baseline ]]; then inputs+=(-f "profile=$profile"); fi
@@ -1429,7 +1448,8 @@ Core pins: cores-check [id[,id...]], cores-update [id[,id...]] (all by default; 
            LibretroDroid is a library, not a core.
 
 Libretro cores on GitHub Actions (main):
-  cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit] [--abis ABI[,ABI...]]
+  cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit|pgo-generate|pgo-use] [--abis ABI[,ABI...]]
+        PGO: --pgo-run-id ID --pgo-sha256 SHA256 (pgo-use only; one core and ABI)
         [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch] [--publish-experimental [--force]]
                       Build artifacts by default. --publish-experimental signs optimized, optimized-a57 or validated ARM64 JIT profiles on main.
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.

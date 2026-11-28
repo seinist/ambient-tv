@@ -31,8 +31,9 @@ def run(args):
         raise ValueError("Core binary does not match verified build report")
     if args.training and build["profile"] != "pgo-generate":
         raise ValueError("Training requires pgo-generate")
-    if args.frames < 60 or args.frames > 1000000:
-        raise ValueError("Invalid frame count")
+    warmup = getattr(args, "warmup_frames", 0)
+    if args.frames < 60 or args.frames > 1000000 or not 0 <= warmup <= args.frames - 60:
+        raise ValueError("Invalid frame count or measurement window")
     content = args.content.resolve()
     rom = (content / args.rom).resolve()
     if not rom.is_relative_to(content) or not rom.is_file():
@@ -91,7 +92,7 @@ def run(args):
         prefix=remote+"/capture"
         shell("env","AMBIENT_BENCHMARK_RENDERER="+getattr(args,"renderer","auto"),"LD_LIBRARY_PATH="+remote,"LLVM_PROFILE_FILE="+remote+"/training-%p-%m.profraw",
               remote+"/runner",remote+"/core.so",remote+"/content/"+str(rom.relative_to(content)),
-              remote+"/system",remote+"/save",remote+"/input.txt",remote+"/options.txt",args.frames,prefix)
+              remote+"/system",remote+"/save",remote+"/input.txt",remote+"/options.txt",args.frames,prefix,warmup)
         for suffix in (".csv","-thermal.csv","-summary.json"):
             cmd("pull",prefix+suffix,out/("capture"+suffix))
         if args.training:
@@ -110,7 +111,7 @@ def run(args):
                 sha(args.binary) != build["binary_sha256"] or args.report.read_text() != report_text):
             raise ValueError("Local fixture or build changed during capture")
         metadata={"build":build,"device_fingerprint":fingerprint,"device_serial":serial,
-                  "frames":args.frames,**identity}
+                  "frames":args.frames,"warmup_frames":warmup,"measured_frames":args.frames-warmup,**identity}
         (out/"metadata.json").write_text(json.dumps(metadata,indent=2)+"\n")
         (out/"build.json").write_text(report_text)
     finally:
@@ -124,6 +125,7 @@ if __name__=="__main__":
     p.add_argument("--rom",required=True)
     p.add_argument("--serial")
     p.add_argument("--frames",type=int,required=True)
+    p.add_argument("--warmup-frames",type=int,default=0,help="Exclude initial frames from workload counters")
     p.add_argument("--renderer",choices=("auto","gles","vulkan"),default="auto")
     p.add_argument("--training",action="store_true")
     run(p.parse_args())

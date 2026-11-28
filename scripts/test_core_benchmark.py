@@ -22,6 +22,21 @@ class BenchmarkTests(unittest.TestCase):
                 validate_workload([base, dict(other, **changed)])
 
 
+    def test_workload_window_cannot_include_warmup(self):
+        from benchmark_core_matrix import validate_workload
+        base = dict(round=1, profile="baseline", frames=1000, warmup_frames=900,
+                    measured_frames=100, video_frames=100, fresh_frames=90,
+                    duplicate_frames=10, audio_frames=73500, width=1280, height=720, hardware=True)
+        other = dict(base, profile="optimized")
+        validate_workload([base, other], 900, 100)
+        for changed in (dict(warmup_frames=0, measured_frames=1000),
+                        dict(fresh_frames=80, duplicate_frames=20), dict(audio_frames=65000)):
+            with self.assertRaises(ValueError):
+                validate_workload([base, dict(other, **changed)], 900, 100)
+        old = {k:v for k,v in other.items() if k not in ("warmup_frames", "measured_frames")}
+        with self.assertRaises(ValueError):
+            validate_workload([base, old], 900, 100)
+
     def test_fixture_identity_tracks_runtime_and_all_content(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)
