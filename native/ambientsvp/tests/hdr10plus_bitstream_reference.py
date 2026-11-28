@@ -130,7 +130,37 @@ def synthetic_payload(version, windows, *, bad_average=False, bad_marker=False, 
         bits+=("1" if sei_stop else "0")+"0"*(padding-1)
     return REGISTERED+int(bits,2).to_bytes(len(bits)//8,"big"),expected
 
+def fate_reference_payload(sei_stop=False):
+    """Reconstruct the published FFmpeg reference values independently.
+    The actual downloaded stream is still tested separately; this
+    fixture is not asserted to reproduce its original padding bytes.
+    """
+    fields=[]
+    def put(value,width):
+        assert 0<=value<1<<width
+        fields.append(f"{value:0{width}b}")
+    put(1,8);put(1,2);put(400,27);put(0,1)
+    for value in (3340,2870,2720,510):put(value,17)
+    pairs=[(1,30),(5,2940),(10,255),(25,70),(50,1340),(75,1600),(90,1850),(95,1950),(99,2940)]
+    put(len(pairs),4)
+    for p,v in pairs:put(p,7);put(v,17)
+    put(1,10);put(0,1)
+    put(1,1);put(0,12);put(0,12)
+    anchors=(102,205,307,410,512,614,717,819,922)
+    put(len(anchors),4)
+    for v in anchors:put(v,10)
+    put(0,1)
+    bits="".join(fields)
+    padding=(-len(bits))%8
+    if padding:bits+=("1" if sei_stop else "0")+"0"*(padding-1)
+    return REGISTERED+int(bits,2).to_bytes(len(bits)//8,"big")
+
 def self_test(exe):
+    for stop in (False,True):
+        payload=fate_reference_payload(stop)
+        check_fate(probe(exe,payload))
+        check_fate(probe(exe,payload+b"\x00"*32))
+        assert probe(exe,payload+b"\x00\x01") is None
     for version,windows in [(0,1),(0,2),(0,3),(1,1)]:
         payload,expected=synthetic_payload(version,windows)
         assert probe(exe,payload)==[(version,windows,400,1)]+expected
