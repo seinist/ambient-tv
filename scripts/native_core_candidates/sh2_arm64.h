@@ -46,6 +46,25 @@ static unsigned ambient_sh2_emit(uint16_t op, uint32_t* code)
         case 0x600e: code[count++] = 0x13001c41u; break; /* SXTB */
         case 0x600f: code[count++] = 0x13003c41u; break; /* SXTH */
         }
+    } else if ((op & 0xf0ff) == 0x4000 || (op & 0xf0ff) == 0x4020 ||
+               (op & 0xf0ff) == 0x4001 || (op & 0xf0ff) == 0x4021 ||
+               (op & 0xf0ff) == 0x4004 || (op & 0xf0ff) == 0x4005) {
+        const unsigned kind = op & 0xf0ff;
+        code[count++] = load_n;
+        code[count++] = (op & 1) ? 0x12000023u : 0x531f7c23u; /* old low/high bit */
+        switch (kind) {
+        case 0x4000: case 0x4020: code[count++] = 0x531f7821u; break; /* LSL #1 */
+        case 0x4001: code[count++] = 0x53017c21u; break; /* LSR #1 */
+        case 0x4021: code[count++] = 0x13017c21u; break; /* ASR #1 */
+        case 0x4004: code[count++] = 0x13817c21u; break; /* ROR #31 */
+        case 0x4005: code[count++] = 0x13810421u; break; /* ROR #1 */
+        }
+        code[count++] = store_n;
+        code[count++] = 0xb94000e4u;
+        code[count++] = 0x121f7884u;
+        code[count++] = 0x2a030084u;
+        code[count++] = 0xb90000e4u;
+        return count+1;
     } else if ((op & 0xf0ff) == 0x4008 || (op & 0xf0ff) == 0x4018 ||
                (op & 0xf0ff) == 0x4028 || (op & 0xf0ff) == 0x4009 ||
                (op & 0xf0ff) == 0x4019 || (op & 0xf0ff) == 0x4029) {
@@ -136,6 +155,16 @@ static unsigned ambient_sh2_emit(uint16_t op, uint32_t* code)
     return count + 1; /* 0 is unsupported; 1 is a NOP with no native words */
 }
 
+/* Terminal, non-delay conditional branch. Return exact guest cycle charge. */
+static inline unsigned ambient_sh2_branch(uint16_t op, uint32_t* pc, uint32_t sr)
+{
+    const unsigned kind = op & 0xff00u;
+    if (kind != 0x8900u && kind != 0x8b00u) return 0;
+    const unsigned taken = (sr & 1u) == (kind == 0x8900u);
+    *pc += taken ? (uint32_t)(4 + 2 * (int32_t)(int8_t)op) : 2u;
+    return taken ? 3u : 1u;
+}
+
 #if defined(AMBIENT_SH2_ARM64_JIT)
 #if !defined(__aarch64__)
 #error ARM64 SH2 candidate must only be built on AArch64
@@ -150,6 +179,8 @@ typedef struct {
     uint32_t pc;
     uint16_t ops[AMBIENT_SH2_MAX_OPS];
     unsigned count, hits;
+    uint16_t terminal;
+    unsigned has_terminal;
     void* code;
     size_t bytes;
 } AmbientSh2Block;
@@ -176,7 +207,8 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         budget - context->cycles < 4)
         return 0;
     const uint32_t pc = context->regs.PC;
-    if ((pc & 1u) || pc > UINT32_MAX - 2*AMBIENT_SH2_MAX_OPS) return 0;
+    if ((pc & 1u) || pc > UINT32_MAX - 2*AMBIENT_SH2_MAX_OPS ||
+        (pc & 0xc0000000u) == 0xc0000000u) return 0;
     const fetchfunc fetch = ((fetchfunc*)context->fetchlist)[(pc >> 20) & 255];
     /* Only side-effect-free fetch regions. Never prefetch cartridges or MMIO. */
     if (fetch != FetchBios && fetch != FetchLWram && fetch != FetchHWram) return 0;
@@ -184,17 +216,36 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
     if (ambient_sh2_disabled[cpu]) return 0;
     AmbientSh2Block* block = &ambient_sh2_cache[cpu][(pc >> 1 ^ pc >> 9) & (AMBIENT_SH2_SLOTS-1)];
     if (block->pc == pc && block->count && block->code &&
-        block->count <= budget - context->cycles) {
+        block->count <= budget - context->cycles &&
+        (!block->has_terminal || block->count < budget - context->cycles)) {
         unsigned i;
         /* Self-modifying code, savestate loads and RAM aliases cannot reuse
          * a stale translation: verify every source instruction before entry. */
-        for (i = 0; i < block->count; ++i)
-            if ((uint16_t)fetch(context, pc + i*2) != block->ops[i]) break;
-        if (i == block->count) {
+        for (i = 0; i < block->count; ++i) {
+            uint32_t addr = pc + i*2;
+            if (((fetchfunc*)context->fetchlist)[(addr >> 20) & 255] != fetch ||
+                (uint16_t)fetch(context, addr) != block->ops[i]) break;
+        }
+        const uint32_t terminal_pc = pc + block->count*2;
+        if (i == block->count && (!block->has_terminal ||
+            (((fetchfunc*)context->fetchlist)[(terminal_pc >> 20) & 255] == fetch &&
+             (uint16_t)fetch(context, terminal_pc) == block->terminal))) {
             ((void (*)(u32*, u32*))block->code)(context->regs.R, &context->regs.SR.all);
             context->instruction = block->ops[block->count-1];
             context->regs.PC += block->count * 2;
             context->cycles += block->count;
+            if (block->has_terminal) {
+                context->instruction = block->terminal;
+                unsigned cost = ambient_sh2_branch(block->terminal, &context->regs.PC,
+                                                   context->regs.SR.all);
+                if (cost) context->cycles += cost;
+                else {
+                    // Delay-slot, MMIO, bus-wait and self-modifying store
+                    // semantics remain in the exact existing opcode handler.
+                    // End the block immediately after the potentially mutating access.
+                    ((opcodefunc*)context->opcodes)[context->instruction](context);
+                }
+            }
             return 1;
         }
         munmap(block->code, block->bytes);
@@ -213,6 +264,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
     }
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
     unsigned words = 0, count = 0;
+    block->has_terminal = 0;
     code[words++] = 0xd503245fu; /* BTI c, harmless hint on older ARM64 */
     code[words++] = 0xaa0103e7u; /* MOV x7,x1: SR pointer survives scratch register writes */
     while (count < AMBIENT_SH2_MAX_OPS) {
@@ -220,11 +272,24 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         if (((fetchfunc*)context->fetchlist)[(addr >> 20) & 255] != fetch) break;
         uint16_t op = (uint16_t)fetch(context, addr);
         unsigned emitted = ambient_sh2_emit(op, code + words);
-        if (!emitted) break;
+        if (!emitted) {
+            // One terminal instruction may reuse the verified fetch. Never
+            // precompile beyond a potentially mutating memory/control operation.
+            if (count >= 2) {
+                block->terminal = op;
+                block->has_terminal = 1;
+            }
+            break;
+        }
         words += emitted-1;
         block->ops[count++] = op;
     }
-    if (count < 4) { block->ops[0] = (uint16_t)fetch(context, pc); block->count = 1; return 0; }
+    if (count < (block->has_terminal ? 2u : 4u)) {
+        block->ops[0] = (uint16_t)fetch(context, pc);
+        block->count = 1;
+        block->has_terminal = 0;
+        return 0;
+    }
     code[words++] = 0xd65f03c0u;
     const long page = sysconf(_SC_PAGESIZE);
     if (page <= 0 || (size_t)page < words*sizeof(uint32_t)) {

@@ -48,6 +48,11 @@ static int reference(uint16_t op, uint32_t* r, uint32_t* sr)
     case 0x8800: t = r[0] == (uint32_t)(int32_t)(int8_t)op; goto flag;
     }
     switch (op & 0xf0ff) {
+    case 0x4000: case 0x4020: r[n] = a << 1; t = a >> 31; goto flag;
+    case 0x4001: r[n] = a >> 1; t = a & 1; goto flag;
+    case 0x4021: r[n] = (a >> 1) | (a & 0x80000000u); t = a & 1; goto flag;
+    case 0x4004: r[n] = (a << 1) | (a >> 31); t = a >> 31; goto flag;
+    case 0x4005: r[n] = (a >> 1) | (a << 31); t = a & 1; goto flag;
     case 0x4008: r[n] = a << 2; return 1;
     case 0x4018: r[n] = a << 8; return 1;
     case 0x4028: r[n] = a << 16; return 1;
@@ -75,6 +80,16 @@ static uint32_t next(uint32_t* state) {
 
 int main(void)
 {
+    for (unsigned kind=0; kind<2; ++kind)
+        for (int displacement=-128; displacement<128; ++displacement)
+            for (unsigned flag=0; flag<2; ++flag) {
+                uint16_t op = (uint16_t)((kind ? 0x8b00 : 0x8900) | (displacement & 255));
+                uint32_t pc = 0xfffffff0u;
+                const int taken = kind ? !flag : flag;
+                unsigned cost = ambient_sh2_branch(op, &pc, 0x3f0u|flag);
+                assert(cost == (taken ? 3u : 1u));
+                assert(pc == 0xfffffff0u + (uint32_t)(taken ? 4+2*displacement : 2));
+            }
     const long page = sysconf(_SC_PAGESIZE);
     assert(page > 0);
     uint32_t* code = mmap(NULL, (size_t)page, PROT_READ|PROT_WRITE,

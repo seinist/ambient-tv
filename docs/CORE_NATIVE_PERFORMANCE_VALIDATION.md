@@ -13,9 +13,11 @@ compiler build is not proof of correct gameplay or a performance improvement.
   exclusive-access tests on both 4 KiB and 16 KiB devices.
 * `yabause-arm64-jit`: bounded native ARM64 straight-line blocks; integer ALU,
   immediate operations, shifts, comparisons and T flag operations. Native
-  differential tests cover emitted opcode encodings. Unsupported instructions,
-  branches, delay slots and memory/MMIO operations are interpreted. This is
-  intentionally not a claim of full native SH2 instruction coverage.
+  differential tests cover emitted opcode encodings including shift/rotate T
+  flags. Non-delay BT/BF branches use their exact cycle charge in the block
+  exit; other terminal operations reuse a validated fetch and invoke the
+  original opcode handler (including memory/MMIO, bus waits and delay slots).
+  This is intentionally not a claim of full native SH2 instruction coverage.
 * Both are artifact-only until the CI and device acceptance gates pass. Public
   channels do not silently select these binaries.
 
