@@ -55,5 +55,5 @@
     <string name="svp_adaptive_hint">Beginnt mit leichter Analyse und reduziert bei Überlast die Bewegungsanalysequalität. Bildrate und Zeitstempel bleiben gleich.</string>
     <string name="svp_hdr_two_pass">HDR10+ Zweipass (experimentell)</string>
     <string name="svp_hdr_two_pass_on">Analysieren und erneut abspielen</string>
-    <string name="svp_hdr_two_pass_hint">Nur lokale HEVC-HDR10+-Dateien. Der erste Durchlauf misst alle Bilder; nach vollständiger Analyse startet die Wiedergabe mit Szenenmetadaten erneut von Anfang an. Springen bricht die Analyse ab.</string>
+    <string name="svp_hdr_two_pass_hint">Lokale oder vollständige HEVC-HDR10+-Netzwerkdateien bis zur gewählten Auflösung. Versucht eine beschleunigte Analyse ohne sichtbare Wiedergabe. Falls nicht unterstützt, misst der erste Wiedergabedurchlauf alle Bilder und startet danach erneut. Springen bricht die Analyse ab.</string>
 </resources>
