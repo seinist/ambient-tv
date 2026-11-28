@@ -12,7 +12,8 @@ from sh2_memory_differential import PRELUDE
 
 HARNESS = r"""
 static void SH2delay(SH2_struct* sh,u32 addr) {
-    sh->instruction=FetchBios(sh,addr);
+    sh->instruction=yabsys.sh2_cache_enabled && (addr&0xc0000000u)==0xc0000000u ?
+        DataArrayReadWord(sh,addr) : FetchBios(sh,addr);
     opcodefunc handler=decode(SHMT_SH2,sh->instruction);
     if(!handler)abort();
     handler(sh);
@@ -117,10 +118,13 @@ int main(void) {
             want.instruction=raw;want.cycles=next(&seed)&0xffff;
             want.seed=next(&seed);want.stall=(sample&2)!=0;
             want.slot=slots[sample%8];want.isslave=sample&1;
+            yabsys.sh2_cache_enabled=(sample>>2)&1;
+            if(yabsys.sh2_cache_enabled)want.regs.PC|=0xc0000000u;
+            want.model=SHMT_SH2;
             for(unsigned i=0;i<256;++i)want.fetchlist[i]=(void*)FetchBios;
             got=want;
             handler(&want);
-            if(!ambient_sh2_native_one(&got,raw)){
+            if(!ambient_sh2_eligible(&got)||!ambient_sh2_native_one(&got,raw)){
                 fprintf(stderr,"legal opcode rejected %04x\n",raw);return 1;
             }
             if(memcmp(&want.regs,&got.regs,sizeof(want.regs)) || want.cycles!=got.cycles ||
@@ -131,9 +135,10 @@ int main(void) {
                     want.regs.SR.all,got.regs.SR.all);
                 return 1;
             }
-            if(want.count && want.events[0].kind==16)++delayed;
+            if(want.count && (want.events[0].kind==16 || want.events[0].kind==17))++delayed;
         }
     }
+    yabsys.sh2_cache_enabled=0;
     ambient_sh2_clear();
     printf("SH2 complete native path: %u legal, %u illegal encodings, %u executions, %u delay-slot executions passed\n",
            legal,illegal,legal*32,delayed);
@@ -169,6 +174,9 @@ static u32 FetchBios(SH2_struct* sh,u32 addr){
         return index<sh->program_length?sh->program[index]:0x0009;
     }
     event(sh,16,addr,sh->slot);return sh->slot;
+}
+static u16 DataArrayReadWord(SH2_struct* sh,u32 addr) {
+    event(sh,17,addr,sh->slot);return sh->slot;
 }
 static u32 FetchLWram(SH2_struct* sh,u32 addr){return FetchBios(sh,addr);}
 static u32 FetchHWram(SH2_struct* sh,u32 addr){return FetchBios(sh,addr);}

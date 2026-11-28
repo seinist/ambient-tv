@@ -37,8 +37,10 @@ compiler build is not proof of correct gameplay or a performance improvement.
   guest register allocation spans the branch, slot and target; BSR updates
   PR before the slot. The native code falls through directly without host
   dispatch. Every non-contiguous source address is checked before execution.
-  Registers are committed at mapped-bus/helper and dynamic-exit boundaries. Illegal opcodes, cache-enabled/debug execution and executable
-  mapping failure retain upstream fallbacks.
+  Registers are committed at mapped-bus/helper and dynamic-exit boundaries. Cache-enabled SH2 execution uses the same native single-op dispatcher with
+  exact cache/data-array fetches, including delay slots; speculative traces
+  stay disabled there. Illegal opcodes, debugging and executable mapping
+  failure retain upstream fallbacks.
   Pure ALU traces now span up to 32 guest instructions and retain up to ten
   frequently accessed GPRs in caller-saved AArch64 registers. Dirty values
   are written back before any helper or trace exit. Memory/control-only hot

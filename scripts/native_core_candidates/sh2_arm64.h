@@ -388,8 +388,12 @@ static void ambient_sh2_delay_native(SH2_struct* sh, u32 addr)
     SH2delay(sh,addr);
     return;
 #endif
-    if(yabsys.sh2_cache_enabled) {SH2delay(sh,addr);return;}
-    sh->instruction=((fetchfunc*)sh->fetchlist)[(addr>>20)&255u](sh,addr);
+    /* A cache-enabled SH2 must still fetch exactly once through the
+     * emulated cache or data array. Do not speculatively fetch a trace. */
+    if(yabsys.sh2_cache_enabled && (addr&0xc0000000u)==0xc0000000u)
+        sh->instruction=DataArrayReadWord(sh,addr);
+    else
+        sh->instruction=((fetchfunc*)sh->fetchlist)[(addr>>20)&255u](sh,addr);
     if(!ambient_sh2_native_one(sh,sh->instruction))
         ((opcodefunc*)sh->opcodes)[sh->instruction](sh); /* illegal opcode or W^X failure */
     sh->regs.PC-=2;
@@ -438,7 +442,7 @@ static int ambient_sh2_eligible(const SH2_struct* context)
 #ifdef SH2_TRACE
     (void)context;return 0;
 #else
-    return context->model == SHMT_SH2 && !yabsys.sh2_cache_enabled &&
+    return context->model == SHMT_SH2 &&
         !context->isIdle && !context->isSleeping && !context->delay &&
         !context->breakpointEnabled && !context->backtraceEnabled &&
         !context->stepOverOut.enabled && !context->trackInfLoop.enabled;
@@ -459,7 +463,7 @@ static unsigned ambient_sh2_slot(uint32_t pc)
 static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
                                  AmbientSh2Block* linked, AmbientSh2Block** executed)
 {
-    if (!ambient_sh2_eligible(context) || context->cycles >= budget ||
+    if (!ambient_sh2_eligible(context) || yabsys.sh2_cache_enabled || context->cycles >= budget ||
         budget - context->cycles < 4)
         return 0;
     const uint32_t pc = context->regs.PC;
