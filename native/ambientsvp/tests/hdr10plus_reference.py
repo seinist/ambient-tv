@@ -53,8 +53,8 @@ def proxy(frame,w,h):
             a,b = Fraction(x*w,pw),Fraction((x+1)*w,pw)
             c,d = Fraction(y*h,ph),Fraction((y+1)*h,ph)
             total = Fraction()
-            for iy in range(h):
-                for ix in range(w):
+            for iy in range(c.__floor__(), min(h,d.__ceil__())):
+                for ix in range(a.__floor__(), min(w,b.__ceil__())):
                     weight = max(Fraction(),min(b,ix+1)-max(a,ix))*max(Fraction(),min(d,iy+1)-max(c,iy))
                     r,g,blue = frame[iy*w+ix]
                     luma = (2627*r+6780*g+593*blue)/10000
@@ -123,6 +123,22 @@ class Reference(unittest.TestCase):
             self.assertEqual(weight(eps),max(0,min(4000000000,5000000000-eps*255)))
         for eps in (0,3921567,3921568,3921569,19607842,19607843,19607844,1000000000):
             self.assertEqual(weight(eps),max(0,min(4000000000,5000000000-eps*255)))
+
+    def test_nonuniform_vulkan_reference_scene(self):
+        w,h=66,34
+        one,zero=Fraction(1),Fraction(0)
+        low=Fraction(pq(0x3bfc))
+        a=[(one,zero,zero) if x<23 else (zero,one,zero) for y in range(h) for x in range(w)]
+        b=[(zero,low,zero) if x<23 else (zero,one,zero) for y in range(h) for x in range(w)]
+        pa,pb=proxy(a,w,h),proxy(b,w,h)
+        self.assertEqual(fbp([pa]),(0,643))
+        self.assertEqual(fbp([pb]),(0,811))
+        self.assertEqual(fbp([pa,pb]),(1,811))
+        values=[max(rgb) for rgb in a+b]
+        self.assertEqual((sum(values)*100000/len(values)+Fraction(1,2)).__floor__(),99678)
+        decimal_values=[D(v.numerator)/D(v.denominator) for v in values]
+        self.assertEqual(distribution(decimal_values,[1,5,10,25,50,75,90,95,99],1),
+                         [98152,0,255,100000,100000,100000,100000,100000,100000])
 
     def test_proxy_and_fbp(self):
         a = [(Fraction(1,2),)*3]*50
