@@ -285,7 +285,9 @@ class MoonlightMediaCodecRenderer(
                                   fill: (java.nio.ByteBuffer) -> Unit): Boolean {
         val decoder = codec ?: return false
         return try {
-            val index = decoder.dequeueInputBuffer(if (directSubmit) 500L else 3_000L)
+            val timeout = moonlightDecoderInputTimeoutUs(requested.pacing, decodedFps, directSubmit,
+                flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0)
+            val index = decoder.dequeueInputBuffer(timeout)
             if (index < 0) return false
             val buffer = decoder.getInputBuffer(index)
             if (buffer == null || length > buffer.capacity()) {
@@ -313,6 +315,10 @@ class MoonlightMediaCodecRenderer(
                     if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) pacer.reset()
                     continue
                 }
+                if (info.size <= 0 || info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                    decoder.releaseOutputBuffer(index, false)
+                    continue
+                }
                 var pts = info.presentationTimeUs
                 var size = info.size
                 // Keep the newest ready picture if the decoder has accumulated a backlog.
@@ -325,6 +331,12 @@ class MoonlightMediaCodecRenderer(
                     if (newer < 0) {
                         if (newer == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) pacer.reset()
                         break
+                    }
+                    // Metadata or empty output must not displace a ready picture.
+                    if (next.size <= 0 || next.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                        decoder.releaseOutputBuffer(newer, false)
+                        now = System.nanoTime()
+                        continue
                     }
                     decoder.releaseOutputBuffer(index, false)
                     dropped.incrementAndGet()
