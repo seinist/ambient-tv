@@ -433,6 +433,9 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
         let n=u32(max(size.x*size.y,1));
         let normalized=(best_raw*64u/u32(select(1,4,CODE_MAX==1023)))/n;
         fields[index]=vec4i(best_vec,i32(normalized),PEL);
+        // Preserve the complete selected luma + weighted chroma metric
+        // for the artifact mask; the legacy confidence word stays luma-only.
+        fields[4u*geometry.z*gh+3u+index]=vec4i(i32(best_sad),0,0,0);
     }
 }
 // Global scene gate on device. Both directional residuals must be
