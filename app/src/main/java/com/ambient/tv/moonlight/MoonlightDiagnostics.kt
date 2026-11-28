@@ -18,11 +18,13 @@ internal fun moonlightBoundedText(input: CharSequence): String = buildString {
 }
 
 /** Explicit, redacted diagnostic snapshot. No account, host, app, or clipboard contents. */
-internal fun moonlightDiagnosticReport(metrics: MoonlightStreamMetrics, displayHdr10: Boolean, displayMode: String): String =
+internal fun moonlightDiagnosticReport(metrics: MoonlightStreamMetrics, displayHdr10: Boolean, displayMode: String,
+                                       generation: Long = 0L): String =
     buildString {
         val video = metrics.video
         val audio = metrics.audio
         appendLine("Moonlight diagnostics v1")
+        appendLine("session_generation=$generation sample_ns=${metrics.sampledAtNanos}")
         appendLine("display_mode=$displayMode display_hdr10_capable=$displayHdr10")
         appendLine("decoder=${video.decoder} mime=${video.mime} size=${video.width}x${video.height} fps=${video.fps}")
         appendLine("hdr_signaled=${video.hdr} decoder_hdr_evidence=${video.hdrOutputEvidence} color_standard=${video.outputColorStandard} color_transfer=${video.outputColorTransfer} color_range=${video.outputColorRange} hdr_static_bytes=${video.outputHdrStaticBytes}")

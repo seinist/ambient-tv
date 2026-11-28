@@ -229,3 +229,30 @@ portable end-to-end hardware zero-copy compressed path is not available
 through this API; claiming it by using a direct ByteBuffer would be incorrect.
 Keep the bounded one-copy compressed path and direct Surface output until
 a vendor-supported externally importable compressed input path is available.
+
+### Reproducible measurement report
+
+Copy two diagnostic snapshots from the same running stream, at least 60 seconds
+apart, and save them as local text files. Then run:
+
+```bash
+python3 scripts/moonlight_device_validation.py before.txt after.txt --expected-hdr hdr10
+```
+
+For external input-to-photon measurements, provide camera frame indices
+(input indicator activation and first visible response), one event per CSV row:
+
+```csv
+input_frame,presented_frame
+120,128
+```
+
+```bash
+python3 scripts/moonlight_device_validation.py before.txt after.txt \
+  --expected-hdr hdr10 --camera-csv camera.csv --camera-fps 240
+```
+
+Use at least 30 actual events (the row above only illustrates the format).
+The script rejects session changes, counter resets and insufficient elapsed
+time, and reports missing measurements as unknown. Keep the camera footage
+and color-meter/HDMI observations alongside each report.

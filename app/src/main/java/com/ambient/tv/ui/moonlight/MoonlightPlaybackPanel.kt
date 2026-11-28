@@ -143,9 +143,9 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                             // content URIs or intents to text, or send clipboard data automatically.
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                             val text = runCatching {
-                                if (clipboard?.primaryClipDescription?.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) == true)
-                                    clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text
-                                else null
+                                clipboard?.primaryClip?.takeIf {
+                                    it.description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) && it.itemCount > 0
+                                }?.getItemAt(0)?.text
                             }.getOrNull()
                             if (text != null) message = moonlightBoundedText(text)
                         },
@@ -232,13 +232,14 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     val context = LocalContext.current
                     TvActionButton(
                         text = stringResource(R.string.moonlight_copy_diagnostics),
-                        enabled = video.width > 0,
+                        enabled = video.width > 0 && metrics.sampledAtNanos > 0 &&
+                            status.phase == com.ambient.tv.moonlight.MoonlightStreamPhase.STREAMING,
                         onClick = {
                             // Explicit local export: no host names, IDs, pairing data or text.
                             val report = com.ambient.tv.moonlight.moonlightDiagnosticReport(metrics,
-                                displayResult.hdr10, displayResult.mode?.label.orEmpty())
+                                displayResult.hdr10, displayResult.mode?.label.orEmpty(), detailed.generation)
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                            clipboard?.setPrimaryClip(ClipData.newPlainText("Moonlight diagnostics", report))
+                            runCatching { clipboard?.setPrimaryClip(ClipData.newPlainText("Moonlight diagnostics", report)) }
                         },
                     )
                 }

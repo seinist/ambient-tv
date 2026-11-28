@@ -803,7 +803,7 @@ class MoonlightStreamEngine @Inject constructor(
                                 rtt?.let { it.toInt().takeIf { n -> n >= 0 } }, fps.coerceAtLeast(0.0),
                                 presentedFps.coerceAtLeast(0.0), pendingVideo.coerceAtLeast(0), session.networkPoor,
                                 session.inputLatency.p95Ms(), session.inputMailbox.depth(),
-                                queueBalance.differenceMs, queueBalance.reductionMs))
+                                queueBalance.differenceMs, queueBalance.reductionMs, sampledAtNanos = now))
                     }
                 }
             }

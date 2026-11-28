@@ -65,4 +65,5 @@ data class MoonlightStreamMetrics(
     val pendingInputs: Int = 0,
     val avQueueDifferenceMs: Double? = null,
     val audioQueueReductionMs: Int = 0,
+    val sampledAtNanos: Long = 0L,
 )
