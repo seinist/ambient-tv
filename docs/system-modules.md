@@ -741,6 +741,14 @@ libplacebo must match its recipe checksum. The final source archive is
 stream-checked against the tarball inventory. Unmatched recipe evidence is
 explicitly marked for review, not claimed to be verified source correspondence.
 
+Moonlight's final integration seam now also guards application catalogs,
+host verification/proofs, artwork and remote quit operations against an
+unavailable module. Local trust cleanup remains usable without the native
+engine. Native builds require the entire reconciliation script to pass in
+check-only mode, not merely a matching feature flag. The reviewed source
+anchors are compatible with PR #494 head d1e345c3423c8086adb967b868c01208b3888d51;
+the upstream branch is not merged or modified by this preparation.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

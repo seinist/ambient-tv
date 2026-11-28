@@ -40,12 +40,37 @@ CHANGES = {
          "if (!MoonlightFeature.nativeAvailable || !surface.isValid || appId <= 0 || !prefs.moonlightEnabled) return false"),
     ],
     "app/src/moonlight/java/com/ambient/tv/moonlight/MoonlightSystemTransport.kt": [
-        ("    val available = true", "    val available: Boolean get() = MoonlightFeature.nativeAvailable"),
+        ("    val available = true",
+         "    val available: Boolean get() = MoonlightFeature.nativeAvailable\n"
+         "    private fun requireAvailable() { check(available) { \"Moonlight module unavailable\" } }"),
         ("    fun newPairingPin(): String = backend.pairingPin()",
-         "    fun newPairingPin(): String { check(available); return backend.pairingPin() }"),
+         "    fun newPairingPin(): String { requireAvailable(); return backend.pairingPin() }"),
         ("    suspend fun pair(hostId: String, pin: String): MoonlightPairResult = backend.pair(hostId, pin)",
          "    suspend fun pair(hostId: String, pin: String): MoonlightPairResult =\n"
          "        if (available) backend.pair(hostId, pin) else MoonlightPairResult.Unavailable"),
+        ("    suspend fun applications(hostId: String): MoonlightAppCatalog = backend.loadApplications(hostId)",
+         "    suspend fun applications(hostId: String): MoonlightAppCatalog {\n"
+         "        requireAvailable(); return backend.loadApplications(hostId)\n"
+         "    }"),
+        ("    suspend fun verify(hostId: String): String = backend.verifiedHost(hostId).identity",
+         "    suspend fun verify(hostId: String): String {\n"
+         "        requireAvailable(); return backend.verifiedHost(hostId).identity\n"
+         "    }"),
+        ("    suspend fun proof(hostId: String): MoonlightHostProof = backend.verifiedHost(hostId).let {\n"
+         "        MoonlightHostProof(it.identity, it.runningAppId)\n"
+         "    }",
+         "    suspend fun proof(hostId: String): MoonlightHostProof {\n"
+         "        requireAvailable()\n"
+         "        val host = backend.verifiedHost(hostId)\n"
+         "        return MoonlightHostProof(host.identity, host.runningAppId)\n"
+         "    }"),
+        ("    suspend fun artwork(hostId: String, appId: Int): ByteArray = backend.loadArtwork(hostId, appId)",
+         "    suspend fun artwork(hostId: String, appId: Int): ByteArray {\n"
+         "        requireAvailable(); return backend.loadArtwork(hostId, appId)\n"
+         "    }"),
+        ("    suspend fun quitRemoteApp(hostId: String, expectedAppId: Int): Boolean = backend.quitRemoteApp(hostId, expectedAppId)",
+         "    suspend fun quitRemoteApp(hostId: String, expectedAppId: Int): Boolean =\n"
+         "        available && backend.quitRemoteApp(hostId, expectedAppId)"),
     ],
     "app/src/main/java/com/ambient/tv/ui/moonlight/MoonlightSettingsViewModel.kt": [
         ("    private var pairJob: Job? = null",

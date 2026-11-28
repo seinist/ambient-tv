@@ -22,6 +22,21 @@ class MoonlightModuleHostTest(unittest.TestCase):
             self.assertEqual(0, moonlight.reconcile(root, check=True))
             self.assertEqual(0, moonlight.reconcile(root))
 
+    def test_transport_operations_cannot_bypass_module_availability(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.fixture(root)
+            moonlight.reconcile(root)
+            path = root / "app/src/moonlight/java/com/ambient/tv/moonlight/MoonlightSystemTransport.kt"
+            text = path.read_text()
+            self.assertEqual(5, text.count("requireAvailable()") - 1)
+            self.assertIn("available && backend.quitRemoteApp", text)
+            self.assertIn("else MoonlightPairResult.Unavailable", text)
+            # Even one regressed guard invalidates the complete build seam.
+            path.write_text(text.replace("requireAvailable(); return backend.loadArtwork", "return backend.loadArtwork"))
+            with self.assertRaises(ValueError):
+                moonlight.reconcile(root, check=True)
+
     def test_drift_never_partially_modifies_other_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

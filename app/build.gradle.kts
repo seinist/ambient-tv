@@ -175,10 +175,12 @@ val moonlightModuleRequested = providers.gradleProperty("MOONLIGHT_NATIVE")
     .let { it == "1" || it.equals("true", true) }
 val moonlightModuleBinding = if (moonlightModuleRequested) {
     check(rootProject.findProject(":moonlight_native") != null) { "Moonlight sources are not integrated" }
-    val gate = rootProject.file("app/src/main/java/com/ambient/tv/moonlight/MoonlightFeature.kt")
-    check(gate.isFile && gate.readText().contains("MoonlightModuleAvailability.isAvailable")) {
-        "Run scripts/reconcile_moonlight_module_host.py after integrating Moonlight"
-    }
+    // Validate every reviewed integration seam, not only the feature flag.
+    // A native build must never bypass the selected module at any entry point.
+    providers.exec {
+        commandLine("python3", rootProject.file("scripts/reconcile_moonlight_module_host.py").absolutePath,
+            "--root", rootProject.projectDir.absolutePath, "--check")
+    }.result.get().assertNormalExitValue()
     providers.exec {
         commandLine("python3", rootProject.file("scripts/patch_moonlight_module_loader.py").absolutePath,
             rootProject.file("third_party/moonlight-android").absolutePath, "--fingerprint")
