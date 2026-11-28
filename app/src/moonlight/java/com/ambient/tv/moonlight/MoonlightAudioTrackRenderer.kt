@@ -142,14 +142,20 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         }
     }
 
+    override fun wantsNativeStereoDownmix(): Boolean = synchronized(lock) {
+        inputChannels != outputChannels && outputChannels == 2 && track != null
+    }
+
     override fun playDecodedAudio(audioData: ShortArray) {
         if (recovering) { lostSamples.addAndGet(audioData.size.toLong()); return }
         synchronized(lock) {
             val t = track ?: return
-            if (closing || recovering || !playing || muted || audioData.isEmpty() || audioData.size % inputChannels != 0) return
+            if (closing || recovering || !playing || muted || audioData.isEmpty()) return
+            val nativeStereo = inputChannels != outputChannels && outputChannels == 2 && audioData.size == frameSamples * 2
+            if (!nativeStereo && audioData.size % inputChannels != 0) return
             val data: ShortArray
             val length: Int
-            if (inputChannels != outputChannels) {
+            if (inputChannels != outputChannels && !nativeStereo) {
                 val frames = audioData.size / inputChannels
                 if (frames > frameSamples) return
                 // GameStream PCM uses the AudioTrack channel order: FL, FR, FC, LFE, rear, side.
