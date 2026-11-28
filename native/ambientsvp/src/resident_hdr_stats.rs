@@ -353,7 +353,7 @@ pub struct HdrScene{
 }
 impl HdrScene{
     pub(super) fn new(first:u64,end:u64,width:u32,height:u32,percentages:[u32;9])->Result<Self>{
-        if first>=end||width==0||height==0||u64::from(width)*u64::from(height)>1920*1080||
+        if first>=end||width==0||height==0||width>3840||height>2160||u64::from(width)*u64::from(height)>3840*2160||
             (end-first)>u64::MAX/(u64::from(width)*u64::from(height))/100000||
             percentages.iter().any(|&v|v>100)||percentages.windows(2).any(|p|p[0]>=p[1]){
             return Err("invalid scene interval or distribution".into());
@@ -488,7 +488,7 @@ impl TwoPass{
     pub(super) fn open(mode:u32,plan:&std::path::Path,cache:&std::path::Path,key:&str,profile:&str,w:u32,h:u32)->Result<Self>{
         if !matches!(mode,1|2)||key.len()!=64||!key.bytes().all(|v|v.is_ascii_hexdigit())||
             profile.is_empty()||profile.len()>1024||profile.bytes().any(|v|!v.is_ascii_graphic())||
-            w==0||h==0||u64::from(w)*u64::from(h)>1920*1080||plan==cache{
+            w==0||h==0||w>3840||h>2160||u64::from(w)*u64::from(h)>3840*2160||plan==cache{
             return Err("invalid two-pass identity or geometry".into());
         }
         let manifest=read_bounded(plan,2_000_000)?;
