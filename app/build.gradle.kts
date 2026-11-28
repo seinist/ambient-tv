@@ -544,7 +544,12 @@ if (modularPreview) {
         exclude("games/slang/**")
         into(filteredAssets)
     }
-    android.sourceSets.getByName("main").assets.setSrcDirs(listOf(filteredAssets.get().asFile))
+    android.sourceSets {
+        named("main") {
+            assets.directories.clear()
+            assets.directories.add(filteredAssets.get().asFile.absolutePath)
+        }
+    }
     tasks.configureEach {
         if (name == "preBuild" || (name.startsWith("merge") && name.endsWith("Assets"))) {
             dependsOn(prepareModularAssets)
