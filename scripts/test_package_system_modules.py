@@ -162,6 +162,31 @@ class SystemModulePackageTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "binding fingerprint"):
                 packages.native_module(root, "vlc", 2, [apk], [notice])
 
+    def test_svp_libretro_and_shaders_require_matching_native_contract(self):
+        for module in ("svp", "libretrodroid", "shaders"):
+            with self.subTest(module=module), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                apk = root / "full.apk"
+                notice = root / "NOTICE"
+                notice.write_text("test")
+                name = packages.NATIVE_ROOTS[module][0]
+                with zipfile.ZipFile(apk, "w") as archive:
+                    for abi in packages.ABIS:
+                        archive.writestr(f"lib/{abi}/{name}", abi.encode())
+                with self.assertRaisesRegex(ValueError, "binding fingerprint"):
+                    packages.native_module(root, module, 1, [apk], [notice])
+                with mock.patch.object(packages, "native_dependencies", return_value={"libc.so"}), \
+                     mock.patch.object(packages, "shader_assets", return_value={"assets/games/slang/a.slangp": b"preset"}):
+                    entries = packages.native_module(root, module, 1, [apk], [notice], "b" * 64)
+                self.assertEqual(len(entries), 4)
+                for entry in entries:
+                    self.assertEqual(entry["hostBindingSha256"], "b" * 64)
+                    with zipfile.ZipFile(root / entry["asset"]) as archive:
+                        expected = {"lib/" + name, "licenses/NOTICE"}
+                        if module == "shaders":
+                            expected.add("assets/games/slang/a.slangp")
+                        self.assertEqual(set(archive.namelist()), expected)
+
 
 if __name__ == "__main__":
     unittest.main()
