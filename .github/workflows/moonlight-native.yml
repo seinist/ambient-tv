@@ -26,6 +26,7 @@ on:
       - 'scripts/fetch_moonlight_sources.sh'
       - 'scripts/tests/test_moonlight_fec_pool.py'
       - 'scripts/tests/test_moonlight_enet_packets.py'
+      - 'scripts/tests/test_moonlight_udp_burst.py'
       - 'scripts/patches/moonlight/**'
       - 'gradle/external-versions.properties'
       - 'settings.gradle.kts'
@@ -86,6 +87,10 @@ jobs:
         if: matrix.abi == 'arm64-v8a'
         shell: bash
         run: python3 scripts/tests/test_moonlight_enet_packets.py third_party/moonlight-android/app/src/main/jni/moonlight-core/moonlight-common-c/enet
+      - name: Test bounded video UDP burst receive on loopback
+        if: matrix.abi == 'arm64-v8a'
+        shell: bash
+        run: python3 scripts/tests/test_moonlight_udp_burst.py third_party/moonlight-android/app/src/main/jni/moonlight-core/moonlight-common-c/src/VideoStream.c
       - name: Verify upstream GameStream native dependencies
         shell: bash
         run: |
