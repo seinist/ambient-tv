@@ -115,7 +115,7 @@ fun updateReadmeVersions(code: Int) {
 // versionCode comes from version.properties and goes up by one on every local build that produces
 // an APK/AAB (assemble*/bundle*/install*/package* requested). Sync, tests-only, clean and CI (CI env
 // set) leave it unchanged. The README version markers are updated alongside. -PversionCode=N overrides without touching the file. The file is not committed
-// automatically.
+// automatically. build.sh supplies a reserved -PversionCode and commits it after successful packaging.
 val versionPropertiesFile = rootProject.file("version.properties")
 val appVersionCode: Int = run {
     (project.findProperty("versionCode") as? String)?.trim()?.toIntOrNull()?.let { return@run it }
@@ -165,6 +165,7 @@ fun externalVersion(key: String): String = externalVersions.getProperty(key, "")
 
 // APK_ABI controls which release artifact is produced by :app:packageRelease.
 // all (default): arm64 + armv7 + x86 + x86_64 split APKs plus universal APK
+// arm-only: arm64-v8a and armeabi-v7a split APKs, no universal or x86 APK
 // universal: one universal APK containing all supported ABIs
 // arm64-v8a / armeabi-v7a / x86 / x86_64: one ABI-only APK
 val apkAbiMode = providers.gradleProperty("APK_ABI")
@@ -175,6 +176,7 @@ val apkAbiMode = providers.gradleProperty("APK_ABI")
     .lowercase()
 
 val selectedAbis = when (apkAbiMode) {
+    "arm-only" -> listOf("arm64-v8a", "armeabi-v7a")
     "arm64", "arm64-v8a" -> listOf("arm64-v8a")
     "arm", "armv7", "armeabi-v7a" -> listOf("armeabi-v7a")
     "x86" -> listOf("x86")

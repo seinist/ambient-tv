@@ -197,6 +197,9 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 # Signed release (when keystore.properties is present)
 ./build.sh release
 
+# ARM release only (arm64-v8a and armeabi-v7a)
+./build.sh release-arm
+
 # Private build: compile account keys from private-keys.env (git-ignored,
 # template private-keys.env.example) into the APK; Settings hide those inputs.
 # Keys inside an APK can be extracted: never publish such builds.
@@ -220,6 +223,8 @@ PRIVATE_KEYS=1 ./build.sh release
 ./build.sh cores-check
 ./build.sh cores-update
 ```
+
+Local `build.sh` APK builds reserve one build number per invocation and update `version.properties` and both README version markers only after all requested APKs and release packaging succeed. Failed builds do not advance the counter.
 
 Artifacts land under `dist/` (e.g. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`). Pre-release suffixes such as `beta`, `alpha` or `rc` keep the suffix and insert the build number before it (`ambient-tv-arm64-1.0.270-beta.apk`).
 
