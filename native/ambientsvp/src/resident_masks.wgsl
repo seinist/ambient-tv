@@ -66,11 +66,11 @@ fn sad_mask(index:u32)->i32{
     // resident path extends the reference 8-bit metric in code units.
     let sad=max(0,atomicLoad(&field[offset(sad_base(count())+index)]));
     if SAD_AREA==0{return 0;}
-    let den=AREA*10000*DEPTH_SCALE;
-    // Clamp before multiplication: 4*sad*area*255 can overflow.
-    let multiplier=4*SAD_AREA*255;
-    if sad>=den*255/multiplier{return 255;}
-    return clamp(sad*multiplier/den,0,255);
+    // App policies use 50 or 100; cancel the factor 4*area/10000
+    // before multiplying to keep the arithmetic in signed 32 bits.
+    let den=AREA*DEPTH_SCALE*select(50,25,SAD_AREA==100);
+    if sad>=den{return 255;}
+    return clamp(sad*255/den,0,255);
 }
 @compute @workgroup_size(64)
 fn finish(@builtin(global_invocation_id) id:vec3u){
