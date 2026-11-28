@@ -891,6 +891,112 @@ mod tests{
             assert_eq!(super::raw_synthesis_spirv(mode).unwrap()[0],0x07230203);
         }
     }
+    #[test]
+    #[ignore="requires Vulkan, including Mesa software Vulkan"]
+    fn resident_upstream_subpixel_filters_match_phase_planes(){
+        use wgpu::util::DeviceExt;
+        let instance=wgpu::Instance::new(&wgpu::InstanceDescriptor{
+            backends:wgpu::Backends::VULKAN,..Default::default()
+        });
+        let adapter=pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+            .expect("Vulkan adapter required");
+        let (device,queue)=pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor{
+            label:Some("SVP exact native filter phase probe"),required_features:wgpu::Features::empty(),
+            required_limits:wgpu::Limits::default().using_resolution(adapter.limits()),
+            memory_hints:wgpu::MemoryHints::MemoryUsage,
+        },None)).unwrap();
+        let (width,height)=(64u32,48u32);
+        let mut input=vec![0u8;(width*height*3/2) as usize];
+        for (i,p) in input.iter_mut().enumerate(){*p=((i*73+i/13*17+i/64*37)%256) as u8;}
+        let texture=device.create_texture(&wgpu::TextureDescriptor{
+            label:Some("phase probe input"),size:wgpu::Extent3d{width,height,depth_or_array_layers:1},
+            mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,
+            format:wgpu::TextureFormat::R8Unorm,view_formats:&[],
+            usage:wgpu::TextureUsages::TEXTURE_BINDING|wgpu::TextureUsages::COPY_DST,
+        });
+        queue.write_texture(wgpu::TexelCopyTextureInfo{texture:&texture,mip_level:0,
+            origin:wgpu::Origin3d::ZERO,aspect:wgpu::TextureAspect::All},
+            &input[..(width*height) as usize],wgpu::TexelCopyBufferLayout{
+                offset:0,bytes_per_row:Some(width),rows_per_image:Some(height)},
+            wgpu::Extent3d{width,height,depth_or_array_layers:1});
+        let view=texture.create_view(&Default::default());
+        let points=[(0u32,0u32),(4,4),(7,5),(21,19),(31,26),(58,42)];
+        // Exclude the last phase-storage row/column and SIMD spill
+        // bytes: these are layout-specific upstream canvas behavior.
+        for pel in [2u32,4]{
+            for filter in 0..=2{
+                let t=super::ResidentTuning{block:16,overlap:4,pel,radius:2,satd:1,chroma:1,lambda:64,pnew:50,scene:50,artifacts:2};
+                let mut weights=super::ResidentSearchWeights::legacy(t);weights.filter=filter;
+                let builder=svpflow1_vs::SuperBuilder::with_options(width as i32,height as i32,
+                    &format!("{{pel:{pel},gpu:0,scale:{{up:{filter}}}}}")).unwrap();
+                let reference=builder.build(&input).unwrap();
+                let plane=reference.planes()[0];
+                // Probe the same sampler compiled in the native kernel,
+                // using a small storage output rather than pixel transfers
+                // in the actual player path.
+                let mut source=super::quality_source(0,t,weights).unwrap();
+                source.push_str(r#"
+@compute @workgroup_size(1)
+fn sample_probe(@builtin(global_invocation_id) id:vec3u){
+    let hi=vec2i(geometry.xy)-vec2i(1);
+    let point=vec2i(i32(id.x),i32(id.y));
+    let phase=vec2i(i32(id.z)%PEL,i32(id.z)/PEL);
+    let value=sample_plane(ay,point*PEL+phase,hi,0u);
+    let offset=id.x+id.y*geometry.x+id.z*geometry.x*geometry.y;
+    fields[offset]=vec4i(value,0,0,0);
+}
+"#);
+                let module=device.create_shader_module(wgpu::ShaderModuleDescriptor{
+                    label:Some("upstream phase probe"),source:wgpu::ShaderSource::Wgsl(source.into())});
+                let pipeline=device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{
+                    label:None,layout:None,module:&module,entry_point:Some("sample_probe"),
+                    compilation_options:Default::default(),cache:None});
+                let size=u64::from(width*height*pel*pel)*16;
+                let output=device.create_buffer(&wgpu::BufferDescriptor{label:None,size,
+                    usage:wgpu::BufferUsages::STORAGE|wgpu::BufferUsages::COPY_SRC,mapped_at_creation:false});
+                let read=device.create_buffer(&wgpu::BufferDescriptor{label:None,size,
+                    usage:wgpu::BufferUsages::MAP_READ|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false});
+                let words:Vec<u8>=[width,height,0,0].into_iter().flat_map(u32::to_le_bytes).collect();
+                let uniform=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                    label:None,contents:&words,usage:wgpu::BufferUsages::UNIFORM});
+                let bind=device.create_bind_group(&wgpu::BindGroupDescriptor{label:None,
+                    layout:&pipeline.get_bind_group_layout(0),entries:&[
+                        wgpu::BindGroupEntry{binding:0,resource:wgpu::BindingResource::TextureView(&view)},
+                        wgpu::BindGroupEntry{binding:6,resource:output.as_entire_binding()},
+                        wgpu::BindGroupEntry{binding:7,resource:uniform.as_entire_binding()}]});
+                let mut encoder=device.create_command_encoder(&Default::default());
+                {
+                    let mut pass=encoder.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&pipeline);pass.set_bind_group(0,&bind,&[]);
+                    pass.dispatch_workgroups(width,height,pel*pel);
+                }
+                encoder.copy_buffer_to_buffer(&output,0,&read,0,size);
+                queue.submit([encoder.finish()]);
+                let slice=read.slice(..);
+                let (tx,rx)=std::sync::mpsc::channel();
+                slice.map_async(wgpu::MapMode::Read,move |r|{let _=tx.send(r);});
+                let _=device.poll(wgpu::Maintain::Wait);
+                rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap().unwrap();
+                let data=slice.get_mapped_range();
+                for phase in 0..pel*pel{
+                    for (x,y) in points{
+                        let index=(x+y*width+phase*width*height) as usize;
+                        let actual=i32::from_le_bytes(data[index*16..index*16+4].try_into().unwrap());
+                        assert_eq!(actual,i32::from(plane[index]),"pel={pel} filter={filter} phase={phase} ({x},{y})");
+                    }
+                    // Every interior sample, including negative fractional
+                    // motion represented by its preceding integer base.
+                    for y in 4..height-5{for x in 4..width-5{
+                        let index=(x+y*width+phase*width*height) as usize;
+                        let actual=i32::from_le_bytes(data[index*16..index*16+4].try_into().unwrap());
+                        assert_eq!(actual,i32::from(plane[index]),"pel={pel} filter={filter} phase={phase} ({x},{y})");
+                    }}
+                }
+                drop(data);read.unmap();
+            }
+        }
+    }
+
 }
 
 #[cfg(test)]
