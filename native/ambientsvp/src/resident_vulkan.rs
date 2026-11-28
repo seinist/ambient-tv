@@ -8,7 +8,7 @@ use std::{sync::{Arc,Mutex,atomic::{AtomicBool,AtomicU32,Ordering}},panic::{catc
 use crate::resident::{MOTION,SYNTHESIS};
 #[path="resident_hdr_stats.rs"]
 mod hdr_stats;
-use hdr_stats::{HdrWindow,HdrResult,HdrTrack,StatsJob,StatsPipelines,HdrScene,SceneResult,TwoPass};
+use hdr_stats::{HdrWindow,HdrResult,HdrTrack,StatsJob,StatsPipelines,HdrScene,SceneResult,TwoPass,LegacySceneResult};
 
 const MAX_PHASES:usize=8;
 const MAX_IN_FLIGHT:u32=4;
@@ -907,7 +907,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
     if s.is_null()||queue==vk::Queue::null()||images.is_null()||waits.is_null()||
         !matches!(count,2|3|5)||count==2&&phase!=0.0||signal==vk::Semaphore::null()||value==0||
         !phase.is_finite()||!(0.0..=1.0).contains(&phase){return -1;}
-    if !pass.is_null()&&n!=1{return -1;}
+    if !pass.is_null()&&(n==0||n>3){return -1;}
     if n>3||n>0&&(windows.is_null()||results.is_null()||rects.is_null()||ellipses.is_null()||shifts.is_null()||n>1&&(tracks.is_null()||axes.is_null())){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
         let core=&(*s).0;
@@ -944,7 +944,8 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
                 return Err("held renderer pair rejected".into());
             }
             if n>0{
-                let rc=if !pass.is_null(){ambient_svp_vk_hdr_stats_scene(pair,0,windows,n)}
+                let rc=if !pass.is_null()&&(&*pass).version()==0{ambient_svp_vk_hdr_stats_scene_legacy(pair,0,windows,tracks,axes,n)}
+                    else if !pass.is_null(){ambient_svp_vk_hdr_stats_scene(pair,0,windows,n)}
                     else if n==1{ambient_svp_vk_hdr_stats(pair,0,windows,n)}
                     else{ambient_svp_vk_hdr_stats_ellipse(pair,0,windows,tracks,axes,phase,n)};
                 if rc!=0{return Err("held HDR stats rejected".into());}
@@ -960,7 +961,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
             submitted=true;
             if ambient_svp_vk_seal(pair,fence)!=0{return Err("held renderer seal failed".into());}
             d.wait_for_fences(&[fence],true,u64::MAX).map_err(err)?;
-            if n>0{
+            if n>0&&pass.is_null(){
                 let rc=if n==1{ambient_svp_vk_hdr_read(pair,0,results,n)}
                     else{ambient_svp_vk_hdr_read_track(pair,0,results,shifts,n)};
                 if rc!=1||n>1&&(ambient_svp_vk_hdr_read_rectangles(pair,0,rects,n)!=1||
@@ -1151,6 +1152,22 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_scene(pair:*mut VulkanPair,pha
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
 }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_scene_legacy(pair:*mut VulkanPair,phase:u32,
+    windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],count:u32)->i32{
+    if pair.is_null()||windows.is_null()||!(1..=3).contains(&count)||count>1&&(tracks.is_null()||axes.is_null()){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&mut *pair};let i=phase as usize;
+        if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
+            p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
+        let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
+        let tracking=if count>1{Some((unsafe{std::slice::from_raw_parts(tracks,count as usize)},0.0,true))}else{None};
+        let ellipses=if count>1{Some(unsafe{std::slice::from_raw_parts(axes,count as usize)})}else{None};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,tracking,ellipses,true)else{return -1;};
+        unsafe{job.record(p.command,p.core.width,p.core.height);}
+        p.hdr_jobs[i]=Some(job);0
+    })).unwrap_or(-1)
+}
 // Read compact metadata only once the real submission fence signals.
 // Never read GPU-produced data before completion or after pair release.
 #[unsafe(no_mangle)]
@@ -1318,6 +1335,17 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_open(mode:u32,plan:*const std::ffi
     })).unwrap_or(ptr::null_mut())
 }
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_open_version(mode:u32,version:u32,plan:*const std::ffi::c_char,
+    cache:*const std::ffi::c_char,key:*const std::ffi::c_char,profile:*const std::ffi::c_char,w:u32,h:u32)->*mut TwoPass{
+    if [plan,cache,key,profile].iter().any(|p|p.is_null()){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let (Ok(plan),Ok(cache),Ok(key),Ok(profile))=(std::ffi::CStr::from_ptr(plan).to_str(),
+            std::ffi::CStr::from_ptr(cache).to_str(),std::ffi::CStr::from_ptr(key).to_str(),std::ffi::CStr::from_ptr(profile).to_str())else{return ptr::null_mut();};
+        TwoPass::open_version(mode,version,std::path::Path::new(plan),std::path::Path::new(cache),key,profile,w,h)
+            .map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s)))
+    })).unwrap_or(ptr::null_mut())
+}
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_hdr_pass_interval(pass:*const TwoPass,index:u64,end:*mut u64)->i32{
     if pass.is_null()||end.is_null(){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
@@ -1332,6 +1360,10 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_capture(pass:*mut TwoPass,pair:*co
         if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
         match p.core.device.get_fence_status(p.fence){Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
         let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        if (&*pass).version()==0{
+            let Ok(frames)=job.scene_frames()else{return -1;};
+            return (&mut *pass).capture_legacy(index,frames).map_or(-1,|_|1);
+        }
         let Ok(frame)=job.scene_frame()else{return -1;};
         (&mut *pass).capture(index,frame).map_or(-1,|_|1)
     })).unwrap_or(-1)
@@ -1341,6 +1373,13 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_lookup(pass:*mut TwoPass,index:u64
     if pass.is_null()||out.is_null(){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
         let Ok(result)=(&mut *pass).lookup(index)else{return -1;};*out=result;1
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_lookup_legacy(pass:*mut TwoPass,index:u64,out:*mut LegacySceneResult)->i32{
+    if pass.is_null()||out.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let Ok(result)=(&mut *pass).lookup_legacy(index)else{return -1;};*out=result;1
     })).unwrap_or(-1)
 }
 #[unsafe(no_mangle)]
