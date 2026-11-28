@@ -803,6 +803,14 @@ lockfile digests, copied lockfiles, reusable source configuration and
 presence of vendored sources before module signing. This catches omitted
 workspaces and changed lockfiles; it is not proof of an offline rebuild.
 
+Cargo source verification now matches every external locked package to
+its versioned vendor directory, checks registry package checksums against
+Cargo.lock and verifies every vendored file against Cargo's
+.cargo-checksum.json. Vendor trees preserve packaged build inputs rather
+than applying normal build-output exclusions. Git revisions are pinned in
+the lockfile; independent Git-source reconstruction and offline compilation
+are still separate validation steps.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

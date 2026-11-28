@@ -88,17 +88,39 @@ class CorrespondingSourceTest(unittest.TestCase):
         lock = str(Path(manifest).with_name("Cargo.lock"))
         original = {lock: "a" * 64}
         rows = [{"workspace": "workspace-0", "manifest": manifest, "lockSha256": "a" * 64}]
+        prefix = "workspace-0/vendor/crate-1.0.0/"
         files = {"workspace-0/Cargo.lock": "a" * 64,
                  "workspace-0/cargo-source-config.toml": "b" * 64,
-                 "workspace-0/vendor/crate/src/lib.rs": None}
-        sources.validate_cargo_inventory("svp", rows, files, original)
+                 prefix + "Cargo.toml": "c" * 64,
+                 prefix + "src/lib.rs": "d" * 64,
+                 prefix + ".cargo-checksum.json": "e" * 64}
+        checksums = {prefix + ".cargo-checksum.json": {
+            "package": "f" * 64, "files": {"Cargo.toml": "c" * 64, "src/lib.rs": "d" * 64}}}
+        locks = {"workspace-0/Cargo.lock": {"package": [{"name": "crate", "version": "1.0.0",
+                  "source": "registry+https://github.com/rust-lang/crates.io-index", "checksum": "f" * 64}]}}
+        sources.validate_cargo_inventory("svp", rows, files, original, checksums, locks)
         for invalid in ({**files, "workspace-0/Cargo.lock": "c" * 64},
                         {key: value for key, value in files.items() if "/vendor/" not in key},
+                        {**files, prefix + "src/lib.rs": "0" * 64},
+                        {key: value for key, value in files.items() if not key.endswith("src/lib.rs")},
+                        {**files, prefix + "extra": "0" * 64},
                         {**files, "workspace-9/vendor/crate/lib.rs": None}):
             with self.assertRaises(ValueError):
-                sources.validate_cargo_inventory("svp", rows, invalid, original)
+                sources.validate_cargo_inventory("svp", rows, invalid, original, checksums, locks)
         with self.assertRaises(ValueError):
-            sources.validate_cargo_inventory("svp", [], files, original)
+            sources.validate_cargo_inventory("svp", [], files, original, checksums, locks)
+
+    def test_vendor_source_files_preserve_build_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "build").mkdir()
+            (root / "build" / "helper.c").write_text("source")
+            (root / "fixture.a").write_bytes(b"fixture")
+            self.assertEqual({"build/helper.c", "fixture.a"},
+                {path.as_posix() for _, path in sources.source_files(root, preserve_vendor=True)})
+            (root / ".env").write_text("unsafe")
+            with self.assertRaises(ValueError):
+                list(sources.source_files(root, preserve_vendor=True))
 
     def maven_fixture(self, directory, identities):
         for identity in identities:

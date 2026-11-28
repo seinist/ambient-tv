@@ -59,18 +59,36 @@ def safe_path(relative):
                    for part in relative.parts) and relative.suffix.lower() not in EXCLUDED_SUFFIXES
 
 
-def source_files(root):
+def source_files(root, preserve_vendor=False):
     # For git worktrees include tracked files as modified by the actual build,
     # including recursively checked-out submodules. Also capture generated
     # source/patches and non-git source trees from explicitly selected roots.
     for directory, dirs, names in os.walk(root, followlinks=False):
         base = Path(directory)
-        dirs[:] = sorted(d for d in dirs if safe_path((base / d).relative_to(root)) and
-                         not (base / d).is_symlink() and d not in ("build", "prefix", "install"))
+        if preserve_vendor:
+            # Cargo's checksums cover package inputs, including directories
+            # named build and any packaged binary fixtures. Do not silently
+            # apply the ordinary build-output exclusions to vendor sources.
+            dirs[:] = sorted(dirs)
+            for name in dirs + names:
+                item = base / name
+                relative = item.relative_to(root)
+                if (item.is_symlink() or not safe_archive_name(relative.as_posix())
+                        or any(part.lower() in (".git", ".env", ".netrc", "credentials",
+                                               "local.properties", "keystore.properties", "private-keys.env",
+                                               "gradle.properties.local") for part in relative.parts)
+                        or item.suffix.lower() in (".jks", ".keystore", ".p12", ".pfx", ".key")):
+                    raise ValueError(f"Unsafe Cargo vendor input: {relative}")
+        else:
+            dirs[:] = sorted(d for d in dirs if safe_path((base / d).relative_to(root)) and
+                             not (base / d).is_symlink() and d not in ("build", "prefix", "install"))
         for name in sorted(names):
             path = base / name
             relative = path.relative_to(root)
-            if not safe_path(relative) or path.is_symlink() or not path.is_file():
+            if preserve_vendor:
+                if not path.is_file():
+                    raise ValueError(f"Invalid Cargo vendor input: {relative}")
+            elif not safe_path(relative) or path.is_symlink() or not path.is_file():
                 continue
             yield path, relative
 
@@ -108,6 +126,8 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     cargo_root = cargo_roots[0] if cargo_roots else None
     cargo_inventory = None
     cargo_files = {}
+    cargo_checksums = {}
+    cargo_locks = {}
     original_locks = {str(Path(manifest).with_name("Cargo.lock")): None
                       for manifest in CARGO_MANIFESTS.get(module, ())}
     if not path.is_file() or path.is_symlink() or path.name != descriptor.get("asset") or type(descriptor.get("size")) is not int or not 0 < path.stat().st_size <= MAX_SOURCE_BYTES or path.stat().st_size != descriptor["size"] or digest(path) != descriptor.get("sha256"):
@@ -148,6 +168,7 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                 workspace_path = f"{root}/{relative}"
                 if workspace_path in original_locks:
                     original_locks[workspace_path] = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
+                member_digest = None
                 if root == cargo_root:
                     if relative == "workspaces.json":
                         if not 0 < member.size <= MAX_INVENTORY_BYTES:
@@ -156,9 +177,22 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                     elif re.fullmatch(r"workspace-[0-9]+/(Cargo.lock|cargo-source-config.toml)", relative):
                         if not 0 < member.size <= 16 * 1024**2:
                             raise ValueError("Invalid vendored Cargo metadata")
-                        cargo_files[relative] = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
+                        contents = archive.extractfile(member).read()
+                        member_digest = hashlib.sha256(contents).hexdigest()
+                        cargo_files[relative] = member_digest
+                        if relative.endswith("/Cargo.lock"):
+                            import tomllib
+                            cargo_locks[relative] = tomllib.loads(contents.decode("utf-8"))
                     elif re.match(r"^workspace-[0-9]+/vendor/", relative):
-                        cargo_files[relative] = None
+                        if relative.endswith("/.cargo-checksum.json"):
+                            if not 0 < member.size <= 16 * 1024**2:
+                                raise ValueError("Invalid Cargo package checksum metadata")
+                            contents = archive.extractfile(member).read()
+                            member_digest = hashlib.sha256(contents).hexdigest()
+                            cargo_checksums[relative] = json.loads(contents)
+                        else:
+                            member_digest = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
+                        cargo_files[relative] = member_digest
                     else:
                         raise ValueError("Unexpected vendored Cargo member")
                 if module == "smarttube" and root.endswith("/resolved-j2v8-provenance") and name == f"upstream/{root}/j2v8-provenance.json":
@@ -178,7 +212,7 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                     if notice_hashes is not None:
                         relative = name.removeprefix(f"upstream/{root}/")
                         notice_hashes[f"source-{root_indices[root]}/{relative}"] = (
-                            member.size, hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest())
+                            member.size, member_digest or hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest())
         # Consume the remaining gzip stream, including its checksum, rather
         # than accepting an archive truncated after the tar end marker.
         trailing = 0
@@ -191,7 +225,7 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     if any(tuple(actual[name]) != expected[name] for name in expected):
         raise ValueError("Source root file or notice count mismatch")
     if module in CARGO_MANIFESTS:
-        validate_cargo_inventory(module, cargo_inventory, cargo_files, original_locks)
+        validate_cargo_inventory(module, cargo_inventory, cargo_files, original_locks, cargo_checksums, cargo_locks)
     if module == "smarttube":
         from package_system_modules import ABIS
         if not isinstance(j2v8, dict) or j2v8.get("schema") != 1 or j2v8.get("nativeSourceCorrespondence") != "unverified":
@@ -218,7 +252,7 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     return j2v8
 
 
-def validate_cargo_inventory(module, inventory, files, original_locks):
+def validate_cargo_inventory(module, inventory, files, original_locks, checksums, locks):
     """Match every archived resolved workspace to its original Cargo.lock."""
     if not isinstance(inventory, list) or not inventory:
         raise ValueError("Missing Cargo workspace inventory")
@@ -241,10 +275,69 @@ def validate_cargo_inventory(module, inventory, files, original_locks):
         if not files.get(f"{prefix}/cargo-source-config.toml"):
             raise ValueError("Missing reusable Cargo source configuration")
         vendor = f"{prefix}/vendor/"
-        if not any(path.startswith(vendor) for path in files):
-            raise ValueError("Missing vendored Cargo sources")
+        lock = locks.get(f"{prefix}/Cargo.lock")
+        if not isinstance(lock, dict):
+            raise ValueError("Missing parsed Cargo lockfile")
+        verify_vendor_packages(vendor, files, checksums, lock)
     if seen != expected_manifests or any(path.split("/", 1)[0] not in prefixes for path in files):
         raise ValueError("Incomplete Cargo workspace inventory")
+
+
+def verify_vendor_packages(prefix, files, checksums, lock):
+    """Require every locked external crate and every file listed by Cargo.
+
+    Registry archive checksums are bound to Cargo.lock; Git dependencies
+    carry a null package checksum, as generated by cargo vendor. Their
+    revision remains recorded in the lockfile, not independently rebuilt.
+    """
+    required = {}
+    packages = lock.get("package")
+    if not isinstance(packages, list):
+        raise ValueError("Missing Cargo lock package list")
+    for package in packages:
+        if not isinstance(package, dict):
+            raise ValueError("Invalid Cargo lock package")
+        source = package.get("source")
+        if source is None:
+            continue
+        name, version = package.get("name"), package.get("version")
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name) or not isinstance(version, str) or not re.fullmatch(r"[0-9A-Za-z.+-]+", version):
+            raise ValueError("Invalid locked Cargo package identity")
+        identity = f"{name}-{version}"
+        if not isinstance(source, str) or identity in required:
+            raise ValueError("Ambiguous locked Cargo package identity")
+        checksum = package.get("checksum")
+        if source.startswith("registry+"):
+            if not isinstance(checksum, str) or not re.fullmatch(r"[a-f0-9]{64}", checksum):
+                raise ValueError("Missing locked registry checksum")
+        elif source.startswith("git+"):
+            if checksum is not None or not re.search(r"#[a-f0-9]{40}$", source):
+                raise ValueError("Missing pinned Cargo Git revision")
+        else:
+            raise ValueError("Unsupported Cargo dependency source")
+        required[identity] = checksum
+    actual = {}
+    for path, digest_value in files.items():
+        if not path.startswith(prefix):
+            continue
+        relative = path.removeprefix(prefix)
+        crate, separator, file = relative.partition("/")
+        if not separator or not file:
+            raise ValueError("Unexpected Cargo vendor member")
+        actual.setdefault(crate, {})[file] = digest_value
+    if not required or set(actual) != set(required):
+        raise ValueError("Vendored Cargo package set differs from lockfile")
+    for crate, package_files in actual.items():
+        checksum_path = f"{prefix}{crate}/.cargo-checksum.json"
+        metadata = checksums.get(checksum_path)
+        if not isinstance(metadata, dict) or set(metadata) != {"files", "package"} or metadata["package"] != required[crate]:
+            raise ValueError(f"Cargo package checksum differs from lockfile: {crate}")
+        declared = metadata["files"]
+        observed = {name: value for name, value in package_files.items() if name != ".cargo-checksum.json"}
+        if not isinstance(declared, dict) or not declared or "Cargo.toml" not in declared or any(
+                not safe_archive_name(name) or not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value)
+                for name, value in declared.items()) or observed != declared:
+            raise ValueError(f"Missing, extra or changed vendored Cargo file: {crate}")
 
 
 def safe_archive_name(name):
@@ -571,7 +664,7 @@ def collect(module, commit, output, notices, extra_roots=()):
             for index, (name, root) in enumerate(roots):
                 count = 0
                 found = 0
-                for path, relative in source_files(root):
+                for path, relative in source_files(root, preserve_vendor=root.name == "resolved-cargo-source"):
                     add_file(archive, path, f"upstream/{name}/{relative.as_posix()}", budget)
                     count += 1
                     if NOTICE.match(path.name) and 0 < path.stat().st_size <= 4 * 1024 * 1024:
