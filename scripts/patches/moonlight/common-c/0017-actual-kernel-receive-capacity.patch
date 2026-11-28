@@ -1,0 +1,38 @@
+diff --git a/src/VideoStream.c b/src/VideoStream.c
+--- a/src/VideoStream.c
++++ b/src/VideoStream.c
+@@ -199,6 +199,12 @@
+     videoReceiveStartedMs = PltGetMillis();
+     unsigned int resizeCheck = 0;
+     unsigned int appliedTier = 0;
++    int effectiveBytes = 0;
++    socklen_t effectiveLen = sizeof(effectiveBytes);
++    if (getsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&effectiveBytes, &effectiveLen) != 0) effectiveBytes = 0;
++#if defined(__linux__)
++    effectiveBytes /= 2;
++#endif
+ #if defined(__ANDROID__)
+     bool useBatch = !useSelect;
+     char* batchBuffers[VIDEO_UDP_BATCH] = {0};
+@@ -225,13 +231,20 @@
+             unsigned int tier = __atomic_load_n(&adaptiveVideoBufferTier, __ATOMIC_RELAXED);
+             if (tier != appliedTier) {
+                 int bytes = videoReceiveBufferBytes(StreamConfig.bitrate, StreamConfig.fps, StreamConfig.packetSize, tier);
+-                if (setsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&bytes, sizeof(bytes)) == 0) {
++                bool alreadySufficient = effectiveBytes > 0 &&
++                    (tier < appliedTier ? effectiveBytes <= bytes : effectiveBytes >= bytes);
++                if (!alreadySufficient && setsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&bytes, sizeof(bytes)) == 0) {
+                     int effective = 0;
+                     socklen_t effectiveLen = sizeof(effective);
+                     if (getsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&effective, &effectiveLen) == 0) {
+                         // Linux reports double the requested size (kernel overhead accounting).
+                         // Log both; do not assume the kernel accepted the requested capacity.
+                         Limelog("Video UDP receive capacity: %d requested, %d kernel-reported bytes\n", bytes, effective);
++#if defined(__linux__)
++                        effectiveBytes = effective / 2;
++#else
++                        effectiveBytes = effective;
++#endif
+                     }
+                 }
+                 appliedTier = tier; // Avoid repeated syscalls if the OS rejects the request.

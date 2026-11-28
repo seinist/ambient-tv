@@ -34,6 +34,7 @@ on:
       - 'scripts/tests/test_moonlight_udp_burst.py'
       - 'scripts/tests/test_moonlight_direct_and_simd.py'
       - 'scripts/tests/test_moonlight_nanors.py'
+      - 'scripts/tests/test_moonlight_opus_compare.py'
       - 'scripts/patches/moonlight/**'
       - 'gradle/external-versions.properties'
       - 'settings.gradle.kts'
@@ -112,6 +113,17 @@ jobs:
       - name: Verify NanoRS reconstruction on host and ARM64 NEON
         if: matrix.abi == 'arm64-v8a'
         run: python3 scripts/tests/test_moonlight_nanors.py third_party/moonlight-android/app/src/main/jni/moonlight-core/moonlight-common-c/nanors --arm64
+      - name: Compare baseline and optimized pinned Opus on host
+        if: matrix.abi == 'arm64-v8a'
+        run: |
+          sudo apt-get install -y --no-install-recommends clang lld
+          python3 scripts/tests/test_moonlight_opus_compare.py third_party/moonlight-android/app/src/main/jni/moonlight-core/opus/source --report moonlight-opus-report.json
+      - uses: actions/upload-artifact@v5
+        if: matrix.abi == 'arm64-v8a' && always()
+        with:
+          name: moonlight-opus-comparison
+          path: moonlight-opus-report.json
+          if-no-files-found: ignore
       - name: Verify upstream GameStream native dependencies
         shell: bash
         run: |

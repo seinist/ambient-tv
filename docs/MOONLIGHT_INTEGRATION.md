@@ -174,3 +174,9 @@ Sunshine, and the current-game check and remote quit are separate host requests.
   playback, gaming, settings, backup or Android Auto regression.
 
 **Do not merge or enable Moonlight in normal releases until these gates pass.**
+
+### Follow-up audit gates
+
+- Native decode-unit bounds and JNI callback failures are checked before allocation; vendor non-direct buffers use a bounded synchronous array fallback. PCM writes must remain channel-aligned, including partial tails. The queue estimator extrapolates only after observed playback progress.
+- Socket capacity is read back from SO_RCVBUF; Linux bookkeeping doubles the reported capacity, which is normalized for tier changes. Artwork lookups and proof reuse are bounded and identity-scoped. Launch and quit still require a fresh authenticated probe.
+- The host Opus comparison builds a separate O2 baseline and O3/ThinLTO candidate, runs upstream API/decode tests and compares identical multichannel bitstreams and loss concealment, reporting median CPU time. These are host measurements, not Shield/Android device benchmarks or a substitute for official external conformance vectors.
