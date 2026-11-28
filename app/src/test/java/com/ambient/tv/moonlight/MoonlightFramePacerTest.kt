@@ -19,6 +19,14 @@ class MoonlightFramePacerTest {
         assertFalse(pacer.shouldDrain(1000000L, 1001000000L))
         assertTrue(pacer.shouldDrain(1000000L, 1100000000L))
     }
+    @Test fun decoderWaitsScaleWithoutBlockingDirectIngress() {
+        assertEquals(500L, moonlightDecoderInputTimeoutUs("latency", 120, true, false))
+        assertEquals(3_000L, moonlightDecoderInputTimeoutUs("latency", 120, false, true))
+        assertEquals(3_000L, moonlightDecoderInputTimeoutUs("smooth", 120, false, false))
+        assertTrue(moonlightDecoderInputTimeoutUs("latency", 120, false, false) <
+            moonlightDecoderInputTimeoutUs("latency", 30, false, false))
+        assertTrue(moonlightDecoderInputTimeoutUs("latency", 240, false, false) >= 750L)
+    }
     @Test fun resetDiscardsPreviousPresentationSchedule() {
         val pacer = MoonlightFramePacer("smooth", 60)
         pacer.presentationTime(1_000_000_000L)
