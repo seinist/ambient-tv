@@ -677,6 +677,13 @@ bound to the exact release tag and filename, redirects are limited to
 known HTTPS GitHub asset hosts, and the installer still checks the signed
 APK identity and rejects downgrades. No automatic switch to Full occurs.
 
+After an APK variant or host API change, the selection reader authenticates
+the stored manifest and archive even if the previous ABI, SDK or host API
+no longer matches. Full may use its bundled engine for this verified
+incompatibility; Modular reports the unavailable engine and retains the
+selection for recovery. Corruption still fails closed, and runtime loading
+and rollback retain strict compatibility checks.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

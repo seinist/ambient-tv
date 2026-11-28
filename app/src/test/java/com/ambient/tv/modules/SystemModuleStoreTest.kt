@@ -24,9 +24,9 @@ class SystemModuleStoreTest {
     }.generateKeyPair()
     private val module = SystemModule.MONOGRAM
     private val tag = "modules-test"
-    private fun store() = SystemModuleStore(
+    private fun store(abi: String = "arm64-v8a", hostApi: Int = 1, sdk: Int = 37) = SystemModuleStore(
         folder.root, Base64.getEncoder().encodeToString(key.public.encoded),
-        "arm64-v8a", 1, 37,
+        abi, hostApi, sdk,
     )
 
     private fun zip(vararg names: String): ByteArray = ByteArrayOutputStream().also { bytes ->
@@ -133,6 +133,28 @@ class SystemModuleStoreTest {
         val archive = install(store(), 1, zip("lib/libgood.so"))!!.archive
         archive.writeBytes(byteArrayOf(1))
         reject { store().current(module) }
+    }
+
+    @Test fun incompatibleSelectionRemainsAuthenticatedButCannotBeLoadedOrRolledBack() {
+        val original = store()
+        val previous = install(original, 1, zip("lib/libone.so"))!!
+        val current = install(original, 2, zip("lib/libtwo.so"))!!
+        for (changed in listOf(store(abi = "armeabi-v7a"), store(hostApi = 2), store(sdk = 28))) {
+            val selection = changed.currentForSelection(module)!!
+            assertEquals(current.build, selection.build)
+            assertFalse(changed.isHostCompatible(selection.build))
+            reject { changed.current(module) }
+            reject { changed.rollback(module) }
+            assertEquals(current.build, changed.selectedMetadata(module))
+        }
+        assertTrue(original.isHostCompatible(current.build))
+        assertEquals(previous.build, original.rollback(module)?.build)
+    }
+
+    @Test fun incompatibleSelectionMustStillPassArchiveAuthentication() {
+        val current = install(store(), 1, zip("lib/libgood.so"))!!
+        current.archive.writeBytes(byteArrayOf(0))
+        reject { store(hostApi = 2).currentForSelection(module) }
     }
 
     @Test fun unsignedCatalogNeverOpensPayload() {

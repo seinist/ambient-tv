@@ -195,7 +195,7 @@ internal object SystemModuleHost {
     fun selected(module: SystemModule): SystemModuleBuild? {
         return try {
             val build = if (app == null || BuildConfig.CORES_PUBLIC_KEY.isBlank()) null
-                else session.store.current(module)?.build
+                else session.store.currentForSelection(module)?.build
             SystemModuleAvailability.observeSelection(module, build?.version)
             build
         } catch (e: Exception) {
@@ -268,7 +268,7 @@ internal object SystemModuleHost {
             runCatching {
                 val candidate = selected(module)
                 if (candidate == null) null
-                else if (!session.runtime.matchesHost(module, candidate)) {
+                else if (!session.store.isHostCompatible(candidate) || !session.runtime.matchesHost(module, candidate)) {
                     SystemModuleAvailability.reportIncompatibleSelection(module, candidate.version)
                     if (SystemModuleAvailability.bundled(module)) null
                     else throw SystemModuleTrustException("Downloaded module is incompatible with installed APK")

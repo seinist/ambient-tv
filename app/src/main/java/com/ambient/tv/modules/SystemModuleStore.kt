@@ -117,6 +117,16 @@ internal class SystemModuleStore(
         readState(directory).current?.let { verify(directory, module, it) }
     }
 
+    /** Authenticate the selected archive even after an APK changes ABI/host API.
+     * This is selection evidence only, not permission to load executable code.
+     */
+    fun currentForSelection(module: SystemModule): Package? = locked(module) { directory ->
+        readState(directory).current?.let { verify(directory, module, it, requireCompatibleHost = false) }
+    }
+
+    fun isHostCompatible(build: SystemModuleBuild): Boolean =
+        build.abi in setOf(processAbi, "any") && build.hostApi == hostApi && build.minSdk <= sdk
+
     /** Deliberate user rollback; the automatic update floor never decreases. */
     fun rollback(module: SystemModule, validateCandidate: (Package) -> Unit = {}): Package? = locked(module) { directory ->
         val state = readState(directory)
@@ -152,7 +162,7 @@ internal class SystemModuleStore(
         syncDirectory(directory)
     }
 
-    private fun verify(directory: File, module: SystemModule, pointer: Pointer): Package {
+    private fun verify(directory: File, module: SystemModule, pointer: Pointer, requireCompatibleHost: Boolean = true): Package {
         if (!idPattern.matches(pointer.id)) throw SystemModuleTrustException("Invalid package pointer")
         val dir = File(directory, pointer.id)
         if (!Files.isDirectory(dir.toPath(), LinkOption.NOFOLLOW_LINKS))
@@ -162,12 +172,12 @@ internal class SystemModuleStore(
             readBounded(File(dir, "manifest.sig"), 256), publicKey, pointer.tag,
         )
         val build = pointer.build
-        if (build.module != module.id || build !in manifest.modules ||
-            build.abi !in setOf(processAbi, "any") || build.hostApi != hostApi || build.minSdk > sdk) {
-            throw SystemModuleTrustException("Stored module is no longer compatible")
-        }
+        if (build.module != module.id || build !in manifest.modules)
+            throw SystemModuleTrustException("Stored module does not match signed catalog")
         val archive = File(dir, "package.zip")
         SystemModuleArchive.verify(archive, build)
+        if (requireCompatibleHost && !isHostCompatible(build))
+            throw SystemModuleTrustException("Stored module is no longer compatible")
         return Package(archive, build)
     }
 
