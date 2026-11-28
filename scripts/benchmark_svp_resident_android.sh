@@ -53,11 +53,11 @@ report="$dest/svp-resident-$abi-$(date -u +%Y%m%dT%H%M%SZ).log"
     for prop in ro.product.manufacturer ro.product.model ro.build.version.release ro.build.fingerprint; do
         printf '%s=' "$prop"; "${adb[@]}" shell getprop "$prop"
     done
-    for workload in '640 360 12' '1280 720 12' '1920 1080 12'; do
-        read -r w h runs <<<"$workload"
-        "${adb[@]}" shell "AMBIENT_SVP_REQUIRE_HARDWARE=1 AMBIENT_SVP_BENCH_WIDTH=$w AMBIENT_SVP_BENCH_HEIGHT=$h AMBIENT_SVP_BENCH_RUNS=$runs $remote/test --ignored --exact resident_vulkan::gpu_tests::held_cache_and_submission_benchmark --nocapture"
+    for workload in '640 360 12 11' '1280 720 12 11' '1920 1080 12 11' '3840 2160 8 11' '1280 720 12 23'; do
+        read -r w h runs algorithm <<<"$workload"
+        "${adb[@]}" shell "AMBIENT_SVP_REQUIRE_HARDWARE=1 AMBIENT_SVP_BENCH_WIDTH=$w AMBIENT_SVP_BENCH_HEIGHT=$h AMBIENT_SVP_BENCH_RUNS=$runs AMBIENT_SVP_BENCH_ALGORITHM=$algorithm $remote/test --ignored --exact resident_vulkan::gpu_tests::held_cache_and_submission_benchmark --nocapture"
     done
     [[ "$(python3 "$ROOT/scripts/svp_dependency.py" --fingerprint)" == "$fingerprint" ]]
 } | tee "$report"
-[[ "$(grep -c 'SVP_PARITY exact' "$report")" == 3 ]]
+[[ "$(grep -c 'SVP_PARITY exact' "$report")" == 5 ]]
 echo "Report: $report"

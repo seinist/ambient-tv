@@ -1810,3 +1810,5 @@ host-submit and complete means, and asserts exact FP16 parity.
 This synthetic test does not measure MediaCodec, display latency,
 thermal steady state or real-video performance. No Android hardware
 measurements have been recorded yet.
+
+Audit benchmark extension: translated nonuniform FP16 source textures, four outstanding native tickets, same-phase final output comparison, algorithm 23 four-picture inputs, and UHD workload. Physical-device execution remains required.
