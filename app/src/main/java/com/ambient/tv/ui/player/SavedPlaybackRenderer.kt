@@ -5,11 +5,11 @@ import com.ambient.tv.data.local.TitleVideoSettings
 
 /** Specific video beats its resolution class, which beats the global setting. */
 internal fun savedPlaybackRenderer(
-    default: String, title: TitleVideoSettings?, resolution: ResolutionVideoProfile?, mpvAvailable: Boolean,
+    default: String, title: TitleVideoSettings?, resolution: ResolutionVideoProfile?, mpvAvailable: Boolean, vlcAvailable: Boolean = true,
 ): String {
     val byResolution = resolution?.rendererOrDefault(default) ?: default
     val selected = title?.rendererOrDefault(byResolution) ?: byResolution
-    return if (selected == "mpv" && !mpvAvailable) "media3" else selected
+    return if ((selected == "mpv" && !mpvAvailable) || (selected == "vlc" && !vlcAvailable)) "media3" else selected
 }
 
 /**
@@ -25,11 +25,12 @@ internal fun sourceAutoDefaultRenderer(source: String, globalDefault: String, is
 
 /** Resolve the source's Auto to a concrete backend before acquiring a playback engine. */
 internal fun resolveSourceAutoRenderer(
-    source: String, requested: String, mpvAvailable: Boolean, isTrailer: Boolean = false,
+    source: String, requested: String, mpvAvailable: Boolean, isTrailer: Boolean = false, vlcAvailable: Boolean = true,
 ): String = when {
     requested == "auto" && !isTrailer && source in setOf("youtube", "telegram") ->
         if (mpvAvailable) "mpv" else "media3"
     requested == "mpv" && !mpvAvailable -> "media3"
+    requested == "vlc" && !vlcAvailable -> "media3"
     requested == "auto" -> "media3"
     else -> requested
 }
@@ -42,14 +43,15 @@ internal fun preferredSourcePlaybackRenderer(
     resolution: ResolutionVideoProfile?,
     mpvAvailable: Boolean,
     isTrailer: Boolean = false,
+    vlcAvailable: Boolean = true,
 ): String {
     if (source !in setOf("youtube", "telegram") || isTrailer) {
-        return savedPlaybackRenderer(globalDefault, title, resolution, mpvAvailable)
+        return savedPlaybackRenderer(globalDefault, title, resolution, mpvAvailable, vlcAvailable)
     }
     val autoDefault = sourceAutoDefaultRenderer(source, globalDefault, isTrailer)
     val byResolution = resolution?.rendererOrDefault(autoDefault) ?: autoDefault
     val requested = title?.rendererOrDefault(byResolution) ?: byResolution
-    return resolveSourceAutoRenderer(source, requested, mpvAvailable, isTrailer)
+    return resolveSourceAutoRenderer(source, requested, mpvAvailable, isTrailer, vlcAvailable)
 }
 
 /** The stream resolver and the YouTube screen must agree on the same title/width/Auto policy. */
@@ -66,4 +68,5 @@ internal fun preferredYouTubePlaybackRenderer(
         ?.let { ResolutionVideoProfileStore.load(context, metadata) },
     mpvAvailable = com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable,
     isTrailer = metadata.isTrailer,
+    vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
 )
