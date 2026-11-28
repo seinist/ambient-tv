@@ -873,6 +873,13 @@ host shader dispatcher and the bundled Libretro conversion, including
 the vendor CUT2/CUT3 constructors, instead of asserting obsolete direct
 host-to-vendor calls.
 
+The next native build passed the historical Python generator and reached
+JNI bridge compilation. V8 9.3 hides its deprecated Handle<T> alias under
+V8_IMMINENT_DEPRECATION_WARNINGS (enabled by GN). The source build now
+migrates the 122 pinned JNI alias uses to the equivalent Local<T> without
+relaxing V8's build options. Both patched JNI source and header are included
+and hashed in candidate evidence and rechecked during staging.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

@@ -13,6 +13,15 @@ class SourceBuildTest(unittest.TestCase):
         self.assertIn('":v8_monolith"', build.BRIDGE)
         self.assertIn("max-page-size=16384", build.BRIDGE)
 
+    def test_v8_handle_alias_migration_keeps_strict_gn_options(self):
+        old = "v8::Handle<v8::Context> a;\n" + "Handle<Value> b;\n" * 121 + "HandleScope scope;"
+        new = build.modernize_bridge(old)
+        self.assertIn("v8::Local<v8::Context>", new)
+        self.assertEqual(new.count("Local<"), 122)
+        self.assertIn("HandleScope scope;", new)
+        with self.assertRaisesRegex(ValueError, "alias count"):
+            build.modernize_bridge("Handle<Value> value;")
+
     def test_missing_jni_and_private_dependencies_fail(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)

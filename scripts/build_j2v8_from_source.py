@@ -68,6 +68,18 @@ def sha(path):
     return digest.hexdigest()
 
 
+def modernize_bridge(source):
+    """V8 9.3 aliases Handle<T> to Local<T> only without imminent-deprecation warnings.
+
+    GN enables those warnings for the entire V8 build. Keep the toolchain
+    configuration intact and migrate the pinned JNI source's obsolete alias.
+    """
+    updated, count = re.subn(r"\bHandle(?=\s*<)", "Local", source)
+    if count != 122:
+        raise ValueError(f"Unexpected pinned J2V8 Handle alias count: {count}")
+    return updated
+
+
 def jni_exports(path, readelf="readelf"):
     text = run([readelf, "--dyn-syms", "--wide", path], capture=True)
     symbols = set()
@@ -131,8 +143,11 @@ def build(work, output, shared, abi, jobs):
         raise ValueError("Missing resolved V8 dependency inventory")
     bridge = v8 / "ambient_j2v8"
     bridge.mkdir()
-    for name in ("com_eclipsesource_v8_V8Impl.cpp", "com_eclipsesource_v8_V8Impl.h"):
-        shutil.copyfile(j2v8 / "jni" / name, bridge / name)
+    cpp = "com_eclipsesource_v8_V8Impl.cpp"
+    original_bridge = (j2v8 / "jni" / cpp).read_text()
+    (bridge / cpp).write_text(modernize_bridge(original_bridge))
+    shutil.copyfile(j2v8 / "jni/com_eclipsesource_v8_V8Impl.h",
+                    bridge / "com_eclipsesource_v8_V8Impl.h")
     build_file = v8 / "BUILD.gn"
     build_file.write_text(build_file.read_text() + BRIDGE)
     out = v8 / "out" / abi
@@ -148,6 +163,8 @@ def build(work, output, shared, abi, jobs):
     shutil.copyfile(candidate, output / "libj2v8.so")
     (output / "args.gn").write_text(args)
     (output / "bridge.gn").write_text(BRIDGE)
+    shutil.copyfile(bridge / cpp, output / cpp)
+    shutil.copyfile(bridge / "com_eclipsesource_v8_V8Impl.h", output / "com_eclipsesource_v8_V8Impl.h")
     (output / "v8-deps.txt").write_text(actual_deps)
     shutil.copyfile(v8 / "DEPS", output / "V8-DEPS")
     (output / "source-build.json").write_text(json.dumps({
@@ -156,6 +173,9 @@ def build(work, output, shared, abi, jobs):
         "pythonVersion": sys.version.split()[0],
         "depsSha256": sha(output / "V8-DEPS"), "resolvedDepsSha256": sha(output / "v8-deps.txt"),
         "argsSha256": sha(output / "args.gn"), "bridgeSha256": sha(output / "bridge.gn"),
+        "jniSourceSha256": sha(output / cpp),
+        "jniHeaderSha256": sha(output / "com_eclipsesource_v8_V8Impl.h"),
+        "jniCompatibilityPatch": "v8-handle-to-local-122",
         "native": row, "deviceValidated": False, "publicationApproved": False,
     }, indent=2, sort_keys=True) + "\n")
 
@@ -183,11 +203,16 @@ def stage_candidates(inputs, output, shared):
                 or evidence.get("publicationApproved") is not False):
             raise ValueError(f"Invalid source-build identity for {abi}")
         for name, field in (("V8-DEPS", "depsSha256"), ("v8-deps.txt", "resolvedDepsSha256"),
-                            ("args.gn", "argsSha256"), ("bridge.gn", "bridgeSha256")):
+                            ("args.gn", "argsSha256"), ("bridge.gn", "bridgeSha256"),
+                            ("com_eclipsesource_v8_V8Impl.cpp", "jniSourceSha256"),
+                            ("com_eclipsesource_v8_V8Impl.h", "jniHeaderSha256")):
             path = root / name
             if (not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= 16 * 1024**2
                     or sha(path) != evidence.get(field)):
                 raise ValueError(f"Build evidence mismatch: {abi}/{name}")
+        if (evidence.get("jniCompatibilityPatch") != "v8-handle-to-local-122"
+                or re.search(r"\bHandle\s*<", (root / "com_eclipsesource_v8_V8Impl.cpp").read_text())):
+            raise ValueError(f"Unexpected JNI source compatibility patch: {abi}")
         if (root / "bridge.gn").read_text() != BRIDGE:
             raise ValueError(f"Unexpected JNI build recipe: {abi}")
         candidate = root / "libj2v8.so"
