@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="game_launch_loading_title">Spiel wird geladen</string>
     <string name="game_preparing">Spiel wird vorbereitet …</string>
     <string name="game_progress">%1$d %%</string>
     <string name="game_core_needed">%1$s wird benötigt</string>
