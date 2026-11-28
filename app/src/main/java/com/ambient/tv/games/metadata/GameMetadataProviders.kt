@@ -508,7 +508,7 @@ internal fun sanitizedGameArtworkUrl(provider: String, input: String?): String? 
 internal fun credentialFreeGameUrl(url: HttpUrl): HttpUrl {
     // OkHttp permits literal square brackets in a path, but the strict
     // java.net.URI persistence boundary requires them percent-encoded.
-    return sanitizedGameMetadataUrl(url.uri().toASCIIString())?.toHttpUrlOrNull()
+    return sanitizedGameMetadataUrl(url.toUri().toASCIIString())?.toHttpUrlOrNull()
         ?: throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
 }
 
