@@ -127,7 +127,7 @@ class SidebarViewModel @Inject constructor(
             plexEnabled = appPreferences.isConfigured,
             jellyfinEnabled = appPreferences.isJellyfinConfigured,
             embyEnabled = appPreferences.isEmbyConfigured,
-            youtubeEnabled = appPreferences.youtubeEnabled,
+            youtubeEnabled = appPreferences.youtubeEnabled && smartTubeEngine.available,
             youtubeFeedKeys = appPreferences.youtubeFeedKeys.ifEmpty { listOf("home") },
             youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
             spotifyEnabled = appPreferences.spotifyEnabled,
@@ -212,7 +212,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.isEmbyConfigured) add("emby")
             if (appPreferences.hasTvheadendEndpoint) add("tvheadend")
             addAll(liveTv.configured().map { it.source.system })
-            if (appPreferences.youtubeEnabled) add("youtube")
+            if (appPreferences.youtubeEnabled && smartTubeEngine.available) add("youtube")
             if (appPreferences.spotifyEnabled) add("spotify")
             if (appPreferences.radioEnabled) add("radio")
             if (com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && appPreferences.telegramEnabled) add("telegram")
@@ -356,7 +356,7 @@ class SidebarViewModel @Inject constructor(
             addAll(dlnaStore.servers().map { "dlna:${it.id}" })
         }
         val remote = buildSet {
-            if (appPreferences.youtubeEnabled) add("youtube")
+            if (appPreferences.youtubeEnabled && smartTubeEngine.available) add("youtube")
             if (appPreferences.radioEnabled) add("radio")
             if (appPreferences.weatherSettings.enabled && appPreferences.weatherSettings.showInSidebar) add("weather")
             if (appPreferences.telegramEnabled && telegramRepository.authorized.value) add("telegram")
@@ -486,7 +486,7 @@ class SidebarViewModel @Inject constructor(
                 plexEnabled = appPreferences.isConfigured,
                 jellyfinEnabled = appPreferences.isJellyfinConfigured,
                 embyEnabled = appPreferences.isEmbyConfigured,
-                youtubeEnabled = appPreferences.youtubeEnabled,
+                youtubeEnabled = appPreferences.youtubeEnabled && smartTubeEngine.available,
                 youtubeFeedKeys = appPreferences.youtubeFeedKeys.ifEmpty { listOf("home") },
                 youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
                 spotifyEnabled = appPreferences.spotifyEnabled,
