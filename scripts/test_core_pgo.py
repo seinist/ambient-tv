@@ -38,5 +38,10 @@ class PgoTests(unittest.TestCase):
             patch.write_text("version = 2")
             self.assertNotEqual(original, recipe_digest(root, "mgba"))
             patch.write_text("version = 1")
+            headers = root/"scripts/native_core_candidates"
+            headers.mkdir()
+            (headers/"candidate.h").write_text("new native source")
+            self.assertNotEqual(original, recipe_digest(root, "mgba"))
+            (headers/"candidate.h").unlink()
             workflow.write_text("ndk: 31")
             self.assertNotEqual(original, recipe_digest(root, "mgba"))

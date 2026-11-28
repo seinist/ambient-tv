@@ -54,6 +54,11 @@ class BenchmarkTests(unittest.TestCase):
             self.assertAlmostEqual(result["profiles"]["optimized"]["median"]["p95_ms_delta_pct"], -20)
             with self.assertRaises(ValueError):
                 compare({**manifest,"runs":runs[:-1]}, path)
+            thermal = path/"optimized-2-thermal.csv"
+            thermal.write_text("ts,status\n0,0\n90000000,3\n")
+            with self.assertRaises(ValueError):
+                compare(manifest, path)
+            thermal.write_text("ts,status\n0,0\n")
             runs[-1]["renderer"]="vulkan"
             with self.assertRaises(ValueError):
                 compare(manifest, path)

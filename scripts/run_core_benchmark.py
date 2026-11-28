@@ -82,6 +82,12 @@ def run(args):
                              ("libc++_shared.so", identity["runtime_sha256"])):
             if digest is not None and shell("sha256sum", remote+"/"+name, capture=True).split()[0] != digest:
                 raise ValueError("Transferred fixture digest mismatch: "+name)
+        # Verify the actual transferred ROM, all sidecar tracks and BIOS files,
+        # not just the host snapshot. Each argument is individually quoted.
+        for folder, files in (("content", identity["fixture_files"]), ("system", identity["bios_files"])):
+            for name, digest in files.items():
+                if shell("sha256sum", remote+"/"+folder+"/"+name, capture=True).split()[0] != digest:
+                    raise ValueError("Transferred content/BIOS digest mismatch: "+name)
         prefix=remote+"/capture"
         shell("env","AMBIENT_BENCHMARK_RENDERER="+getattr(args,"renderer","auto"),"LD_LIBRARY_PATH="+remote,"LLVM_PROFILE_FILE="+remote+"/training-%p-%m.profraw",
               remote+"/runner",remote+"/core.so",remote+"/content/"+str(rom.relative_to(content)),

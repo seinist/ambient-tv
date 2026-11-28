@@ -46,12 +46,18 @@ jobs:
           set -euo pipefail
           [[ "$CORE" =~ ^[a-z0-9_]+$ && "$ABI" =~ ^(arm64-v8a|armeabi-v7a|x86_64|x86)$ ]]
           [[ "$FIXTURE" =~ ^[a-zA-Z0-9_-]+$ && "$BUILD_RUN" =~ ^[0-9]+$ && "$RUNNER_RUN" =~ ^[0-9]+$ ]]
-          test -d "${AMBIENT_BENCHMARK_FIXTURES:?}/$FIXTURE"
+          fixture_root=$(realpath "${AMBIENT_BENCHMARK_FIXTURES:?}")
+          test -d "$fixture_root/$FIXTURE"
+          [[ "$(realpath "$fixture_root/$FIXTURE")" == "$fixture_root/$FIXTURE" ]]
           # Both inputs must be successful main-branch workflow runs, not PR artifacts.
           for pair in "$BUILD_RUN:cores.yml" "$RUNNER_RUN:core-benchmark-runner.yml"; do
             id="${pair%%:*}"; workflow="${pair#*:}"
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" |
-              jq -e --arg workflow "$workflow" '.head_branch=="main" and .conclusion=="success" and (.path | endswith("/"+$workflow))'
+              jq -e --arg workflow "$workflow" --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" '
+                .head_branch=="main" and .conclusion=="success" and
+                .event=="workflow_dispatch" and .head_sha==$sha and
+                .head_repository.full_name==$repo and .repository.full_name==$repo and
+                .path==(".github/workflows/"+$workflow)'
           done
       - uses: actions/download-artifact@v7
         with:
@@ -83,7 +89,9 @@ jobs:
           rom=$(cat "$fixture/rom.txt")
           [[ "$FRAMES" =~ ^[0-9]+$ ]]
           jq -e --arg c "$CORE" --arg a "$ABI" '.core==$c and .abi==$a and .profile=="pgo-generate" and .ndk=="30.0.16248370"' report/build.json
+          jq -e --arg recipe "$(python3 scripts/core_pgo.py recipe --root "$PWD" --core "$CORE")" '.source_recipe==$recipe' report/build.json
           ndk="${ANDROID_NDK_HOME:?}"
+          grep -Eq '^Pkg.Revision[[:space:]]*=[[:space:]]*30\.0\.16248370[[:space:]]*$' "$ndk/source.properties"
           bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
           case "$ABI" in
             arm64-v8a) triple=aarch64-linux-android ;;

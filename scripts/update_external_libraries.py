@@ -269,7 +269,13 @@ def cores_latest(cores: list[dict]) -> dict[str, str]:
     repos = list(dict.fromkeys(c["repo"] for c in cores))
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         heads = dict(zip(repos, pool.map(remote_head, repos)))
-    return {c["core"]: heads[c["repo"]] for c in cores}
+    # Different pins in one repository can intentionally select distinct
+    # emulator implementations. Never collapse them onto a common HEAD.
+    pins = {}
+    for c in cores:
+        pins.setdefault(c["repo"], set()).add(c["commit"])
+    return {c["core"]: c["commit"] if len(pins[c["repo"]]) > 1
+            else heads[c["repo"]] for c in cores}
 
 
 def render_cores(data: dict, commits: dict[str, str]) -> bytes:

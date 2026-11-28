@@ -292,6 +292,9 @@ int main(int argc,char** argv) {
             last_thermal=start;start=now();
         }
         run();
+        // Both hardware backends are synchronous for each measured frame.
+        // Do not attribute deferred GPU work to a later frame or teardown.
+        if(hardware && !vulkan)glFinish();
         uint64_t end=now();
         std::fprintf(csv,"AmbientTV:Libretro/retro_run,%llu,%llu\n",
                      (unsigned long long)start,(unsigned long long)(end-start));
@@ -322,7 +325,7 @@ int main(int argc,char** argv) {
     std::fprintf(summary,"{\"frames\":%u,\"fps\":%.9g,\"video_frames\":%llu,\"audio_frames\":%llu,"
                          "\"width\":%u,\"height\":%u,\"hardware\":%s,\"renderer\":\"%s\",\"state_hash\":\"%016llx\",\"state_valid\":%s}\n",
                  frames,av.timing.fps,(unsigned long long)video_frames,(unsigned long long)audio_frames,
-                 width,height,hardware?"true":"false",vulkan?"vulkan-sync-headless":hardware?"gles-pbuffer":"software",(unsigned long long)state_hash,state_ok?"true":"false");
+                 width,height,hardware?"true":"false",vulkan?"vulkan-sync-headless":hardware?"gles-sync-pbuffer":"software",(unsigned long long)state_hash,state_ok?"true":"false");
     if(std::fclose(summary))die("Summary output failed");
     // Deliberately keep the DSO loaded until normal process exit so the
     // compiler instrumentation runtime can emit LLVM_PROFILE_FILE.

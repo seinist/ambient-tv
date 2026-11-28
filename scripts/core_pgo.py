@@ -17,7 +17,8 @@ def recipe_digest(root, core):
     if len(entries) != 1:
         raise ValueError("Expected one catalog entry")
     paths = sorted((root / "scripts").glob("core_*.py"))
-    paths += [root / ".github/workflows/cores.yml"]
+    paths += sorted((root / "scripts/native_core_candidates").glob("*.h"))
+    paths += [root / "scripts/check_elf_pages.py", root / ".github/workflows/cores.yml"]
     payload = {"recipe": entries[0], "inputs": {
         str(path.relative_to(root)): digest(path) for path in paths if path.is_file()
     }}

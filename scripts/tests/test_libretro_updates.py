@@ -56,9 +56,9 @@ class LibretroUpdateTest(unittest.TestCase):
         original = json.loads(self.cores.read_text())
         self.assertEqual(self.run_updater("--apply", lambda repo: NEW), 0)
         updated = json.loads(self.cores.read_text())
-        self.assertTrue(all(c["commit"] == NEW for c in updated["cores"]))
         for before, after in zip(original["cores"], updated["cores"]):
-            self.assertEqual({**before, "commit": NEW}, after)
+            pins = {c["commit"] for c in original["cores"] if c["repo"] == before["repo"]}
+            self.assertEqual({**before, "commit": before["commit"] if len(pins) > 1 else NEW}, after)
         self.assertEqual(self.cores.read_text(), json.dumps(updated, indent=2, ensure_ascii=False) + "\n")
         self.assertIn(f"LIBRETRODROID_COMMIT={NEW}", self.props.read_text())
         self.prepare.assert_called_once()
@@ -82,14 +82,17 @@ class LibretroUpdateTest(unittest.TestCase):
             {"core": "second", "repo": "https://github.com/a/shared", "commit": "c" * 40},
         ]
         with mock.patch.object(updater, "remote_head", return_value=NEW) as head:
-            self.assertEqual(updater.cores_latest(cores), {"first": NEW, "second": NEW})
+            self.assertEqual(updater.cores_latest(cores), {"first": "a" * 40, "second": "c" * 40})
             head.assert_called_once_with(cores[0]["repo"])
 
     def test_patch_failure_keeps_old_libretrodroid_but_updates_cores(self):
         self.assertEqual(self.run_updater("--apply", lambda repo: NEW, prepare=False), 0)
         self.assertIn(f"LIBRETRODROID_COMMIT={self.old_commit}", self.props.read_text())
         self.assertEqual(self.prepare.call_count, 2)
-        self.assertTrue(all(c["commit"] == NEW for c in json.loads(self.cores.read_text())["cores"]))
+        updated = json.loads(self.cores.read_text())["cores"]
+        self.assertTrue(any(c["commit"] == NEW for c in updated))
+        self.assertNotEqual(next(c["commit"] for c in updated if c["core"] == "yabause"),
+                            next(c["commit"] for c in updated if c["core"] == "yabasanshiro"))
 
     def test_unresolvable_core_aborts_without_changes(self):
         before = (self.props.read_bytes(), self.cores.read_bytes())

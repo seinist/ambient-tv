@@ -59,7 +59,7 @@ def compare(manifest, directory):
                 raise ValueError(f"Build identity mismatch: {key}")
         if build.get("profile") != profile or build.get("binary_sha256") != run.get("binary_sha256"):
             raise ValueError("Build profile or binary digest mismatch")
-        if not run.get("binary_sha256") or len(run["binary_sha256"]) != 64:
+        if not run.get("binary_sha256") or len(run["binary_sha256"]) != 64 or any(c not in "0123456789abcdef" for c in run["binary_sha256"]):
             raise ValueError("Missing binary digest")
         previous = binaries.setdefault(profile, run["binary_sha256"])
         if previous != run["binary_sha256"]:
@@ -90,7 +90,9 @@ def compare(manifest, directory):
             while cursor+1 < len(thermals) and thermals[cursor+1][0] <= start:
                 cursor += 1
             if (cursor < 0 or start - thermals[cursor][0] > 5_000_000_000 or
-                    thermals[cursor][1] not in (0, 1)):
+                    thermals[cursor][1] not in (0, 1) or
+                    any(status not in (0, 1) for ts, status in thermals[cursor+1:]
+                        if ts <= start + duration)):
                 raise ValueError("Missing/stale or throttled thermal evidence")
         durations = sorted(d for _, d in measured)
         key = (int(run["round"]), profile)
