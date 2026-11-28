@@ -21,11 +21,15 @@ NATIVE_ROOTS = {
     "mpv": ("libmpv.so", "libambientmpv.so"),
     "spotify": ("libspotify_receiver_core.so",),
     "vlc": ("libvlc.so", "libvlcjni.so"),
+    "svp": ("libambientsvp.so",),
+    "shaders": ("liblibrashader_capi.so",),
 }
 HOST_LIBRARIES = {
     "projectm": {"libc++_shared.so"},
     "spotify": {"libc++_shared.so"},
     "vlc": {"libc++_shared.so"},
+    "svp": set(),
+    "shaders": set(),
     "mpv": {"libc++_shared.so", "libavcodec.so", "libavdevice.so", "libavfilter.so",
             "libavformat.so", "libavutil.so", "libswresample.so", "libswscale.so",
             "libpostproc.so", "libass.so", "libplacebo.so", "libfreetype.so",
@@ -71,7 +75,7 @@ def write_package(out, module, abi, version, files, shared=None, binding=None):
                 hostNativeSha256=shared or {}, **({"hostBindingSha256": binding} if binding else {}))
 
 
-def shaders(out, version):
+def shader_assets():
     source = ROOT / "app/src/main/assets/games/slang"
     files = {}
     for path in sorted(source.rglob("*")):
@@ -81,7 +85,11 @@ def shaders(out, version):
             files["assets/games/slang/" + path.relative_to(source).as_posix()] = path.read_bytes()
     if not any(name.endswith(".slangp") for name in files):
         raise ValueError("no shader presets found")
-    return [write_package(out, "shaders", "any", version, files)]
+    return files
+
+
+def shaders(out, version):
+    return [write_package(out, "shaders", "any", version, shader_assets())]
 
 
 def native_dependencies(data, name):
@@ -98,8 +106,8 @@ def native_dependencies(data, name):
 
 
 def native_module(out, module, version, apks, licenses, binding=None):
-    if module == "vlc" and not re.fullmatch(r"[0-9a-f]{64}", binding or ""):
-        raise ValueError("VLC requires exact patched Java binding fingerprint")
+    if module in {"vlc", "svp", "shaders"} and not re.fullmatch(r"[0-9a-f]{64}", binding or ""):
+        raise ValueError(f"{module} requires exact host binding fingerprint")
     entries = []
     seen = set()
     roots = NATIVE_ROOTS[module]
@@ -117,6 +125,8 @@ def native_module(out, module, version, apks, licenses, binding=None):
                     raise ValueError(f"duplicate APK ABI: {abi}")
                 seen.add(abi)
                 files = {"lib/" + name: archive.read(prefix + name) for name in roots}
+                if module == "shaders":
+                    files.update(shader_assets())
                 shared = {}
                 visited = set()
 
@@ -237,7 +247,7 @@ def monogram_dex(out, version, dex_dir, apks, licenses):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube", "vlc"), required=True)
+    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube", "vlc", "svp"), required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -251,7 +261,7 @@ def main():
     if args.version <= 0 or not re.fullmatch(r"modules-" + args.module + r"-[A-Za-z0-9._-]{1,70}", args.tag):
         parser.error("invalid tag or version")
     args.output.mkdir(parents=True, exist_ok=False)
-    if args.module == "shaders":
+    if args.module == "shaders" and not args.apk:
         entries = shaders(args.output, args.version)
     elif args.module == "monogram":
         if not args.license or bool(args.monogram_aar) == bool(args.monogram_dex_dir):
@@ -272,6 +282,10 @@ def main():
         if args.module == "vlc" and not args.vlc_aar:
             parser.error("VLC requires the matching patched AAR")
         binding = vlc_binding(args.vlc_aar) if args.module == "vlc" else None
+        if args.module == "svp":
+            binding = digest((ROOT / "native/ambientsvp/include/ambientsvp.h").read_bytes())
+        if args.module == "shaders":
+            binding = digest((ROOT / "scripts/native_libretro_vulkan/librashader.h").read_bytes())
         entries = native_module(args.output, args.module, args.version, args.apk, args.license, binding)
     manifest = dict(schema=1, tag=args.tag, modules=entries)
     (args.output / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
