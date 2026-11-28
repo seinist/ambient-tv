@@ -21,16 +21,17 @@ object VlcBackendAvailability {
             val module = if (SystemModule.VLC in SystemModuleHost.supported)
                 SystemModuleHost.loadSelected(SystemModule.VLC) else null
             external = module != null
-            if (module != null) {
+            if (module != null && module.entrypoint == null) {
                 val native = checkNotNull(module.nativeDirectory)
                 check(native.resolve("libvlc.so").isFile && native.resolve("libvlcjni.so").isFile)
                 // The patched Java loader uses precisely the already verified,
                 // host-classloader-owned libraries. No APK copy may be loaded.
                 System.setProperty("ambient.vlc.native.directory", native.absolutePath)
-            } else {
+            } else if (module == null) {
                 if (!SystemModuleAvailability.bundled(SystemModule.VLC)) return false
                 System.clearProperty("ambient.vlc.native.directory")
             }
+            VlcEngineRuntime.bind(module)
             val instance = VlcEngineRuntime.engine.createLibrary(context.applicationContext, arrayListOf("--verbose=0"))
             instance.release()
             ready = true

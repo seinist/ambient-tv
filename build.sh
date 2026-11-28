@@ -1244,6 +1244,9 @@ build_release() {
         if [[ "${SKIP_VLC_VULKAN:-0}" != 1 ]]; then
             module_audit_args+=(--expect-vlc-external)
         fi
+        if [[ "${VLC_DEX_MODULE:-0}" == 1 ]]; then
+            module_audit_args+=(--expect-vlc-dex)
+        fi
         python3 "$ROOT_DIR/scripts/check_modular_preview_apk.py" "${module_audit_args[@]}" "${UPDATE_APKS[@]}"
     fi
     generate_release_update_manifest

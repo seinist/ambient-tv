@@ -44,6 +44,18 @@ internal class ModuleDexOwnership(
             ),
             hostResourceClasses = true,
         )
+        val VLC = ModuleDexOwnership(
+            setOf("org.videolan.libvlc."),
+            setOf("com.ambient.tv.ui.player.backend.VlcModuleAdapter",
+                "com.ambient.tv.ui.player.backend.VlcNativeEngine",
+                "com.ambient.tv.ui.player.backend.VlcTrackAccess"),
+            required = setOf("com.ambient.tv.ui.player.backend.VlcModuleAdapter",
+                "com.ambient.tv.ui.player.backend.VlcNativeEngine",
+                "com.ambient.tv.ui.player.backend.VlcTrackAccess",
+                "org.videolan.libvlc.LibVLC", "org.videolan.libvlc.MediaPlayer",
+                "org.videolan.libvlc.Media", "org.videolan.libvlc.AmbientNativeLibraryLoader"),
+            hostResourceClasses = true,
+        )
         val MONOGRAM = ModuleDexOwnership(
             setOf("org.monogram.mtproto.", "uniffi.monogram_mtproto.", "com.sun.jna.", "org.rustls."),
             setOf(

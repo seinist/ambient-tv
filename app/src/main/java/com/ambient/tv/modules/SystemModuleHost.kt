@@ -73,15 +73,24 @@ internal object SystemModuleHost {
             )
         ) else emptyMap()
     
-    private fun vlcContracts(): Map<SystemModule, SystemModuleRuntime.Contract> =
-        if (BuildConfig.VLC_MODULE_BINDING_SHA256.isNotBlank()) mapOf(
-            SystemModule.VLC to SystemModuleRuntime.Contract(
-                nativeRoots = setOf("libvlc.so", "libvlcjni.so"),
-                hostLibraries = setOf("libc++_shared.so"),
-                bundledOverrides = setOf("libvlc.so", "libvlcjni.so"),
-                hostBindingSha256 = BuildConfig.VLC_MODULE_BINDING_SHA256,
-            )
-        ) else emptyMap()
+    private fun vlcContracts(): Map<SystemModule, SystemModuleRuntime.Contract> {
+        if (BuildConfig.VLC_MODULE_BINDING_SHA256.isBlank()) return emptyMap()
+        val dex = SystemModuleRuntime.Contract(
+            entryClass = "com.ambient.tv.ui.player.backend.VlcModuleAdapter",
+            hostBindingSha256 = BuildConfig.VLC_DEX_BINDING_SHA256,
+            dexOwnership = ModuleDexOwnership.VLC,
+            dexNativeRoots = setOf("libvlc.so", "libvlcjni.so", "libc++_shared.so"),
+        )
+        val native = SystemModuleRuntime.Contract(
+            nativeRoots = setOf("libvlc.so", "libvlcjni.so"),
+            hostLibraries = setOf("libc++_shared.so"),
+            bundledOverrides = setOf("libvlc.so", "libvlcjni.so"),
+            hostBindingSha256 = BuildConfig.VLC_MODULE_BINDING_SHA256,
+        )
+        // Opt-in DEX builds cannot activate legacy native-only packages because
+        // their Java bindings were stripped. Normal builds retain the old format.
+        return mapOf(SystemModule.VLC to if (BuildConfig.VLC_DEX_ENABLED) dex else native)
+    }
 
     private fun libretroContracts(): Map<SystemModule, SystemModuleRuntime.Contract> =
         if (BuildConfig.LIBRETRODROID_MODULE_BINDING_SHA256.isNotBlank()) mapOf(

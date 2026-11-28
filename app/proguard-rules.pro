@@ -153,3 +153,20 @@
 -keep class com.google.android.gms.net.** { *; }
 -keep class org.brotli.** { *; }
 -keep class org.objectweb.asm.** { *; }
+
+# VLC pre-R8 adapter ABI and reflective bundled fallback.
+-keep class com.ambient.tv.ui.player.backend.VlcNativeEngine { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcModuleAdapter { *; }
+-keep class com.ambient.tv.ui.player.backend.Vlc*Port { *; }
+-keep interface com.ambient.tv.ui.player.backend.Vlc*Port { *; }
+-keep interface com.ambient.tv.ui.player.backend.VlcOutputPort$* { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcEvent* { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcChapter { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcEqualizer { *; }
+-keep class com.ambient.tv.ui.player.backend.Vlc*Track { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcRuntimeStats { *; }
+-keep class com.ambient.tv.ui.player.backend.ReflectiveMembers { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcStreamInfoKt { *; }
+-keep class androidx.legacy.** { *; }
+-keep class androidx.fragment.** { *; }
+-keep class org.videolan.libvlc.R$* { *; }

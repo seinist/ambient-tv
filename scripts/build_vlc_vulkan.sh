@@ -36,7 +36,7 @@ for patch in "$ROOT"/native/vlc-aar/jni-patches/*.patch; do
         git -C "$JNI" apply --reverse --check "$patch"
     fi
 done
-python3 "$ROOT/scripts/patch_vlc_module_loader.py" "$JNI/libvlc/src/main/java"
+python3 "$ROOT/scripts/patch_vlc_module_loader.py" "$JNI/libvlc/src/main/java" --jni-root "$JNI/libvlc/jni"
 bash "$ROOT/scripts/prepare_svp_sources.sh" vlc "$JNI/vlc"
 for patch in "$JNI"/libvlc/patches/*.patch; do
     if git -C "$JNI/vlc" apply --check "$patch" 2>/dev/null; then

@@ -124,6 +124,30 @@ class SystemModulePackageTest(unittest.TestCase):
                         "code/classes.dex", "lib/libj2v8.so", "licenses/NOTICE",
                     })
 
+    def test_vlc_dex_has_namespace_local_cpp_runtime(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dex = root / "dex"
+            dex.mkdir()
+            (dex / "host-binding.sha256").write_text("a" * 64)
+            (dex / "classes.dex").write_bytes(b"dex\n039\0" + bytes(104))
+            apk = root / "full.apk"
+            with zipfile.ZipFile(apk, "w") as archive:
+                for abi in packages.ABIS:
+                    for name in (*packages.NATIVE_ROOTS["vlc"], "libc++_shared.so"):
+                        archive.writestr(f"lib/{abi}/{name}", name.encode())
+            def dependencies(data, name):
+                return {"libvlc.so", "libc++_shared.so"} if name == "libvlcjni.so" else {"libc.so"}
+            with mock.patch.object(packages, "native_dependencies", side_effect=dependencies):
+                entries = packages.adapter_dex(root, "vlc", 2, dex, [apk], [])
+            self.assertEqual(len(entries), 4)
+            for entry in entries:
+                self.assertEqual(entry["hostNativeSha256"], {})
+                with zipfile.ZipFile(root / entry["asset"]) as archive:
+                    self.assertEqual(set(archive.namelist()), {
+                        "code/classes.dex", "lib/libvlc.so", "lib/libvlcjni.so", "lib/libc++_shared.so",
+                    })
+
     def test_vlc_pins_patched_bindings_and_shared_runtime(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

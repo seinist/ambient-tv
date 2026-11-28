@@ -211,8 +211,11 @@ def adapter_dex(out, module, version, dex_dir, apks, licenses):
     if not dex or set(dex) != expected or any(
             len(data) < 112 or not data.startswith(b"dex\n") for data in dex.values()):
         raise ValueError("invalid or noncontiguous Monogram adapter DEX")
-    roots = {"libmonogram_mtproto.so", "libjnidispatch.so"} if module == "monogram" else {"libj2v8.so"}
-    primary = "libmonogram_mtproto.so" if module == "monogram" else "libj2v8.so"
+    primary, roots = {
+        "monogram": ("libmonogram_mtproto.so", {"libmonogram_mtproto.so", "libjnidispatch.so"}),
+        "smarttube": ("libj2v8.so", {"libj2v8.so"}),
+        "vlc": ("libvlc.so", set(NATIVE_ROOTS["vlc"]) | {"libc++_shared.so"}),
+    }[module]
     entries = []
     seen = set()
     for apk in apks:
@@ -261,6 +264,7 @@ def main():
     parser.add_argument("--vlc-aar", type=Path)
     parser.add_argument("--monogram-dex-dir", type=Path)
     parser.add_argument("--smarttube-dex-dir", type=Path)
+    parser.add_argument("--vlc-dex-dir", type=Path)
     args = parser.parse_args()
     if args.version <= 0 or not re.fullmatch(r"modules-" + args.module + r"-[A-Za-z0-9._-]{1,70}", args.tag):
         parser.error("invalid tag or version")
@@ -276,6 +280,11 @@ def main():
             entries = monogram_dex(args.output, args.version, args.monogram_dex_dir, args.apk, args.license)
         else:
             entries = monogram(args.output, args.version, args.monogram_aar, args.license)
+    elif args.module == "vlc" and args.vlc_dex_dir:
+        if not args.apk or not args.license or not args.vlc_aar:
+            parser.error("VLC DEX requires matching Full APKs, patched AAR and notices")
+        vlc_binding(args.vlc_aar)
+        entries = adapter_dex(args.output, "vlc", args.version, args.vlc_dex_dir, args.apk, args.license)
     elif args.module == "smarttube":
         if not args.smarttube_dex_dir or not args.apk or not args.license:
             parser.error("SmartTube requires matching DEX, Full APKs and license notices")

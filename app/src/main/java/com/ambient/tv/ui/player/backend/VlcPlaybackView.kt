@@ -2151,7 +2151,8 @@ internal fun vlcStreamInfoWarmup(sinceStartMs: Long, statsKnown: Boolean): Boole
 internal fun vlcStreamInfoIntervalMs(warmup: Boolean): Long = if (warmup) VLC_WARMUP_POLL_MS else 1_000L
 
 /** SVP for VLC needs both the shared engine gate and a libVLC build that contains the filter. */
-internal fun vlcSvpAllowed(context: Context): Boolean = com.ambient.tv.BuildConfig.VLC_SVP && svpAllowed(context)
+internal fun vlcSvpAllowed(context: Context): Boolean = com.ambient.tv.BuildConfig.VLC_SVP &&
+    !VlcEngineRuntime.isolated && svpAllowed(context)
 
 /** Without a new synthesized frame for this long while playing, VLC reports passthrough. */
 private const val VLC_SVP_STALL_MS = 4_000L

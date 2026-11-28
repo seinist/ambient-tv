@@ -41,6 +41,26 @@ class MonogramDexExportTest(unittest.TestCase):
                 self.assertIn("com/ambient/tv/data/telegram/MonogramModuleFactory.class", archive.namelist())
                 self.assertIn("kotlin/Unit.class", archive.namelist())
 
+    def test_vlc_export_retains_host_resources_and_rejects_host_linkage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "vlc.jar"
+            with zipfile.ZipFile(source, "w") as archive:
+                for name in exporter.VLC_REQUIRED:
+                    archive.writestr(name, b"engine")
+                archive.writestr("org/videolan/libvlc/R$id.class", b"resource")
+                archive.writestr("host/Port.class", b"host")
+            program, host = root / "program.jar", root / "host.jar"
+            exporter.split([source], program, host, "vlc")
+            with zipfile.ZipFile(program) as archive:
+                self.assertEqual(set(archive.namelist()), set(exporter.VLC_REQUIRED))
+            with zipfile.ZipFile(host) as archive:
+                self.assertIn("org/videolan/libvlc/R$id.class", archive.namelist())
+            with zipfile.ZipFile(source, "a") as archive:
+                archive.writestr("host/Bad.class", b"\xca\xfe\xba\xbeLorg/videolan/libvlc/LibVLC;")
+            with self.assertRaisesRegex(ValueError, "host class references private VLC"):
+                exporter.split([source], program, host, "vlc")
+
     def test_conflicting_duplicate_class_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

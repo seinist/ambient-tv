@@ -210,6 +210,27 @@ val vlcModuleBinding = if (vulkanVlcAar.isFile) ZipFile(vulkanVlcAar).use { aar 
         .joinToString("") { "%02x".format(it.toInt() and 255) } else ""
 } else ""
 val vlcModuleSupported = vlcModuleBinding.isNotEmpty()
+val vlcDexEnabled = providers.gradleProperty("VLC_DEX_MODULE")
+    .orElse(providers.environmentVariable("VLC_DEX_MODULE")).orElse("0").get() == "1"
+require(!vlcDexEnabled || vlcModuleSupported) { "VLC DEX requires the patched custom AAR" }
+require(!vlcDexEnabled || !stableModular) { "VLC DEX is preview-only until shared SVP/ProjectM validation" }
+val vlcDexInputs = fileTree("src/main/java/com/ambient/tv/ui/player/backend") {
+    include("Vlc*.kt", "ReflectiveMembers.kt", "VideoAccelerationCapabilities.kt")
+}.files + setOf(file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
+    file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
+    rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/external-versions.properties"),
+    rootProject.file("scripts/export_monogram_adapter.py"), rootProject.file("scripts/strip_smarttube_classes.py"))
+val vlcDexBinding = if (vlcModuleSupported) MessageDigest.getInstance("SHA-256").let { digest ->
+    digest.update("ambient-vlc-dex-v1".toByteArray(Charsets.UTF_8))
+    digest.update(vlcModuleBinding.toByteArray(Charsets.UTF_8))
+    vlcDexInputs.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(it.readBytes())
+        digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+} else ""
 val vlcBundled = !modularPreview || !vlcModuleSupported
 val smartTubeHostResources = rootProject.findProject(":youtubeapi") != null
 val smartTubeBundled = smartTubeHostResources && !modularPreview
@@ -446,6 +467,8 @@ android {
         buildConfigField("boolean", "VLC_SVP", vulkanVlcAar.isFile.toString())
         buildConfigField("boolean", "VLC_BUNDLED", vlcBundled.toString())
         buildConfigField("String", "VLC_MODULE_BINDING_SHA256", quotedBuildConfigString(vlcModuleBinding))
+        buildConfigField("String", "VLC_DEX_BINDING_SHA256", quotedBuildConfigString(vlcDexBinding))
+        buildConfigField("boolean", "VLC_DEX_ENABLED", vlcDexEnabled.toString())
         buildConfigField("String", "LIBVLC_VERSION", quotedBuildConfigString(if (vulkanVlcAar.isFile) "4.0.0-dev-vulkan+c84ef1e" else libs.versions.libvlc.get()))
         buildConfigField("String", "MEDIA3_VERSION", quotedBuildConfigString(libs.versions.media3.get()))
         buildConfigField("String", "COMPOSE_BOM_VERSION", quotedBuildConfigString(libs.versions.composeBom.get()))
@@ -687,6 +710,22 @@ if (smartTubeBundled) {
     }
 }
 
+if (vlcDexEnabled && !modularPreview) {
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+        val task = tasks.register<ExportMonogramDex>("exportVlcAdapterDex") {
+            exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            binding.set(vlcDexBinding)
+            module.set("vlc")
+            androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
+            d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
+            destination.set(layout.buildDirectory.dir("outputs/system-modules/vlc-dex"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
+            ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
+    }
+}
+
 /** Remove engine classes before D8/R8 while retaining normal AAR resource merging. */
 abstract class StripSmartTubeClasses @Inject constructor(
     private val execOperations: ExecOperations,
@@ -695,11 +734,13 @@ abstract class StripSmartTubeClasses @Inject constructor(
     @get:InputFiles abstract val allDirectories: ListProperty<Directory>
     @get:InputFile abstract val stripper: org.gradle.api.file.RegularFileProperty
     @get:InputFile abstract val ownershipScript: org.gradle.api.file.RegularFileProperty
+    @get:Input abstract val modules: ListProperty<String>
     @get:org.gradle.api.tasks.OutputFile abstract val output: org.gradle.api.file.RegularFileProperty
 
     @TaskAction fun strip() {
         val command = mutableListOf("python3", stripper.get().asFile.absolutePath,
             "--output", output.get().asFile.absolutePath)
+        for (module in modules.get()) command.addAll(listOf("--module", module))
         for (input in allJars.get().map { it.asFile } + allDirectories.get().map { it.asFile }) {
             command.addAll(listOf("--input", input.absolutePath))
         }
@@ -707,13 +748,14 @@ abstract class StripSmartTubeClasses @Inject constructor(
     }
 }
 
-if (modularPreview && smartTubeHostResources) {
+if (modularPreview && (smartTubeHostResources || vlcDexEnabled)) {
     androidComponents.onVariants(androidComponents.selector().all()) { variant ->
         val task = tasks.register<StripSmartTubeClasses>(
             "strip" + variant.name.replaceFirstChar { it.uppercase() } + "SmartTubeClasses",
         ) {
             stripper.set(rootProject.layout.projectDirectory.file("scripts/strip_smarttube_classes.py"))
             ownershipScript.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            modules.set(listOfNotNull("smarttube".takeIf { smartTubeHostResources }, "vlc".takeIf { vlcDexEnabled }))
         }
         variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toTransform(
             ScopedArtifact.CLASSES, StripSmartTubeClasses::allJars,

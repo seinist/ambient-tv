@@ -106,6 +106,10 @@ def verify(root, module, run_id, sha):
                 if json.loads(notices.read("corresponding-source.json")) != source:
                     raise ValueError("Source descriptor is not bound to the signed module payload")
             roots = set(packages.NATIVE_ROOTS.get(module, ("libmonogram_mtproto.so", "libjnidispatch.so") if module == "monogram" else ("libj2v8.so",)))
+            if module == "vlc" and any(n.startswith("code/") for n in names):
+                roots.add("libc++_shared.so")
+                if "code/classes.dex" not in names:
+                    raise ValueError("Incomplete VLC adapter DEX")
             native = {n.removeprefix("lib/") for n in names if n.startswith("lib/")}
             if native != roots:
                 raise ValueError("Unexpected native payload")
@@ -151,6 +155,8 @@ def build(args):
             command += [f"--{args.module}-dex-dir", str(ROOT / f"app/build/outputs/system-modules/{args.module}-dex")]
         if args.module == "vlc":
             command += ["--vlc-aar", str(ROOT / "app/libs/libvlc-vulkan.aar")]
+            if args.vlc_dex:
+                command += ["--vlc-dex-dir", str(ROOT / "app/build/outputs/system-modules/vlc-dex")]
         subprocess.run(command, cwd=ROOT, check=True)
     shutil.copyfile(args.source, args.output / args.source.name)
     (args.output / "provenance.json").write_text(json.dumps({"commit": args.sha, "runId": args.run_id,
@@ -170,6 +176,7 @@ def main():
     parser.add_argument("--apksigner", type=Path)
     parser.add_argument("--notices", type=Path)
     parser.add_argument("--source", type=Path)
+    parser.add_argument("--vlc-dex", action="store_true")
     args = parser.parse_args()
     if args.action == "build":
         if not all((args.dist, args.aapt2, args.apksigner, args.notices, args.source)):

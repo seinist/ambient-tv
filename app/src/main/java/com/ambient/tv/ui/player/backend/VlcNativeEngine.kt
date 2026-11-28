@@ -15,6 +15,22 @@ internal object VlcNativeEngine : VlcEnginePort {
     override fun createLibrary(context: Context, options: ArrayList<String>): VlcLibraryPort =
         NativeLibrary(LibVLC(context, options))
     override fun createTracks(player: VlcPlayerPort): VlcTracksPort = VlcTrackAccess(player)
+    override fun vulkanModules(): Boolean {
+        // The helper exists in the patched custom AAR, not the Maven fallback.
+        val type = try {
+            Class.forName("org.videolan.libvlc.AmbientNativeLibraryLoader", false, javaClass.classLoader)
+        } catch (_: ClassNotFoundException) {
+            return false
+        }
+        return try {
+            type.getMethod("vulkanModules").invoke(null) as? Boolean ?: false
+        } catch (_: NoSuchMethodException) {
+            // Legacy host-owned AAR only. Never search the host namespace when
+            // this adapter is isolated; that could load a second bundled VLC.
+            if (javaClass.classLoader !== VlcEnginePort::class.java.classLoader) false
+            else VulkanNativeProbe.available && VulkanNativeProbe.vlcModules()
+        }
+    }
 
     private class NativeLibrary(private val raw: LibVLC) : VlcLibraryPort {
         override fun createPlayer(): VlcPlayerPort = NativePlayer(MediaPlayer(raw))

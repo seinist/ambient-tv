@@ -9,6 +9,7 @@ import android.view.SurfaceView
 internal interface VlcEnginePort {
     fun createLibrary(context: Context, options: ArrayList<String>): VlcLibraryPort
     fun createTracks(player: VlcPlayerPort): VlcTracksPort
+    fun vulkanModules(): Boolean
 }
 
 internal interface VlcLibraryPort {
@@ -107,8 +108,27 @@ internal object VlcTrackType {
     const val Text = 2
 }
 
-/** The bundled implementation stays selected until the DEX/JNI namespace candidate
- * has been validated. Keeping selection here prevents UI code depending on it. */
+/** First-load selection is process-wide. The concrete class is resolved only
+ * after the signed package and classloader have been selected.
+ */
 internal object VlcEngineRuntime {
-    val engine: VlcEnginePort = VlcNativeEngine
+    @Volatile private var selected: VlcEnginePort? = null
+    @Volatile var isolated: Boolean = false
+        private set
+    val engine: VlcEnginePort get() = checkNotNull(selected) { "VLC engine not initialized" }
+
+    fun bind(module: com.ambient.tv.modules.SystemModuleRuntime.Loaded?) {
+        check(selected == null)
+        val external = module?.entrypoint
+        val candidate = if (external != null) {
+            external as? VlcEnginePort ?: error("Invalid VLC engine entrypoint")
+        } else {
+            // String reference: no verifier link to stripped implementation.
+            val type = Class.forName("com.ambient.tv.ui.player.backend.VlcNativeEngine",
+                true, javaClass.classLoader)
+            type.getField("INSTANCE").get(null) as VlcEnginePort
+        }
+        isolated = external != null
+        selected = candidate
+    }
 }

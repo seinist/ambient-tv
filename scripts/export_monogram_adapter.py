@@ -36,6 +36,44 @@ SMARTTUBE_REQUIRED = (
 )
 
 
+VLC_PREFIX = "org/videolan/libvlc/"
+VLC_CLASSES = tuple("com/ambient/tv/ui/player/backend/" + name for name in (
+    "VlcModuleAdapter", "VlcNativeEngine", "VlcTrackAccess",
+))
+VLC_REQUIRED = tuple(name + ".class" for name in VLC_CLASSES) + tuple(
+    VLC_PREFIX + name + ".class" for name in (
+        "LibVLC", "MediaPlayer", "Media", "AmbientNativeLibraryLoader",
+    )
+)
+
+
+def owns_vlc(path):
+    if not path.endswith(".class"):
+        return False
+    name = path[:-6]
+    simple = name.rsplit("/", 1)[-1]
+    if simple == "R" or simple.startswith("R$"):
+        return False
+    return name.startswith(VLC_PREFIX) or any(
+        name == owned or name.startswith(owned + "$") for owned in VLC_CLASSES
+    )
+
+
+def ownership(module):
+    return {"monogram": (owns, REQUIRED), "smarttube": (owns_smarttube, SMARTTUBE_REQUIRED),
+            "vlc": (owns_vlc, VLC_REQUIRED)}[module]
+
+
+def validate_vlc_boundary(name, data):
+    if not data.startswith(b"\xca\xfe\xba\xbe"):
+        return
+    matches = re.findall(rb"org/videolan/libvlc/[A-Za-z0-9_/$-]+", data)
+    if any(owns_vlc(match.decode("ascii") + ".class") for match in matches):
+        raise ValueError(f"host class references private VLC type: {name}")
+    if any(owned.encode() in data for owned in VLC_CLASSES):
+        raise ValueError(f"host class references private VLC adapter: {name}")
+
+
 def owns_smarttube(path):
     if not path.endswith(".class"):
         return False
@@ -80,8 +118,7 @@ def read_classes(path):
 
 
 def split(inputs, program, classpath, module='monogram'):
-    owner = owns if module == 'monogram' else owns_smarttube
-    required = REQUIRED if module == 'monogram' else SMARTTUBE_REQUIRED
+    owner, required = ownership(module)
     seen = {}
     owned = set()
     with zipfile.ZipFile(program, "w", compression=zipfile.ZIP_DEFLATED) as p, \
@@ -102,6 +139,8 @@ def split(inputs, program, classpath, module='monogram'):
                 else:
                     if module == 'smarttube':
                         validate_private_boundary(name, data)
+                    if module == 'vlc':
+                        validate_vlc_boundary(name, data)
                     h.writestr(name, data)
     if not set(required) <= owned:
         raise ValueError(f"missing adapter classes: {set(required) - owned}")
@@ -116,7 +155,7 @@ def main():
     parser.add_argument("--android-lib", type=Path, action="append", required=True)
     parser.add_argument("--d8", type=Path, required=True)
     parser.add_argument("--binding", required=True)
-    parser.add_argument("--module", choices=("monogram", "smarttube"), default="monogram")
+    parser.add_argument("--module", choices=("monogram", "smarttube", "vlc"), default="monogram")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{64}", args.binding):

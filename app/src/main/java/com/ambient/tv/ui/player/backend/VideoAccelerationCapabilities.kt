@@ -63,7 +63,7 @@ object VideoAccelerationRuntime {
                 val vlcReady = VlcBackendAvailability.probe(context)
                 val vlc = if (vlcReady && VulkanNativeProbe.available) runCatching {
                     val instance = VlcEngineRuntime.engine.createLibrary(context.applicationContext, arrayListOf("--verbose=0"))
-                    try { VulkanNativeProbe.vlcModules() } finally { instance.release() }
+                    try { VlcEngineRuntime.engine.vulkanModules() } finally { instance.release() }
                 }.getOrDefault(false) else false
                 val eglPq = MpvEglHdrProbe.hdr10Pq()
                 val eglSurfacePatch = MpvNativeFeatures.EGL_HDR_SURFACE in MpvNativeFeatures.current

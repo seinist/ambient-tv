@@ -606,6 +606,24 @@ source text, pass order, scaling, sampling, framebuffer precision and
 intensity are unchanged. Existing shader policy tests use the host model;
 a separate conversion test verifies the vendor mapping.
 
+### Experimental VLC Java/DEX candidate
+
+Set VLC_DEX_MODULE=1 when building release-modular-preview to strip the
+VLC implementation and vendor Java classes (retaining Android resource
+classes). The Full candidate uses exportVlcAdapterDex and packages the
+exact signed APK native roots plus a private C++ runtime. A DEX-specific
+host fingerprint, entrypoint allowlist and retained-class boundary scan
+prevent mixing the native-only and DEX formats. The Vulkan module-bank
+probe runs inside VLC JNI, not the host linker namespace.
+
+The Build release workflow accepts vlc_dex_candidate with module_candidate=vlc.
+This is opt-in; the stable Modular release deliberately rejects the flag
+until native cross-namespace SVP and ProjectM PCM integration is validated.
+The isolated adapter disables SVP rather than accidentally starting a second
+unshared native runtime. ProjectM PCM routing still needs integration testing.
+The default native-only VLC path stays unchanged. Device validation must
+cover JNI load, seek, audio, subtitles, Vulkan and release before promotion.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
