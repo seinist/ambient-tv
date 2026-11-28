@@ -177,6 +177,7 @@ class ResumeConnectivityMonitor @Inject constructor(
                 backgroundedForMs = backgroundedFor,
                 lastHealthAgeMs = healthAge,
                 handheld = !com.ambient.tv.ui.mobile.isTelevision(context),
+                hasStartupNas = preferences.activeConnectivityFileSources().any { it.network },
             )) return
         requestRecheck(reason = "resume backgrounded=${backgroundedFor}ms healthAge=${healthAge}ms")
     }
@@ -300,21 +301,31 @@ class ResumeConnectivityMonitor @Inject constructor(
         }
 
         kotlinx.coroutines.coroutineScope {
-            targets.map { system ->
-                async {
-                    val online = try {
-                        recheckSystem(system, ::update)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        Timber.w(error, "Resume recheck failed for %s", system)
-                        update(system, ResumeConnectivityStatus.ServerPhase.ERROR, error.message)
-                        false
-                    }
-                    if (online) noteHealthyNow()
-                    online
+            suspend fun check(system: MediaSystem, awaitSiblingWake: suspend (String) -> Unit = {}): Boolean {
+                val online = try {
+                    recheckSystem(system, ::update, awaitSiblingWake)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Timber.w(error, "Resume recheck failed for %s", system)
+                    update(system, ResumeConnectivityStatus.ServerPhase.ERROR, error.message)
+                    false
                 }
-            }.awaitAll()
+                if (online) noteHealthyNow()
+                return online
+            }
+            // A passive NAS source must not report an outage while Plex/TVH on the same
+            // machine is still performing its configured automatic wake.
+            val servers = targets.filter { it != MediaSystem.FILES }.map { system ->
+                hosts.machine(system.key) to async { check(system) }
+            }
+            val files = if (MediaSystem.FILES in targets) async {
+                check(MediaSystem.FILES) { machine ->
+                    servers.filter { it.first == machine }.map { it.second }.awaitAll()
+                }
+            } else null
+            servers.map { it.second }.awaitAll()
+            files?.await()
         }
 
         lastHealthElapsedMs = SystemClock.elapsedRealtime()
@@ -330,6 +341,7 @@ class ResumeConnectivityMonitor @Inject constructor(
     private suspend fun recheckSystem(
         system: MediaSystem,
         update: (MediaSystem, ResumeConnectivityStatus.ServerPhase, String?) -> Unit,
+        awaitSiblingWake: suspend (String) -> Unit,
     ): Boolean {
         update(system, ResumeConnectivityStatus.ServerPhase.CHECKING, null)
         val ok = when (system) {
@@ -345,7 +357,10 @@ class ResumeConnectivityMonitor @Inject constructor(
             MediaSystem.TVHEADEND -> tvheadendConnection.recheckOnResume(
                 onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) },
             )
-            MediaSystem.FILES -> recheckFiles(onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) })
+            MediaSystem.FILES -> recheckFiles(
+                onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) },
+                awaitSiblingWake = awaitSiblingWake,
+            )
             else -> false
         }
         update(
@@ -361,8 +376,12 @@ class ResumeConnectivityMonitor @Inject constructor(
      * starts) its machine's wake with the full budget: a NAS that needs 30 s to boot must not
      * count as unreachable after a few seconds while its wake card keeps waiting.
      */
-    private suspend fun recheckFiles(onWaking: (() -> Unit)? = null): Boolean {
-        val sources = preferences.fileSources.filter { it.kind != "local" }
+    private suspend fun recheckFiles(
+        onWaking: (() -> Unit)? = null,
+        awaitSiblingWake: suspend (String) -> Unit,
+    ): Boolean {
+        val sources = preferences.activeConnectivityFileSources().filter { it.network }
+            .sortedByDescending { it.wolAuto && it.wolMac.isNotBlank() }
         val targets = sources.map { source -> wakeOnLan.machineKey(source) to source }
         val endpoints = targets.groupBy({ it.first }, { (_, source) ->
             ResumeWakeEndpoint(
@@ -378,6 +397,7 @@ class ResumeConnectivityMonitor @Inject constructor(
         val sweep = fileWakePauses.sweep(endpoints)
         var allOk = true
         for ((machine, source) in targets) {
+            val noticeKey = "files:offline:${source.id}"
             val ok = sweep.check(machine) {
                 if (wakeOnLan.isReachable(source)) return@check true
                 if (fileWakePauses.isPaused(machine)) return@check false
@@ -391,11 +411,20 @@ class ResumeConnectivityMonitor @Inject constructor(
                         false
                     }
                 } else {
-                    notifyResult("files:offline:${source.id}", "files", source.name, success = false, failureMessage = R.string.notice_unreachable)
+                    awaitSiblingWake(machine)
+                    if (wakeOnLan.isReachable(source)) return@check true
+                    if (!fileWakePauses.isPaused(machine)) {
+                        AppNotifications.post(AppNotice(
+                            key = noticeKey, message = R.string.notice_unreachable,
+                            systems = listOf("files"), subject = source.name,
+                            phase = NoticePhase.ERROR, kind = NoticeKind.CONNECTION,
+                            machine = machine,
+                        ))
+                    }
                     false
                 }
             }
-            if (!ok) allOk = false
+            if (ok) AppNotifications.dismiss(noticeKey) else allOk = false
         }
         return allOk
     }
@@ -405,7 +434,7 @@ class ResumeConnectivityMonitor @Inject constructor(
         if (preferences.jellyfinEnabled && preferences.isJellyfinConfigured) add(MediaSystem.JELLYFIN)
         if (preferences.embyEnabled && preferences.isEmbyConfigured) add(MediaSystem.EMBY)
         if (preferences.tvheadendEnabled && preferences.isTvheadendConfigured) add(MediaSystem.TVHEADEND)
-        if (preferences.filesEnabled && preferences.fileSources.any { it.kind != "local" }) add(MediaSystem.FILES)
+        if (preferences.activeConnectivityFileSources().any { it.network }) add(MediaSystem.FILES)
     }
 
     @Suppress("DEPRECATION") // A synchronous snapshot of every network. activeNetwork misses Wi-Fi when cellular is the default route.
