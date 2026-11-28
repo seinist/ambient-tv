@@ -647,7 +647,7 @@ internal fun vlcImageMediaOptions(options: VlcImageOptions, svpTargetFps: Double
         filters += "ambientsvp{fps=$target,preset=${svpPreset(o.svpMode)},${svpNativeOptions(o.svp, ",")}$transport}"
         if (resident) {
             add(":mediacodec-dr")
-            add(":mediacodec-svp-vulkan")
+            if (hdrSceneOptions.isEmpty()) add(":mediacodec-svp-vulkan")
         } else add(":no-mediacodec-dr")
     }
     if (filters.isNotEmpty()) add(":video-filter=${filters.joinToString(":")}")
