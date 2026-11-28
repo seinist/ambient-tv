@@ -84,6 +84,15 @@ data class GameLibraryUiState(
 
 /** Folder operations belong to the library, not to whichever settings or browse route
  * happens to be visible. Leaving the settings page must not cancel an ongoing scan. */
+internal fun retainGameBrowseOrder(previous: List<LibraryGame>, current: List<LibraryGame>): List<LibraryGame> {
+    if (previous.isEmpty()) return current
+    val remaining = current.associateByTo(LinkedHashMap(), LibraryGame::fileId)
+    return buildList(current.size) {
+        previous.forEach { remaining.remove(it.fileId)?.let(::add) }
+        addAll(remaining.values)
+    }
+}
+
 @Singleton
 class GameLibraryWork @Inject constructor() {
     internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -110,14 +119,10 @@ class GameLibraryViewModel @Inject constructor(
         set(value) { work.job = value }
 
     private fun updateScan(transform: (GameLibraryUiState) -> GameLibraryUiState) {
-        mutable.update(transform)
-        val current = mutable.value
-        // Never retain an entire browse result or a view model in the shared progress state.
-        work.progress.update { it.copy(scanning = current.scanning, busy = current.scanning,
-            scanPhase = current.scanPhase, scanProcessed = current.scanProcessed,
-            scanDiscovered = current.scanDiscovered, scanFolderName = current.scanFolderName,
-            activeScanFolderId = current.activeScanFolderId, enriching = current.enriching,
-            error = current.error, message = current.message, nameCatalogs = current.nameCatalogs) }
+        // Only scan-related transforms use this path. The shared state never contains
+        // browse results. Atomic updates prevent concurrent workers losing progress.
+        work.progress.update(transform)
+        applyScanProgress(forceFeedback = true)
     }
     private fun showScanError(error: Throwable, fallback: Int) {
         libraryReadError = null
@@ -147,20 +152,28 @@ class GameLibraryViewModel @Inject constructor(
     private var loadedGames: Pair<ReadRequest, List<LibraryGame>>? = null
     private var loadedSystems: Pair<com.ambient.tv.games.library.GameLibraryRevision, List<String>>? = null
 
+    private fun applyScanProgress(forceFeedback: Boolean = false) {
+        mutable.update { state ->
+            val progress = work.progress.value
+            state.copy(scanning = progress.scanning, busy = if (progress.scanning) true
+                else if (state.scanning) false else state.busy,
+                scanPhase = progress.scanPhase, scanProcessed = progress.scanProcessed,
+                scanDiscovered = progress.scanDiscovered, scanFolderName = progress.scanFolderName,
+                activeScanFolderId = progress.activeScanFolderId, enriching = progress.enriching,
+                error = if (forceFeedback || progress.scanning || state.scanning) progress.error else state.error,
+                message = if (forceFeedback || progress.scanning || state.scanning) progress.message else state.message,
+                nameCatalogs = if (progress.nameCatalogs.isNotEmpty()) progress.nameCatalogs else state.nameCatalogs)
+        }
+    }
+
     init {
         viewModelScope.launch {
-            work.progress.collect { progress ->
-                mutable.update { state ->
-                    state.copy(scanning = progress.scanning, busy = if (progress.scanning) true
-                        else if (state.scanning) false else state.busy,
-                        scanPhase = progress.scanPhase, scanProcessed = progress.scanProcessed,
-                        scanDiscovered = progress.scanDiscovered, scanFolderName = progress.scanFolderName,
-                        activeScanFolderId = progress.activeScanFolderId, enriching = progress.enriching,
-                        error = if (progress.scanning || state.scanning) progress.error else state.error,
-                        message = if (progress.scanning || state.scanning) progress.message else state.message,
-                        nameCatalogs = if (progress.nameCatalogs.isNotEmpty()) progress.nameCatalogs else state.nameCatalogs)
-                }
-                if (!progress.scanning) refreshRevision.update { it + 1 }
+            var wasScanning = work.progress.value.scanning
+            work.progress.collect {
+                applyScanProgress()
+                val scanning = work.progress.value.scanning
+                if (wasScanning && !scanning) refreshRevision.update { revision -> revision + 1 }
+                wasScanning = scanning
             }
         }
         viewModelScope.launch {
@@ -198,11 +211,18 @@ class GameLibraryViewModel @Inject constructor(
         // every read. Never publish data for a category/search/sort that is no longer selected.
         val current = selection.value?.copy(sort = library.sortKey(), descending = library.sortDescending())
         if (current != request.read.query || library.titleStyle() != request.read.titleStyle) return
+        val sameSelection = loadedGames?.first?.let {
+            it.query == request.read.query && it.titleStyle == request.read.titleStyle
+        } == true
+        // Preserve the order of already visible IDs during enrichment. Names and
+        // covers update in place; the final catalog refresh restores the selected sort.
+        val displayGames = if (work.progress.value.scanning && sameSelection)
+            retainGameBrowseOrder(mutable.value.games, games) else games
         loadedGames = request.read to games
         loadedSystems = systemsRevision to systems
         val previousReadError = libraryReadError
         mutable.update { it.copy(
-            games = games, systems = systems, folders = library.folders(), sources = files.sources(),
+            games = displayGames, systems = systems, folders = library.folders(), sources = files.sources(),
             view = request.view, gridColumns = request.gridColumns, listRows = request.listRows,
             titleStyle = request.read.titleStyle, sortKey = request.read.query.sort,
             sortDescending = request.read.query.descending, ready = true,
