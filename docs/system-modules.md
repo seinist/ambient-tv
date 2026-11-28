@@ -703,6 +703,15 @@ decoder or other base library cannot rely on a separately downloaded engine
 to satisfy a direct linker dependency. Explicit optional JNI/dlsym bridges
 still require device validation.
 
+Runtime preflight additionally inspects the actual APK-owned ELF dependencies
+behind every signed host fingerprint. The reachable host graph must match the
+signed dependency set exactly; missing transitive libraries, unused entries,
+SONAME mismatches and host-to-module back edges fail before activation.
+Parsed ELF metadata is cached per installed APK process. Compressed APK entry
+inspection uses a bounded temporary file, removed after inspection; it is
+never loaded as native code. Shared libraries are explicitly loaded once in
+dependency-first order (Android resolves host-only linker cycles).
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

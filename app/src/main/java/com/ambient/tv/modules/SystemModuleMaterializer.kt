@@ -142,6 +142,8 @@ internal object SystemModuleMaterializer {
         "libsync.so",
     )
 
+    internal fun isPlatformLibrary(name: String): Boolean = name in platform
+
     internal fun validateNativeDependencies(native: Map<String, SystemModuleBinary.Native>, hostLibraries: Set<String> = emptySet()) {
         if (native.keys.any { it in platform || it in hostLibraries })
             throw SystemModuleTrustException("Package attempts to replace Android platform library")

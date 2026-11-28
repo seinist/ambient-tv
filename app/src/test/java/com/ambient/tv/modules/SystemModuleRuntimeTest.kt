@@ -180,6 +180,22 @@ class SystemModuleRuntimeTest {
             allowedModuleDependencies = setOf(SystemModule.SHADERS)), pkg.build))
     }
 
+    @Test fun hostNativeClosureIsExactAndOrderedBeforeModuleActivation() {
+        fun lib(name: String, vararg needed: String) = SystemModuleBinary.Native(name, needed.toSet())
+        val module = mapOf("libengine.so" to lib("libengine.so", "libavcodec.so", "libc.so"))
+        val codec = lib("libavcodec.so", "libavutil.so")
+        val util = lib("libavutil.so", "libc.so")
+        val host = mapOf("libavcodec.so" to codec, "libavutil.so" to util)
+        assertEquals(listOf("libavutil.so", "libavcodec.so"), SystemModuleRuntime.sharedHostOrder(module, host))
+        reject { SystemModuleRuntime.sharedHostOrder(module, host - "libavutil.so") }
+        reject { SystemModuleRuntime.sharedHostOrder(module, host + ("libunused.so" to lib("libunused.so"))) }
+        reject { SystemModuleRuntime.sharedHostOrder(module, host + ("libavutil.so" to lib("libavutil.so", "libengine.so"))) }
+        reject { SystemModuleRuntime.sharedHostOrder(module, host + ("libavutil.so" to lib("libforeign.so"))) }
+        reject { SystemModuleRuntime.sharedHostOrder(module, host + ("libc.so" to lib("libc.so"))) }
+        val cyclicHost = host + ("libavutil.so" to lib("libavutil.so", "libavcodec.so"))
+        assertEquals(setOf("libavutil.so", "libavcodec.so"), SystemModuleRuntime.sharedHostOrder(module, cyclicHost).toSet())
+    }
+
     @Test fun nativeOnlyLoadOrderIncludesDependenciesFirst() {
         val libs = mapOf(
             "liba.so" to SystemModuleBinary.Native("liba.so", setOf("libb.so")),

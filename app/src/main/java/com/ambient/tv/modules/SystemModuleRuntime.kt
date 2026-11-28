@@ -63,6 +63,7 @@ internal class SystemModuleRuntime(
     // APK-owned libraries are immutable for this installed app process. Cache
     // their verified fingerprints and only explicitly load each SONAME once.
     private val verifiedHostHashes = mutableMapOf<String, String>()
+    private val verifiedHostElf = mutableMapOf<Pair<String, String>, SystemModuleBinary.Native>()
     private val loadedHostLibraries = mutableSetOf<String>()
     private var loading = false
 
@@ -219,10 +220,11 @@ internal class SystemModuleRuntime(
                 }
                 if (contract.requireSoname && files.native.any { (name, binary) -> binary.soname != name })
                     throw SystemModuleTrustException("Native runtime requires matching ELF SONAME")
+                hostLoadOrder(files)
                 nativeOrder(files.native, contract.nativeRoots)
             }
-            else -> if (files.dex.isNotEmpty() || files.native.isNotEmpty())
-                throw SystemModuleTrustException("Executable code in asset-only module")
+            else -> if (files.dex.isNotEmpty() || files.native.isNotEmpty() || files.build.hostNativeSha256.isNotEmpty())
+                throw SystemModuleTrustException("Executable code or native dependency in asset-only module")
         }
     }
 
@@ -250,6 +252,62 @@ internal class SystemModuleRuntime(
         digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
     }
 
+    /**
+     * Inspect the exact fingerprinted APK libraries before any JNI activation.
+     * Android may return a standalone path or a path into the installed APK.
+     * Cache parsed metadata for the lifetime of this immutable APK process.
+     * A ZIP entry is copied to a bounded, private temporary file solely for
+     * random-access ELF inspection; it is never passed to System.load.
+     */
+    private fun hostLibraryElf(location: String, abi: String): SystemModuleBinary.Native =
+        verifiedHostElf.getOrPut(location to abi) {
+            val split = location.indexOf("!/")
+            if (split < 0) {
+                SystemModuleBinary.elf(File(location), abi, pageSize)
+            } else {
+                val temp = File.createTempFile("host-elf-", ".tmp", root)
+                try {
+                    java.util.zip.ZipFile(location.substring(0, split)).use { zip ->
+                        val entry = zip.getEntry(location.substring(split + 2))
+                            ?: throw SystemModuleTrustException("Host APK native library missing")
+                        if (entry.isDirectory || entry.size !in 1..SystemModuleChannel.MAX_PACKAGE_BYTES)
+                            throw SystemModuleTrustException("Host ELF exceeds bounds")
+                        zip.getInputStream(entry).use { input ->
+                            temp.outputStream().use { output ->
+                                val buffer = ByteArray(64 * 1024)
+                                var total = 0L
+                                while (true) {
+                                    val n = input.read(buffer)
+                                    if (n == -1) break
+                                    if (n == 0 || n > entry.size - total)
+                                        throw SystemModuleTrustException("Host ELF exceeds declared size")
+                                    output.write(buffer, 0, n)
+                                    total += n
+                                }
+                                if (total != entry.size)
+                                    throw SystemModuleTrustException("Host ELF is truncated")
+                            }
+                        }
+                    }
+                    SystemModuleBinary.elf(temp, abi, pageSize)
+                } finally {
+                    temp.delete()
+                }
+            }
+        }
+
+    private fun hostLoadOrder(files: SystemModuleMaterializer.Materialized): List<String> {
+        val bundled = hostLoader as? BaseDexClassLoader
+        val host = files.build.hostNativeSha256.keys.associateWith { name ->
+            if (name in nativeOwners)
+                throw SystemModuleTrustException("Host native dependency is already owned by a module")
+            val location = bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so"))
+                ?: throw SystemModuleTrustException("Required host library unavailable")
+            hostLibraryElf(location, files.build.abi)
+        }
+        return sharedHostOrder(files.native, host)
+    }
+
     private fun activate(files: SystemModuleMaterializer.Materialized, contract: Contract): Loaded {
         val assets = File(files.directory, "assets")
         val dependencies = files.build.dependencies.mapNotNull {
@@ -271,7 +329,7 @@ internal class SystemModuleRuntime(
             return Loaded(files.build, assets, entry, loader)
         }
         if (contract.nativeRoots.isNotEmpty()) {
-            for (name in files.build.hostNativeSha256.keys.sorted()) {
+            for (name in hostLoadOrder(files)) {
                 if (name !in loadedHostLibraries) {
                     System.loadLibrary(name.removePrefix("lib").removeSuffix(".so"))
                     loadedHostLibraries += name
@@ -287,6 +345,36 @@ internal class SystemModuleRuntime(
     companion object {
         internal fun dependenciesAllowed(contract: Contract, build: SystemModuleBuild): Boolean =
             build.dependencies.all { SystemModule.fromId(it.module) in contract.allowedModuleDependencies }
+
+        /**
+         * Exact host closure, not just direct DT_NEEDED edges from the module.
+         * Host-only cycles may be resolved by Android's linker. No edge may
+         * return from a shared APK library into a replaceable module root.
+         */
+        internal fun sharedHostOrder(
+            module: Map<String, SystemModuleBinary.Native>,
+            host: Map<String, SystemModuleBinary.Native>,
+        ): List<String> {
+            if (host.keys.any { it in module || SystemModuleMaterializer.isPlatformLibrary(it) })
+                throw SystemModuleTrustException("Conflicting host native dependency")
+            val visited = mutableSetOf<String>()
+            val ordered = mutableListOf<String>()
+            fun visit(name: String) {
+                if (SystemModuleMaterializer.isPlatformLibrary(name)) return
+                if (name in module)
+                    throw SystemModuleTrustException("Host library links back into optional module")
+                val binary = host[name] ?: throw SystemModuleTrustException("Unsigned transitive host dependency")
+                if (!visited.add(name)) return
+                if (binary.soname != null && binary.soname != name)
+                    throw SystemModuleTrustException("Host ELF SONAME mismatch")
+                binary.needed.sorted().forEach(::visit)
+                ordered += name
+            }
+            module.values.flatMap { it.needed }.toSortedSet().filter { it !in module }.forEach(::visit)
+            if (visited != host.keys)
+                throw SystemModuleTrustException("Unused signed host native dependency")
+            return ordered
+        }
 
         internal fun nativeClosure(libraries: Map<String, SystemModuleBinary.Native>, roots: Set<String>): Set<String> {
             val visited = mutableSetOf<String>()
