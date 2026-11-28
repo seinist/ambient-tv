@@ -319,6 +319,8 @@ internal class HdrSceneSession(
 ) {
     var mode: Int = 1
         private set
+    fun analysisPath(): String = sourceFile.path
+    fun discardIncompleteCapture() { if (mode == 1) cache.delete() }
     fun playbackPath(): String? = sourceFile.path.takeIf { staged && valid() }
     fun valid() = mode != 0 && sourceFile.length() == sourceLength && sourceFile.lastModified() == sourceModified
     fun advance(): Boolean {
