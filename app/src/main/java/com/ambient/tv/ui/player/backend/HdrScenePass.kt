@@ -37,7 +37,15 @@ internal object HdrScenePlanner {
         File(path).canonicalFile.takeIf { it.isFile && it.canRead() }
     }.getOrNull()
 
-    private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
+    private fun hex(bytes: ByteArray): String {
+        val digits = "0123456789abcdef"
+        return CharArray(bytes.size*2).also { out ->
+            bytes.forEachIndexed { i,b ->
+                val v = b.toInt() and 255
+                out[i*2] = digits[v ushr 4];out[i*2+1] = digits[v and 15]
+            }
+        }.concatToString()
+    }
 
     // Extract the registered user-data SEI message from HEVC NAL units. Accept
     // Annex B or four-byte length prefixes only; reject inconsistent payloads.
@@ -146,8 +154,26 @@ internal object HdrScenePlanner {
         return Plan(ends,source,target)
     }
 
-    suspend fun scan(url: String, target: Double, vlc: Boolean, directory: File): HdrSceneSession? = withContext(Dispatchers.IO) {
-        val file = localFile(url) ?: return@withContext null
+    suspend fun scan(url: String, source: Double, target: Double, vlc: Boolean, directory: File): HdrSceneSession? {
+        var created: File? = null
+        var delivered = false
+        try {
+            val result = withContext(Dispatchers.IO) {
+                scanLocal(url,source,target,vlc,directory) { created = it }
+            }
+            delivered = result != null
+            return result
+        } finally {
+            // withContext may discard a result if cancellation races dispatch
+            // back to the player thread. Never strand the private run directory.
+            if (!delivered) created?.deleteRecursively()
+        }
+    }
+
+    private suspend fun scanLocal(url: String, source: Double, target: Double, vlc: Boolean,
+        directory: File, created: (File) -> Unit): HdrSceneSession? {
+        if (!source.isFinite() || !target.isFinite() || source !in 5.0..120.0 || target <= source || target > 120 || target/source > 5) return null
+        val file = localFile(url) ?: return null
         val length = file.length()
         val modified = file.lastModified()
         val digest = MessageDigest.getInstance("SHA-256")
@@ -167,35 +193,38 @@ internal object HdrScenePlanner {
             val video = (0 until extractor.trackCount).filter {
                 extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
             }
-            if (video.size != 1) return@withContext null
+            if (video.size != 1) return null
             val format = extractor.getTrackFormat(video.single())
+            val width = format.getInteger(MediaFormat.KEY_WIDTH)
+            val height = format.getInteger(MediaFormat.KEY_HEIGHT)
             if (format.getString(MediaFormat.KEY_MIME) != "video/hevc" ||
-                format.getInteger(MediaFormat.KEY_WIDTH).toLong()*format.getInteger(MediaFormat.KEY_HEIGHT) > 1920L*1080 ||
-                !format.containsKey(MediaFormat.KEY_FRAME_RATE)) return@withContext null
-            val source = runCatching { format.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }
-                .getOrElse { format.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }
+                width !in 32..1920 || height !in 32..1080) return null
             extractor.selectTrack(video.single())
             val buffer = ByteBuffer.allocate(MAX_SAMPLE)
             val samples = ArrayList<Sample>()
+            val known = HashMap<String,String>()
             while (extractor.sampleTrackIndex >= 0) {
                 currentCoroutineContext().ensureActive()
-                if (samples.size >= MAX_FRAMES) return@withContext null
+                if (samples.size >= MAX_FRAMES || extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_ENCRYPTED != 0) return null
                 buffer.clear()
                 val count = extractor.readSampleData(buffer,0)
-                if (count <= 0 || count >= MAX_SAMPLE || extractor.sampleTrackIndex != video.single()) return@withContext null
+                if (count <= 0 || count >= MAX_SAMPLE || extractor.sampleTrackIndex != video.single()) return null
                 val bytes = ByteArray(count)
                 buffer.position(0);buffer.get(bytes)
-                val hdr = metadata(bytes) ?: return@withContext null
-                samples += Sample(extractor.sampleTime,hdr)
+                val hdr = metadata(bytes) ?: return null
+                if (hdr !in known && known.size >= MAX_SCENES) return null
+                samples += Sample(extractor.sampleTime,known.getOrPut(hdr) { hdr })
                 if (!extractor.advance()) break
             }
-            plan(samples,source,target,vlc) ?: return@withContext null
+            plan(samples,source,target,vlc) ?: return null
         } finally { extractor.release() }
         currentCoroutineContext().ensureActive()
-        if (file.length() != length || file.lastModified() != modified) return@withContext null
-        if (!directory.exists() && !directory.mkdirs()) return@withContext null
+        if (file.length() != length || file.lastModified() != modified) return null
+        if (!directory.exists() && !directory.mkdirs()) return null
         val run = java.nio.file.Files.createTempDirectory(directory.toPath(),"hdr-").toFile()
-        try {
+        created(run)
+        if (run.path.any { it in ":,{}%\"\\\n\r" }) return null
+        return try {
             val manifest = File(run,"plan")
             manifest.writeText(buildString {
                 appendLine("AMBIENTSVP_SCENE_PLAN_1");appendLine(key)
@@ -220,6 +249,12 @@ internal class HdrSceneSession(
     fun valid() = mode != 0 && sourceFile.length() == sourceLength && sourceFile.lastModified() == sourceModified
     fun advance(): Boolean {
         if (mode != 1 || !valid() || !cache.isFile || cache.length() !in 1L..32_000_000L) return false
+        val matching = runCatching {
+            cache.inputStream().bufferedReader().use {
+                it.readLine() == "AMBIENTSVP_SCENE_CACHE_1" && it.readLine() == key
+            }
+        }.getOrDefault(false)
+        if (!matching) return false
         mode = 2
         return true
     }
