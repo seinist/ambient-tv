@@ -967,6 +967,8 @@ int main(){
     assert(output.size()==24);
     for(unsigned row=0;row<3;++row)for(unsigned i=0;i<8;++i)assert(output[row*8+i]==input[row*16+i]);
     assert(!pack(1,2,4,3,input.data(),39,output));
+    assert(!pack(4,5,4,2,input.data(),48,output));
+    assert(!pack(1,2,4,0,input.data(),48,output));
     assert(pack(4,5,12,2,input.data(),20,output));
     assert(output.size()==16&&output[8]==12);
     assert(pack(1,4,4,3,input.data(),48,output)&&output==input);

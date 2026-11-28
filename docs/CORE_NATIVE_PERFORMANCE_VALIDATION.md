@@ -77,8 +77,9 @@ compiler build is not proof of correct gameplay or a performance improvement.
   aligned High/Low WRAM loads/stores only when the exact original table target
   matches. MMIO, debug tracing, cache-enabled and unusual accesses retain
   the original bus paths. This is not a full native SH2 JIT.
-* Both are artifact-only until the CI and device acceptance gates pass. Public
-  channels do not silently select these binaries.
+* Both are opt-in signed experimental channels. Artifact-only validation
+  precedes manual main-only signing. Default channels do not silently select
+  these binaries; on-device game acceptance remains required.
 
 ## Additional renderer / recompiler candidates
 
@@ -196,3 +197,9 @@ optimized channels. Device gameplay evidence is still required before broad
 promotion. Full catalog validation shards baseline and optimized by ABI plus
 ARM64 A57. No shard publishes. GLES runner measurements now synchronize each
 frame and verify all transferred fixture content and BIOS digests.
+
+The audit also bounds Cemu's queued plus active pipeline compilation, adds
+completion-driven Dolphin shader waits and validates texture upload dimensions
+before transitions, reduces the Panda3DS shader cache on low-memory Android,
+and bounds/flushes PPSSPP audio with bit-exact NEON conversion. ARMSX2 checks
+compressed-row upload sizes and invalid input before allocation.
