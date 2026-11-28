@@ -49,6 +49,8 @@ struct svp_placebo_quality {
     int (*submit_cached)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **,uint64_t);
     uint64_t generation;
+    uint64_t source_ids[4];
+    int (*set_source_ids)(const AmbientSvpVk *,const uint64_t (*)[4]);
     bool generation_exhausted;
     int (*submit_capture)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
@@ -145,6 +147,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         s->retire=dlsym(s->lib,"ambient_svp_vk_retire_held");
         s->retire_status=dlsym(s->lib,"ambient_svp_vk_retire_held_status");
         s->submit_cached=dlsym(s->lib,"ambient_svp_vk_submit_held_cached");
+        s->set_source_ids=dlsym(s->lib,"ambient_svp_vk_set_held_source_ids");
         s->submit_capture=dlsym(s->lib,"ambient_svp_vk_submit_held_capture");
         s->retire_capture=dlsym(s->lib,"ambient_svp_vk_retire_held_capture");
         if(!s->retire_capture)s->submit_capture=NULL;
@@ -206,6 +209,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     get_queue(vk->device,family,0,&queue);
     if(!queue)goto cleanup;
     vk->lock_queue(vk,family,0);
+    if(s->set_source_ids)s->set_source_ids(s->engine,count==5?&s->source_ids:NULL);
     int rc=split_stats?s->submit_stats(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->count,pass,index,&job,s->generation):
         capture&&pass&&s->submit_capture?s->submit_capture(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,

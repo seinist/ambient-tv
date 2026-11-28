@@ -430,6 +430,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     // IDs, including the two adjacent pictures for algorithm 23.
     bool extended=ambient_svp_quality_extended(&pair->quality)&&pair->past&&pair->future;
     uint64_t ids[4]={pair->a_id,pair->b_id,pair->past_id,pair->future_id};
+    memcpy(s->quality.source_ids,ids,sizeof(ids));
     for(unsigned i=0;i<(extended?4u:2u);i++){
         for(unsigned j=i+1;j<4&&s->sources[i].id!=ids[i];j++){
             if(s->sources[j].id!=ids[i])continue;

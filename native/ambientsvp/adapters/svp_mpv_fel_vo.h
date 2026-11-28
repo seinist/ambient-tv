@@ -141,6 +141,7 @@ static inline bool svp_fel_vo_map(struct priv *p,struct vo *vo,struct mp_image *
         if(i<2)return false;
         extended=false;break;
     }
+    memcpy(s->quality.source_ids,pair->ids,sizeof(s->quality.source_ids));
     struct frame_priv *fp=mpi->priv;
     // The full BL/EL reconstruction is complete. Interpolate only
     // canonical RGB; source endpoints or bridge failure keep exact
