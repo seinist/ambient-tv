@@ -154,6 +154,10 @@ class GamePlayerViewModel @Inject constructor(
             prepared?.close()
             prepared = null
             directFailed = false
+            if (!withContext(Dispatchers.IO) { LibretroFrontendAvailability.probe() }) {
+                mutable.value = GameUiState.Failed(GameFailure.START)
+                return@launch
+            }
             val game = try {
                 preparer.prepare(fileId, { progress -> mutable.value = GameUiState.Preparing(progress) }, forceCache, assignedSystem)
             } catch (error: GameDirectUnavailableException) {
