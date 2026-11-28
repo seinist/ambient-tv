@@ -66,7 +66,7 @@ def generate(paths, aapt2, apksigner, expected_abis, packaging="full"):
     return manifest
 
 
-def verify_packaging(path, aapt2, expected):
+def verify_packaging(path, aapt2, expected, require_marker=False):
     xml = subprocess.run([str(aapt2), "dump", "xmltree", "--file", "AndroidManifest.xml", str(path)],
                          check=True, capture_output=True, text=True).stdout
     # aapt2 reports the element and its attributes on separate lines.
@@ -78,7 +78,7 @@ def verify_packaging(path, aapt2, expected):
             if not match:
                 raise ValueError("Invalid APK packaging marker")
             markers.append(match[1])
-    if markers != [expected] and not (expected == "full" and not markers):
+    if markers != [expected] and not (expected == "full" and not markers and not require_marker):
         raise ValueError(f"APK packaging mismatch: {path}")
 
 

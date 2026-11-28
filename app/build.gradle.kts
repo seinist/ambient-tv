@@ -163,8 +163,12 @@ val externalVersions = loadProjectProperties("gradle/external-versions.propertie
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
 val modulePackaging = providers.gradleProperty("MODULE_PACKAGING")
     .orElse(providers.environmentVariable("MODULE_PACKAGING")).orElse("full").get()
-require(modulePackaging in setOf("full", "modular-preview")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
-val modularPreview = modulePackaging == "modular-preview"
+require(modulePackaging in setOf("full", "modular-preview", "modular")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
+val modularPreview = modulePackaging != "full"
+val stableModular = modulePackaging == "modular"
+require(!stableModular || providers.environmentVariable("REVIEWED_MODULAR_RELEASE").orNull == "1") {
+    "Stable Modular packaging requires REVIEWED_MODULAR_RELEASE=1"
+}
 val libretroModuleMarker = rootProject.file("third_party/libretrodroid/.ambient-libretrodroid")
 val libretroModuleJava = rootProject.file("third_party/libretrodroid/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java")
 val libretroModuleBinding = if (libretroModuleMarker.isFile && libretroModuleJava.isFile &&
@@ -1170,7 +1174,7 @@ val generateUpdateManifest = tasks.register<Exec>("generateUpdateManifest") {
     group = "distribution"
     description = "Generates update.json from this release's signed APKs (deferred when unsigned)."
     dependsOn("packageRelease")
-    onlyIf { !modularPreview }
+    onlyIf { modulePackaging != "modular-preview" }
     val output = layout.buildDirectory.file("outputs/update/update.json")
     val script = rootProject.file("scripts/generate_update_manifest.py")
     val gradleMetadata = layout.buildDirectory.file("outputs/apk/release/output-metadata.json")
@@ -1188,13 +1192,13 @@ val generateUpdateManifest = tasks.register<Exec>("generateUpdateManifest") {
             "--output", output.get().asFile.path, "--aapt2", File(toolsDir, "aapt2").path,
             "--apksigner", File(toolsDir, "apksigner").path, "--expected-abis", expected,
             "--gradle-metadata", gradleMetadata.get().asFile.path,
-            "--skip-unsigned")
+            "--packaging", if (stableModular) "modular" else "full", "--skip-unsigned")
     })
 }
 tasks.matching { it.name == "packageRelease" }.configureEach {
     val staleManifest = layout.buildDirectory.file("outputs/update/update.json").get().asFile
     doFirst { staleManifest.delete() }
-    if (!modularPreview) finalizedBy(generateUpdateManifest)
+    if (modulePackaging != "modular-preview") finalizedBy(generateUpdateManifest)
 }
 // generateUpdateManifest depends on packageRelease, so Gradle never runs it after a failed packageRelease.
 

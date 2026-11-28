@@ -503,12 +503,12 @@ the selected variant's signed Android manifest marker (legacy unmarked Full
 APKs remain supported). A profile-install retry is tied to the original APK
 hash. Preview builds cannot use or generate stable update manifests.
 
-Stable Modular APK publication remains intentionally disabled until the
-remaining engine integration, paired build verification and device validation
-are complete. The Modular channel can only resolve a published modular
-manifest; absence produces the existing no-manifest error. The future paired
-release must share version code, signing identity and app ID across both
-variants. No account data is intentionally reset by package replacement.
+Stable Modular APK publication is an explicit reviewed main-only workflow
+option (paired_release=true), not the default. Do not select it before
+remaining engine integration, module availability and device validation are complete. The Modular channel can only resolve a published modular
+manifest; absence produces the existing no-manifest error. The paired release verifies version code, signing identity, app ID, SDK,
+all four ABIs and exact shared native bytes across both variants. Both update
+manifests and all eight APKs are uploaded to one reviewable release draft. No account data is intentionally reset by package replacement.
 
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
