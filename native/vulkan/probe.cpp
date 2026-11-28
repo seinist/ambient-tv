@@ -45,7 +45,25 @@ struct Probe {
     }
     // Surface recreation does not change the device's decoder profiles or external-memory
     // features. Recheck only the actual graphics/presentation queue and surface formats.
-    std::string validatedSurface(VkPhysicalDevice device, const VkPhysicalDeviceProperties &props) {
+    std::string deviceUuid(VkPhysicalDevice device) {
+        auto props2 = fn<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2");
+        if (!props2) return {};
+        VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+        VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        props.pNext = &id;
+        props2(device, &props);
+        std::string uuid;
+        bool nonzero = false;
+        constexpr char hex[] = "0123456789abcdef";
+        for (auto byte : id.deviceUUID) {
+            nonzero |= byte != 0;
+            uuid += hex[byte >> 4];
+            uuid += hex[byte & 15];
+        }
+        return nonzero ? uuid : std::string{};
+    }
+    std::string validatedSurface(VkPhysicalDevice device, const VkPhysicalDeviceProperties &props,
+                                 const std::string &uuid) {
         auto failure = [&](const char *why) { return "{\"device\":" + quote(props.deviceName) + ",\"version\":" +
             std::to_string(props.apiVersion) + ",\"reason\":" + quote(why) + "}"; };
         if (!surface) return failure("surface_create");
@@ -72,7 +90,7 @@ struct Probe {
         values.resize(count);
         std::ostringstream out;
         out << "{\"render\":true,\"reason\":\"\",\"device\":" << quote(props.deviceName)
-            << ",\"version\":" << props.apiVersion << ",\"surfaceColorSpaces\":[";
+            << ",\"version\":" << props.apiVersion << ",\"deviceUuid\":" << quote(uuid.c_str()) << ",\"surfaceColorSpaces\":[";
         for (size_t i = 0; i < values.size(); ++i) {
             if (i) out << ',';
             out << static_cast<int>(values[i].colorSpace);
@@ -86,7 +104,7 @@ struct Probe {
         out << "]}";
         return out.str();
     }
-    std::string run(JNIEnv *env, jobject javaSurface, const char *validatedDevice = nullptr, uint32_t validatedVersion = 0) {
+    std::string run(JNIEnv *env, jobject javaSurface, const char *validatedDevice = nullptr, uint32_t validatedVersion = 0, const char *validatedUuid = nullptr) {
         if (!get) return "{\"reason\":\"loader\"}";
         auto enumerate = fn<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties");
         if (!enumerate) return "{\"reason\":\"instance_functions\"}";
@@ -135,7 +153,11 @@ struct Probe {
             if (validatedDevice && (strcmp(props.deviceName, validatedDevice) || props.apiVersion != validatedVersion)) continue;
             unsupported = failure("device_features");
             if (props.apiVersion < VK_API_VERSION_1_1 || props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) continue;
-            if (validatedDevice) return validatedSurface(device, props);
+            const auto uuid = deviceUuid(device);
+            if (validatedDevice) {
+                if (!validatedUuid || uuid.empty() || uuid != validatedUuid) continue;
+                return validatedSurface(device, props, uuid);
+            }
             auto devExt = fn<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             if (devExt(device, nullptr, &count, nullptr) != VK_SUCCESS) continue;
             ext.resize(count);
@@ -212,7 +234,7 @@ struct Probe {
                 surfaceFormats.resize(formats);
             }
             std::ostringstream out;
-            out << "{\"render\":true,\"reason\":\"\",\"hostQueryReset\":" << (hostReset.hostQueryReset ? "true" : "false") << ",\"device\":" << quote(props.deviceName) << ",\"version\":" << props.apiVersion << ",\"androidHardwareBufferImport\":" << (ahbImport ? "true" : "false")
+            out << "{\"render\":true,\"reason\":\"\",\"hostQueryReset\":" << (hostReset.hostQueryReset ? "true" : "false") << ",\"device\":" << quote(props.deviceName) << ",\"version\":" << props.apiVersion << ",\"deviceUuid\":" << quote(uuid.c_str()) << ",\"androidHardwareBufferImport\":" << (ahbImport ? "true" : "false")
                 << ",\"foreignQueueFamily\":" << (foreignQueue ? "true" : "false")
                 << ",\"samplerYcbcrConversion\":" << (ycbcr.samplerYcbcrConversion ? "true" : "false")
                 << ",\"syncFdImportExport\":" << (syncFd ? "true" : "false")
@@ -286,7 +308,21 @@ Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_probeValidatedSurface(JN
     const char *name = env->GetStringUTFChars(device, nullptr);
     if (!name) return nullptr;
     Probe probe;
-    auto result = probe.run(env, surface, name, static_cast<uint32_t>(version));
+    // Older Java callers cannot supply a stable physical identity: run the full probe.
+    auto result = probe.run(env, surface);
+    env->ReleaseStringUTFChars(device, name);
+    return env->NewStringUTF(result.c_str());
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_probeValidatedSurfaceIdentity(JNIEnv *env, jobject, jobject surface, jstring device, jlong version, jstring uuid) {
+    if (!surface || !device || !uuid) return env->NewStringUTF("{}");
+    const char *name = env->GetStringUTFChars(device, nullptr);
+    if (!name) return nullptr;
+    const char *identity = env->GetStringUTFChars(uuid, nullptr);
+    if (!identity) { env->ReleaseStringUTFChars(device, name); return nullptr; }
+    Probe probe;
+    auto result = probe.run(env, surface, name, static_cast<uint32_t>(version), identity);
+    env->ReleaseStringUTFChars(uuid, identity);
     env->ReleaseStringUTFChars(device, name);
     return env->NewStringUTF(result.c_str());
 }

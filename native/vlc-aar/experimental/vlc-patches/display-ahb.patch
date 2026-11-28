@@ -349,7 +349,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      pl_gpu_flush(gpu);
  
-@@ -463,8 +688,13 @@
+@@ -463,8 +688,14 @@
  
      sys->fbo = NULL;
      if (vlc_placebo_MakeCurrent(sys->pl) == VLC_SUCCESS) {
@@ -358,7 +358,8 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +        if (!submitted)
              msg_Err(vd, "Failed rendering frame!");
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
-+        if (sys->ahb && submitted && sys->ahb_frame_rendered)
++        if (sys->ahb && submitted && sys->ahb_frame_rendered &&
++            pl_vulkan_swapchain_ambient_presented(sys->pl->swapchain))
 +            var_SetBool(vd, "ambient-ahb-dropped", false);
 +#endif
          pl_swapchain_swap_buffers(sys->pl->swapchain);

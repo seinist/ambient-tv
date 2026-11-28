@@ -19,7 +19,7 @@ import timber.log.Timber
 internal object VulkanNativeProbe {
     val available by lazy { runCatching { System.loadLibrary("ambientvulkan"); true }.getOrDefault(false) }
     external fun probe(surface: Surface?): String
-    external fun probeValidatedSurface(surface: Surface, device: String, version: Long): String
+    external fun probeValidatedSurfaceIdentity(surface: Surface, device: String, version: Long, uuid: String): String
     external fun vlcModules(): Boolean
     /** Read-only producer dataspace, not a Vulkan capability query. Unknown returns zero. */
     external fun dataSpace(surface: Surface): Int
@@ -76,7 +76,8 @@ object VideoAccelerationRuntime {
                 val eglSurfacePatch = MpvNativeFeatures.EGL_HDR_SURFACE in MpvNativeFeatures.current
                 VideoAccelerationCapabilities(true, device, mpv and 1 != 0, mpv and 2 != 0, vlc, eglPq,
                     mpvEglHdrSurface = eglSurfacePatch, surfaceDataSpaceReadable = VulkanNativeProbe.available).also {
-                    if (mutable.value.device.device != device.device || mutable.value.device.version != device.version)
+                    if (mutable.value.device.device != device.device || mutable.value.device.version != device.version ||
+                        mutable.value.device.deviceUuid != device.deviceUuid)
                         mutableEvidence.value = emptyMap()
                     mutable.value = it
                     Timber.i("VULKAN capabilities device=%s render=%s profiles=%s mpv=%d vlc=%s reason=%s eglPq=%s " +
@@ -100,10 +101,10 @@ object VideoAccelerationRuntime {
     private fun probeSurface(surface: Surface): VulkanDeviceCapabilities {
         if (!surface.isValid) return VulkanDeviceCapabilities(reason = "invalid_surface")
         val validated = mutable.value.device
-        val probed = if (validated.render && validated.device.isNotBlank()) {
+        val probed = if (validated.render && validated.device.isNotBlank() && validated.deviceUuid.isNotBlank()) {
             try {
                 json.decodeFromString<VulkanDeviceCapabilities>(
-                    VulkanNativeProbe.probeValidatedSurface(surface, validated.device, validated.version),
+                    VulkanNativeProbe.probeValidatedSurfaceIdentity(surface, validated.device, validated.version, validated.deviceUuid),
                 ).let { result ->
                     mergeValidatedVulkanSurface(validated, result)
                 }
@@ -131,7 +132,8 @@ object VideoAccelerationRuntime {
         Timber.i("VULKAN surface device=%s render=%s reason=%s colorSpaces=%s hdr10=%s formats=%s",
             probed.device, probed.render, probed.reason, probed.surfaceColorSpaces, probed.hdr10SurfaceSupported, probed.surfaceFormats)
         val current = mutable.value.device
-        val supported = probed.render && probed.device == current.device && probed.version == current.version
+        val supported = probed.render && probed.device == current.device && probed.version == current.version &&
+            probed.deviceUuid == current.deviceUuid
         if (backend != null) mutableEvidence.update { it + (backend to VulkanPlaybackEvidence(
             if (supported) VulkanPlaybackStage.SURFACE_READY else VulkanPlaybackStage.FAILED,
             if (supported) null else "surface",

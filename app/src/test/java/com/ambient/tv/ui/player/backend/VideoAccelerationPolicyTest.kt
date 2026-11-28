@@ -166,6 +166,14 @@ class VideoAccelerationPolicyTest {
         assertEquals(false, merged.hdr10SurfaceSupported)
     }
 
+    @Test fun identicalGpuNamesCannotShareEvidenceAcrossPhysicalDevices() {
+        val a = VulkanDeviceCapabilities(render = true, device = "GPU", version = 1L, deviceUuid = "a")
+        val b = a.copy(deviceUuid = "b")
+        assertFalse(mergeValidatedVulkanSurface(a, b).render)
+        assertFalse(mergeValidatedVulkanSurface(a, a.copy(deviceUuid = "")).render)
+        assertTrue(mergeValidatedVulkanSurface(a, a).render)
+    }
+
     @Test fun surfaceFailureOrDifferentDeviceCannotInheritSuccessfulEvidence() {
         val device = full.device
         val changed = device.copy(version = device.version + 1)

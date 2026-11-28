@@ -225,6 +225,7 @@ jobs:
           meson compile -C .ci/pl-build -j2
           nm -D --defined-only .ci/pl-build/src/libplacebo.so > .ci/pl-exported-symbols.txt
           grep -E '[[:space:]]pl_vulkan_swapchain_ambient_mark_retired$' .ci/pl-exported-symbols.txt
+          grep -E '[[:space:]]pl_vulkan_swapchain_ambient_presented$' .ci/pl-exported-symbols.txt
           cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_hdr10plus_spatial_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdrplus-spatial

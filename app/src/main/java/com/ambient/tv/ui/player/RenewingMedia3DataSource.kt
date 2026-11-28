@@ -41,7 +41,7 @@ internal class RenewingMedia3DataSource(
         private val upstream: DataSource.Factory,
         renew: (String) -> String?,
     ) : DataSource.Factory {
-        private val policy = StreamUrlRenewalPolicy(renew)
+        private val policy = StreamUrlRenewalPolicy(renew = renew)
         override fun createDataSource(): DataSource =
             RenewingMedia3DataSource(upstream.createDataSource(), policy)
     }

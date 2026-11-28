@@ -33,6 +33,7 @@ data class VulkanDeviceCapabilities(
     val foreignQueueFamily: Boolean? = null,
     val samplerYcbcrConversion: Boolean? = null,
     val syncFdImportExport: Boolean? = null,
+    val deviceUuid: String = "",
 ) {
     /** Hardware prerequisites only, not a claim that the loaded vout implements interop. */
     val androidInteropPrerequisites: Boolean get() = render && androidHardwareBufferImport == true &&
@@ -42,7 +43,8 @@ data class VulkanDeviceCapabilities(
 
 /** Reuse only immutable device evidence for the same validated device. Surface data is fresh. */
 internal fun mergeValidatedVulkanSurface(device: VulkanDeviceCapabilities, surface: VulkanDeviceCapabilities): VulkanDeviceCapabilities {
-    if (!device.render || !surface.render || surface.device != device.device || surface.version != device.version)
+    if (!device.render || !surface.render || surface.device != device.device || surface.version != device.version ||
+        surface.deviceUuid != device.deviceUuid)
         return surface.copy(render = false, reason = if (surface.render) "device_changed" else surface.reason)
     return device.copy(surfaceColorSpaces = surface.surfaceColorSpaces, surfaceFormats = surface.surfaceFormats)
 }
