@@ -1349,3 +1349,47 @@ weight formula. Earlier CI passed source staging/idempotence and
 CPU tests; exact-head native GPU execution, full MPV/VLC builds,
 physical hardware quality/performance and normative conformance
 remain pending.
+
+
+Upstream subpixel phases and weighted resident search
+---------------------------------------------------
+The optional create_weighted ABI preserves the existing tuning
+structure and accepts all five relative predictor/new penalties,
+lambda, lsad, Q16 plevel, stage/level count, optional SAD-gated SATD
+and bilinear/Catmull-Rom/Wiener upscale selection. MPV chooses the
+pinned default GPU=1 bilinear, fast=0 gate and block/level-scaled
+lambda/lsad/default penalties. The configured resident kernel
+implements the upstream rounded half phases, including the unusual
+bilinear diagonal and first row, and builds quarter phases by
+averaging rounded half phases in the same order. Four-tap Catmull-
+Rom and six-tap Wiener use the upstream signed integer coefficients,
+rounding and clipping. The filter parity contract is interior
+8-bit samples; the 10-bit modes extend arithmetic to their code
+range. Visible image borders are clamped for safety, not treated
+as the original packed canvas's cross-row/phase SIMD spill bytes.
+The new filters are used in motion evaluation; the separate warped
+pixel synthesis still uses its existing continuous sampling.
+
+Quality search now snapshots the coarse device fields, computes
+per-direction global mode and consensus on the GPU, then processes
+causal full-quality waves. Reciprocal/global/zero/top-left/top/
+top-right/left predictors use separate signed relative penalties.
+Candidate SAD/SATD and chroma costs are parallel, while ordered
+selection preserves the current winner on ties and updates the
+optional raw SAD gate. Level/pel scaling and per-block LSAD
+adaptation use reference formulas. A bounded integer-mantissa
+implementation emulates the reference f32 ratio and f64 rounding/
+truncation without requiring shaderFloat64 or shaderInt64.
+Extreme squared-motion penalties saturate rather than wrapping
+into false winning costs. All data remains device-resident.
+These are the reference weighting terms, not full algorithm parity:
+the resident global/reciprocal seed derivation, coarse stage,
+border/recalc processing, try-many orchestration and synthesis
+remain independent implementations.
+
+Added SPIR-V compile checks for each filter and snapshot pipeline,
+a Mesa GPU comparison against pinned SuperBuilder half/quarter
+phase planes for interior pixels, and 4096 adaptive-lambda/signed
+penalty reference comparisons. Fixed the ST2084 c3 coefficient
+(18.6875, not 19.6875) identified by the previous GPU HDR
+statistics regression. Exact-head CI and device tests pending.
