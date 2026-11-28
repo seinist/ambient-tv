@@ -57,6 +57,46 @@ impl Buffer{
     }
     fn map(&self)->Result<*mut u32>{unsafe{self.device.map_memory(self.memory,0,self.size,vk::MemoryMapFlags::empty()).map(|p|p.cast()).map_err(err)}}
 }
+// For static legacy geometry, precompute each ellipse/rectangle intersection
+// as one inclusive-exclusive integer span per scanline. This avoids
+// per-pixel GPU trigonometry and f32 uncertainty near the ellipse boundary.
+// Coordinates follow section 6.1 (pixel centers, clockwise angle).
+fn ellipse_spans(rect:[u32;4],center:[u32;2],axes:[u32;3],height:u32)->Vec<u32>{
+    let [a,b,angle]=axes;
+    let (sin,cos)=match angle{0|180=>(0.0,1.0),90=>(1.0,0.0),_=>f64::from(angle).to_radians().sin_cos()};
+    let (a,b)=(f64::from(a),f64::from(b));
+    let inv_a=1.0/(a*a);let inv_b=1.0/(b*b);
+    let aa=cos*cos*inv_a+sin*sin*inv_b;
+    let ab=sin*cos*(inv_a-inv_b);
+    // det = 1/(a²b²), computed directly to avoid cancellation.
+    let det=inv_a*inv_b;
+    let mut spans=vec![0;2*height as usize];
+    let inside=|x:i64,y:i64|{
+        let dx=x-i64::from(center[0]);let dy=y-i64::from(center[1]);
+        if angle==0||angle==180||angle==90{
+            let (dx,dy)=if angle==90{(dy,dx)}else{(dx,dy)};
+            let (aa,bb)=((a as i128).pow(2),(b as i128).pow(2));
+            return i128::from(dx).pow(2)*bb+i128::from(dy).pow(2)*aa<=aa*bb;
+        }
+        let (x,y)=(dx as f64,dy as f64);
+        let u=(cos*x+sin*y)/a;let v=(-sin*x+cos*y)/b;
+        u*u+v*v<=1.0+8.0*f64::EPSILON
+    };
+    for y in rect[1]..rect[3].min(height){
+        let dy=f64::from(y)-f64::from(center[1]);
+        let rad=aa-det*dy*dy;
+        if rad< -aa*8.0*f64::EPSILON{continue;}
+        let shift=-ab*dy/aa+f64::from(center[0]);
+        let radius=rad.max(0.0).sqrt()/aa;
+        let left=i64::from(rect[0]);let right=i64::from(rect[2]);
+        let mut lo=((shift-radius).floor() as i64-1).clamp(left,right);
+        let mut hi=((shift+radius).ceil() as i64+2).clamp(left,right);
+        while lo<hi&&!inside(lo,i64::from(y)){lo+=1;}
+        while lo<hi&&!inside(hi-1,i64::from(y)){hi-=1;}
+        spans[2*y as usize]=lo as u32;spans[2*y as usize+1]=hi as u32;
+    }
+    spans
+}
 pub(super) struct StatsJob{
     device:ash::Device,pool:vk::DescriptorPool,
     hist:Buffer,summary:Buffer,scene_hist:Option<Buffer>,windows:Vec<HdrWindow>,
@@ -101,11 +141,12 @@ impl StatsJob{
             vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
         let scene_hist=if scene{Some(Buffer::new(core,BINS*4*windows.len() as u64,vk::BufferUsageFlags::TRANSFER_DST,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?)}else{None};
-        let summary=Buffer::new(core,(STRIDE*4*windows.len()) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
+        let span_words=if scene&&windows.len()>1{2*core.height as usize*(windows.len()-1)}else{0};
+        let summary=Buffer::new(core,((STRIDE*windows.len()+span_words)*4) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
         let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
             pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some()&&!scene,affine:tracking.is_some_and(|t|t.2),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
-        let mut config=vec![0u32;STRIDE*windows.len()];
+        let mut config=vec![0u32;STRIDE*windows.len()+span_words];
         for (i,w) in windows.iter().enumerate(){
             let row=&mut config[i*STRIDE..(i+1)*STRIDE];
             row[..4].copy_from_slice(&w.rect);row[4]=w.count;row[5..20].copy_from_slice(&w.percentages);
@@ -114,6 +155,16 @@ impl StatsJob{
                 row[48..52].copy_from_slice(&t.b);row[52..54].copy_from_slice(&t.ellipse);row[54]=1;row[55]=u32::from(s.affine);
                 if let Some(e)=ellipses{row[64..67].copy_from_slice(&e[i]);row[67]=1;row[68..71].copy_from_slice(&e[i]);}
             }}
+        }
+        if scene&&windows.len()>1{
+            let (tracks,_,_)=tracking.ok_or("missing legacy ellipse tracks")?;
+            let axes=ellipses.ok_or("missing legacy ellipse axes")?;
+            for i in 1..windows.len(){
+                let offset=STRIDE*windows.len()+2*core.height as usize*(i-1);
+                let spans=ellipse_spans(windows[i].rect,tracks[i].ellipse,axes[i],core.height);
+                config[i*STRIDE+71]=offset as u32;
+                config[offset..offset+spans.len()].copy_from_slice(&spans);
+            }
         }
         unsafe{
             let mapped=s.summary.map()?;
@@ -906,5 +957,22 @@ mod legacy_scene_cache_tests{
         assert_eq!(r.percentiles[1],100);assert_eq!(r.percentiles[2],100);
         assert_eq!(p.lookup_v1(1,schema).unwrap(),r);p.finish().unwrap();
         let _=std::fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn legacy_ellipse_span_reference_counts(){
+    for angle in [0,90,180]{
+        let spans=ellipse_spans([0,0,8,8],[0,0],[4,2,angle],8);
+        assert_eq!(spans.chunks_exact(2).map(|p|p[1]-p[0]).sum::<u32>(),10);
+    }
+    let spans=ellipse_spans([0,0,12,12],[5,5],[4,2,90],12);
+    for y in 0..12{
+        for x in 0..12{
+            let (dx,dy)=(x as i32-5,y as i32-5);
+            let expected=dy*dy*4+dx*dx*16<=64;
+            assert_eq!(x as u32>=spans[y*2]&&(x as u32)<spans[y*2+1],expected);
+        }
     }
 }
