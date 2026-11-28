@@ -213,7 +213,7 @@ class GameCoreChannelTest {
         org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, tag, "baseline"))
         org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, "other", "core-hotpaths"))
         assertEquals(GameCoreSource.AUTO, GameSettingsState().withCoreSource(GameCoreSource.HOTPATHS).coreSource)
-        assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57), GameCoreSource.publicExperiments)
+        assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57, GameCoreSource.CITRA_ARM64_JIT, GameCoreSource.YABAUSE_ARM64_JIT), GameCoreSource.publicExperiments)
         org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel(tag, true, "optimized"))
         org.junit.Assert.assertTrue(GameCoreChannel.matchesChannel("core-experiments-optimized--20261127-1-1", true, "optimized"))
     }
@@ -230,11 +230,27 @@ class GameCoreChannelTest {
         org.junit.Assert.assertFalse(GameSettingsState().coreExperimentsEnabled)
     }
 
+    @Test fun nativeJitProfilesAreRestrictedAndFallBackToSignedOptimized() {
+        val citra = GameCore("citra2018", "Citra", "GPL-2.0")
+        val yabause = GameCore("yabause", "Yabause", "GPL-2.0")
+        for ((source, matching, other) in listOf(
+            Triple(GameCoreSource.CITRA_ARM64_JIT, citra, yabause),
+            Triple(GameCoreSource.YABAUSE_ARM64_JIT, yabause, citra))) {
+            org.junit.Assert.assertTrue(source.supportsExperiment(matching, "arm64-v8a"))
+            org.junit.Assert.assertFalse(source.supportsExperiment(other, "arm64-v8a"))
+            org.junit.Assert.assertFalse(source.supportsExperiment(matching, "x86_64"))
+            assertEquals(listOf(source, GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),
+                source.preferredSources(matching, "arm64-v8a"))
+            assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),
+                source.preferredSources(other, "arm64-v8a"))
+        }
+    }
+
     @Test fun specializedTestBuildsFollowCoreAndAbi() {
         val picoDrive = GameSystems.byId("sega32x")!!.core
         val snes = GameSystems.byId("snes")!!
         val threaded = snes.core("snes9x2010")!!
-        assertEquals(listOf(GameCoreSource.AUTO, GameCoreSource.AMBIENT, GameCoreSource.BUILDBOT, GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57), GameCoreSource.regular)
+        assertEquals(listOf(GameCoreSource.AUTO, GameCoreSource.AMBIENT, GameCoreSource.BUILDBOT, GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57, GameCoreSource.CITRA_ARM64_JIT, GameCoreSource.YABAUSE_ARM64_JIT), GameCoreSource.regular)
         for (source in GameCoreSource.publicExperiments) {
             val settings = GameSettingsState().withCoreSource(source)
             assertEquals(source, settings.coreSource)

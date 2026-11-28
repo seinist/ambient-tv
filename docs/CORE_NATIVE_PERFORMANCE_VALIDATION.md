@@ -186,3 +186,13 @@ dispatched Core PGO training workflow on a configured self-hosted Android
 benchmark runner. Never reuse profiles across different source pins, ABIs or
 NDK versions. Training and evaluation content should be separate. No profile
 is automatically published and no speedup is claimed without device evidence.
+
+## Audit follow-up
+
+Distinct Citra and Yabause JIT channels are selectable as opt-in signed sources.
+Publication is manual, main-only, and requires a successful dedicated JIT
+validation workflow on the identical commit; it does not change baseline or
+optimized channels. Device gameplay evidence is still required before broad
+promotion. Full catalog validation shards baseline and optimized by ABI plus
+ARM64 A57. No shard publishes. GLES runner measurements now synchronize each
+frame and verify all transferred fixture content and BIOS digests.
