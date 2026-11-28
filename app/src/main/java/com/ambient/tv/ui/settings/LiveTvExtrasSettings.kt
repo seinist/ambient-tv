@@ -27,8 +27,6 @@ class LiveTvExtrasSettingsViewModel @Inject constructor(val preferences: AppPref
 internal fun LiveTvExtrasSettingsGroup(showRecording: Boolean = true, viewModel: LiveTvExtrasSettingsViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
     val context = LocalContext.current
     var size by remember { mutableIntStateOf(viewModel.preferences.run { initializeTimeshiftStorage(context); liveTimeshiftMb }) }
-    var lead by remember { mutableIntStateOf(LiveTvReminderScheduler.leadMinutes(context)) }
-    var autoSwitch by remember { mutableStateOf(LiveTvReminderScheduler.autoSwitch(context)) }
     var timeshift by remember { mutableStateOf(viewModel.preferences.liveTimeshiftEnabled) }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // One Timeshift section: switch, buffer size and storage note stay together.
@@ -59,24 +57,7 @@ internal fun LiveTvExtrasSettingsGroup(showRecording: Boolean = true, viewModel:
         if (showRecording) SettingsGroup(title = stringResource(R.string.settings_playback_live_functions)) {
             LiveTvFeatureSwitches(showRecording = true, showTimeshift = false)
         }
-        SettingsGroup(title = stringResource(R.string.settings_live_reminders)) {
-            com.ambient.tv.ui.common.TvSettingRow(
-                title = stringResource(R.string.reminder_auto_switch),
-                body = stringResource(R.string.reminder_auto_switch_hint),
-                checked = autoSwitch,
-                onCheckedChange = { autoSwitch = it; LiveTvReminderScheduler.setAutoSwitch(context, it) },
-            )
-            SettingsSelect(
-                label = stringResource(R.string.reminder_lead_title),
-                options = listOf(0, 1, 2, 5, 10).map { minutes ->
-                    SettingsSelectOption(
-                        text = if (minutes == 0) stringResource(R.string.reminder_lead_at_start) else stringResource(R.string.reminder_lead_minutes, minutes),
-                        selected = lead == minutes,
-                        onClick = { lead = minutes; LiveTvReminderScheduler.setLeadMinutes(context, minutes) },
-                    )
-                },
-            )
-        }
+        ProgrammeReminderSettings(youtube = false)
     }
 }
 
