@@ -16,7 +16,10 @@ assert "toolchain_hash=" + toolchain_hash in lines
 assert [x for x in lines if x.startswith("abi=")] == ["abi=" + abi]
 expected = dict((line.split("  ", 1)[1], line.split("  ", 1)[0])
                 for line in lines if "  " in line)
-with zipfile.ZipFile(root / "libvlc-vulkan-ahb-experimental.aar") as aar:
+aar_path = root / "libvlc-vulkan-ahb-experimental.aar"
+with aar_path.open("rb") as stream:
+    assert "aar_sha256=" + hashlib.file_digest(stream, "sha256").hexdigest() in lines
+with zipfile.ZipFile(aar_path) as aar:
     assert aar.testzip() is None
     assert aar.read("assets/ambient-vlc-extended-v1") == b"AHB DOVI FEL HDR10PLUS\n"
     for name in ("libvlc.so", "libvlcjni.so"):

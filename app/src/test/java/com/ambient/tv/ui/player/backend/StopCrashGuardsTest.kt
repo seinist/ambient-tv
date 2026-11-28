@@ -80,10 +80,11 @@ class StopCrashGuardsTest {
         assertEquals(2, released.size)
     }
 
-    @Test fun libVlcReleaseFailureDoesNotEscape() {
+    @Test fun libVlcReleaseFailureReachesTheNativeRetirementOwner() {
         val gate = VlcLibraryReleaseGate<String> { error("native") }
-        gate.releaseWhenIdle("lib")
-        gate.retiring("b"); gate.releaseWhenIdle("b"); gate.retired("b")
+        assertTrue(runCatching { gate.releaseWhenIdle("lib") }.isFailure)
+        gate.retiring("b"); gate.releaseWhenIdle("b")
+        assertTrue(runCatching { gate.retired("b") }.isFailure)
     }
 
     @Test fun everyLibVlcReleaseGoesThroughTheGate() {

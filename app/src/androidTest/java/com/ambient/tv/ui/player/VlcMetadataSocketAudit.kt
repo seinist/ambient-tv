@@ -16,7 +16,7 @@ internal fun auditVlcMetadataSocket(log: (String) -> Unit) {
     val session = inbox.beginSession()
     inbox.clearForSeek(1234000, 41)
     inbox.clearForSeek(1234000, 42)
-    val processed = CountDownLatch(3)
+    val processed = CountDownLatch(4)
     val receiver = checkNotNull(VlcTimedMetadataReceiver.open {
         inbox.offer(session, it)
         processed.countDown()
@@ -48,13 +48,14 @@ internal fun auditVlcMetadataSocket(log: (String) -> Unit) {
         check(packet(7, 42, false).contentEquals(golden.chunked(2).map { it.toInt(16).toByte() }.toByteArray()))
         send(packet(6, 41, true))
         send(packet(7, 42, false), 7)
-        send(packet(7, 42, true))
+        send(packet(7, 42, true), 7)
+        send(packet(7, 42, true), 7) // retransmission after a lost ACK
         check(processed.await(3, TimeUnit.SECONDS))
         check(inbox.events.value.single().seekRequestId == 42L)
         inbox.clearForSeek(1234000, 43)
         send(packet(8, 42, true))
         send(packet(9, 43, false), 9)
-        send(packet(9, 43, true))
+        send(packet(9, 43, true), 9)
         val end = SystemClock.elapsedRealtime() + 3000
         while (inbox.events.value.singleOrNull()?.seekRequestId != 43L && SystemClock.elapsedRealtime() < end) {
             Thread.sleep(10)

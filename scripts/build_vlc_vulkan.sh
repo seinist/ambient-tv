@@ -55,14 +55,14 @@ if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
     rm -f -- "$VLC_NATIVE_LINK_RECEIPT"
 fi
 if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
-    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-ahb-experimental-${SOURCE_HASH:0:16}}"
+    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-ahb-experimental-${SOURCE_HASH:0:16}-${TOOLCHAIN_HASH:0:16}}"
     # Never reuse a legacy build tree; installation is separately controlled.
     if [[ -d "$JNI/vlc/.git" && ! -f "$JNI/vlc/.ambient-ahb-experimental" ]]; then
         echo "Refusing to use unmarked VLC tree for AHB experiment" >&2
         exit 1
     fi
 else
-    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-${SOURCE_HASH:0:16}}"
+    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-${SOURCE_HASH:0:16}-${TOOLCHAIN_HASH:0:16}}"
     [[ ! -f "$JNI/vlc/.ambient-ahb-experimental" ]] ||
         { echo "Refusing experimental tree for production VLC" >&2; exit 1; }
 fi
@@ -70,7 +70,11 @@ if [[ -f "$JNI/.ambient-source-hash" && "$(<"$JNI/.ambient-source-hash")" != "$S
     echo "VLC build root contains a different source series; use a fresh VLC_BUILD_ROOT" >&2
     exit 1
 fi
-export ANDROID_NDK="${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/30.0.16248370}"
+if [[ -f "$JNI/.ambient-toolchain-hash" && "$(<"$JNI/.ambient-toolchain-hash")" != "$TOOLCHAIN_HASH" ]]; then
+    echo "VLC build root contains a different toolchain; use a fresh VLC_BUILD_ROOT" >&2
+    exit 1
+fi
+export ANDROID_NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-$HOME/Android/Sdk/ndk/30.0.16248370}}"
 export MAKEFLAGS="-j${NATIVE_JOBS:-8}"
 export PKG_CONFIG_IGNORE_CONFLICTS=1
 JNI_REF=a8d53a9151d7e4a9a5dfd0a5eb1cd92669afdc21
@@ -100,7 +104,7 @@ stage_signature() {
     ) | sha256sum | cut -d ' ' -f1
 }
 if [[ -f "$JNI/.ambient-stage-signature" ]]; then
-    [[ -f "$JNI/.ambient-source-hash" && "$(<"$JNI/.ambient-stage-signature")" == "$(stage_signature)" ]] ||
+    [[ -f "$JNI/.ambient-source-hash" && -f "$JNI/.ambient-toolchain-hash" && "$(<"$JNI/.ambient-stage-signature")" == "$(stage_signature)" ]] ||
         { echo "VLC staged sources changed; use a fresh VLC_BUILD_ROOT" >&2; exit 1; }
 else
     git -C "$JNI" diff --quiet --ignore-submodules=all HEAD &&
@@ -185,6 +189,7 @@ perl -0777 -i -pe 's/which autopoint >\/dev\/null\nif \[ ! \$\? -eq 0 \];then/if
 perl -i -pe 's/find \$1 -name \x27\$2\x27/find "\$1" -name "\$2"/' "$JNI/buildsystem/build-libvlc.sh"
     stage_signature > "$JNI/.ambient-stage-signature"
     printf '%s\n' "$SOURCE_HASH" > "$JNI/.ambient-source-hash"
+    printf '%s\n' "$TOOLCHAIN_HASH" > "$JNI/.ambient-toolchain-hash"
 fi
 export EXTRA_PARAMS="--enable-vulkan --enable-libplacebo"
 export PATH="$JNI/vlc/extras/tools/build/bin:$PATH"
@@ -254,6 +259,9 @@ with zipfile.ZipFile(sys.argv[1], "a", compression=zipfile.ZIP_DEFLATED) as z:
 PY
     mkdir -p "$ROOT/native/vlc-aar/build/experimental"
     cp "$aar" "$ROOT/native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar"
+    if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
+        printf 'aar_sha256=%s\n' "$(sha256sum "$aar" | cut -d ' ' -f1)" >> "$VLC_NATIVE_LINK_RECEIPT"
+    fi
 fi
 if [[ "$INSTALL_APP" == 1 ]]; then
     mkdir -p "$ROOT/app/libs"

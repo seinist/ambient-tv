@@ -11,6 +11,8 @@ internal object VlcNativeRetirement {
         runCatching { MediaPlayer::class.java.getMethod("ambientOutputQuarantined") }.getOrNull()
     }
 
+    val supported: Boolean get() = query != null
+
     @Synchronized private fun quarantine(player: MediaPlayer, library: LibVLC, cause: Throwable): Nothing {
         if (retained.none { it.first === player }) {
             retained += player to library
@@ -28,6 +30,12 @@ internal object VlcNativeRetirement {
     fun stop(player: MediaPlayer, library: LibVLC) {
         verify(player, library)
         try { player.stop() } catch (e: Throwable) { quarantine(player, library, e) }
+        verify(player, library)
+    }
+
+    fun releaseLibrary(player: MediaPlayer, library: LibVLC, release: () -> Unit) {
+        verify(player, library)
+        try { release() } catch (e: Throwable) { quarantine(player, library, e) }
         verify(player, library)
     }
 

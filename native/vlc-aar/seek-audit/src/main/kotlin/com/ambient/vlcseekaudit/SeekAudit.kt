@@ -35,6 +35,7 @@ class SeekAudit : Instrumentation() {
         // mock. The shell checks the native failure-path marker in logcat.
         val lib = LibVLC(targetContext, arrayListOf("--window=wdummy", "--vout=none", "--codec=avcodec", "--avcodec-hw=none", "--no-audio", "--verbose=2"))
         try {
+            check(!MediaPlayer.ambientOutputQuarantined())
             val player = MediaPlayer(lib)
             try {
                 repeat(3) {
@@ -52,6 +53,7 @@ class SeekAudit : Instrumentation() {
                         SystemClock.sleep(500)
                     }
                     player.stop()
+                    check(!MediaPlayer.ambientOutputQuarantined()) { "Ordinary display failure must not poison the process" }
                 }
             } finally { player.release() }
         } finally { lib.release() }
@@ -88,8 +90,9 @@ class SeekAudit : Instrumentation() {
                         waitFor("initial native playback") { player.isPlaying && player.time in 200L..1500L }
                         var lastEpoch = 0L
                         fun seek(id: Long) {
-                            inbox.clearForSeek(2000000, id)
+                            val fence = inbox.clearForSeek(2000000, id)
                             check(tagged.invoke(player, 2000L, id) == true) { "Native queue rejected $id" }
+                            inbox.acceptSeek(fence)
                             val deadline = SystemClock.elapsedRealtime() + 12000
                             var barrier: VlcTimedMetadataPacket.Message.Epoch? = null
                             while (SystemClock.elapsedRealtime() < deadline) {

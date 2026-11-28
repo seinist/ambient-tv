@@ -16,17 +16,27 @@ internal class VlcLibraryReleaseGate<T : Any>(private val release: (T) -> Unit) 
     }
 
     /** The retiring player of [library] has been released; a pending library release runs now. */
-    @Synchronized fun retired(library: T) {
-        val left = (retiring[library] ?: return) - 1
-        if (left > 0) { retiring[library] = left; return }
-        retiring.remove(library)
-        if (awaiting.remove(library) != null) runCatching { release(library) }
+    fun retired(library: T) {
+        val releaseNow = synchronized(this) {
+            val left = (retiring[library] ?: return) - 1
+            if (left > 0) { retiring[library] = left; return }
+            retiring.remove(library)
+            awaiting.remove(library) != null
+        }
+        // Never hold the ownership lock across native destruction. Failures
+        // propagate to the caller's native-output retirement future.
+        if (releaseNow) release(library)
     }
 
     /** Releases [library] now, or once its last retiring player is gone. */
-    @Synchronized fun releaseWhenIdle(library: T) {
-        if ((retiring[library] ?: 0) > 0) awaiting[library] = Unit
-        else runCatching { release(library) }
+    fun releaseWhenIdle(library: T) {
+        val releaseNow = synchronized(this) {
+            if ((retiring[library] ?: 0) > 0) {
+                awaiting[library] = Unit
+                false
+            } else true
+        }
+        if (releaseNow) release(library)
     }
 
     @Synchronized internal fun pending(library: T): Boolean = awaiting.containsKey(library)

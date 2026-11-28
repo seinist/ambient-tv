@@ -17,6 +17,7 @@ fi
 test -s "$AAR" && test -s "$RECEIPT"
 grep -Fx "ambient_head=$(git rev-parse HEAD)" "$RECEIPT"
 grep -Fx "source_hash=$(VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh --hash)" "$RECEIPT"
+grep -Fx "aar_sha256=$(sha256sum "$AAR" | cut -d ' ' -f1)" "$RECEIPT"
 APK="$AUDIT/build/outputs/apk/debug/seek-audit-debug.apk"
 if [[ "$mode" != --run-prepared ]]; then
     ./gradlew -p "$AUDIT" -PAUDIT_ABI="$ABI" assembleDebug
