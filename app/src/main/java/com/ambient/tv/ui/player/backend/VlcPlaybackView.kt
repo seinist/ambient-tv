@@ -163,6 +163,7 @@ class VlcPlaybackController(
     var renderSurfaceSize by mutableStateOf<Pair<Int, Int>?>(null)
         private set
     val videoOutputDescription: String get() = when {
+        configuredHdrSceneMode != 0 -> "libplacebo / Vulkan · HDR10+ SVP"
         vulkanOutput -> "libplacebo / Vulkan"
         toneMappingRequired -> "OpenGL ES / HDR → SDR"
         else -> "Android Surface / OpenGL ES"
@@ -175,6 +176,24 @@ class VlcPlaybackController(
     private var hdrSceneRestartPending = false
     private var hdrSceneReattaching = false
     private var configuredHdrSceneMode = 0
+    private val extendedHdrSceneVlc by lazy {
+        android.os.Build.VERSION.SDK_INT >= 34 &&
+            runCatching { context.assets.open("ambient-vlc-extended-v1").use { true } }.getOrDefault(false)
+    }
+    private fun hdrSceneOutputOptions(): List<String>? = runCatching {
+        if (!extendedHdrSceneVlc) return@runCatching null
+        val dm = context.getSystemService(android.hardware.display.DisplayManager::class.java) ?: return@runCatching null
+        val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return@runCatching null
+        val caps = display.hdrCapabilities ?: return@runCatching null
+        if (android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 !in caps.supportedHdrTypes) return@runCatching null
+        val min = caps.desiredMinLuminance
+        val max = caps.desiredMaxLuminance
+        if (!min.isFinite() || !max.isFinite() || min < 0f || max <= min || max > 10000f) return@runCatching null
+        listOf("--vout=libplacebo,none", "--pl-gpu=pl_vulkan,none", "--vk-platform=vk_android,none",
+            "--vk-device=${VideoAccelerationRuntime.capabilities.value.device.device}",
+            "--vk-ambient-ahb", "--vk-ambient-hdr10plus", "--vk-ambient-hdr10plus-spatial",
+            "--vk-ambient-hdr-target-transfer=1", "--vk-ambient-hdr-target-min=$min", "--vk-ambient-hdr-target-max=$max")
+    }.getOrNull()
 
     private fun cancelHdrScenePass() {
         hdrSceneJob?.cancel()
@@ -190,7 +209,7 @@ class VlcPlaybackController(
             liveStream || audioOnly || startPositionMs > 0 || !nativeHdrPreferred ||
             sourceHdrStandard != HdrStandard.HDR10_PLUS || !imageOptions.svp.hdrTwoPass ||
             !imageOptions.svp.hardwareResident || imageOptions.svpMode == "off" || !vlcSvpAllowed(context) ||
-            residentRejected || vulkanOutput || !player.isSeekable || attachedView?.holder?.surface?.isValid != true ||
+            residentRejected || vulkanOutput || hdrSceneOutputOptions() == null || !player.isSeekable || attachedView?.holder?.surface?.isValid != true ||
             HdrScenePlanner.localFile(url) == null ||
             SvpNative.residentOutputsOrNull() == null || !VideoAccelerationRuntime.current(context).let { it.checked && it.device.render }) return
         val source = measuredSourceFps ?: return
@@ -237,7 +256,7 @@ class VlcPlaybackController(
     }
 
     private fun hdrResidentAvailable(): Boolean = nativeHdrPreferred && (svpStaticHdrResident(sourceHdrStandard) ||
-            sourceHdrStandard == HdrStandard.HDR10_PLUS && hdrSceneSession?.valid() == true) &&
+            sourceHdrStandard == HdrStandard.HDR10_PLUS && hdrSceneSession?.valid() == true && hdrSceneOutputOptions() != null) &&
         !residentRejected && !audioOnly && !vulkanOutput &&
         svpResidentRequested(com.ambient.tv.data.local.SvpOptions(hardwareResident = true), measuredSourceSize?.first, measuredSourceSize?.second) &&
         com.ambient.tv.BuildConfig.VLC_SVP &&
@@ -318,7 +337,9 @@ class VlcPlaybackController(
             // "none" ends implicit module search so a failed Vulkan initialization
             // reaches our observable default-path retry instead of silently using GL.
             addAll(vlcHdrToSdrOutputOptions(vulkanOutput, toneMappingRequired))
-            if (configuredResident) add("--vout=android-display")
+            if (configuredResident && hdrSceneSession != null) {
+                addAll(checkNotNull(hdrSceneOutputOptions()) { "HDR scene renderer unavailable" })
+            } else if (configuredResident) add("--vout=android-display")
             if (vulkanOutput) addAll(listOf(
                 "--vout=libplacebo,none", "--pl-gpu=pl_vulkan,none",
                 "--vk-platform=vk_android,none",
