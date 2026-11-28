@@ -1710,3 +1710,39 @@ MaxSCL, percentiles, mean, brightest frame and FBP with a separate
 Decimal/Fraction oracle, including a partial proxy cell and fractional
 bright-band membership. These are synthetic conformance checks, not
 validation on a commercial bitstream or physical display.
+
+
+Deterministic arbitrary-angle selector and external corpus
+--------------------------------------------------------
+The authored and motion-quantized ellipse angles use a common Q30
+sine/cosine table. CPU i128 and GPU portable four-word integer
+arithmetic evaluate the same ellipse quadratic. A convex discrete
+search finds exact inclusive-exclusive scanline spans once per
+output window after motion tracking; both the histogram and the
+linear MaxRGB reducer consume these spans. Orthogonal boundaries
+are exact; other angles are exact relative to the Q30 coefficients.
+An independent 70-digit decimal oracle checks coefficient error
+bounds, 8,000 sampled positions across eight non-cardinal angles,
+and the actual GPU fixture counts at 45 and 73 degrees. Per-frame
+average MaxRGB now uses the same pre-quantization sum as the
+scene path rather than averaging rounded histogram bins.
+
+The native CI includes a real FFmpeg FATE Annex-B HEVC sample:
+https://fate-suite.ffmpeg.org/hevc/hdr10_plus_h265_sample.hevc
+It compares the production C payload parser against FFmpeg's
+tests/ref/fate/hevc-hdr10-plus-metadata numeric reference, including
+an authored nonzero reserved version-one entry. Successful syntax
+parsing is deliberately distinguished from strict current authoring
+constraints. The sample is fetched at test time, not redistributed.
+For manually acquired files, convert an appropriate video track
+to Annex B without reencoding, for example:
+    ffmpeg -i input.ts -map 0:v:0 -c copy -bsf:v hevc_mp4toannexb -f hevc input.hevc
+    python3 native/ambientsvp/tests/hdr10plus_bitstream_reference.py input.hevc
+The probe prints SHA256, accepted payload count, versions and strict
+authoring count. This is parser validation only, not a decoded-image,
+display or full two-pass player test. Additional 2160p50 Samsung
+HDR10+ test sequences are documented by DVB at
+https://dvb.org/specifications/verification-validation/hdr-test-content/
+(EBU content under CC BY 4.0; see the original attribution).
+Those downloads require the DVB request procedure. No commercial
+stream or physical device has been certified by these tests.
