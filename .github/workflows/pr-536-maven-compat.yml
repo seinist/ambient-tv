@@ -1,0 +1,126 @@
+name: PR 536 Maven compatibility
+
+# Temporary, PR-specific verification. Use the synthetic merge commit, not
+# the head branch alone, so these upgrades are checked against the PR base.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maven-compat-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  maven-compat:
+    if: github.event.pull_request.number == 536 && github.event.pull_request.head.ref == 'deps/modernize-manual-maven-pins' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SKIP_MPV_NATIVE: '1'
+      ROBOLECTRIC_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
+      NDK_VERSION: '30.0.16248370'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify the tested merge commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^1)" = "$BASE_SHA"
+          test "$(git rev-parse HEAD^2)" = "$HEAD_SHA"
+          printf 'Base: %s\nHead: %s\nMerge: %s\n' "$BASE_SHA" "$HEAD_SHA" "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test Maven updater and duplicate-coordinate policy
+        run: |
+          bash -n build.sh
+          python3 -m py_compile scripts/maven_dependency.py scripts/update_maven_dependencies.py
+          python3 -m unittest discover -s scripts/tests -p 'test_maven_updates.py' -v
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "ndk;${NDK_VERSION}" "cmake;3.22.1" ||
+            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "ndk;${NDK_VERSION}" "cmake;3.22.1"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Fetch and verify pinned upstream sources
+        run: |
+          bash scripts/fetch_smarttube_engine.sh
+          bash scripts/fetch_libretrodroid.sh
+          python3 scripts/patch_smarttube_compat.py --check --root third_party/smarttube
+
+      - name: Compile current application and SmartTube wrappers
+        run: |
+          set -euo pipefail
+          ./gradlew verifySmartTubeBuildGraph :app:compileDebugKotlin :app:compileDebugJavaWithJavac \
+            :app:compileDebugAndroidTestKotlin :youtubeapi:compileDebugKotlin \
+            :youtubeapi:compileDebugJavaWithJavac :sharedutils:compileDebugKotlin \
+            :sharedutils:compileDebugJavaWithJavac -PAPK_ABI=arm64 \
+            --no-configuration-cache --stacktrace 2>&1 | tee maven-compile.log
+
+      - name: Resolve debug and release dependency graphs
+        run: |
+          set -euo pipefail
+          for variant in debug release; do
+            ./gradlew :app:dependencies --configuration "${variant}RuntimeClasspath" \
+              -PAPK_ABI=arm64 --no-configuration-cache --stacktrace 2>&1 | tee "maven-${variant}-graph.log"
+            if grep -Eq ' FAILED([[:space:]]|$)' "maven-${variant}-graph.log"; then
+              echo "::error::Unresolved Maven dependency in ${variant} runtime graph"
+              exit 1
+            fi
+          done
+
+      - name: Test SmartTube upstream compatibility
+        run: |
+          set -euo pipefail
+          ./gradlew :youtubeapi:testDebugUnitTest -PAPK_ABI=arm64 \
+            --no-configuration-cache --stacktrace 2>&1 | tee maven-smarttube-tests.log
+
+      - name: Test affected application components
+        run: |
+          set -euo pipefail
+          ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 \
+            --tests '*SmartTube*' --tests '*YouTube*' \
+            --tests '*ChunkedStreamRelayTest' --tests '*RenewingMedia3DataSourceTest' \
+            --tests '*GameArchive*' --tests '*FileStoreTest' --tests '*RemoteFileSourcesTest' \
+            --no-configuration-cache --stacktrace 2>&1 | tee maven-app-tests.log
+
+      - name: Validate release shrinker compatibility without APK packaging
+        run: |
+          set -euo pipefail
+          ./gradlew :app:minifyReleaseWithR8 -PAPK_ABI=arm64 -PADB_DEPLOY=false \
+            --no-configuration-cache --stacktrace 2>&1 | tee maven-r8.log
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: pr-536-maven-compat-reports
+          path: |
+            maven-*.log
+            app/build/test-results/
+            app/build/reports/tests/
+            smarttube_wrappers/youtubeapi/build/test-results/
+            app/build/outputs/mapping/release/
+          if-no-files-found: warn
+          retention-days: 7
