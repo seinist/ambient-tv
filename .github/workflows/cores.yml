@@ -250,11 +250,28 @@ jobs:
             echo "::warning::Compiler cache unavailable; compiling without it"
             echo "CORE_CCACHE=" >> "$GITHUB_ENV"
           fi
+      - name: Compute individual compiler cache identity
+        if: env.CORE_CCACHE != ''
+        id: cache_recipe
+        env:
+          CORE_JOB: ${{ toJSON(matrix) }}
+          PGO_SHA256: ${{ inputs.pgo_sha256 }}
+        run: |
+          set -euo pipefail
+          fp=$(python3 scripts/core_release_incremental.py cache-key --job "$CORE_JOB" --ndk "$NDK_VERSION" --pgo-sha256 "$PGO_SHA256")
+          [[ "$fp" =~ ^[0-9a-f]{64}$ ]]
+          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v5
         if: env.CORE_CCACHE != ''
         with:
           path: ~/.cache/ccache
-          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py', 'scripts/core_hotpath_remaining.py', 'scripts/core_citra_arm64.py', 'scripts/core_yabause_arm64.py', 'scripts/native_core_candidates/**') }}
+          key: core-ccache-v2-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ matrix.commit }}-${{ steps.cache_recipe.outputs.fingerprint }}
+          # ccache verifies the compiler, flags, source and included headers.
+          # Reuse unchanged objects after a recipe or upstream pin changes.
+          # Never restore another core/ABI/profile's cache.
+          restore-keys: |
+            core-ccache-v2-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ matrix.commit }}-
+            core-ccache-v2-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.abi }}-${{ matrix.profile }}-
 
       - name: Fetch ${{ matrix.core }} at its pinned commit
         env:

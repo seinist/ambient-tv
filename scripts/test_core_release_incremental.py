@@ -19,6 +19,11 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         }} for j in self.matrix["include"]}
         self.keys = set(self.records)
 
+    def test_fingerprint_is_stable_when_planner_attaches_it(self):
+        job = self.matrix["include"][0]
+        fp = fingerprint(job, self.ndk)
+        self.assertEqual(fp, fingerprint(dict(job, fingerprint=fp), self.ndk))
+
     def test_no_changes_skips_entire_release(self):
         result = select(self.matrix, self.records, self.keys, "baseline", self.ndk)
         self.assertFalse(result["publish"])

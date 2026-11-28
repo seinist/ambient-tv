@@ -98,7 +98,9 @@ def fingerprint(job, ndk, root=ROOT):
     end = workflow.index("      - uses: actions/upload-artifact", start)
     files = {p: digest((root / "scripts" / p).read_bytes()) for p in SHARED if p != "core_build_policy.py"}
     files["core_build_policy.py"] = policy_fingerprint(job, root)
-    if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57", "citra-arm64-jit", "yabause-arm64-jit"}:
+    if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57", "citra-arm64-jit",
+                          "yabause-arm64-jit", "picodrive-sh2", "snes9x2010-threaded",
+                          "pgo-generate", "pgo-use"}:
         files["hotpath"] = hotpath_fingerprint(job["core"], root)
     if job["profile"] in {"citra-arm64-jit", "yabause-arm64-jit"}:
         kind = "citra" if job["profile"].startswith("citra") else "yabause"
@@ -112,6 +114,9 @@ def fingerprint(job, ndk, root=ROOT):
         build_recipe = re.sub(r"(?m)^            # BEGIN MUPEN NATIVE OFFSET LAUNCHER\n"
                               r"[\s\S]*?^            # END MUPEN NATIVE OFFSET LAUNCHER\n", "", build_recipe)
         build_recipe = build_recipe.replace('NDK_CCACHE="$ndk_ccache"', 'NDK_CCACHE="${CORE_CCACHE:-}"')
+    # The matrix can already carry its publication fingerprint. Do not
+    # hash the fingerprint recursively when deriving a compiler-cache key.
+    job = {k: v for k, v in job.items() if k != "fingerprint"}
     payload = {"schema": 2, "ndk": ndk, "job": job,
                "build": digest(build_recipe.encode()), "files": files}
     return digest(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
@@ -266,6 +271,10 @@ def main():
     for flag in ("repo", "profile", "ndk", "matrix"):
         p.add_argument("--" + flag, required=True)
     p.add_argument("--force", action="store_true")
+    p = sub.add_parser("cache-key")
+    p.add_argument("--job", required=True)
+    p.add_argument("--ndk", required=True)
+    p.add_argument("--pgo-sha256", default="")
     p = sub.add_parser("assert-current")
     p.add_argument("--profile", required=True, choices=("baseline", "optimized", "optimized-a57", "citra-arm64-jit", "yabause-arm64-jit"))
     p.add_argument("--ndk", required=True)
@@ -275,6 +284,15 @@ def main():
     p.add_argument("--records", required=True)
     p.add_argument("--destination", type=Path, required=True)
     args = parser.parse_args()
+    if args.action == "cache-key":
+        job = json.loads(args.job)
+        fp = fingerprint(job, args.ndk)
+        if job["profile"] == "pgo-use":
+            if not HEX.fullmatch(args.pgo_sha256):
+                raise ValueError("PGO cache requires the exact profile digest")
+            fp = digest((fp + ":" + args.pgo_sha256).encode())
+        print(fp)
+        return
     if args.action == "assert-current":
         assert_current_recipe(ROOT, args.current_root.resolve(), args.profile, args.ndk)
         print("Current profile build fingerprints and release trust rules match.")

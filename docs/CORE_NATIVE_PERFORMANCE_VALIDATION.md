@@ -233,3 +233,10 @@ Video and fresh-frame counts may vary by at most 1%, audio by at most 2%
 Counters are captured before save-state serialization and teardown. This
 rejects comparisons that render materially less work rather than running
 it faster. It does not replace visual or audio quality verification.
+
+Compiler caches use the per-core semantic release fingerprint (including
+specialized JIT and source patches), rather than hashing every unrelated
+catalog entry. PGO-use keys also include the exact trained profile digest.
+Fallback cache restoration is restricted to the same core, ABI, profile
+and NDK; ccache checks compiler content, flags and included source files.
+A cache hit is never substituted for ELF or link-evidence verification.
