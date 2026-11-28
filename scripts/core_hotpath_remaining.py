@@ -219,22 +219,22 @@ PATCHES = {
     [
       "src/memfile.h",
       "        MemFile() : stream(), file(nullptr) {}",
-      "        MemFile() : stream(), file(nullptr) {}\n        // Libretro's saveState methods write sequentially. Bypass the growing\n        // stringstream and write directly into the caller's bounded buffer.\n        MemFile(void* destination, size_t capacity) : stream(), file(nullptr),\n            directMode(true), directData(static_cast<unsigned char*>(destination)),\n            directCapacity(capacity), directFailed(!destination) {}"
+      "        MemFile() : stream(), file(nullptr) {}\n        // Libretro's saveState methods write sequentially. Bypass the growing\n        // stringstream and write directly into the caller's bounded buffer.\n        MemFile(void* destination, size_t capacity) : stream(), file(nullptr),\n            directMode(true), directData(static_cast<unsigned char*>(destination)),\n            directCapacity(capacity), directFailed(!destination) {}\n        // Loading uses a read-only view over the existing frontend buffer.\n        MemFile(const void* source, size_t length) : stream(), file(nullptr),\n            directMode(true), directReadData(static_cast<const unsigned char*>(source)),\n            directCapacity(length), directFailed(!source) {}"
     ],
     [
       "src/memfile.h",
       "            stream.write(static_cast<const char*>(buffer), size * count);\n            return size;",
-      "            if (directMode)\n            {\n                if (directFailed) return 0;\n                if (size != 0 && count > (directCapacity - directPos) / size)\n                {\n                    directFailed = true;\n                    return 0;\n                }\n                const size_t bytes = size * count;\n                if (bytes != 0)\n                {\n                    if (!buffer) { directFailed = true; return 0; }\n                    std::memcpy(directData + directPos, buffer, bytes);\n                    directPos += bytes;\n                }\n                return size;\n            }\n            stream.write(static_cast<const char*>(buffer), size * count);\n            return size;"
+      "            if (directMode)\n            {\n                if (directFailed || directReadData) { directFailed = true; return 0; }\n                if (size != 0 && count > (directCapacity - directPos) / size)\n                {\n                    directFailed = true;\n                    return 0;\n                }\n                const size_t bytes = size * count;\n                if (bytes != 0)\n                {\n                    if (!buffer) { directFailed = true; return 0; }\n                    std::memcpy(directData + directPos, buffer, bytes);\n                    directPos += bytes;\n                }\n                return size;\n            }\n            stream.write(static_cast<const char*>(buffer), size * count);\n            return size;"
     ],
     [
       "src/memfile.h",
       "            stream.read(static_cast<char*>(buffer), size * count);",
-      "            if (directMode) { directFailed = true; return 0; }\n            stream.read(static_cast<char*>(buffer), size * count);"
+      "            if (directMode)\n            {\n                if (directFailed || !directReadData ||\n                    (size != 0 && count > (directCapacity - directPos) / size))\n                {\n                    directFailed = true;\n                    return 0;\n                }\n                const size_t bytes = size * count;\n                if (bytes != 0)\n                {\n                    if (!buffer) { directFailed = true; return 0; }\n                    std::memcpy(buffer, directReadData + directPos, bytes);\n                    directPos += bytes;\n                }\n                return size;\n            }\n            stream.read(static_cast<char*>(buffer), size * count);"
     ],
     [
       "src/memfile.h",
       "            std::ios_base::seekdir dir;",
-      "            if (directMode) { directFailed = true; return -1; }\n            std::ios_base::seekdir dir;"
+      "            if (directMode)\n            {\n                if (directFailed || !directReadData) { directFailed = true; return -1; }\n                size_t base;\n                switch (origin)\n                {\n                    case SEEK_SET: base = 0; break;\n                    case SEEK_CUR: base = directPos; break;\n                    case SEEK_END: base = directCapacity; break;\n                    default: directFailed = true; return -1;\n                }\n                if (offset < 0)\n                {\n                    const size_t distance = static_cast<size_t>(-(offset + 1)) + 1;\n                    if (distance > base) { directFailed = true; return -1; }\n                    directPos = base - distance;\n                }\n                else\n                {\n                    const size_t distance = static_cast<size_t>(offset);\n                    if (distance > directCapacity - base) { directFailed = true; return -1; }\n                    directPos = base + distance;\n                }\n                return 0;\n            }\n            std::ios_base::seekdir dir;"
     ],
     [
       "src/memfile.h",
@@ -244,7 +244,7 @@ PATCHES = {
     [
       "src/memfile.h",
       "    private:\n        std::stringstream stream;\n        FILE* file;",
-      "        bool finishDirect()\n        {\n            if (!directMode || directFailed) return false;\n            // Preserve the serialized prefix and make unused fixed-size bytes deterministic.\n            if (directPos < directCapacity)\n                std::memset(directData + directPos, 0, directCapacity - directPos);\n            return true;\n        }\n\n    private:\n        std::stringstream stream;\n        FILE* file;\n        bool directMode = false;\n        unsigned char* directData = nullptr;\n        size_t directCapacity = 0;\n        size_t directPos = 0;\n        bool directFailed = false;"
+      "        bool finishDirect()\n        {\n            if (!directMode || !directData || directFailed) return false;\n            // Preserve the serialized prefix and make unused fixed-size bytes deterministic.\n            if (directPos < directCapacity)\n                std::memset(directData + directPos, 0, directCapacity - directPos);\n            return true;\n        }\n\n        bool finishDirectRead() const\n        {\n            return directMode && directReadData && !directFailed;\n        }\n\n    private:\n        std::stringstream stream;\n        FILE* file;\n        bool directMode = false;\n        unsigned char* directData = nullptr;\n        const unsigned char* directReadData = nullptr;\n        size_t directCapacity = 0;\n        size_t directPos = 0;\n        bool directFailed = false;"
     ],
     [
       "src/libretro/savestate.cpp",
@@ -265,6 +265,16 @@ PATCHES = {
       "src/libretro/libretro.cpp",
       "  // HACK: Usually around 6MB but can vary frame to frame!\n  return 1024 * 1024 * 8;",
       "  // DS keeps its existing 8 MiB state size. DSi has 16 MiB of main RAM\n  // alone, so the former 8 MiB bound silently truncated every DSi state.\n  return 1024 * 1024 * (core && core->dsiMode ? 32 : 8);"
+    ],
+    [
+      "src/libretro/savestate.cpp",
+      "  // Open the state file and read past the header\n  MemFile file;\n\n  file.write(data, size, 1);\n  file.seek(8, SEEK_SET);",
+      "  if (!data || size < 8) return false;\n  // Read directly from the frontend buffer instead of copying the entire state.\n  MemFile file(data, size);\n  if (file.seek(8, SEEK_SET) != 0) return false;"
+    ],
+    [
+      "src/libretro/savestate.cpp",
+      "  core->loadState(file);\n\n  return true;",
+      "  core->loadState(file);\n\n  return file.finishDirectRead();"
     ]
   ],
   "panda3ds": [

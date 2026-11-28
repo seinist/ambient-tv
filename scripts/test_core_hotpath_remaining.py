@@ -19,7 +19,7 @@ def replacement(core, needle):
 class RemainingCoreHotpathTests(unittest.TestCase):
     def test_exact_anchor_application_and_atomic_rejection(self):
         self.assertEqual(len(PATCHES), 39)
-        self.assertEqual(sum(map(len, PATCHES.values())), 100)
+        self.assertEqual(sum(map(len, PATCHES.values())), 102)
         for core, changes in PATCHES.items():
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -112,7 +112,7 @@ int main() {
                             str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
-    def test_noods_direct_save_writer(self):
+    def test_noods_direct_save_reader_and_writer(self):
         compiler = shutil.which("c++")
         self.assertIsNotNone(compiler)
         # Construct the actual changed class members from the source patch.
@@ -120,6 +120,9 @@ int main() {
         constructor = changes["        MemFile() : stream(), file(nullptr) {}"]
         writer = changes["            stream.write(static_cast<const char*>(buffer), size * count);\n            return size;"]
         fields = changes["    private:\n        std::stringstream stream;\n        FILE* file;"]
+        reader = changes["            stream.read(static_cast<char*>(buffer), size * count);"]
+        seek = changes["            std::ios_base::seekdir dir;"]
+        tell = changes["            return static_cast<long>(stream.tellg());"]
         source = """
 #include <sstream>
 #include <cstdio>
@@ -132,6 +135,17 @@ public:
 """ + constructor + """
 size_t write(const void* buffer, size_t size, size_t count) {
 """ + writer + """
+}
+size_t read(void* buffer, size_t size, size_t count) {
+""" + reader + """
+    return size;
+}
+int seek(long offset, int origin) {
+""" + seek + """
+    return -1;
+}
+long tell() {
+""" + tell + """
 }
 """ + fields + """
 };
@@ -156,8 +170,33 @@ int main() {
     MemFile overflow(buf, sizeof(buf));
     assert(overflow.write(a, 2, std::numeric_limits<size_t>::max()) == 0);
     assert(!overflow.finishDirect());
-    MemFile invalid(nullptr, 12);
+    MemFile invalid(static_cast<void*>(nullptr), 12);
     assert(!invalid.finishDirect());
+    const unsigned char state[] = {0,1,2,3,4,5,6,7,8,9,10,11};
+    unsigned char out[5] = {};
+    MemFile input(state, sizeof(state));
+    assert(input.seek(8, SEEK_SET) == 0);
+    assert(input.tell() == 8);
+    assert(input.read(out, 1, 4) == 1);
+    assert(out[0] == 8 && out[3] == 11 && out[4] == 0);
+    assert(input.seek(-4, SEEK_END) == 0);
+    assert(input.seek(-2, SEEK_CUR) == 0);
+    assert(input.tell() == 6);
+    assert(input.read(out, 2, 2) == 2);
+    assert(out[0] == 6 && out[3] == 9);
+    assert(input.finishDirectRead());
+    assert(!input.finishDirect());
+    assert(input.read(out, 1, 3) == 0);
+    assert(!input.finishDirectRead());
+    MemFile overflowRead(state, sizeof(state));
+    assert(overflowRead.read(out, 2, std::numeric_limits<size_t>::max()) == 0);
+    assert(!overflowRead.finishDirectRead());
+    MemFile negativeSeek(state, sizeof(state));
+    assert(negativeSeek.seek(std::numeric_limits<long>::min(), SEEK_CUR) == -1);
+    assert(!negativeSeek.finishDirectRead());
+    MemFile readonly(state, sizeof(state));
+    assert(readonly.write(a, 1, 1) == 0);
+    assert(!readonly.finishDirectRead());
 }
 """
         with tempfile.TemporaryDirectory() as directory:
