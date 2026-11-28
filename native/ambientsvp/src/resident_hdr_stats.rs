@@ -28,13 +28,16 @@ const PQ_CODES:usize=0x3c01;
 fn pq_table()->&'static Vec<u32>{
     static TABLE:std::sync::OnceLock<Vec<u32>>=std::sync::OnceLock::new();
     TABLE.get_or_init(||{
-        let mut table=Vec::with_capacity(PQ_CODES*4);
+        let mut table=Vec::with_capacity(PQ_CODES*8);
         for bits in 0..PQ_CODES{
             let exp=(bits>>10)&31;let mant=(bits&1023) as f64;
             let x=if exp==0{mant*2f64.powi(-24)}else{(1.0+mant/1024.0)*2f64.powi(exp as i32-15)};
             let p=x.powf(32.0/2523.0);
             let linear=((p-3424.0/4096.0).max(0.0)/(2413.0/128.0-2392.0/128.0*p)).powf(16384.0/2610.0).clamp(0.0,1.0);
-            table.extend_from_slice(&[(linear*100_000.0).round() as u32,(linear*1_000_000_000.0).round() as u32,(linear as f32).to_bits(),0]);
+            table.extend_from_slice(&[(linear*100_000.0).round() as u32,(linear*1_000_000_000.0).round() as u32,
+                (linear as f32).to_bits(),0,
+                (linear*262_700_000.0).round() as u32,(linear*678_000_000.0).round() as u32,
+                (linear*59_300_000.0).round() as u32,0]);
         }
         table
     })
@@ -275,7 +278,14 @@ impl StatsJob{
         for (i,w) in self.windows.iter().enumerate(){
         let row=&rows[i*STRIDE..(i+1)*STRIDE];
         let bins=bins[i*BINS as usize..(i+1)*BINS as usize].to_vec();
-        let average=if i==0{f32::from_bits(row[61])}else{0.0};let fraction=if i==0{f32::from_bits(row[62])}else{0.0};
+        let proxy_count=u64::from(row[63]);
+        let proxy_sum=u64::from(row[58])|(u64::from(row[59])<<32);
+        let weight_sum=u64::from(row[61])|(u64::from(row[62])<<32);
+        if i==0&&(proxy_count==0||proxy_sum>proxy_count*1_000_000_000||weight_sum>proxy_count*4_000_000_000){
+            return Err("invalid integer HDR luminance reduction".into());
+        }
+        let average=if i==0{proxy_sum as f64/(proxy_count as f64*1_000_000_000.0)}else{0.0};
+        let fraction=if i==0{weight_sum as f64/(proxy_count as f64*4_000_000_000.0)}else{0.0};
         let linear_sum=u64::from(row[56])|(u64::from(row[57])<<32);
         if (i==0&&row[63]!=self.width.div_ceil(5)*self.height.div_ceil(5))||
             !average.is_finite()||!(0.0..=1.0).contains(&average)||
@@ -425,7 +435,7 @@ fn bright_scene_selects_latest_highest_average_and_weighted_band(){
 pub(super) struct SceneWindowFrame{pub count:u32,pub percentages:[u32;15],pub frame:SceneFrame}
 pub(super) struct SceneFrame{
     pub width:u32,pub height:u32,pub maxscl:[u32;3],
-    pub bins:Vec<u32>,pub average:f32,pub fraction:f32,pub linear_sum:u64,
+    pub bins:Vec<u32>,pub average:f64,pub fraction:f64,pub linear_sum:u64,
 }
 
 // Explicit complete-scene contract. The caller supplies authoritative
@@ -439,7 +449,7 @@ pub struct SceneResult{
 }
 pub struct HdrScene{
     first:u64,end:u64,next:u64,width:u32,height:u32,
-    percentages:[u32;9],bins:Vec<u64>,maxscl:[u32;3],linear_sum:u128,best:Option<(f32,u64,f32)>,
+    percentages:[u32;9],bins:Vec<u64>,maxscl:[u32;3],linear_sum:u128,best:Option<(f64,u64,f64)>,
 }
 impl HdrScene{
     pub(super) fn new(first:u64,end:u64,width:u32,height:u32,percentages:[u32;9])->Result<Self>{
@@ -472,7 +482,7 @@ impl HdrScene{
         let denominator=u128::from(n)*10_000;
         let mut result=SceneResult{first:self.first,end:self.end,brightest_frame,maxscl:self.maxscl,
             average:((self.linear_sum+denominator/2)/denominator) as u32,
-            fraction:(f64::from(fraction)*1000.0).round().clamp(1.0,1000.0) as u32,
+            fraction:(fraction*1000.0).round().clamp(1.0,1000.0) as u32,
             ..Default::default()};
         let reserved=self.percentages[1]==5&&self.percentages[2]==10;
         for (j,&pct) in self.percentages.iter().enumerate(){
@@ -491,7 +501,7 @@ impl HdrScene{
 mod scene_tests{
     use super::*;
     const P:[u32;9]=[1,5,10,25,50,75,90,95,99];
-    fn frame(a:u32,b:u32,avg:f32,fraction:f32)->SceneFrame{
+    fn frame(a:u32,b:u32,avg:f64,fraction:f64)->SceneFrame{
         let mut bins=vec![0;BINS as usize];bins[a as usize]+=1;bins[b as usize]+=1;
         SceneFrame{width:2,height:1,maxscl:[a.max(b);3],bins,average:avg,fraction,linear_sum:(u64::from(a)+u64::from(b))*10_000}
     }
@@ -1005,7 +1015,7 @@ fn legacy_ellipse_span_reference_counts(){
 #[test]
 fn pq_table_matches_independent_decimal_vectors(){
     let t=pq_table();
-    assert_eq!(t[0],0);assert_eq!(t[(PQ_CODES-1)*4],100000);
-    assert_eq!((0x37ff..=0x3803).map(|i|t[i*4]).collect::<Vec<_>>(),[920,922,927,932,936]);
-    assert!(t.chunks_exact(4).map(|v|v[0]).collect::<Vec<_>>().windows(2).all(|p|p[0]<=p[1]));
+    assert_eq!(t[0],0);assert_eq!(t[(PQ_CODES-1)*8],100000);
+    assert_eq!((0x37ff..=0x3803).map(|i|t[i*8]).collect::<Vec<_>>(),[920,922,927,932,936]);
+    assert!(t.chunks_exact(8).map(|v|v[0]).collect::<Vec<_>>().windows(2).all(|p|p[0]<=p[1]));
 }
