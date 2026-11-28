@@ -205,7 +205,20 @@ class MoonlightStreamEngine @Inject constructor(
                         }
                 }
                 // NvConnection spawns its own native start thread; callbacks are generation-gated.
-                if (isOwned(session)) connection.start(audio, video, callbacks(session))
+                if (isOwned(session)) {
+                    MoonBridge.consumeCallbackFailure()
+                    connection.start(audio, video, callbacks(session))
+                    // Also covers failures before connectionStarted can launch the normal telemetry job.
+                    scope.launch {
+                        while (isOwned(session)) {
+                            kotlinx.coroutines.delay(500)
+                            if (isOwned(session) && MoonBridge.consumeCallbackFailure()) {
+                                fail(session, "Moonlight native callback failed", retryable = true)
+                                break
+                            }
+                        }
+                    }
+                }
             } catch (cancel: CancellationException) {
                 stopSession(session)
                 throw cancel

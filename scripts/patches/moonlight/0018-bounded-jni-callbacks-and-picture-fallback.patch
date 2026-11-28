@@ -1,0 +1,386 @@
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -62,7 +62,18 @@
+ // the VM; their attachment lifetime is not under native control.
+ static __thread JNIEnv* bridgeThreadEnv;
+ static bool jniEnvKeyReady;
++static bool callbackFailure;
+ 
++static void recordCallbackFailure(JNIEnv* env) {
++    if (env != NULL && (*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
++    __atomic_store_n(&callbackFailure, true, __ATOMIC_RELEASE);
++}
++
++JNIEXPORT jboolean JNICALL Java_com_limelight_nvstream_jni_MoonBridge_consumeCallbackFailure(JNIEnv* env, jclass clazz) {
++    (void)env; (void)clazz;
++    return __atomic_exchange_n(&callbackFailure, false, __ATOMIC_ACQ_REL) ? JNI_TRUE : JNI_FALSE;
++}
++
+ void DetachThread(void* context) {
+     (void)context;
+     bridgeThreadEnv = NULL;
+@@ -73,15 +84,6 @@
+     jniEnvKeyReady = pthread_key_create(&JniEnvKey, DetachThread) == 0;
+ }
+ 
+-static void detachCallbackThread(void) {
+-    if (bridgeThreadEnv != NULL) {
+-        bridgeThreadEnv = NULL;
+-        // An exceptional manual detach must not leave the destructor armed.
+-        pthread_setspecific(JniEnvKey, NULL);
+-    }
+-    (*JVM)->DetachCurrentThread(JVM);
+-}
+-
+ JNIEnv* GetThreadEnv(void) {
+     if (bridgeThreadEnv != NULL) return bridgeThreadEnv;
+ 
+@@ -91,10 +93,11 @@
+ 
+     pthread_once(&JniEnvKeyInitOnce, JniEnvKeyInit);
+     if (!jniEnvKeyReady || (*JVM)->AttachCurrentThread(JVM, &env, NULL) != JNI_OK || env == NULL)
+-        abort(); // All existing bridge callers require a valid JNIEnv.
++        { recordCallbackFailure(NULL); return NULL; }
+     if (pthread_setspecific(JniEnvKey, env) != 0) {
+         (*JVM)->DetachCurrentThread(JVM);
+-        abort();
++        recordCallbackFailure(NULL);
++        return NULL;
+     }
+     bridgeThreadEnv = env;
+     return env;
+@@ -134,6 +137,7 @@
+ 
+ int BridgeDrSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return -1;
+     int err;
+ 
+     err = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSetupMethod, videoFormat, width, height, redrawRate);
+@@ -156,24 +160,30 @@
+ 
+ void BridgeDrStart(void) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeDrStartMethod);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeDrStop(void) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeDrStopMethod);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeDrCleanup(void) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     if (DecodedFrameBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
+     DecodedFrameBuffer = NULL;
+     DecodedFrameCapacity = 0;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeDrCleanupMethod);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ // Only the synchronous renderer callback on this native thread can access the DU.
+@@ -199,6 +209,22 @@
+     return offset == length ? JNI_TRUE : JNI_FALSE;
+ }
+ 
++JNIEXPORT jboolean JNICALL Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureArray(
++        JNIEnv* env, jclass clazz, jbyteArray target, jint length) {
++    (void)clazz;
++    if (activePictureUnit == NULL || target == NULL || length <= 0 || length != activePictureLength ||
++            (*env)->GetArrayLength(env, target) < length) return JNI_FALSE;
++    int offset = 0;
++    for (PLENTRY entry = activePictureUnit->bufferList; entry != NULL; entry = entry->next) {
++        if (entry->bufferType != BUFFER_TYPE_PICDATA) continue;
++        if (entry->length <= 0 || entry->length > length - offset || entry->data == NULL) return JNI_FALSE;
++        (*env)->SetByteArrayRegion(env, target, offset, entry->length, (jbyte*)entry->data);
++        if ((*env)->ExceptionCheck(env)) { recordCallbackFailure(env); return JNI_FALSE; }
++        offset += entry->length;
++    }
++    return offset == length ? JNI_TRUE : JNI_FALSE;
++}
++
+ static bool ensureFrameArray(JNIEnv* env, int length) {
+     if (DecodedFrameCapacity >= length) return true;
+     int capacity = DecodedFrameCapacity > 0 ? DecodedFrameCapacity : 32768;
+@@ -225,27 +251,31 @@
+ 
+ int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
+     JNIEnv* env = GetThreadEnv();
+-    if (decodeUnit->fullLength <= 0) return DR_NEED_IDR;
++    if (env == NULL) return DR_NEED_IDR;
++    if (decodeUnit == NULL || decodeUnit->fullLength <= 0 || decodeUnit->fullLength > 4 * 1024 * 1024 + 12 * 64 * 1024) return DR_NEED_IDR;
+     int pictureLength = 0, totalLength = 0, configLength = 0;
+     for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
+         if (entry->length <= 0 || entry->length > decodeUnit->fullLength - totalLength ||
+                 entry->data == NULL) return DR_NEED_IDR;
+         totalLength += entry->length;
+         if (entry->bufferType == BUFFER_TYPE_PICDATA) pictureLength += entry->length;
+-        else if (entry->length > configLength) configLength = entry->length;
++        else {
++            if (entry->length > 64 * 1024) return DR_NEED_IDR;
++            if (entry->length > configLength) configLength = entry->length;
++        }
+     }
+-    if (totalLength != decodeUnit->fullLength || pictureLength <= 0) return DR_NEED_IDR;
++    if (totalLength != decodeUnit->fullLength || pictureLength <= 0 || pictureLength > 4 * 1024 * 1024) return DR_NEED_IDR;
+     int arrayLength = directPictureEnabled ? configLength : decodeUnit->fullLength;
+     if (arrayLength > 0 && !ensureFrameArray(env, arrayLength)) return DR_NEED_IDR;
+     for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
+         if (entry->bufferType == BUFFER_TYPE_PICDATA) continue;
+         (*env)->SetByteArrayRegion(env, DecodedFrameBuffer, 0, entry->length, (jbyte*)entry->data);
+-        if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return DR_OK; }
++        if ((*env)->ExceptionCheck(env)) { recordCallbackFailure(env); return DR_NEED_IDR; }
+         int ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
+                 DecodedFrameBuffer, entry->length, entry->bufferType,
+                 decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
+                 (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
+-        if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return DR_OK; }
++        if ((*env)->ExceptionCheck(env)) { recordCallbackFailure(env); return DR_NEED_IDR; }
+         if (ret != DR_OK) return ret;
+     }
+     int ret;
+@@ -265,7 +295,7 @@
+         for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
+             if (entry->bufferType != BUFFER_TYPE_PICDATA) continue;
+             (*env)->SetByteArrayRegion(env, DecodedFrameBuffer, offset, entry->length, (jbyte*)entry->data);
+-            if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return DR_OK; }
++            if ((*env)->ExceptionCheck(env)) { recordCallbackFailure(env); return DR_NEED_IDR; }
+             offset += entry->length;
+         }
+         ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
+@@ -273,7 +303,7 @@
+                 decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
+                 (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
+     }
+-    if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return DR_OK; }
++    if ((*env)->ExceptionCheck(env)) { recordCallbackFailure(env); return DR_NEED_IDR; }
+     return ret;
+ }
+ 
+@@ -349,11 +379,14 @@
+ 
+ int BridgeArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int flags) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return -1;
+     int err;
+ 
++    if (opusConfig == NULL || opusConfig->samplesPerFrame <= 0 || opusConfig->samplesPerFrame > 8192 ||
++            (opusConfig->channelCount != 2 && opusConfig->channelCount != 6 && opusConfig->channelCount != 8)) return -1;
+     err = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeArInitMethod, audioConfiguration, opusConfig->sampleRate, opusConfig->samplesPerFrame);
+     if ((*env)->ExceptionCheck(env)) {
+-        // This is called on a Java thread, so it's safe to return
++        recordCallbackFailure(env);
+         err = -1;
+     }
+     if (err == 0) {
+@@ -417,18 +450,23 @@
+ 
+ void BridgeArStart(void) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArStartMethod);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeArStop(void) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArStopMethod);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeArCleanup() {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     opus_multistream_decoder_destroy(Decoder);
+ 
+@@ -443,10 +481,12 @@
+     DecodedAudioSamples = 0;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArCleanupMethod);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     if (DecodedAudioScratch == NULL) return;
+     jshort* decodedData = DecodedAudioScratch;
+@@ -476,76 +516,84 @@
+         }
+         else {
+             (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, outputSamples, decodedData);
+-            if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return; }
++            if ((*env)->ExceptionCheck(env)) { recordCallbackFailure(env); return; }
+             (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod, DecodedAudioBuffer);
+         }
+         if ((*env)->ExceptionCheck(env)) {
+-            // We will crash here
+-            detachCallbackThread();
++                recordCallbackFailure(env);
+         }
+     }
+ }
+ 
+ void BridgeClStageStarting(int stage) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClStageStartingMethod, stage);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeClStageComplete(int stage) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClStageCompleteMethod, stage);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeClStageFailed(int stage, int errorCode) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClStageFailedMethod, stage, errorCode);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeClConnectionStarted(void) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClConnectionStartedMethod);
++    if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+ void BridgeClConnectionTerminated(int errorCode) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClConnectionTerminatedMethod, errorCode);
+     if ((*env)->ExceptionCheck(env)) {
+-        // We will crash here
+-        detachCallbackThread();
++        recordCallbackFailure(env);
+     }
+ }
+ 
+ void BridgeClRumble(unsigned short controllerNumber, unsigned short lowFreqMotor, unsigned short highFreqMotor) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     // The seemingly redundant short casts are required in order to convert the unsigned short to a signed short.
+     // If we leave it as an unsigned short, CheckJNI will fail when the value exceeds 32767. The cast itself is
+     // fine because the Java code treats the value as unsigned even though it's stored in a signed type.
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClRumbleMethod, controllerNumber, (short)lowFreqMotor, (short)highFreqMotor);
+     if ((*env)->ExceptionCheck(env)) {
+-        // We will crash here
+-        detachCallbackThread();
++        recordCallbackFailure(env);
+     }
+ }
+ 
+ void BridgeClConnectionStatusUpdate(int connectionStatus) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClConnectionStatusUpdateMethod, connectionStatus);
+     if ((*env)->ExceptionCheck(env)) {
+-        // We will crash here
+-        detachCallbackThread();
++        recordCallbackFailure(env);
+         return;
+     }
+ }
+ 
+ void BridgeClSetHdrMode(bool enabled) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     jbyteArray hdrMetadataByteArray = NULL;
+     SS_HDR_METADATA hdrMetadata;
+@@ -553,47 +601,49 @@
+     // Check if HDR metadata was provided
+     if (enabled && LiGetHdrMetadata(&hdrMetadata)) {
+         hdrMetadataByteArray = (*env)->NewByteArray(env, sizeof(SS_HDR_METADATA));
++        if (hdrMetadataByteArray == NULL) { recordCallbackFailure(env); return; }
+         (*env)->SetByteArrayRegion(env, hdrMetadataByteArray, 0, sizeof(SS_HDR_METADATA), (jbyte*)&hdrMetadata);
++        if ((*env)->ExceptionCheck(env)) { recordCallbackFailure(env); (*env)->DeleteLocalRef(env, hdrMetadataByteArray); return; }
+     }
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetHdrModeMethod, enabled, hdrMetadataByteArray);
++    if (hdrMetadataByteArray != NULL) (*env)->DeleteLocalRef(env, hdrMetadataByteArray);
+     if ((*env)->ExceptionCheck(env)) {
+-        // We will crash here
+-        detachCallbackThread();
++        recordCallbackFailure(env);
+     }
+ }
+ 
+ void BridgeClRumbleTriggers(unsigned short controllerNumber, unsigned short leftTrigger, unsigned short rightTrigger) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     // The seemingly redundant short casts are required in order to convert the unsigned short to a signed short.
+     // If we leave it as an unsigned short, CheckJNI will fail when the value exceeds 32767. The cast itself is
+     // fine because the Java code treats the value as unsigned even though it's stored in a signed type.
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClRumbleTriggersMethod, controllerNumber, (short)leftTrigger, (short)rightTrigger);
+     if ((*env)->ExceptionCheck(env)) {
+-        // We will crash here
+-        detachCallbackThread();
++        recordCallbackFailure(env);
+     }
+ }
+ 
+ void BridgeClSetMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetMotionEventStateMethod, controllerNumber, motionType, reportRateHz);
+     if ((*env)->ExceptionCheck(env)) {
+-        // We will crash here
+-        detachCallbackThread();
++        recordCallbackFailure(env);
+     }
+ }
+ 
+ void BridgeClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b) {
+     JNIEnv* env = GetThreadEnv();
++    if (env == NULL) return;
+ 
+     // These jbyte casts are necessary to satisfy CheckJNI
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetControllerLEDMethod, controllerNumber, (jbyte)r, (jbyte)g, (jbyte)b);
+     if ((*env)->ExceptionCheck(env)) {
+-        // We will crash here
+-        detachCallbackThread();
++        recordCallbackFailure(env);
+     }
+ }
+ 
+diff --git a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+--- a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
++++ b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+@@ -231,6 +231,8 @@
+ 
+     // Only valid synchronously inside bridgeDrSubmitPicture on the native decode thread.
+     public static native boolean copyActivePictureData(java.nio.ByteBuffer target, int length);
++    public static native boolean copyActivePictureArray(byte[] target, int length);
++    public static native boolean consumeCallbackFailure();
+ 
+     public static boolean bridgeDrSupportsDirectPicture() {
+         return videoRenderer != null && videoRenderer.supportsDirectPicture();
