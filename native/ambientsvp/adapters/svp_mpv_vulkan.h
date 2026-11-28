@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 #include "svp_hdr_curve.h"
 
 #define SVP_VK_PHASES 8
@@ -52,6 +53,13 @@ struct svp_vk_mpv {
     int (*hdr_stats_affine)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,float,uint32_t);
     int (*hdr_read_ellipses)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[3],uint32_t);
     int (*hdr_read_rectangles)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
+    AmbientSvpHdrPass *scene_pass;
+    unsigned scene_mode;
+    int (*scene_stats)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,uint32_t);
+    int (*scene_capture)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
+    int (*scene_lookup)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
+    int (*scene_finish)(AmbientSvpHdrPass *);
+    void (*scene_destroy)(AmbientSvpHdrPass *);
     int (*seal)(AmbientSvpVkPair *,VkFence);
     int (*release)(AmbientSvpVkPair *);
     int (*cancel)(AmbientSvpVkPair *);
@@ -434,6 +442,48 @@ static void svp_vk_hdrplus_affine(AVHDRPlusColorTransformParams *p,const float g
     p->semiminor_axis_external_ellipse=(uint16_t)n;
     p->semimajor_axis_internal_ellipse=(uint16_t)inner;
 }
+static bool svp_vk_scene_metadata(struct mp_image *img,const AmbientSvpHdrSceneResult *r)
+{
+    static const unsigned percentages[9]={1,5,10,25,50,75,90,95,99};
+    for(int i=0;i<img->num_ff_side_data;i++){
+        if(img->ff_side_data[i].type!=AV_FRAME_DATA_DYNAMIC_HDR_PLUS)continue;
+        AVBufferRef *ref=img->ff_side_data[i].buf;
+        if(!ref||ref->size!=sizeof(AVDynamicHDRPlus)||!av_buffer_is_writable(ref))return false;
+        AVDynamicHDRPlus *m=(AVDynamicHDRPlus *)ref->data;
+        if(m->application_version!=1||m->num_windows!=1||r->fraction<1||r->fraction>1000)return false;
+        AVHDRPlusColorTransformParams *p=&m->params[0];
+        if(p->num_distribution_maxrgb_percentiles!=9)return false;
+        for(unsigned j=0;j<9;j++)if(p->distribution_maxrgb[j].percentage!=percentages[j])return false;
+        uint32_t peak=0;
+        for(unsigned j=0;j<3;j++){p->maxscl[j]=(AVRational){r->maxscl[j],100000};if(r->maxscl[j]>peak)peak=r->maxscl[j];}
+        p->average_maxrgb=(AVRational){r->average,100000};
+        p->fraction_bright_pixels=(AVRational){r->fraction,1000};
+        for(unsigned j=0;j<9;j++)p->distribution_maxrgb[j].percentile=(AVRational){r->percentiles[j],100000};
+        SvpHdrCurve curve;
+        AVRational target=m->targeted_system_display_maximum_luminance;
+        if(target.den<=0||!svp_hdr_curve(peak,r->average,r->percentiles[8],(double)target.num/target.den,&curve))return false;
+        p->tone_mapping_flag=curve.count!=0;p->num_bezier_curve_anchors=curve.count;
+        p->knee_point_x=(AVRational){curve.knee_x,4095};p->knee_point_y=(AVRational){curve.knee_y,4095};
+        memset(p->bezier_curve_anchors,0,sizeof(p->bezier_curve_anchors));
+        for(unsigned j=0;j<curve.count;j++)p->bezier_curve_anchors[j]=(AVRational){curve.anchors[j],1023};
+        struct pl_hdr_metadata *hdr=&img->params.color.hdr;
+        memset(hdr->scene_max,0,sizeof(hdr->scene_max));hdr->scene_avg=hdr->max_pq_y=hdr->avg_pq_y=0;
+        memset(&hdr->ootf,0,sizeof(hdr->ootf));
+        pl_map_hdr_metadata(hdr,&(struct pl_av_hdr_metadata){.dhp=m});
+        img->ambient_svp_hdr_generated=true;return true;
+    }
+    return false;
+}
+static bool svp_vk_scene_compatible(const struct mp_image *img)
+{
+    static const unsigned percentages[9]={1,5,10,25,50,75,90,95,99};
+    const AVBufferRef *ref=svp_vk_hdr10plus(img);
+    if(!ref||ref->size!=sizeof(AVDynamicHDRPlus))return false;
+    const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)ref->data;
+    if(m->application_version!=1||m->num_windows!=1||m->params[0].num_distribution_maxrgb_percentiles!=9)return false;
+    for(unsigned j=0;j<9;j++)if(m->params[0].distribution_maxrgb[j].percentage!=percentages[j])return false;
+    return true;
+}
 static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResult results[3],
     const int32_t (*shifts)[2],const float (*gradients)[4],const uint32_t (*rectangles)[4],const uint32_t (*ellipses)[3],bool elliptic,float phase,uint32_t count)
 {
@@ -573,9 +623,20 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
     }
     return outstanding;
 }
+static void svp_vk_scene_abort(struct svp_vk_mpv *s)
+{
+    if(s&&s->scene_pass){s->scene_destroy(s->scene_pass);s->scene_pass=NULL;s->scene_mode=0;}
+}
+static bool svp_vk_scene_complete(struct svp_vk_mpv *s)
+{
+    if(!s||!s->scene_pass)return false;
+    bool ok=s->scene_finish(s->scene_pass)==1;
+    svp_vk_scene_abort(s);return ok;
+}
 static void svp_vk_reset_history(struct svp_vk_mpv *s)
 {
     if (!s) return;
+    svp_vk_scene_abort(s);
     mp_image_unrefp(&s->previous);mp_image_unrefp(&s->older);mp_image_unrefp(&s->lookahead);
     for (unsigned i=0;i<s->output_count;i++) mp_image_unrefp(&s->outputs[i]);
     s->next_output=s->output_count=0;s->tick=0;
@@ -706,6 +767,31 @@ fail:
     svp_vk_destroy_state(s);return NULL;
 }
 
+static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_image *img,
+    const AmbientSvpQuality *q,unsigned mode,const char *plan,const char *cache,const char *key)
+{
+    if(!s||!lib||!img||!q||!mode||!plan||!cache||!key||s->mode<1||s->mode>=4||
+       img->params.color.transfer!=PL_COLOR_TRC_PQ||img->params.color.primaries!=PL_COLOR_PRIM_BT_2020)return false;
+    AmbientSvpHdrPass *(*open)(uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t)=
+        dlsym(lib,"ambient_svp_hdr_pass_open");
+    s->scene_stats=dlsym(lib,"ambient_svp_vk_hdr_stats_scene");
+    s->scene_capture=dlsym(lib,"ambient_svp_hdr_pass_capture");
+    s->scene_lookup=dlsym(lib,"ambient_svp_hdr_pass_lookup");
+    s->scene_finish=dlsym(lib,"ambient_svp_hdr_pass_finish");
+    s->scene_destroy=dlsym(lib,"ambient_svp_hdr_pass_destroy");
+    if(!open||!s->scene_stats||!s->scene_capture||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)return false;
+    PFN_vkGetPhysicalDeviceProperties props=(PFN_vkGetPhysicalDeviceProperties)s->vkdev->get_proc_addr(s->vkdev->inst,"vkGetPhysicalDeviceProperties");
+    if(!props)return false;
+    VkPhysicalDeviceProperties device;props(s->vkdev->phys_dev,&device);
+    char profile[384];
+    int n=snprintf(profile,sizeof(profile),"mpv:1:%u:%u:%u:%u:%lld:%lld:%lld:%u:%u:%u:%u:%u:%u:%u:%u",
+        device.vendorID,device.deviceID,device.driverVersion,s->mode,
+        (long long)llround(s->source_rate*1000000.0),(long long)llround(s->target_rate*1000000.0),
+        (long long)llround(img->pts*1000000.0),q->preset,q->block,q->overlap,q->pel,q->search,q->artifacts,q->scene,q->algorithm);
+    if(n<=0||(size_t)n>=sizeof(profile))return false;
+    s->scene_pass=open(mode,plan,cache,key,profile,s->width,s->height);
+    s->scene_mode=s->scene_pass?mode:0;return s->scene_pass!=NULL;
+}
 static bool svp_vk_matches(struct svp_vk_mpv *s,struct mp_image *img)
 {
     if (!svp_vk_eligible(img) || img->w!=(int)s->width || img->h!=(int)s->height) return false;
@@ -779,6 +865,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     if (s->mode>=4 && a->params.chroma_location!=b->params.chroma_location) return false;
     bool dynamic=s->mode>0 && s->mode<4 && svp_vk_hdrplus_pair(a,b);
     if(dynamic && (!s->hdr_stats||!s->hdr_read))return false;
+    if(s->scene_pass&&(!dynamic||!svp_vk_scene_compatible(a)||!svp_vk_scene_compatible(b)))return false;
     uint32_t hdr_counts[SVP_VK_PHASES]={0};
     bool tracked[SVP_VK_PHASES]={0},affine[SVP_VK_PHASES]={0},elliptic[SVP_VK_PHASES]={0};
     if (s->mode && (s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
@@ -918,7 +1005,10 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         int rc=s->mode>=4?s->render_raw(j->pair,phases[i],dst[i],s->mode==4?2:3):
             s->render(j->pair,phases[i],svp_vk_matrix(a),dst[i][0]);
         if (rc) goto fail;
-        if(dynamic && phases[i]>0.0f){
+        if(s->scene_pass&&s->scene_mode==1){
+            AmbientSvpHdrWindow windows[3];uint32_t n;
+            if(!svp_vk_hdrplus_windows(outputs[i],windows,&n)||n!=1||s->scene_stats(j->pair,i,windows,1))goto fail;
+        }else if(!s->scene_pass&&dynamic && phases[i]>0.0f){
             AmbientSvpHdrWindow windows[3];
             if(!svp_vk_hdrplus_windows(outputs[i],windows,&hdr_counts[i]))goto fail;
             if(hdr_counts[i]>1&&s->hdr_stats_track&&s->hdr_read_track){
@@ -975,6 +1065,13 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     // dynamic HDR waits here, after all FFmpeg frame/queue locks are released.
     if(dynamic){
         if(!j->sealed||s->wait_fences(s->device,1,&j->fence,VK_TRUE,250000000ULL)!=VK_SUCCESS)goto submitted_fail;
+        if(s->scene_pass){
+            for(unsigned i=0;i<count;i++){
+                AmbientSvpHdrSceneResult result;
+                if(s->scene_mode==1){if(s->scene_capture(s->scene_pass,j->pair,i,s->tick+i)!=1)goto submitted_fail;}
+                else if(s->scene_lookup(s->scene_pass,s->tick+i,&result)!=1||!svp_vk_scene_metadata(outputs[i],&result))goto submitted_fail;
+            }
+        }
         for(unsigned i=0;i<count;i++)if(hdr_counts[i]){
             AmbientSvpHdrResult results[3];
             int32_t shifts[3][2]={{0}};
@@ -992,10 +1089,12 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     }
     return true;
 submitted_fail:
+    svp_vk_scene_abort(s);
     // Submitted resources remain in jobs[] until their actual fence retires.
     for(unsigned i=0;i<count;i++)mp_image_unrefp(&outputs[i]);
     return false;
 fail:
+    svp_vk_scene_abort(s);
     while(locked) {struct svp_vk_ref *r=&refs[order[--locked]];r->vfc->unlock_frame(r->fc,r->frame);}
     for (unsigned i=0;i<count;i++) mp_image_unrefp(&outputs[i]);
     svp_vk_job_free(s,j);
@@ -1040,6 +1139,7 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
     if (s->mode && hdr && compatible && ((has_hdrplus && !measured_hdrplus) ||
         (!svp_vk_hdr_metadata_same(a,next) && !measured_hdrplus) ||
         (s->mode>=4 && a->params.chroma_location!=next->params.chroma_location))) {
+        if(s->scene_pass){svp_vk_scene_abort(s);return false;}
         // Do not interpolate across dynamic/static HDR metadata changes.
         // Repeat the exact preceding source until the next source tick;
         // retain all its original pixels, representation and side data.
@@ -1070,14 +1170,14 @@ static bool svp_vk_feed(struct svp_vk_mpv *s,struct mp_image *img)
     double expected=1.0/s->source_rate;
     struct mp_image *last=s->lookahead?s->lookahead:s->previous;
     double delta=img->pts-last->pts;
-    if(fabs(delta-expected)>fmax(0.003,expected*0.25))return false;
+    if(fabs(delta-expected)>fmax(0.003,expected*0.25)){svp_vk_scene_abort(s);return false;}
     if(s->algorithm==23&&s->begin_extended){
         if(!s->lookahead){s->lookahead=img;s->input_frames++;return true;}
-        if(!svp_vk_pair_frames(s,s->lookahead,s->lookahead->pts,img))return false;
+        if(!svp_vk_pair_frames(s,s->lookahead,s->lookahead->pts,img)){svp_vk_scene_abort(s);return false;}
         mp_image_unrefp(&s->older);s->older=s->previous;
         s->previous=s->lookahead;s->lookahead=img;s->input_frames++;return true;
     }
-    if(!svp_vk_pair_frames(s,img,img->pts,NULL))return false;
+    if(!svp_vk_pair_frames(s,img,img->pts,NULL)){svp_vk_scene_abort(s);return false;}
     mp_image_unrefp(&s->previous);s->previous=img;s->input_frames++;return true;
 }
 static void svp_vk_eof(struct svp_vk_mpv *s)
@@ -1088,6 +1188,7 @@ static void svp_vk_eof(struct svp_vk_mpv *s)
             mp_image_unrefp(&s->previous);s->previous=s->lookahead;s->lookahead=NULL;
             mp_image_unrefp(&s->older);return;
         }
+        svp_vk_scene_abort(s);
         s->outputs[0]=svp_vk_take_previous(s);s->output_count=1;s->next_output=0;return;
     }
     if (svp_vk_pair_frames(s,s->previous,s->previous->pts+1.0/s->source_rate,NULL))
