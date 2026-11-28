@@ -1761,7 +1761,7 @@ mod gpu_tests{
             ];
             let bytes=u64::from(w*h*4);
             let readback=d.create_buffer(&vk::BufferCreateInfo::default().size(bytes*3)
-                .usage(vk::BufferUsageFlags::TRANSFER_DST).sharing_mode(vk::SharingMode::EXCLUSIVE),None).unwrap();
+                .usage(vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC).sharing_mode(vk::SharingMode::EXCLUSIVE),None).unwrap();
             let req=d.get_buffer_memory_requirements(readback);
             let readback_memory=d.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size)
                 .memory_type_index(memory_index(&props,req.memory_type_bits,
@@ -2091,6 +2091,63 @@ mod gpu_tests{
                     d.unmap_memory(readback_memory);
                 }
                 assert!(observed[1]>observed[0],"10-bit codes collapsed");
+                if mode==3&&tuned{
+                    // Nonuniform two-frame reference. Exact Fraction/Decimal
+                    // oracle in hdr10plus_reference.py uses 66x34 RGB stripes
+                    // with a boundary crossing the nonintegral 5:1 proxy grid.
+                    let schema=[1,5,10,25,50,75,90,95,99];
+                    let scene=ambient_svp_hdr_scene_create(0,2,w,h,&schema);
+                    assert!(!scene.is_null());
+                    for frame in 0..2u64{
+                        let mapped=d.map_memory(readback_memory,0,bytes*2,vk::MemoryMapFlags::empty()).unwrap();
+                        let data=std::slice::from_raw_parts_mut(mapped.cast::<u16>(),(bytes*2/2) as usize);
+                        for y in 0..h{
+                            for x in 0..w{
+                                let rgb=if frame==0{
+                                    if x<23{[0x3c00,0,0,0x3c00]}else{[0,0x3c00,0,0x3c00]}
+                                }else if x<23{[0,0x3bfc,0,0x3c00]}else{[0,0x3c00,0,0x3c00]};
+                                let i=((y*w+x)*4) as usize;data[i..i+4].copy_from_slice(&rgb);
+                            }
+                        }
+                        d.unmap_memory(readback_memory);
+                        d.reset_fences(&[fence]).unwrap();
+                        d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+                        d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+                        transition(&d,cmd,high[0].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            vk::AccessFlags::SHADER_READ,vk::AccessFlags::TRANSFER_WRITE,
+                            vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+                        d.cmd_copy_buffer_to_image(cmd,readback,high[0].image,vk::ImageLayout::TRANSFER_DST_OPTIMAL,&region);
+                        transition(&d,cmd,high[0].image,vk::ImageLayout::TRANSFER_DST_OPTIMAL,vk::ImageLayout::GENERAL,
+                            vk::AccessFlags::TRANSFER_WRITE,vk::AccessFlags::SHADER_READ,
+                            vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+                        transition(&d,cmd,high[4].image,if frame==0{vk::ImageLayout::TRANSFER_SRC_OPTIMAL}else{vk::ImageLayout::GENERAL},
+                            vk::ImageLayout::GENERAL,if frame==0{vk::AccessFlags::TRANSFER_READ}else{vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE},
+                            vk::AccessFlags::SHADER_WRITE,if frame==0{vk::PipelineStageFlags::TRANSFER}else{vk::PipelineStageFlags::COMPUTE_SHADER},
+                            vk::PipelineStageFlags::COMPUTE_SHADER);
+                        let pair=ambient_svp_vk_begin(engine,cmd,&a,&a);
+                        assert!(!pair.is_null());
+                        assert_eq!(ambient_svp_vk_render(pair,0.0,4,high[4].view),0);
+                        let mut global=HdrWindow{rect:[0,0,w,h],count:9,percentages:[0;15]};
+                        global.percentages[..9].copy_from_slice(&schema);
+                        assert_eq!(ambient_svp_vk_hdr_stats_scene(pair,0,&global,1),0);
+                        d.end_command_buffer(cmd).unwrap();
+                        d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+                        assert_eq!(ambient_svp_vk_seal(pair,fence),0);
+                        d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+                        assert_eq!(ambient_svp_hdr_scene_push(scene,pair,0,frame),1);
+                        let f=(&*pair).hdr_jobs[0].as_ref().unwrap().scene_frame().unwrap();
+                        assert_eq!(f.maxscl,if frame==0{[100000,100000,0]}else{[0,100000,0]});
+                        assert_eq!((f.fraction*1000.0).round() as u32,if frame==0{643}else{811});
+                        assert_eq!(ambient_svp_vk_release(pair),1);
+                    }
+                    let mut measured=SceneResult::default();
+                    assert_eq!(ambient_svp_hdr_scene_finish(scene,&mut measured),1);
+                    assert_eq!(measured.maxscl,[100000,100000,0]);
+                    assert_eq!(measured.average,99678);
+                    assert_eq!(measured.percentiles,[98152,0,255,100000,100000,100000,100000,100000,100000]);
+                    assert_eq!(measured.brightest_frame,1);assert_eq!(measured.fraction,811);
+                    ambient_svp_hdr_scene_destroy(scene);
+                }
                 ambient_svp_vk_destroy(engine);
                 for img in high{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
             }
