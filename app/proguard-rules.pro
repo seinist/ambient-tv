@@ -119,3 +119,23 @@
 -keep class kotlin.** { *; }
 -keep class kotlinx.coroutines.** { *; }
 -keep class timber.log.** { *; }
+
+# SmartTube external DEX shares Android resources and common dependency types
+# with the host. Keep their ABI until adapter integration is validated on device.
+-keep class com.liskovsoft.** { *; }
+-keep class com.eclipsesource.v8.** { *; }
+-keep class com.ambient.tv.youtube.SmartTubeModuleAdapter { *; }
+-keep class okhttp3.** { *; }
+-keep class okio.** { *; }
+-keep class retrofit2.** { *; }
+-keep class com.google.gson.** { *; }
+-keep class io.reactivex.** { *; }
+-keep class org.reactivestreams.** { *; }
+-keep class org.apache.commons.io.** { *; }
+-keep class com.jayway.jsonpath.** { *; }
+-keep class net.minidev.** { *; }
+-keep class org.xbill.DNS.** { *; }
+-keep class org.slf4j.** { *; }
+-keep class androidx.webkit.** { *; }
+-keep class androidx.preference.** { *; }
+-keep class androidx.appcompat.** { *; }
