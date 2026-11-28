@@ -93,6 +93,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
     onOpenDlna: () -> Unit,
     projectmAvailable: Boolean = com.ambient.tv.modules.SystemModuleAvailability.state(com.ambient.tv.modules.SystemModule.PROJECTM).usable,
     mpvAvailable: Boolean = com.ambient.tv.modules.SystemModuleAvailability.state(com.ambient.tv.modules.SystemModule.MPV).usable,
+    vlcAvailable: Boolean = com.ambient.tv.modules.SystemModuleAvailability.state(com.ambient.tv.modules.SystemModule.VLC).usable,
 ) {
     when (category) {
         SettingsCategory.ROMM -> {
@@ -624,7 +625,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     SettingsSelect(
                         label = systemString(MediaSystem.TVHEADEND, R.string.settings_tvh_playback_backend),
                         description = stringResource(R.string.settings_tvh_playback_backend_hint),
-                        options = listOf("media3", "vlc", "mpv").filter { it != "mpv" || mpvAvailable }.map { backend ->
+                        options = listOf("media3", "vlc", "mpv").filter { (it != "mpv" || mpvAvailable) && (it != "vlc" || vlcAvailable) }.map { backend ->
                             val mpvUnavailable = false
                             SettingsSelectOption(
                                 text = when (backend) {
@@ -643,7 +644,8 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (uiState.tvheadendPlaybackBackendKey !in setOf("mpv", "vlc") ||
-                            (uiState.tvheadendPlaybackBackendKey == "mpv" && !mpvAvailable)) {
+                            (uiState.tvheadendPlaybackBackendKey == "mpv" && !mpvAvailable) ||
+                            (uiState.tvheadendPlaybackBackendKey == "vlc" && !vlcAvailable)) {
                             ConnectionListCaption(stringResource(R.string.tvh_deinterlace_state))
                             ImageHint(stringResource(R.string.tvh_deinterlace_media3_hint))
                         } else {
