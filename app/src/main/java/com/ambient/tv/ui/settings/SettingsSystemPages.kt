@@ -885,6 +885,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 )
             }
             if (uiState.youtubeEnabled) item { SystemNameField(MediaSystem.YOUTUBE, uiState, viewModel) }
+            if (uiState.youtubeEnabled) item(key = "youtube-programme-reminders") { ProgrammeReminderSettings(youtube = true) }
             item(key = "youtube-account-section") { SettingsSubheader(stringResource(R.string.settings_system_account_devices)) }
             item {
                 SettingsGroup(
