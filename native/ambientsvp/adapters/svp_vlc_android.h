@@ -36,8 +36,9 @@ typedef struct {
     int (*destroy)(AmbientSvpAndroidStream *);
     AmbientSvpOutputLease *(*lease_output)(AmbientSvpAndroidStream *,AHardwareBuffer *,int);
     SvpRecycle *recycle;
-    picture_t *previous;
+    picture_t *previous,*lookahead;
     double source,target;
+    bool extended;
     vlc_tick_t origin;
     uint64_t tick;
     bool bypass;
@@ -135,7 +136,8 @@ static void svp_android_reset_history(SvpAndroid *s)
 {
     s->reset(s->stream);
     if (s->previous) picture_Release(s->previous);
-    s->previous=NULL;s->tick=0;
+    if (s->lookahead) picture_Release(s->lookahead);
+    s->previous=s->lookahead=NULL;s->tick=0;
 }
 static void svp_android_flush(filter_t *f)
 {
@@ -170,9 +172,10 @@ static unsigned svp_android_phases(SvpAndroid *s,vlc_tick_t end,
 }
 static picture_t *svp_android_passthrough(SvpAndroid *s,picture_t *pic,bool drop)
 {
-    picture_t *old=s->previous;s->previous=NULL;
+    picture_t *old=s->previous,*delayed=s->lookahead;s->previous=s->lookahead=NULL;
     s->reset(s->stream);s->tick=0;
     if (drop && pic) {picture_Release(pic);pic=NULL;}
+    if(delayed){delayed->p_next=pic;pic=delayed;}
     if (old) {old->p_next=pic;return old;}
     return pic;
 }
@@ -216,6 +219,7 @@ static picture_t *svp_android_filter(filter_t *f,picture_t *pic)
     uint64_t next=s->tick;unsigned count=0;
     if (!pic) {
         if (!s->previous) return NULL;
+        if(s->extended)return svp_android_passthrough(s,NULL,false);
         count=svp_android_phases(s,s->previous->date+VLC_TICK_FROM_US(llround(1000000.0/s->source)),
             phases,dates,&next);
         if (!count || s->drain(s->stream,phases,count,outputs))
@@ -229,7 +233,8 @@ static picture_t *svp_android_filter(filter_t *f,picture_t *pic)
     if (!svp_android_input(s,pic,&buffer,&ctx))
         return svp_android_passthrough(s,pic,false);
     if (s->previous) {
-        const video_format_t *previous=&s->previous->format;
+        picture_t *last=s->lookahead?s->lookahead:s->previous;
+        const video_format_t *previous=&last->format;
         const video_format_t *current=&pic->format;
         if (previous->transfer!=current->transfer || previous->primaries!=current->primaries ||
             previous->space!=current->space || previous->color_range!=current->color_range ||
@@ -238,11 +243,13 @@ static picture_t *svp_android_filter(filter_t *f,picture_t *pic)
                          memcmp(&previous->lighting,&current->lighting,sizeof(previous->lighting)))))
             return svp_android_passthrough(s,pic,false);
         double expected=1000000.0/s->source;
-        double delta=US_FROM_VLC_TICK(pic->date-s->previous->date);
+        double delta=US_FROM_VLC_TICK(pic->date-last->date);
         if (fabs(delta-expected)>fmax(3000.0,expected*0.25))
             return svp_android_passthrough(s,pic,false);
-        count=svp_android_phases(s,pic->date,phases,dates,&next);
-        if (!count) return svp_android_passthrough(s,pic,false);
+        if(!s->extended||s->lookahead){
+            count=svp_android_phases(s,s->extended?s->lookahead->date:pic->date,phases,dates,&next);
+            if (!count) return svp_android_passthrough(s,pic,false);
+        }
     } else {s->origin=pic->date;s->tick=0;}
     const video_format_t *v=&pic->format;
     int rc=s->push(s->stream,buffer,ctx->fence_fd,NS_FROM_VLC_TICK(pic->date),
@@ -252,10 +259,17 @@ static picture_t *svp_android_filter(filter_t *f,picture_t *pic)
         s->bypass=true;msg_Warn(f,"SVP Android GPU transport failed (%d), falling back",rc);
         return svp_android_passthrough(s,pic,rc==-5);
     }
-    if (!count) {s->previous=pic;return NULL;}
+    if (!count) {
+        if(s->extended&&s->previous)s->lookahead=pic;
+        else s->previous=pic;
+        return NULL;
+    }
     picture_t *head=svp_android_chain(f,s->previous,outputs,dates,count);
     if (!head) {s->bypass=true;return svp_android_passthrough(s,pic,false);}
-    picture_Release(s->previous);s->previous=pic;s->tick=next;
+    picture_Release(s->previous);
+    if(s->extended){s->previous=s->lookahead;s->lookahead=pic;}
+    else s->previous=pic;
+    s->tick=next;
     return head;
 }
 static const struct vlc_filter_operations svp_android_ops={
@@ -298,6 +312,7 @@ static int svp_android_open(filter_t *f)
         dlsym(s->api.lib,"ambient_svp_android_stream_create_quality");
     if(!create_quality)goto fail;
     s->stream=create_quality(v->i_visible_width,v->i_visible_height,mode,&quality);
+    s->extended=ambient_svp_quality_extended(&quality);
     if (!s->stream) goto fail;
     // Optional ABI extension: older engines retain the fresh-buffer path.
     s->lease_output=dlsym(s->api.lib,"ambient_svp_android_stream_lease_output");
