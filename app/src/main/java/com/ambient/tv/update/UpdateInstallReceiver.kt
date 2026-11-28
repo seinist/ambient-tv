@@ -49,7 +49,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_SUCCESS, PackageInstaller.STATUS_FAILURE_ABORTED -> Unit
             else -> {
                 Timber.w("UPDATE install failed status=%d profiled=%s message=%s", status, profiled, message)
-                if (updateRetryWithoutProfile(profiled, status, message)) updater.retryWithoutProfile()
+                if (updateRetryWithoutProfile(profiled, status, message)) updater.retryWithoutProfile(intent.getStringExtra(EXTRA_APK_HASH))
                 else updater.reportInstallError()
             }
         }
@@ -80,6 +80,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
     }.onFailure { Timber.w(it, "UPDATE confirmation notification failed") }.isSuccess
 
     companion object {
+        const val EXTRA_APK_HASH = "com.ambient.tv.update.APK_HASH"
         const val EXTRA_PROFILED = "com.ambient.tv.update.PROFILED"
         private const val CHANNEL = "app_updates"
         private const val NOTIFICATION_ID = 0x75d1

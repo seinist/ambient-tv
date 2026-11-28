@@ -26,4 +26,8 @@
     <string name="module_settings_progress">Download: %1$d%%</string>
     <string name="module_settings_cancel">Cancel download</string>
     <string name="module_settings_cancelled">Download cancelled. Previous selection retained.</string>
+    <string name="update_variant_installed">Installed variant: %1$s</string>
+    <string name="update_variant_hint">Full bundles the libraries. Modular downloads optional libraries separately. Switching requires confirming the APK installation.</string>
+    <string name="update_variant_choice">Update channel: %1$s</string>
+    <string name="update_variant_preview">Preview builds do not use stable app updates.</string>
 </resources>

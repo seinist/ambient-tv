@@ -360,6 +360,7 @@ android {
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "MODULE_PACKAGING", quotedBuildConfigString(modulePackaging))
+        manifestPlaceholders["modulePackaging"] = modulePackaging
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
         // Pin the exact UniFFI/Kotlin bridge artifact, independent of CPU tuning.
         val monogramBindingSha = if (monogramEnabled) ZipFile(monogramAar).use { aar ->
@@ -1169,6 +1170,7 @@ val generateUpdateManifest = tasks.register<Exec>("generateUpdateManifest") {
     group = "distribution"
     description = "Generates update.json from this release's signed APKs (deferred when unsigned)."
     dependsOn("packageRelease")
+    onlyIf { !modularPreview }
     val output = layout.buildDirectory.file("outputs/update/update.json")
     val script = rootProject.file("scripts/generate_update_manifest.py")
     val gradleMetadata = layout.buildDirectory.file("outputs/apk/release/output-metadata.json")
@@ -1192,7 +1194,7 @@ val generateUpdateManifest = tasks.register<Exec>("generateUpdateManifest") {
 tasks.matching { it.name == "packageRelease" }.configureEach {
     val staleManifest = layout.buildDirectory.file("outputs/update/update.json").get().asFile
     doFirst { staleManifest.delete() }
-    finalizedBy(generateUpdateManifest)
+    if (!modularPreview) finalizedBy(generateUpdateManifest)
 }
 // generateUpdateManifest depends on packageRelease, so Gradle never runs it after a failed packageRelease.
 

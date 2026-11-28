@@ -84,6 +84,22 @@ class ManifestTest(unittest.TestCase):
                 generator.main()
         self.assertFalse(output.exists())
 
+    def test_modular_requires_explicit_apk_marker(self):
+        def run(args, **kwargs):
+            if "xmltree" in args:
+                return subprocess.CompletedProcess(args, 0, stdout=(
+                    '  E: meta-data (line=1)\\n'
+                    '    A: android:name(0x01010003)="com.ambient.tv.MODULE_PACKAGING"\\n'
+                    '    A: android:value(0x01010024)="modular"\\n'))
+            return self.run_tool(args, **kwargs)
+        with patch.object(generator.subprocess, "run", side_effect=run):
+            result = generator.generate(self.paths, "aapt2", "apksigner", ["arm64-v8a", "armeabi-v7a"], "modular")
+        self.assertEqual(2, result["schemaVersion"])
+        self.assertEqual("modular", result["packaging"])
+        with patch.object(generator.subprocess, "run", side_effect=self.run_tool):
+            with self.assertRaises(ValueError):
+                generator.generate(self.paths, "aapt2", "apksigner", ["arm64-v8a", "armeabi-v7a"], "modular")
+
     def test_empty_artifact_set_is_rejected(self):
         with self.assertRaises(ValueError):
             self.generate([])

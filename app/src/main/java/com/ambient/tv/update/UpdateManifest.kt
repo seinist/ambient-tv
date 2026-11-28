@@ -5,12 +5,27 @@ import org.json.JSONObject
 internal const val UPDATE_REPOSITORY = "seinist/ambient-tv"
 internal const val UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000L
 
+internal const val UPDATE_PACKAGING_METADATA = "com.ambient.tv.MODULE_PACKAGING"
+
+internal enum class UpdateVariant(val id: String, val manifestAsset: String) {
+    FULL("full", "update.json"),
+    MODULAR("modular", "update-modular.json");
+
+    companion object {
+        fun fromId(id: String?): UpdateVariant? = entries.firstOrNull { it.id == id }
+    }
+}
+
+internal fun updateVersionAllowed(installedCode: Long, installed: UpdateVariant?, incomingCode: Long, target: UpdateVariant): Boolean =
+    installed != null && (incomingCode > installedCode || incomingCode == installedCode && installed != target)
+
 internal data class UpdateApk(val name: String, val abi: String, val size: Long, val sha256: String)
 internal data class UpdateManifest(
     val versionCode: Long,
     val versionName: String,
     val minSdk: Int,
     val apks: List<UpdateApk>,
+    val variant: UpdateVariant = UpdateVariant.FULL,
 ) {
     fun select(supportedAbis: List<String>): UpdateApk? = supportedAbis.firstNotNullOfOrNull { abi ->
         apks.firstOrNull { it.abi == abi }
@@ -19,7 +34,11 @@ internal data class UpdateManifest(
     companion object {
         fun parse(text: String): UpdateManifest {
             val json = JSONObject(text)
-            require(json.getInt("schemaVersion") == 1)
+            val variant = when (json.getInt("schemaVersion")) {
+                1 -> { require(!json.has("packaging") || json.getString("packaging") == "full"); UpdateVariant.FULL }
+                2 -> requireNotNull(UpdateVariant.fromId(json.getString("packaging")))
+                else -> error("Unknown update manifest schema")
+            }
             require(json.getString("packageName") == "com.ambient.tv")
             val code = json.getLong("versionCode")
             val name = json.getString("versionName")
@@ -36,7 +55,7 @@ internal data class UpdateManifest(
                 }
             }
             require(apks.map { it.name }.distinct().size == apks.size && apks.map { it.abi }.distinct().size == apks.size)
-            return UpdateManifest(code, name, minSdk, apks)
+            return UpdateManifest(code, name, minSdk, apks, variant)
         }
     }
 }

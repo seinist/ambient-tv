@@ -491,6 +491,25 @@ changes can reuse native outputs, but shared build recipe changes invalidate
 the group. Per-engine independent cross-run caches remain a later optimization.
 The candidate packaging/validation still uses the actual signed Full APK bytes.
 
+### Variant-aware APK updates
+
+The updater persists an explicitly selected Full/Modular channel. The common
+application release may contain update.json (legacy schema 1 Full) and
+update-modular.json (schema 2 with packaging=modular). Cached offers are
+invalidated when the channel changes. Same-version replacement is allowed
+only across explicitly selected variants; lower version codes are forbidden.
+The incoming APK must have the same application ID/signing lineage and match
+the selected variant's signed Android manifest marker (legacy unmarked Full
+APKs remain supported). A profile-install retry is tied to the original APK
+hash. Preview builds cannot use or generate stable update manifests.
+
+Stable Modular APK publication remains intentionally disabled until the
+remaining engine integration, paired build verification and device validation
+are complete. The Modular channel can only resolve a published modular
+manifest; absence produces the existing no-manifest error. The future paired
+release must share version code, signing identity and app ID across both
+variants. No account data is intentionally reset by package replacement.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

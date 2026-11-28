@@ -26,4 +26,8 @@
     <string name="module_settings_progress">Download: %1$d%%</string>
     <string name="module_settings_cancel">Download abbrechen</string>
     <string name="module_settings_cancelled">Download abgebrochen. Die bisherige Auswahl bleibt erhalten.</string>
+    <string name="update_variant_installed">Installierte Variante: %1$s</string>
+    <string name="update_variant_hint">Full enthält die Bibliotheken. Modular lädt optionale Bibliotheken separat. Der Wechsel erfolgt erst nach bestätigter APK-Installation.</string>
+    <string name="update_variant_choice">Update-Kanal: %1$s</string>
+    <string name="update_variant_preview">Die Vorschau verwendet keine stabilen App-Updates.</string>
 </resources>

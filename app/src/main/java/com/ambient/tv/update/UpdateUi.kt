@@ -85,6 +85,21 @@ private fun UpdateDialog(updater: AppUpdater, dismiss: () -> Unit) {
     AppDialog(onDismiss = dismiss, title = stringResource(R.string.update_title), content = {
         Text(stringResource(R.string.update_installed, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
             style = MaterialTheme.typography.bodyMedium)
+        if (updater.installedVariant != null) {
+            val installed = if (updater.installedVariant == UpdateVariant.FULL) "Full" else "Modular"
+            Text(stringResource(R.string.update_variant_installed, installed))
+            Text(stringResource(R.string.update_variant_hint), style = MaterialTheme.typography.bodySmall)
+            val canChange = !state.checking && !state.downloading && !state.preparingInstall
+            UpdateVariant.entries.forEach { variant ->
+                val label = if (variant == UpdateVariant.FULL) "Full" else "Modular"
+                TvActionButton(text = stringResource(R.string.update_variant_choice, label).let {
+                    if (state.target == variant) "✓ $it" else it
+                }, enabled = canChange && state.target != variant,
+                    onClick = { updater.setTarget(variant) })
+            }
+        } else {
+            Text(stringResource(R.string.update_variant_preview))
+        }
         if (state.checking) Text(stringResource(R.string.update_checking))
         if (state.checked && state.offer == null && state.error == null) Text(stringResource(R.string.update_current))
         state.error?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
@@ -95,7 +110,7 @@ private fun UpdateDialog(updater: AppUpdater, dismiss: () -> Unit) {
                 style = MaterialTheme.typography.titleMedium)
         }
         TvActionButton(text = stringResource(R.string.update_check), onClick = { updater.check() },
-            enabled = !state.checking && !state.downloading && !state.preparingInstall, loading = state.checking)
+            enabled = updater.installedVariant != null && !state.checking && !state.downloading && !state.preparingInstall, loading = state.checking)
         if (offer != null) {
             when {
                 state.downloading -> {

@@ -37,6 +37,19 @@ class UpdateManifestTest {
         ).forEach { assertTrue(runCatching { UpdateManifest.parse(it) }.isFailure) }
     }
 
+    @Test fun variantManifestAndExplicitSameVersionSwitch() {
+        assertEquals(UpdateVariant.FULL, UpdateManifest.parse(json).variant)
+        val modular = json.replace("\"schemaVersion\":1", "\"schemaVersion\":2,\"packaging\":\"modular\"")
+        assertEquals(UpdateVariant.MODULAR, UpdateManifest.parse(modular).variant)
+        assertTrue(runCatching { UpdateManifest.parse(modular.replace("modular", "modular-preview")) }.isFailure)
+        assertTrue(runCatching { UpdateManifest.parse(modular.replace("\"schemaVersion\":2", "\"schemaVersion\":1")) }.isFailure)
+        assertTrue(updateVersionAllowed(300, UpdateVariant.FULL, 300, UpdateVariant.MODULAR))
+        assertTrue(updateVersionAllowed(300, UpdateVariant.MODULAR, 300, UpdateVariant.FULL))
+        assertFalse(updateVersionAllowed(300, UpdateVariant.FULL, 300, UpdateVariant.FULL))
+        assertFalse(updateVersionAllowed(300, UpdateVariant.MODULAR, 299, UpdateVariant.FULL))
+        assertFalse(updateVersionAllowed(300, null, 301, UpdateVariant.FULL))
+    }
+
     @Test fun automaticCheckIsDailyAndRecoversFromClockMovingBackwards() {
         assertTrue(updateCheckDue(1000, 0))
         assertFalse(updateCheckDue(2000, 1000))
