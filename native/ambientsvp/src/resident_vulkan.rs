@@ -974,7 +974,8 @@ pub struct HeldSubmission {
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_retire_held(job:*mut HeldSubmission,wait:u32)->i32{
-    unsafe{retire_held_impl(job,wait,ptr::null_mut(),0)}
+    let rc=unsafe{retire_held_impl(job,wait,ptr::null_mut(),0)};
+    if rc==2{1}else{rc}
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_retire_held_capture(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64)->i32{
@@ -983,6 +984,9 @@ pub unsafe extern "C" fn ambient_svp_vk_retire_held_capture(job:*mut HeldSubmiss
 }
 unsafe fn retire_held_impl(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64)->i32{
     if job.is_null()||wait>1{return -1;}
+    unsafe{retire_held_with(job,wait,|p|pass.is_null()||ambient_svp_hdr_pass_capture(pass,p,0,index)==1)}
+}
+unsafe fn retire_held_with(job:*mut HeldSubmission,wait:u32,consume:impl FnOnce(*const VulkanPair)->bool)->i32{
     let j=unsafe{&*job};
     let d=&j.core.device;
     let fence=j.commands.as_ref().unwrap().fence;
@@ -997,7 +1001,7 @@ unsafe fn retire_held_impl(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,in
         }
     };
     let j=unsafe{Box::from_raw(job)};
-    let captured=pass.is_null()||!lost&&unsafe{ambient_svp_hdr_pass_capture(pass,j.pair,0,index)}==1;
+    let captured=!lost&&consume(j.pair);
     if lost{j.core.lost.store(true,Ordering::Release);}
     unsafe{
         if lost||ambient_svp_vk_release(j.pair)!=1{drop(Box::from_raw(j.pair));}
@@ -1037,6 +1041,30 @@ pub unsafe extern "C" fn ambient_svp_vk_submit_held_capture(s:*const VulkanResid
     unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
         windows,tracks,axes,ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),
         n,pass,index,job,generation)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_submit_held_stats(s:*const VulkanResident,queue:vk::Queue,family:u32,
+    images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
+    value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
+    n:u32,pass:*mut TwoPass,index:u64,job:*mut *mut HeldSubmission,generation:u64)->i32{
+    if job.is_null(){return -1;}
+    unsafe{*job=ptr::null_mut();}
+    if n==0||n>3||!pass.is_null()&&unsafe{((&*pass).mode(),(&*pass).version())}!=(2,0){return -1;}
+    unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
+        windows,tracks,axes,ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),
+        n,pass,index,job,generation)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_collect_held_stats(job:*mut HeldSubmission,wait:u32,
+    results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],n:u32,pass:*mut TwoPass,index:u64)->i32{
+    if job.is_null()||wait>1||n==0||n>3||results.is_null()||rects.is_null()||ellipses.is_null()||shifts.is_null(){return -1;}
+    unsafe{retire_held_with(job,wait,|p|{
+        let rc=if n==1{ambient_svp_vk_hdr_read(p,0,results,n)}
+            else{ambient_svp_vk_hdr_read_track(p,0,results,shifts,n)};
+        rc==1&&(n==1||ambient_svp_vk_hdr_read_rectangles(p,0,rects,n)==1&&
+            ambient_svp_vk_hdr_read_ellipses(p,0,ellipses,n)==1)&&
+            (pass.is_null()||ambient_svp_hdr_pass_verify_geometry(pass,p,0,index)==1)
+    })}
 }
 /// Renderer bridge for libplacebo-held, canonical RGBA16F textures.
 /// Caller owns queue serialization and image hold/release. Waits are
@@ -2014,7 +2042,7 @@ mod gpu_tests{
                         if previous_pool!=vk::CommandPool::null(){assert_eq!(p,previous_pool,"command bundle was not reused");}
                         previous_pool=p;
                         if mode==2{
-                            let snapshot=(*engine).0.held_field.lock().unwrap();
+                            let snapshot=(&(*engine).0).held_field.lock().unwrap();
                             assert!(snapshot.as_ref().unwrap().key.is_some());
                         }
                         assert_eq!(ambient_svp_vk_retire_held(job,1),1);

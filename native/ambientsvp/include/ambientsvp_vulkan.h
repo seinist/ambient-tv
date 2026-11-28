@@ -212,6 +212,13 @@ int ambient_svp_vk_submit_held_capture(const AmbientSvpVk *,VkQueue,uint32_t,con
     const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
     const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
 int ambient_svp_vk_retire_held_capture(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
+/* Split live HDR/legacy replay submit and metadata collection. Collection
+ * consumes the ticket on 1 (valid metadata) or 2 (failed metadata). */
+int ambient_svp_vk_submit_held_stats(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+    const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
+    const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
+int ambient_svp_vk_collect_held_stats(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrResult *,uint32_t (*)[4],
+    uint32_t (*)[3],int32_t (*)[2],uint32_t,AmbientSvpHdrPass *,uint64_t);
 int ambient_svp_vk_render_held_pass(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
     const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,
     const AmbientSvpHdrTrack *,const uint32_t (*)[3],AmbientSvpHdrResult *,

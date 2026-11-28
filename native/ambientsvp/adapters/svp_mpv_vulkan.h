@@ -28,6 +28,7 @@
 #define SVP_VK_IMAGES (12 + 3*SVP_VK_PHASES)
 struct svp_vk_job {
     VkCommandPool pool;
+    VkCommandBuffer cmd;
     VkFence fence;
     AmbientSvpVkPair *pair;
     AVFrame *frames[SVP_VK_FRAMES];
@@ -78,6 +79,8 @@ struct svp_vk_mpv {
     VkFormat output_format;
     PFN_vkCreateCommandPool create_pool;
     PFN_vkDestroyCommandPool destroy_pool;
+    PFN_vkResetCommandPool reset_pool;
+    PFN_vkResetFences reset_fences;
     PFN_vkAllocateCommandBuffers allocate_commands;
     PFN_vkBeginCommandBuffer begin_commands;
     PFN_vkEndCommandBuffer end_commands;
@@ -89,6 +92,8 @@ struct svp_vk_mpv {
     PFN_vkCmdPipelineBarrier2 barrier;
     PFN_vkQueueSubmit submit;
     struct svp_vk_job *jobs[SVP_VK_JOBS];
+    struct svp_vk_job *idle_commands[SVP_VK_JOBS];
+    unsigned idle_count;
     struct mp_image *previous,*older,*lookahead;
     unsigned algorithm;
     struct mp_image *outputs[SVP_VK_PHASES];
@@ -737,7 +742,15 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
         // A submitted pair must be released by its own fence check.
         if (j->sealed && s->release(j->pair)==1) {
             j->pair=NULL;
-            svp_vk_job_free(s,j); s->jobs[i]=NULL;
+            s->jobs[i]=NULL;
+            // Never pool after device loss or failed fence status.
+            if(s->idle_count<SVP_VK_JOBS&&s->wait_fences(s->device,1,&j->fence,VK_TRUE,0)==VK_SUCCESS){
+                for(unsigned k=0;k<j->nviews;k++)s->destroy_view(s->device,j->views[k],NULL);
+                for(unsigned k=0;k<j->nframes;k++)av_frame_free(&j->frames[k]);
+                VkCommandPool pool=j->pool;VkCommandBuffer cmd=j->cmd;VkFence fence=j->fence;
+                *j=(struct svp_vk_job){.pool=pool,.cmd=cmd,.fence=fence};
+                s->idle_commands[s->idle_count++]=j;
+            }else svp_vk_job_free(s,j);
         } else outstanding++;
     }
     return outstanding;
@@ -772,6 +785,7 @@ static bool svp_vk_destroy_state(struct svp_vk_mpv *s)
     // Never destroy an external device or free in-flight descriptors.
     // On a stuck driver the owner must retain this state and library.
     if (svp_vk_reap(s,true)) return false;
+    while(s->idle_count)svp_vk_job_free(s,s->idle_commands[--s->idle_count]);
     if (s->engine) s->destroy(s->engine);
     av_buffer_unref(&s->output_hwframes);
     av_buffer_unref(&s->device_ref);
@@ -839,6 +853,7 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     if (!get) goto fail;
 #define LOAD_VK(member,name) s->member=(PFN_vk##name)get(s->device,"vk" #name); if(!s->member) goto fail
     LOAD_VK(create_pool,CreateCommandPool);LOAD_VK(destroy_pool,DestroyCommandPool);
+    LOAD_VK(reset_pool,ResetCommandPool);LOAD_VK(reset_fences,ResetFences);
     LOAD_VK(allocate_commands,AllocateCommandBuffers);LOAD_VK(begin_commands,BeginCommandBuffer);
     LOAD_VK(end_commands,EndCommandBuffer);LOAD_VK(create_fence,CreateFence);
     LOAD_VK(destroy_fence,DestroyFence);LOAD_VK(wait_fences,WaitForFences);
@@ -1009,8 +1024,10 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     }
     unsigned slot=0;while(slot<SVP_VK_JOBS && s->jobs[slot]) slot++;
     if (slot==SVP_VK_JOBS) return false;
-    struct svp_vk_job *j=calloc(1,sizeof(*j));
+    struct svp_vk_job *j=s->idle_count?s->idle_commands[--s->idle_count]:calloc(1,sizeof(*j));
     if (!j) return false;
+    if(j->pool&&(s->reset_pool(s->device,j->pool,0)!=VK_SUCCESS||
+        s->reset_fences(s->device,1,&j->fence)!=VK_SUCCESS)){svp_vk_job_free(s,j);return false;}
     struct svp_vk_ref refs[SVP_VK_FRAMES];
     unsigned order[SVP_VK_FRAMES], unique=0, locked=0;
     VkCommandBuffer cmd=VK_NULL_HANDLE;
@@ -1084,12 +1101,15 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     }
     VkCommandPoolCreateInfo pi={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,.queueFamilyIndex=s->family};
-    if (s->create_pool(s->device,&pi,NULL,&j->pool)!=VK_SUCCESS) goto fail;
-    VkCommandBufferAllocateInfo ci={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=j->pool,
-        .level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};
-    if (s->allocate_commands(s->device,&ci,&cmd)!=VK_SUCCESS) goto fail;
-    VkFenceCreateInfo fi={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    if (s->create_fence(s->device,&fi,NULL,&j->fence)!=VK_SUCCESS) goto fail;
+    if(!j->pool){
+        if (s->create_pool(s->device,&pi,NULL,&j->pool)!=VK_SUCCESS) goto fail;
+        VkCommandBufferAllocateInfo ci={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=j->pool,
+            .level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};
+        if (s->allocate_commands(s->device,&ci,&j->cmd)!=VK_SUCCESS) goto fail;
+        VkFenceCreateInfo fi={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if (s->create_fence(s->device,&fi,NULL,&j->fence)!=VK_SUCCESS) goto fail;
+    }
+    cmd=j->cmd;
     VkCommandBufferBeginInfo bi={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     if (s->begin_commands(cmd,&bi)!=VK_SUCCESS) goto fail;
     // Lock distinct frames in stable address order, exactly around recording

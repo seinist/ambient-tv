@@ -1789,7 +1789,10 @@ legacy HDR10+ capture. Direct MPV uses its existing fence-owned
 jobs to collect scene statistics in tick order; version-1 replay
 attaches the existing scene statistics without a GPU readback.
 Legacy replay and live per-frame HDR metadata still require the
-measured results before presenting their matching output.
+measured results before presenting their matching output; the shared
+bridge splits submission from collection, releasing the external
+queue mutex before waiting. Direct MPV also recycles fence-retired
+command pools, buffers and fences.
 
 Fence-retired held command pools, command buffers and fences are
 recycled per queue family. A single device-local snapshot caches

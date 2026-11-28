@@ -53,6 +53,11 @@ struct svp_placebo_quality {
         const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
     int (*retire_capture)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
     bool capture_failed;
+    int (*submit_stats)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+        const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
+        const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
+    int (*collect_stats)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrResult *,uint32_t (*)[4],
+        uint32_t (*)[3],int32_t (*)[2],uint32_t,AmbientSvpHdrPass *,uint64_t);
     struct svp_placebo_pending pending[SVP_PLACEBO_PENDING];
     unsigned pending_count;
     VkSemaphore done;
@@ -131,6 +136,9 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         s->submit_capture=dlsym(s->lib,"ambient_svp_vk_submit_held_capture");
         s->retire_capture=dlsym(s->lib,"ambient_svp_vk_retire_held_capture");
         if(!s->retire_capture)s->submit_capture=NULL;
+        s->submit_stats=dlsym(s->lib,"ambient_svp_vk_submit_held_stats");
+        s->collect_stats=dlsym(s->lib,"ambient_svp_vk_collect_held_stats");
+        if(!s->collect_stats||!s->retire)s->submit_stats=NULL;
         if(!s->retire){s->submit=NULL;s->submit_cached=NULL;s->submit_capture=NULL;}
         if(!s->create||!s->destroy||!s->render){dlclose(s->lib);s->lib=NULL;return false;}
     }
@@ -173,6 +181,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     }
     unsigned held=0;bool ok=false,retired=false;
     AmbientSvpVkHeld *job=NULL;
+    bool split_stats=!capture&&hdr&&s->submit_stats;
     for(unsigned i=0;i<count;i++){
         holds[i]=pl_vulkan_sem_create(gpu,pl_vulkan_sem_params(.type=VK_SEMAPHORE_TYPE_BINARY));
         if(!holds[i]||!pl_vulkan_hold_ex(gpu,pl_vulkan_hold_params(.tex=tex[i],
@@ -187,7 +196,9 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     get_queue(vk->device,family,0,&queue);
     if(!queue)goto cleanup;
     vk->lock_queue(vk,family,0);
-    int rc=capture&&pass&&s->submit_capture?s->submit_capture(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
+    int rc=split_stats?s->submit_stats(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
+        hdr->windows,hdr->tracks,hdr->axes,hdr->count,pass,index,&job,s->generation):
+        capture&&pass&&s->submit_capture?s->submit_capture(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->count,pass,index,&job,s->generation):
         pass?s->render_pass(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index):
@@ -202,9 +213,17 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     if(rc==-2){VkResult status;do{status=wait_idle(queue);}while(status!=VK_SUCCESS&&status!=VK_ERROR_DEVICE_LOST);}
     vk->unlock_queue(vk,family,0);
     if(rc==0||rc==1){s->value++;retired=true;ok=rc==0;}
+    // Metadata belongs to this exact output, but collection no longer
+    // holds the external Vulkan queue lock while waiting for the fence.
+    if(split_stats&&job){
+        int result=s->collect_stats(job,1,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index);
+        if(result==1||result==2)job=NULL;
+        else if(s->retire(job,1)==1)job=NULL;
+        ok=ok&&result==1;
+    }
 cleanup:
-    // The native helper returns only after fence completion or confirmed
-    // device loss. On pre-submit failure retire libplacebo's hold signals.
+    // A queued timeline signal protects async jobs. On pre-submit
+    // failure retire libplacebo's hold signals before releasing textures.
     if(!retired)pl_gpu_finish(gpu);
     for(unsigned i=0;i<held;i++)
         pl_vulkan_release_ex(gpu,pl_vulkan_release_params(.tex=tex[i],.layout=VK_IMAGE_LAYOUT_GENERAL,
