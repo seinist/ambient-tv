@@ -11,6 +11,11 @@ import android.net.Uri
 import com.ambient.tv.ui.MainActivity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
+import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,6 +49,7 @@ data class LiveTvReminder(
     val due: Boolean = false,
     val snoozedUntilMs: Long = 0L,
     val stopEpochSeconds: Long? = null,
+    val imageUrl: String? = null,
 ) {
     val id: String get() = if (youtube) "youtube:$eventId" else "$sourceId|$eventId"
     fun route(): String = if (youtube) Destinations.youtubePlayer(eventId)
@@ -62,13 +68,21 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
     private val mutable = shared
     init { refresh() }
     val reminders = mutable.asStateFlow()
+    val homeVisible = sharedHomeVisible.asStateFlow()
+    fun setHomeVisible(visible: Boolean) {
+        prefs.edit().putBoolean("home_visible", visible).apply()
+        sharedHomeVisible.value = visible
+    }
 
     private fun load(): List<LiveTvReminder> = runCatching { json.decodeFromString<List<LiveTvReminder>>(prefs.getString(KEY, "[]")!!) }
         .getOrDefault(emptyList())
         // Old records without an end time retain the previous one-hour fallback.
         .filter { it.isRelevant(System.currentTimeMillis()) }
 
-    fun refresh() = synchronized(lock) { mutable.value = load() }
+    fun refresh() = synchronized(lock) {
+        mutable.value = load()
+        sharedHomeVisible.value = prefs.getBoolean("home_visible", true)
+    }
 
     fun has(sourceId: String, eventId: String): Boolean = reminders.value.any { it.sourceId == sourceId && it.eventId == eventId }
 
@@ -153,6 +167,7 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
         const val KEY = "reminders"
         val lock = Any()
         val shared = MutableStateFlow<List<LiveTvReminder>>(emptyList())
+        val sharedHomeVisible = MutableStateFlow(true)
     }
 }
 
@@ -228,6 +243,8 @@ object LiveTvReminderScheduler {
 object LiveTvReminderPrompt {
     var foreground = false
         internal set
+    val selectedId = MutableStateFlow<String?>(null)
+    fun select(id: String) { selectedId.value = id }
 }
 
 class LiveTvReminderReceiver : BroadcastReceiver() {
@@ -272,39 +289,61 @@ class LiveTvReminderReceiver : BroadcastReceiver() {
 fun LiveTvReminderPromptDialog() {
     val context = LocalContext.current.applicationContext
     val store = remember(context) { LiveTvReminderStore(context) }
+    var resumed by remember { mutableStateOf(false) }
     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        resumed = true
         LiveTvReminderPrompt.foreground = true
         store.refresh()
         LiveTvReminderScheduler.rescheduleAll(context)
-        onPauseOrDispose { LiveTvReminderPrompt.foreground = false }
+        onPauseOrDispose { resumed = false; LiveTvReminderPrompt.foreground = false }
     }
     val reminders by store.reminders.collectAsState()
-    val reminder = reminders.filter { it.due && it.isRelevant(System.currentTimeMillis()) }
-        .minByOrNull { it.startEpochSeconds } ?: return
-    // Automatic starts are serialized through the same queue and never occur from the background.
-    val automatic = LiveTvReminderScheduler.autoSwitch(context, reminder.youtube) &&
+    val selectedId by LiveTvReminderPrompt.selectedId.collectAsState()
+    val pendingRoute by LauncherIntents.requests.collectAsState()
+    // Inexact Android alarms can be delayed; while the app is visible a single
+    // cancellable timer also wakes for the nearest pending reminder.
+    val next = reminders.filterNot { it.due }.minByOrNull { LiveTvReminderScheduler.alarmAt(context, it) }
+    val nextAt = next?.let { LiveTvReminderScheduler.alarmAt(context, it) }
+    LaunchedEffect(resumed, next, nextAt) {
+        if (!resumed || next == null || nextAt == null) return@LaunchedEffect
+        delay((nextAt - System.currentTimeMillis()).coerceAtLeast(0L))
+        store.markDue(next.id)
+    }
+    if (!resumed) return
+    val due = reminders.filter { it.due && it.isRelevant(System.currentTimeMillis()) }.sortedBy { it.startEpochSeconds }
+    val selected = reminders.firstOrNull { it.id == selectedId }
+    val reminder = selected ?: due.firstOrNull() ?: return
+    val time = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+        .format(java.util.Date(reminder.startEpochSeconds * 1000))
+    val automatic = selected == null && due.size == 1 && pendingRoute == null &&
+        LiveTvReminderScheduler.autoSwitch(context, reminder.youtube) &&
         reminder.startEpochSeconds * 1000 <= System.currentTimeMillis()
-    if (automatic && LiveTvReminderPrompt.foreground) {
-        androidx.compose.runtime.LaunchedEffect(reminder.id) {
+    if (automatic) {
+        LaunchedEffect(reminder.id) {
+            if (store.find(reminder.id)?.due != true || LauncherIntents.requests.value != null) return@LaunchedEffect
             if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
             LauncherIntents.post(reminder.route())
         }
         return
     }
+    val closeSelection = { LiveTvReminderPrompt.selectedId.value = null }
     AppDialog(
-        onDismiss = { store.snooze(reminder.id) },
-        title = stringResource(R.string.reminder_title, reminder.title),
-        hint = reminder.channelName,
+        onDismiss = { closeSelection(); if (reminder.due) store.snooze(reminder.id) },
+        title = if (reminder.due) stringResource(R.string.reminder_title, reminder.title) else reminder.title,
+        hint = reminder.channelName + " · " + time,
         footer = {
-            TvActionButton(stringResource(R.string.programme_reminder_play), {
-                // Keep a YouTube reminder until the player has resolved a playable stream.
-                if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
-                LauncherIntents.post(reminder.route())
-            }, selected = true)
-            TvActionButton(stringResource(R.string.programme_reminder_snooze), { store.snooze(reminder.id) })
-            TvActionButton(stringResource(R.string.reminder_dismiss), { store.remove(reminder.id) })
+            if (reminder.due) {
+                TvActionButton(stringResource(R.string.programme_reminder_play), {
+                    closeSelection()
+                    if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
+                    LauncherIntents.post(reminder.route())
+                }, selected = true)
+                TvActionButton(stringResource(R.string.programme_reminder_snooze), { closeSelection(); store.snooze(reminder.id) })
+            }
+            TvActionButton(stringResource(R.string.reminder_remove), { closeSelection(); store.remove(reminder.id) })
+            if (!reminder.due) TvActionButton(stringResource(R.string.common_back), closeSelection)
         },
     ) {
-        if (reminder.youtube) androidx.tv.material3.Text(stringResource(R.string.programme_reminder_scheduled_hint))
+        if (reminder.youtube && reminder.due) Text(stringResource(R.string.programme_reminder_scheduled_hint))
     }
 }
