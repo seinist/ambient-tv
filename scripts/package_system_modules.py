@@ -23,6 +23,7 @@ NATIVE_ROOTS = {
     "vlc": ("libvlc.so", "libvlcjni.so"),
     "svp": ("libambientsvp.so",),
     "libretrodroid": ("liblibretrodroid.so",),
+    "moonlight": ("libmoonlight-core.so",),
     "shaders": ("liblibrashader_capi.so",),
 }
 HOST_LIBRARIES = {
@@ -31,6 +32,7 @@ HOST_LIBRARIES = {
     "vlc": {"libc++_shared.so"},
     "svp": set(),
     "libretrodroid": {"libc++_shared.so", "libadrenotools.so", "liboboe.so"},
+    "moonlight": set(),
     "shaders": set(),
     "mpv": {"libc++_shared.so", "libavcodec.so", "libavdevice.so", "libavfilter.so",
             "libavformat.so", "libavutil.so", "libswresample.so", "libswscale.so",
@@ -108,7 +110,7 @@ def native_dependencies(data, name):
 
 
 def native_module(out, module, version, apks, licenses, binding=None):
-    if module in {"vlc", "svp", "shaders", "libretrodroid"} and not re.fullmatch(r"[0-9a-f]{64}", binding or ""):
+    if module in {"vlc", "svp", "shaders", "libretrodroid", "moonlight"} and not re.fullmatch(r"[0-9a-f]{64}", binding or ""):
         raise ValueError(f"{module} requires exact host binding fingerprint")
     entries = []
     seen = set()
@@ -249,7 +251,7 @@ def monogram_dex(out, version, dex_dir, apks, licenses):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube", "vlc", "svp", "libretrodroid"), required=True)
+    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube", "vlc", "svp", "libretrodroid", "moonlight"), required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -284,6 +286,9 @@ def main():
         if args.module == "vlc" and not args.vlc_aar:
             parser.error("VLC requires the matching patched AAR")
         binding = vlc_binding(args.vlc_aar) if args.module == "vlc" else None
+        if args.module == "moonlight":
+            from patch_moonlight_module_loader import binding as moonlight_binding
+            binding = moonlight_binding(ROOT / "third_party/moonlight-android")
         if args.module == "libretrodroid":
             source = ROOT / "third_party/libretrodroid"
             marker = (source / ".ambient-libretrodroid").read_bytes()
