@@ -53,4 +53,8 @@ class MoonlightAvQueuePolicyTest {
         org.junit.Assert.assertEquals(30.0, moonlightEstimateQueuedAudio(30.0, 10_000_000L, false), 0.0)
         org.junit.Assert.assertEquals(20.0, moonlightEstimateQueuedAudio(30.0, 10_000_000L, true), 0.0)
     }
+    @org.junit.Test fun timestampCannotUnderestimateObservedQueue() {
+        org.junit.Assert.assertEquals(20.0, moonlightConservativeAudioQueue(20.0, 960, 960, 48000), 0.0)
+        org.junit.Assert.assertEquals(20.0, moonlightConservativeAudioQueue(10.0, 960, 0, 48000), 0.0)
+    }
 }

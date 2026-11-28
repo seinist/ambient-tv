@@ -54,6 +54,7 @@ class MoonlightLibraryStore @Inject constructor(
     private val negativeArtwork = LinkedHashMap<String, Long>()
     private data class IndexedArtwork(val file: File?, val checkedAt: Long)
     private val artworkIndex = android.util.LruCache<String, IndexedArtwork>(4096)
+    private val artworkGeneration = java.util.concurrent.atomic.AtomicLong()
     private val mutableAvailability = MutableStateFlow(0L)
     val availabilityRevisions = mutableAvailability.asStateFlow()
     private val mutableArtworkChanges = MutableStateFlow<Map<String, Long>>(emptyMap())
@@ -241,20 +242,24 @@ class MoonlightLibraryStore @Inject constructor(
         if (!validMoonlightHostId(hostId) || appId <= 0) return null
         val identity = trust.identity(hostId) ?: return null
         val key = artworkKey(hostId, appId, identity)
-        return synchronized(artworkLock) {
-            if (trust.identity(hostId) != identity) return@synchronized null
-            val now = android.os.SystemClock.elapsedRealtime()
-            artworkIndex.get(key)?.let {
-                if (now - it.checkedAt in 0 until 30_000L && (it.file == null || it.file.isFile))
-                    return@synchronized it.file
-            }
+        val now = android.os.SystemClock.elapsedRealtime()
+        val generation = artworkGeneration.get()
+        artworkIndex.get(key)?.let {
+            if (now - it.checkedAt in 0 until 30_000L && (it.file == null || it.file.isFile) &&
+                trust.identity(hostId) == identity && generation == artworkGeneration.get()) return it.file
+        }
+        // Miss scans do not hold the global writer lock. Publish only if no disk mutation raced.
+        run {
             val directory = File(artworkDir, "$hostId/$identity/$appId")
             val file = directory.listFiles()?.filter { it.isFile && it.extension == "img" && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
                 ?.maxByOrNull(File::lastModified)
                 ?: File(artworkDir, "$hostId/$identity/$appId.img").takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
                 ?: File(artworkDir, "$hostId-$identity-$appId.img").takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
-            artworkIndex.put(key, IndexedArtwork(file, now))
-            file
+            if (trust.identity(hostId) != identity) return null
+            synchronized(artworkIndex) {
+                if (generation == artworkGeneration.get()) artworkIndex.put(key, IndexedArtwork(file, now))
+            }
+            return file?.takeIf { it.isFile && trust.identity(hostId) == identity }
         }
     }
 
@@ -299,10 +304,17 @@ class MoonlightLibraryStore @Inject constructor(
             val directory = File(artworkDir, "$hostId/$expectedIdentity/$appId").apply { mkdirs() }
             val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
             val target = File(directory, "$digest.img")
-            artworkIndex.remove(artworkKey(hostId, appId, expectedIdentity))
+            synchronized(artworkIndex) {
+                artworkGeneration.incrementAndGet()
+                artworkIndex.remove(artworkKey(hostId, appId, expectedIdentity))
+            }
             if (target.isFile && target.length() == bytes.size.toLong()) {
                 target.setLastModified(System.currentTimeMillis())
                 negativeArtwork.remove(artworkKey(hostId, appId, expectedIdentity))
+                synchronized(artworkIndex) {
+                    artworkGeneration.incrementAndGet()
+                    artworkIndex.put(artworkKey(hostId, appId, expectedIdentity), IndexedArtwork(target, android.os.SystemClock.elapsedRealtime()))
+                }
                 return@synchronized target
             }
             val temporary = File(directory, "$digest.part")
@@ -325,6 +337,10 @@ class MoonlightLibraryStore @Inject constructor(
                 negativeArtwork.remove(artworkKey(hostId, appId, expectedIdentity))
                 artworkAccess.put(target.absolutePath, System.currentTimeMillis())
                 val evicted = trimArtwork()
+                synchronized(artworkIndex) {
+                    artworkGeneration.incrementAndGet()
+                    artworkIndex.put(artworkKey(hostId, appId, expectedIdentity), IndexedArtwork(target.takeIf { it.isFile }, android.os.SystemClock.elapsedRealtime()))
+                }
                 val revision = mutableArtworkRevisions.value + 1
                 val changes = LinkedHashMap(mutableArtworkChanges.value)
                 for (item in evicted + "$hostId:$appId") {
@@ -364,7 +380,10 @@ class MoonlightLibraryStore @Inject constructor(
                 artworkDir.listFiles()?.filter { it.isFile && legacy.matches(it.name) &&
                     (current == null || !it.name.startsWith("$hostId-$current-")) }?.forEach(File::delete)
                 negativeArtwork.keys.removeAll { it.startsWith("$hostId:") }
-                artworkIndex.snapshot().keys.filter { it.startsWith("$hostId:") }.forEach { artworkIndex.remove(it) }
+                synchronized(artworkIndex) {
+                    artworkGeneration.incrementAndGet()
+                    artworkIndex.snapshot().keys.filter { it.startsWith("$hostId:") }.forEach { artworkIndex.remove(it) }
+                }
                 artworkBytes = -1L
             }
         }
@@ -383,7 +402,7 @@ class MoonlightLibraryStore @Inject constructor(
                 artworkAccess.remove(file.absolutePath)
                 artworkBounds.remove(file.absolutePath)
                 // Rare eviction pass: invalidate file lookup snapshots as well.
-                artworkIndex.evictAll()
+                synchronized(artworkIndex) { artworkGeneration.incrementAndGet(); artworkIndex.evictAll() }
                 val parts = file.relativeTo(artworkDir).invariantSeparatorsPath.split('/')
                 val item = when (parts.size) {
                     4 -> parts[0] + ":" + parts[2]

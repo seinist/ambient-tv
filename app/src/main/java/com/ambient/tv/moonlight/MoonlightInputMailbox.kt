@@ -3,9 +3,14 @@ package com.ambient.tv.moonlight
 /** One drain consumer per stream generation. No lock is held across a native call. */
 internal class MoonlightInputMailbox(private val capacity: Int = 256) {
     enum class Offer { START, QUEUED, OVERFLOW, CLOSED }
-    private data class Relative(val kind: String, val x: Int, val y: Int, val limit: Int,
+    private class Relative(val kind: String, var x: Int, var y: Int, val limit: Int,
                                 val dispatch: (Int, Int) -> Unit)
-    private data class Pending(val key: Any?, val action: ((Long) -> Unit)? = null, val relative: Relative? = null, val queuedAt: Long = 0L)
+    private class Pending(val key: Any?, var action: ((Long) -> Unit)? = null, val relative: Relative? = null, val queuedAt: Long = 0L) : () -> Unit {
+        override fun invoke() {
+            val callback = action
+            if (callback != null) callback(queuedAt) else relative?.let { it.dispatch(it.x, it.y) }
+        }
+    }
     private val queue = ArrayDeque<Pending>()
     private var draining = false
     private var closed = false
@@ -15,8 +20,7 @@ internal class MoonlightInputMailbox(private val capacity: Int = 256) {
     @Synchronized fun offerTimed(key: Any?, queuedAt: Long, action: (Long) -> Unit): Offer {
         if (closed) return Offer.CLOSED
         if (key != null && queue.lastOrNull()?.key == key) {
-            val previous = queue.removeLast()
-            queue.addLast(Pending(key, action, queuedAt = previous.queuedAt))
+            queue.last().action = action
             return Offer.QUEUED
         }
         return append(Pending(key, action, queuedAt = queuedAt))
@@ -39,9 +43,9 @@ internal class MoonlightInputMailbox(private val capacity: Int = 256) {
             val sumX = old.x + x
             val sumY = old.y + y
             if (sumX in -limit..limit && sumY in -limit..limit) {
-                queue.removeLast()
-                // Keep the oldest timestamp in dispatch for queue-latency telemetry.
-                queue.addLast(Pending(null, relative = old.copy(x = sumX, y = sumY)))
+                // Still owned by the queue; preserve the oldest dispatch timestamp.
+                old.x = sumX
+                old.y = sumY
                 return Offer.QUEUED
             }
         }
@@ -63,9 +67,7 @@ internal class MoonlightInputMailbox(private val capacity: Int = 256) {
     @Synchronized fun take(): (() -> Unit)? {
         val next = queue.removeFirstOrNull()
         if (next == null) draining = false
-        return next?.action?.let { action -> { action(next.queuedAt) } } ?: next?.relative?.let { movement ->
-            { movement.dispatch(movement.x, movement.y) }
-        }
+        return next
     }
     @Synchronized fun close() { closed = true; queue.clear() }
     @Synchronized fun depth(): Int = queue.size

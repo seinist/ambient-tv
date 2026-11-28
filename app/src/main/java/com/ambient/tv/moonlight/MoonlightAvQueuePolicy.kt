@@ -85,3 +85,7 @@ internal fun moonlightValidPcmWrite(written: Int, requested: Int, channels: Int)
 /** Do not extrapolate playback during startup, underruns or a paused sink. */
 internal fun moonlightEstimateQueuedAudio(queuedMs: Double, elapsedNanos: Long, advancing: Boolean): Double =
     if (!advancing) queuedMs else (queuedMs - elapsedNanos.coerceIn(0L, 20_000_000L) / 1_000_000.0).coerceAtLeast(0.0)
+
+/** Timestamp projection can only make the queue estimate more conservative. */
+internal fun moonlightConservativeAudioQueue(headEstimateMs: Double, written: Long, projected: Long, rate: Int): Double =
+    if (rate <= 0) headEstimateMs else maxOf(headEstimateMs, ((written - projected).coerceAtLeast(0L) * 1000.0 / rate).coerceAtMost(1000.0))

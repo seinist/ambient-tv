@@ -32,6 +32,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
     private var writtenFrames = 0L
     private var muted = false
     private var recoveryAttempts = 0
+    private var sinkFailed = false
     @Volatile private var recovering = false
     private var closing = false
     private var recoveryThread: Thread? = null
@@ -64,6 +65,8 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
             for (count in listOf(inputChannels, 2).distinct()) {
                 val candidate = createTrack(count, sampleRate, samplesPerFrame) ?: continue
                 track = candidate
+                sinkFailed = false
+                recoveryAttempts = 0
                 outputChannels = count
                 scratch = if (count != inputChannels) ShortArray(samplesPerFrame * count) else ShortArray(0)
                 pending = ShortArray(samplesPerFrame * count)
@@ -135,7 +138,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
 
     override fun start() {
         synchronized(lock) {
-            if (closing) return
+            if (closing || sinkFailed) return
             val t = track ?: return
             try {
                 if (!muted) t.play()
@@ -158,7 +161,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         if (recovering) { lostSamples.addAndGet(samples.toLong()); return }
         synchronized(lock) {
             val t = track ?: return
-            if (closing || recovering || !playing || muted || samples != frameSamples * outputChannels ||
+            if (closing || recovering || sinkFailed || !playing || muted || samples != frameSamples * outputChannels ||
                 !pcm.isDirect || samples > pcm.capacity() / 2) return
             pcm.clear()
             pcm.limit(samples * 2)
@@ -171,7 +174,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         if (recovering) { lostSamples.addAndGet(audioData.size.toLong()); return }
         synchronized(lock) {
             val t = track ?: return
-            if (closing || recovering || !playing || muted || audioData.isEmpty()) return
+            if (closing || recovering || sinkFailed || !playing || muted || audioData.isEmpty()) return
             val nativeStereo = inputChannels != outputChannels && outputChannels == 2 && audioData.size == frameSamples * 2
             if (!nativeStereo && audioData.size % inputChannels != 0) return
             val data: ShortArray
@@ -223,14 +226,13 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     lastQueueEstimateNanos = now
                     if (now - lastSnapshotNanos >= 250_000_000L) {
                         val projected = runCatching {
-                            if (t.getTimestamp(audioTimestamp)) moonlightProjectAudioHead(
+                            if (playbackAdvancing && t.getTimestamp(audioTimestamp)) moonlightProjectAudioHead(
                                 audioTimestamp.framePosition, audioTimestamp.nanoTime, playbackHead,
                                 writtenFrames, rate, now) else null
                         }.getOrNull()
                         timestampBacked = projected != null
                         if (projected != null)
-                            localQueuedMs = ((writtenFrames - projected).coerceAtLeast(0L) * 1000.0 / rate)
-                                .coerceAtMost(1000.0)
+                            localQueuedMs = moonlightConservativeAudioQueue(localQueuedMs, writtenFrames, projected, rate)
                         publishSnapshot(t, now)
                         lastSnapshotNanos = now
                     }
@@ -337,7 +339,16 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
 
     private fun handleWriteError(code: Int) {
         discardPending()
-        if (code == AudioTrack.ERROR_DEAD_OBJECT && recoveryAttempts++ < 2 && !closing && !recovering) {
+        if (code == AudioTrack.ERROR_DEAD_OBJECT) {
+            // No subsequent successful write may rehabilitate a broken channel boundary.
+            sinkFailed = true
+            if (closing || recovering) return
+            if (recoveryAttempts >= 2) {
+                playing = false
+                onError("Moonlight audio recovery exhausted")
+                return
+            }
+            recoveryAttempts++
             recovering = true
             // Detach the dead track under the owner lock, rebuild off the PCM callback.
             val old = track
@@ -359,6 +370,8 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                         publishSnapshot(rebuilt)
                     } else failed = true
                     failed = failed || !released
+                    sinkFailed = failed || closing
+                    if (failed) playing = false
                     recovering = false
                 }
                 if (failed) onError("Moonlight audio device could not be restored")
@@ -373,7 +386,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         if (muted == value) return@synchronized
         muted = value
         val t = track ?: return@synchronized
-        if (!playing) return@synchronized
+        if (!playing || sinkFailed) return@synchronized
         try {
             if (value) {
                 discardPending()
