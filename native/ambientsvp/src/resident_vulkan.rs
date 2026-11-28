@@ -2016,7 +2016,8 @@ mod gpu_tests{
                     d.end_command_buffer(cmd).unwrap();
                     d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
                     assert_eq!(ambient_svp_vk_seal(pair,fence),0);
-                    d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+                    d.wait_for_fences(&[fence],true,20_000_000_000)
+                        .unwrap_or_else(|e|panic!("high-depth fence mode={mode} tuned={tuned} phase={phase}: {e:?}"));
                     if mode==3{
                         if tuned&&i==1{
                             let job=(&*pair).hdr_jobs[0].as_ref().unwrap();

@@ -192,33 +192,39 @@ fn signed_product(a:i32,b:i32)->vec2u{
     return select(p,wide_neg(p),(a<0)!=(b<0));
 }
 fn wide_abs(a:vec2u)->vec2u{return select(a,wide_neg(a),(a.y&0x80000000u)!=0u);}
+fn add_word(a:u32,b:u32,carry:u32)->vec2u{
+    let lo=a+b;let hi=lo+carry;
+    return vec2u(hi,select(0u,1u,lo<a||hi<lo));
+}
 fn quad_add(a:vec4u,b:vec4u)->vec4u{
-    var result=vec4u(0u);var carry=0u;
-    for(var i=0u;i<4u;i++){
-        let lo=a[i]+b[i];let hi=lo+carry;
-        carry=select(0u,1u,lo<a[i]||hi<lo);result[i]=hi;
-    }
-    return result;
+    let p=add_word(a.x,b.x,0u);
+    let q=add_word(a.y,b.y,p.y);
+    let r=add_word(a.z,b.z,q.y);
+    let s=add_word(a.w,b.w,r.y);
+    return vec4u(p.x,q.x,r.x,s.x);
 }
 fn quad_square(a:vec2u)->vec4u{
     let p=wide_mul(a.x,a.x);let q=wide_mul(a.x,a.y);let r=wide_mul(a.y,a.y);
     let cross=vec4u(0u,q.x,q.y,0u);
     return quad_add(quad_add(vec4u(p,0u,0u),vec4u(0u,0u,r)),quad_add(cross,cross));
 }
+fn mul_word_carry(a:u32,b:u32,carry:u32)->vec2u{
+    let p=wide_mul(a,b);
+    let low=p.x+carry;
+    return vec2u(low,p.y+select(0u,1u,low<p.x));
+}
 fn quad_mul_word(a:vec4u,b:u32)->vec4u{
-    var result=vec4u(0u);var carry=0u;
-    for(var i=0u;i<4u;i++){
-        let p=wide_mul(a[i],b);
-        let low=p.x+carry;
-        carry=p.y+select(0u,1u,low<p.x);result[i]=low;
-    }
-    return result;
+    let p=mul_word_carry(a.x,b,0u);
+    let q=mul_word_carry(a.y,b,p.y);
+    let r=mul_word_carry(a.z,b,q.y);
+    let s=mul_word_carry(a.w,b,r.y);
+    return vec4u(p.x,q.x,r.x,s.x);
 }
 fn quad_le(a:vec4u,b:vec4u)->bool{
-    for(var i=4u;i>0u;i--){
-        if a[i-1u]!=b[i-1u]{return a[i-1u]<b[i-1u];}
-    }
-    return true;
+    if a.w!=b.w{return a.w<b.w;}
+    if a.z!=b.z{return a.z<b.z;}
+    if a.y!=b.y{return a.y<b.y;}
+    return a.x<=b.x;
 }
 fn ellipse_center(o:u32)->vec2i{
     return vec2i(i32(atomicLoad(&words[o+52u])),i32(atomicLoad(&words[o+53u])))+
@@ -261,7 +267,7 @@ fn ellipse_scanlines(@builtin(global_invocation_id) id:vec3u){
     let dest=base+2u*y;
     atomicStore(&words[dest],0u);atomicStore(&words[dest+1u],0u);
     let rect=rectangle(o);
-    if y<rect.y||y>=rect.w||rect.x>=rect.z{return;}
+    if y<rect.y||y>=rect.w||rect.x>=rect.z||rect.z>params.x||rect.w>params.y{return;}
     let axes=vec2u(atomicLoad(&words[o+68u]),atomicLoad(&words[o+69u]));
     let angle=atomicLoad(&words[o+70u]);
     if any(axes==vec2u(0u))||angle>180u{return;}
@@ -273,7 +279,7 @@ fn ellipse_scanlines(@builtin(global_invocation_id) id:vec3u){
     if angle==0u||angle==90u||angle==180u{
         left=u32(clamp(center.x,i32(left),i32(right)));
     }else{
-        while left<right{
+        for(var step=0u;step<12u&&left<right;step++){
             let mid=left+(right-left)/2u;
             let p=ellipse_value(vec2i(i32(mid)-center.x,dy),trig,a2,b2);
             let q=ellipse_value(vec2i(i32(mid+1u)-center.x,dy),trig,a2,b2);
@@ -283,13 +289,13 @@ fn ellipse_scanlines(@builtin(global_invocation_id) id:vec3u){
     let middle=left;
     if !ellipse_contains(vec2u(middle,y),o){return;}
     left=rect.x;right=middle;
-    while left<right{
+    for(var step=0u;step<12u&&left<right;step++){
         let mid=left+(right-left)/2u;
         if ellipse_contains(vec2u(mid,y),o){right=mid;}else{left=mid+1u;}
     }
     atomicStore(&words[dest],left);
     left=middle;right=rect.z;
-    while left+1u<right{
+    for(var step=0u;step<12u&&left+1u<right;step++){
         let mid=left+(right-left)/2u;
         if ellipse_contains(vec2u(mid,y),o){left=mid;}else{right=mid;}
     }
@@ -310,7 +316,9 @@ fn collect(@builtin(global_invocation_id) id:vec3u){
             let span=span_base+2u*id.y;
             inside=id.x>=atomicLoad(&words[span])&&id.x<atomicLoad(&words[span+1u]);
         }else if atomicLoad(&words[o+67u])==1u{
-            inside=ellipse_contains(id.xy,o);
+            // Every ellipse job allocates spans. Fail closed if its contract
+            // is broken; never inline the wide selector into pixel kernels.
+            inside=false;
         }
         if inside&&all(id.xy>=lo)&&all(id.xy<hi){
             atomicMax(&words[o+20u],c.x);
@@ -480,7 +488,9 @@ fn scene_linear_sum(@builtin(global_invocation_id) id:vec3u,@builtin(local_invoc
             let span=span_base+2u*id.y;
             inside=id.x>=atomicLoad(&words[span])&&id.x<atomicLoad(&words[span+1u]);
         }else if atomicLoad(&words[o+67u])==1u{
-            inside=ellipse_contains(id.xy,o);
+            // Every ellipse job allocates spans. Fail closed if its contract
+            // is broken; never inline the wide selector into pixel kernels.
+            inside=false;
         }
         if inside&&all(id.xy>=lo)&&all(id.xy<hi){value=linear;}
 
