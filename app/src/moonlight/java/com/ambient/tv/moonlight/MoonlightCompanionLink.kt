@@ -158,7 +158,12 @@ class MoonlightCompanionLink @Inject constructor(
 
     private fun motion(port: Int, state: CompanionMotionState?) {
         if (port !in 0..3) return
-        if (state == null) { motionMasks[port] = -1; return }
+        if (state == null) {
+            if (motionMasks[port] and 2 != 0 && motionMasks[port] >= 0)
+                owner?.let { engine.clearRemoteMotion(it, port) }
+            motionMasks[port] = -1
+            return
+        }
         val data = state
         val currentOwner = owner ?: return
         val generation = engine.generation(currentOwner)

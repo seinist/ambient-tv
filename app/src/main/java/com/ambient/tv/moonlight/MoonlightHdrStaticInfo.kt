@@ -16,3 +16,8 @@ fun moonlightHdrStaticInfo(payload: ByteArray?): ByteBuffer? {
         flip()
     }
 }
+
+/** Normalize both supported wire layouts to the exact Android-relevant bytes.
+ * Ignore the extra upstream field so repeated HDR callbacks do not restart the decoder. */
+internal fun moonlightCanonicalHdrMetadata(payload: ByteArray?): ByteArray? =
+    payload?.takeIf { it.size == 24 || it.size == 26 }?.copyOf(24)

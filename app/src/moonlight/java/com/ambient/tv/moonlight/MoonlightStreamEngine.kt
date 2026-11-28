@@ -590,10 +590,38 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     /** Enable physical sensor delivery only while the owning Activity accepts gameplay. */
-    fun setLocalMotionEnabled(owner: Any, enabled: Boolean) = synchronized(lock) {
-        if (active?.owner === owner && localMotionEnabled != enabled) {
+    fun setLocalMotionEnabled(owner: Any, enabled: Boolean) {
+        val stoppedPorts = synchronized(lock) {
+            if (active?.owner !== owner || localMotionEnabled == enabled) return
             localMotionEnabled = enabled
             localMotionEpoch++
+            if (enabled) emptyList() else (0..3).filter {
+                localControllerMask and (1 shl it) != 0 && it !in remoteControllerPorts
+            }
+        }
+        // An angular rate is not a button: silence alone can leave a virtual gyro
+        // at its last non-zero value. Preserve a discrete neutral report on menu/focus loss.
+        stoppedPorts.forEach { clearGyroscope(owner, it, remote = false) }
+    }
+
+    fun clearRemoteMotion(owner: Any, port: Int) = clearGyroscope(owner, port, remote = true)
+
+    private fun clearGyroscope(owner: Any, port: Int, remote: Boolean) {
+        if (port !in 0..3) return
+        enqueueInput(owner) {
+            val conn = synchronized(lock) {
+                val session = active?.takeIf { it.owner === owner && it.started && !it.cancelled }
+                    ?: return@synchronized null
+                if ((port in remoteControllerPorts) != remote ||
+                    !remote && localControllerMask and (1 shl port) == 0) return@synchronized null
+                val key = port to MoonBridge.LI_MOTION_TYPE_GYRO
+                val request = motionRequests[key] ?: return@synchronized null
+                if (request.first <= 0) return@synchronized null
+                motionRequests[key] = request.first to 0L
+                session.connection
+            }
+            runCatching { conn?.sendControllerMotionEvent(port.toByte(), MoonBridge.LI_MOTION_TYPE_GYRO,
+                0f, 0f, 0f) }
         }
     }
 

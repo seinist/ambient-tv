@@ -58,15 +58,25 @@ def compare(before, after, expected_hdr=None, minimum_seconds=60):
     if not deltas["received"]:
         raise ValueError("No received video frames during measurement")
     evidence = None
-    if expected_hdr == "hdr10":
-        evidence = all(snapshot.get("hdr_signaled") == "true" and
-                       snapshot.get("display_hdr10_capable") == "true" and
-                       snapshot.get("decoder_hdr_evidence") == "confirmed"
-                       for snapshot in (before, after))
-    elif expected_hdr == "sdr":
-        evidence = all(snapshot.get("hdr_signaled") == "false" and
-                       snapshot.get("color_transfer") not in {"6", "7"}
-                       for snapshot in (before, after))
+    if expected_hdr:
+        def color_evidence(snapshot):
+            if expected_hdr == "hdr10":
+                if (snapshot.get("hdr_signaled") == "false" or
+                        snapshot.get("display_hdr10_capable") == "false" or
+                        snapshot.get("decoder_hdr_evidence") == "mismatch"):
+                    return False
+                if (snapshot.get("hdr_signaled") == "true" and
+                        snapshot.get("display_hdr10_capable") == "true" and
+                        snapshot.get("decoder_hdr_evidence") == "confirmed"):
+                    return True
+            else:
+                if snapshot.get("hdr_signaled") == "true" or snapshot.get("color_transfer") in {"6", "7"}:
+                    return False
+                if snapshot.get("hdr_signaled") == "false" and snapshot.get("color_transfer") in {"1", "3"}:
+                    return True
+            return None
+        observations = [color_evidence(snapshot) for snapshot in (before, after)]
+        evidence = False if False in observations else True if all(value is True for value in observations) else None
     return {
         "elapsed_seconds": elapsed,
         "profile": {field: after[field] for field in ("decoder", "mime", "size", "fps", "display_mode")},

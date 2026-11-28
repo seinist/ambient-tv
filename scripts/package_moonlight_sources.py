@@ -59,7 +59,7 @@ def archive_checkout(root, pin, name, out):
         subprocess.run(["git", "-C", str(root), "archive", "--format=tar",
                         f"--prefix={name}/", pin], stdout=tar, check=True, timeout=180)
         tar.seek(0)
-        with target.open("wb") as raw, gzip.GzipFile(filename="", fileobj=raw, mtime=0) as compressed:
+        with target.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
             shutil.copyfileobj(tar, compressed)
     return {"component": name, "commit": pin, "archive": target.name, "sha256": digest(target)}
 
@@ -77,7 +77,9 @@ def collect_apks(dist):
     for apk in sorted(dist.glob("*.apk")):
         with zipfile.ZipFile(apk) as package:
             names = set(package.namelist())
-            if not all("assets/moonlight-licenses/" + notice in names for notice in NOTICES):
+            if not all("assets/moonlight-licenses/" + notice in names and
+                       package.getinfo("assets/moonlight-licenses/" + notice).file_size > 0
+                       for notice in NOTICES):
                 raise ValueError(f"Missing Moonlight source notices: {apk.name}")
             native = [n for n in names if n.startswith("lib/") and n.endswith("/libmoonlight-core.so")]
             if len(native) != 1:

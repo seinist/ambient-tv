@@ -28,6 +28,13 @@ class DeviceValidationTest(unittest.TestCase):
         self.assertTrue(report["decoder_and_display_capability_evidence"])
         self.assertEqual(report["profile"]["display_mode"], "1920x1080 60 Hz")
 
+    def test_unknown_color_metadata_is_not_a_pass_or_a_mismatch(self):
+        before, after = sample(10**9, 60), sample(61 * 10**9, 3660)
+        after["decoder_hdr_evidence"] = "unknown"
+        self.assertIsNone(validation.compare(before, after, "hdr10")["decoder_and_display_capability_evidence"])
+        after["decoder_hdr_evidence"] = "mismatch"
+        self.assertFalse(validation.compare(before, after, "hdr10")["decoder_and_display_capability_evidence"])
+
     def test_reject_reset_or_different_session(self):
         before, after = sample(10**9, 60), sample(61 * 10**9, 1)
         with self.assertRaises(ValueError):

@@ -16,6 +16,16 @@ class MoonlightHdrStaticInfoTest {
         val legacy = requireNotNull(moonlightHdrStaticInfo(upstream.copyOf(24)))
         assertArrayEquals(legacy.array(), result.array())
     }
+    @Test fun canonicalMetadataIgnoresExtraWireFieldAndOwnsItsBytes() {
+        val long = ByteArray(26) { it.toByte() }
+        val canonical = requireNotNull(moonlightCanonicalHdrMetadata(long))
+        assertEquals(24, canonical.size)
+        long[25] = 99
+        assertArrayEquals(canonical, moonlightCanonicalHdrMetadata(long))
+        long[0] = 99
+        assertEquals(0, canonical[0].toInt())
+        assertNull(moonlightCanonicalHdrMetadata(ByteArray(25)))
+    }
     @Test fun rejectsMalformedHdrMetadata() {
         assertNull(moonlightHdrStaticInfo(null))
         assertNull(moonlightHdrStaticInfo(byteArrayOf()))

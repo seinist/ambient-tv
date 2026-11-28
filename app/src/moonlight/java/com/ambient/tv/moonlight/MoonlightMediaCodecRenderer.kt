@@ -430,20 +430,19 @@ class MoonlightMediaCodecRenderer(
         synchronized(inputLock) {
             if (closing || failed.get()) return
             hdrSignal = enabled
-            if (enabled && negotiatedFormat == 0) {
-                hdrMasteringInfo = hdrMetadata?.takeIf { moonlightHdrStaticInfo(it) != null }?.copyOf()
+            val newMetadata = if (enabled) moonlightCanonicalHdrMetadata(hdrMetadata) else null
+            if (negotiatedFormat == 0) {
+                hdrMasteringInfo = newMetadata
                 return
             }
             if (enabled && !negotiatedHdr10) {
                 reportFailure("Unexpected HDR request to SDR Moonlight decoder")
                 return
             }
-            val validMetadata = hdrMetadata?.takeIf { moonlightHdrStaticInfo(it) != null }
-            val newMetadata = if (enabled) validMetadata?.copyOf(24) else null
             val sameMetadata = hdrMasteringInfo?.contentEquals(newMetadata ?: byteArrayOf()) ?: (newMetadata == null)
             if (activeHdr == enabled && sameMetadata) return
             activeHdr = enabled
-            hdrMasteringInfo = newMetadata?.copyOf()
+            hdrMasteringInfo = newMetadata
             hdrReconfigure = codec != null
         }
     }
