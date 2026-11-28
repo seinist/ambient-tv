@@ -243,6 +243,8 @@ def requirements(core, abi, profile):
                   "disc_io": ("yabause/src/cd-libretro.c", ())}
         if core == "yabasanshiro" and arm:
             result["sh2_dynarec"] = ("yabause/src/sh2_dynarec_devmiyax/DynarecSh2.cpp", (("DYNAREC_DEVMIYAX", "1"),))
+        if core == "yabause" and profile == "yabause-arm64-jit" and arm64:
+            result["sh2_arm64_blocks"] = ("yabause/src/sh2int.c", (("AMBIENT_SH2_ARM64_JIT", "1"),))
         return result
     if core == "ymir":
         return {"sh2": ("libs/ymir-core/src/ymir/hw/sh2/sh2.cpp", ()),

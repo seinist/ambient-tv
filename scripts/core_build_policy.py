@@ -22,6 +22,7 @@ PROFILES = {
     "core-hotpaths": ((), ()),
     "optimized": (("-O3", "-flto=thin"), ("-flto=thin",)),
     "optimized-a57": (("-O3", "-flto=thin", "-mtune=cortex-a57"), ("-flto=thin",)),
+    "yabause-arm64-jit": (("-O3",), ()),
     "citra-arm64-jit": (("-O3",), ()),
     "pgo-generate": (("-O3", "-fprofile-instr-generate"), ("-fprofile-instr-generate",)),
     "pgo-use": (("-O3", "-fprofile-instr-use=ambient.profdata", "-Werror=profile-instr-out-of-date"), ("-fprofile-instr-use=ambient.profdata",)),
@@ -85,10 +86,10 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         raise ValueError("Unknown comparison matrix")
     if comparison != "none" and (event != "workflow_dispatch" or publish or profile != "baseline"):
         raise ValueError("Paired comparisons require an artifact-only manual dispatch and baseline profile")
-    if profile == "citra-arm64-jit":
+    if profile in {"citra-arm64-jit", "yabause-arm64-jit"}:
         if event != "workflow_dispatch" or publish or comparison != "none":
-            raise ValueError("Citra ARM64 JIT is an artifact-only candidate")
-        cores = cores or "citra2018"
+            raise ValueError("ARM64 JIT profiles are artifact-only candidates")
+        cores = cores or ("citra2018" if profile == "citra-arm64-jit" else "yabause")
         abis = abis or "arm64-v8a"
     if profile in {"pgo-generate", "pgo-use"}:
         if event != "workflow_dispatch" or publish or comparison != "none" or not cores or not abis:
@@ -113,8 +114,8 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         abis = abis or "arm64-v8a"
     chosen_cores = selection(cores, ids, "core")
     chosen_abis = selection(abis, declared_abis, "ABI")
-    if profile == "citra-arm64-jit" and (chosen_cores != ["citra2018"] or chosen_abis != ["arm64-v8a"]):
-        raise ValueError("Citra JIT candidate requires Citra 2018 on ARM64")
+    if profile in {"citra-arm64-jit", "yabause-arm64-jit"} and (chosen_cores != ["citra2018" if profile == "citra-arm64-jit" else "yabause"] or chosen_abis != ["arm64-v8a"]):
+        raise ValueError("JIT candidate requires its designated ARM64 core")
     if profile == "picodrive-sh2" and (chosen_cores != ["picodrive"] or chosen_abis != ["arm64-v8a"]):
         raise ValueError("PicoDrive SH2 candidate requires PicoDrive on arm64-v8a")
     if profile == "core-hotpaths" and not set(chosen_cores) <= HOTPATH_CORES:
@@ -167,6 +168,8 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
             jobs += [(core, abi, variant) for core in extended for abi in declared_abis
                      for variant in ("baseline", "optimized")]
             jobs += [(core, "arm64-v8a", "optimized-a57") for core in extended]
+            jobs += [("citra2018", "arm64-v8a", "citra-arm64-jit"),
+                     ("yabause", "arm64-v8a", "yabause-arm64-jit")]
         else:
             jobs += [(core, abi, "optimized") for core in original for abi in declared_abis]
             jobs += [(core, "arm64-v8a", "optimized-a57") for core in original]
@@ -545,7 +548,7 @@ def main():
     elif args.action == "prepare-cmake":
         prepare_cmake(args.root, args.core, args.profile)
     elif args.action == "prepare-hotpaths":
-        if args.profile in {"core-hotpaths", "citra-arm64-jit"} or (args.profile in PUBLIC_EXPERIMENTS and args.core in HOTPATH_CORES):
+        if args.profile in {"core-hotpaths", "citra-arm64-jit", "yabause-arm64-jit"} or (args.profile in PUBLIC_EXPERIMENTS and args.core in HOTPATH_CORES):
             prepare_hotpaths(args.root, args.core)
     elif args.action == "prepare-ndk":
         prepare_ndk(args.root, args.core, args.profile)

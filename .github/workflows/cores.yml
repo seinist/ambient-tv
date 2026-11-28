@@ -11,6 +11,7 @@ on:
       - cores/cores.json
       - scripts/core_*.py
       - scripts/test_core_*.py
+      - scripts/native_core_candidates/**
       - .github/workflows/cores.yml
   workflow_call:
     inputs:
@@ -61,7 +62,7 @@ on:
       profile:
         description: Compiler profile (optimized and optimized-a57 are public; other candidates are diagnostic)
         type: choice
-        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths, pgo-generate, pgo-use, citra-arm64-jit]
+        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths, pgo-generate, pgo-use, citra-arm64-jit, yabause-arm64-jit]
         default: baseline
       pgo_run_id:
         description: Trusted same-repository artifact run ID (pgo-use only)
@@ -117,6 +118,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_core_hotpath_patches.py
           python3 -m unittest discover -s scripts -p test_core_hotpath_remaining.py
           python3 -m unittest discover -s scripts -p test_core_pgo.py
+          python3 -m unittest discover -s scripts -p test_core_candidates.py
       - id: plan
         env:
           ONLY: ${{ inputs.cores }}
@@ -236,7 +238,7 @@ jobs:
         if: env.CORE_CCACHE != ''
         with:
           path: ~/.cache/ccache
-          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py', 'scripts/core_hotpath_remaining.py') }}
+          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py', 'scripts/core_hotpath_remaining.py', 'scripts/core_citra_arm64.py', 'scripts/core_yabause_arm64.py', 'scripts/native_core_candidates/**') }}
 
       - name: Fetch ${{ matrix.core }} at its pinned commit
         env:
@@ -298,11 +300,13 @@ jobs:
             LDFLAGS_EXTRA="${LDFLAGS_EXTRA//ambient.profdata/$pgo_data}"
             pgo_args=(--profile-data "$pgo_data")
           fi
-          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 || "$PROFILE" == citra-arm64-jit ]]; then
+          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 || "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit ]]; then
             python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
           fi
           if [[ "$PROFILE" == citra-arm64-jit ]]; then
             python3 scripts/core_citra_arm64.py --root src
+          elif [[ "$PROFILE" == yabause-arm64-jit ]]; then
+            python3 scripts/core_yabause_arm64.py --root src
           fi
           if [ "$BUILD_KIND" = "cmake" ]; then
             export ANDROID_NDK_HOME="$NDK" ANDROID_NDK_ROOT="$NDK"
