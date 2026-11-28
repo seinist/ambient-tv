@@ -337,3 +337,93 @@ pub(super) struct SceneFrame{
     pub width:u32,pub height:u32,pub maxscl:[u32;3],
     pub bins:Vec<u32>,pub average:f32,pub fraction:f32,
 }
+
+// Explicit complete-scene contract. The caller supplies authoritative
+// frame boundaries, not guesses from motion, PTS gaps or metadata changes.
+// The accumulator stores one histogram, never a queue of decoded frames.
+#[repr(C)]
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub struct SceneResult{
+    pub first:u64,pub end:u64,pub brightest_frame:u64,
+    pub maxscl:[u32;3],pub average:u32,pub percentiles:[u32;9],pub fraction:u32,
+}
+pub struct HdrScene{
+    first:u64,end:u64,next:u64,width:u32,height:u32,
+    percentages:[u32;9],bins:Vec<u64>,maxscl:[u32;3],best:Option<(f32,u64,f32)>,
+}
+impl HdrScene{
+    pub(super) fn new(first:u64,end:u64,width:u32,height:u32,percentages:[u32;9])->Result<Self>{
+        if first>=end||width==0||height==0||u64::from(width)*u64::from(height)>1920*1080||
+            (end-first)>u64::MAX/(u64::from(width)*u64::from(height))/100000||
+            percentages.iter().any(|&v|v>100)||percentages.windows(2).any(|p|p[0]>=p[1]){
+            return Err("invalid scene interval or distribution".into());
+        }
+        Ok(Self{first,end,next:first,width,height,percentages,bins:vec![0;BINS as usize],maxscl:[0;3],best:None})
+    }
+    pub(super) fn push(&mut self,index:u64,frame:SceneFrame)->Result<()>{
+        if index!=self.next||index>=self.end||frame.width!=self.width||frame.height!=self.height||
+            frame.bins.len()!=self.bins.len()||frame.bins.iter().map(|&v|u64::from(v)).sum::<u64>()!=u64::from(self.width)*u64::from(self.height)||
+            !frame.average.is_finite()||!(0.0..=1.0).contains(&frame.average)||
+            !frame.fraction.is_finite()||!(0.0..=1.0).contains(&frame.fraction)||
+            frame.maxscl.iter().any(|&v|v>100000){
+            return Err("incompatible or out-of-order scene frame".into());
+        }
+        for (sum,&v) in self.bins.iter_mut().zip(&frame.bins){*sum+=u64::from(v);}
+        for (peak,v) in self.maxscl.iter_mut().zip(frame.maxscl){*peak=(*peak).max(v);}
+        if self.best.is_none_or(|(a,_,_)|frame.average>=a){self.best=Some((frame.average,index,frame.fraction));}
+        self.next+=1;
+        Ok(())
+    }
+    pub(super) fn finish(&self)->Result<SceneResult>{
+        if self.next!=self.end{return Err("incomplete scene".into());}
+        let (_,brightest_frame,fraction)=self.best.ok_or("empty scene")?;
+        let n=self.bins.iter().sum::<u64>();
+        let sum=self.bins.iter().enumerate().map(|(i,&v)|i as u128*u128::from(v)).sum::<u128>();
+        let mut result=SceneResult{first:self.first,end:self.end,brightest_frame,maxscl:self.maxscl,
+            average:((sum+u128::from(n)/2)/u128::from(n)) as u32,
+            fraction:(f64::from(fraction)*1000.0).round().clamp(1.0,1000.0) as u32,
+            ..Default::default()};
+        let reserved=self.percentages[1]==5&&self.percentages[2]==10;
+        for (j,&pct) in self.percentages.iter().enumerate(){
+            if reserved&&(j==1||j==2){result.percentiles[j]=if j==1{0}else{255};continue;}
+            let rank=if j==8&&pct==99{n-n/5000}else{((u128::from(n)*u128::from(pct)+99)/100) as u64}.max(1);
+            let mut cumulative=0u64;
+            for (i,&count) in self.bins.iter().enumerate(){
+                cumulative+=count;
+                if cumulative>=rank{result.percentiles[j]=i as u32;break;}
+            }
+        }
+        Ok(result)
+    }
+}
+#[cfg(test)]
+mod scene_tests{
+    use super::*;
+    const P:[u32;9]=[1,5,10,25,50,75,90,95,99];
+    fn frame(a:u32,b:u32,avg:f32,fraction:f32)->SceneFrame{
+        let mut bins=vec![0;BINS as usize];bins[a as usize]+=1;bins[b as usize]+=1;
+        SceneFrame{width:2,height:1,maxscl:[a.max(b);3],bins,average:avg,fraction}
+    }
+    #[test]
+    fn complete_scene_histogram_and_latest_tie(){
+        let mut s=HdrScene::new(10,12,2,1,P).unwrap();
+        assert!(s.push(11,frame(0,100,0.2,0.5)).is_err());
+        s.push(10,frame(100,300,0.2,1.0)).unwrap();
+        assert!(s.finish().is_err());
+        assert!(s.push(10,frame(0,100,0.2,0.5)).is_err());
+        s.push(11,frame(200,400,0.2,0.5)).unwrap();
+        let r=s.finish().unwrap();
+        assert_eq!(r.maxscl,[400;3]);assert_eq!(r.average,250);
+        assert_eq!(r.percentiles,[100,0,255,100,200,300,400,400,400]);
+        assert_eq!(r.brightest_frame,11);assert_eq!(r.fraction,500);
+        assert!(s.push(12,frame(100,100,0.3,1.0)).is_err());
+    }
+    #[test]
+    fn scene_boundaries_and_percentiles(){
+        assert!(HdrScene::new(1,1,2,1,P).is_err());
+        assert!(HdrScene::new(0,1,2,1,[1;9]).is_err());
+        let mut s=HdrScene::new(0,1,2,1,P).unwrap();
+        s.push(0,frame(100,100,0.1,0.00001)).unwrap();
+        assert_eq!(s.finish().unwrap().fraction,1);
+    }
+}
