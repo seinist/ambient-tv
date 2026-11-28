@@ -27,7 +27,7 @@ if '# include "dovi_fel_render.h"' not in s or 'ambient_fel_render_picture_ex' n
     raise SystemExit("Stage PR510 experimental renderer before SVP HDR bridge")
 for name in ("svp_vlc_hdr_pair.h", "svp_vlc_hdr_display.h", "svp_placebo_quality.h"):
     shutil.copyfile(adapter / name, display.parent / name)
-for name in ("ambientsvp_quality.h", "ambientsvp_vulkan.h"):
+for name in ("ambientsvp_quality.h", "ambientsvp_vulkan.h", "svp_hdr_curve.h"):
     shutil.copyfile(adapter.parent / "include" / name, display.parent / name)
 marker = "SVP metadata-aware renderer bridge"
 if marker in s:
