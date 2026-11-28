@@ -11,6 +11,7 @@ case "$abi" in
 esac
 pin=22244de5a79bd1d6d623c32e72bf1954b56235be
 [[ "$(git -C "$root/source" rev-parse HEAD)" == "$pin" ]]
+[[ "$(git -C "$root/source" rev-parse 'v1.6.1^{commit}')" == "$pin" ]]
 [[ -z "$(git -C "$root/source" status --porcelain --untracked-files=no)" ]]
 test -f "$ndk/build/cmake/android.toolchain.cmake"
 command -v cmake >/dev/null
@@ -24,7 +25,7 @@ cmake -S "$root/source" -B "$out/build" -G Ninja \
   -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-29 -DANDROID_STL=none \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG -flto=thin $tune" \
-  -DOPUS_BUILD_SHARED_LIBRARY=OFF -DOPUS_BUILD_TESTING=OFF \
+  -DOPUS_PACKAGE_VERSION=1.6.1 -DOPUS_BUILD_SHARED_LIBRARY=OFF -DOPUS_BUILD_TESTING=OFF \
   -DOPUS_BUILD_PROGRAMS=OFF -DOPUS_DISABLE_INTRINSICS=OFF \
   -DOPUS_HARDENING=ON -DOPUS_FAST_MATH=OFF -DOPUS_FLOAT_APPROX=OFF \
   -DOPUS_X86_PRESUME_AVX2=OFF -DOPUS_X86_PRESUME_SSE4_1=OFF

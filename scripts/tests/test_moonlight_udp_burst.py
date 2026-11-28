@@ -12,6 +12,10 @@ HARNESS = r"""
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
+#define FIRST_FRAME_TIMEOUT_SEC 10
+#define ML_ERROR_NO_VIDEO_TRAFFIC -100
+#define ML_ERROR_NO_VIDEO_FRAME -101
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -48,6 +52,11 @@ static void testAdaptiveBatch(void) {
 }
 int main(void) {
     testAdaptiveBatch();
+    assert(videoStartupError(9999, 0, 0, false, false) == 0);
+    assert(videoStartupError(10000, 0, 0, false, false) == ML_ERROR_NO_VIDEO_TRAFFIC);
+    assert(videoStartupError(14999, 0, 5000, true, false) == 0);
+    assert(videoStartupError(15000, 0, 5000, true, false) == ML_ERROR_NO_VIDEO_FRAME);
+    assert(videoStartupError(90000, 0, 5000, true, true) == 0);
     int rx = socket(AF_INET, SOCK_DGRAM, 0);
     int tx = socket(AF_INET, SOCK_DGRAM, 0);
     assert(rx >= 0 && tx >= 0);
@@ -101,9 +110,11 @@ def main():
     source = Path(sys.argv[1]).read_text()
     start = source.index("#define VIDEO_UDP_BATCH ")
     end = source.index("\n}", source.index("static int receiveVideoDatagrams(")) + 2
+    startup = source.index("static int videoStartupError(")
+    startup_end = source.index("\n}", startup) + 2
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp)
-        (path / "udp.c").write_text(HARNESS + source[start:end] + "\n" + TEST)
+        (path / "udp.c").write_text(HARNESS + source[start:end] + "\n" + source[startup:startup_end] + "\n" + TEST)
         subprocess.run([os.environ.get("CC", "cc"), "-D_GNU_SOURCE", "-std=c11",
                         "-O2", "-Wall", "-Wextra", "-Werror",
                         str(path / "udp.c"), "-o", str(path / "udp")], check=True)

@@ -1,7 +1,7 @@
 diff --git a/src/VideoStream.c b/src/VideoStream.c
 --- a/src/VideoStream.c
 +++ b/src/VideoStream.c
-@@ -100,7 +100,7 @@
+@@ -100,7 +100,23 @@
      decryptionCtx = PltCreateCryptoContext();
      receivedDataFromPeer = false;
      firstDataTimeMs = 0;
@@ -9,8 +9,24 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
 +    __atomic_store_n(&receivedFullFrame, false, __ATOMIC_RELAXED);
  }
  
++// Return the startup failure reason using a monotonic clock. No progress
++// is inferred from interrupted receives or invalid datagrams.
++static int videoStartupError(uint64_t now, uint64_t started, uint64_t first,
++                             bool received, bool fullFrame) {
++    if (!received && now - started >= FIRST_FRAME_TIMEOUT_SEC * 1000)
++        return ML_ERROR_NO_VIDEO_TRAFFIC;
++#ifndef LC_FUZZING
++    if (received && !fullFrame && now - first >= FIRST_FRAME_TIMEOUT_SEC * 1000)
++        return ML_ERROR_NO_VIDEO_FRAME;
++#else
++    (void)first;
++    (void)fullFrame;
++#endif
++    return 0;
++}
++
  // Clean up the video stream
-@@ -148,7 +148,7 @@
+@@ -148,7 +164,7 @@
      char* encryptedBuffer;
      int queueStatus;
      bool useSelect;
@@ -19,7 +35,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
      bool encrypted;
  
      encrypted = !!(EncryptionFeaturesEnabled & SS_ENC_VIDEO);
-@@ -180,7 +180,7 @@
+@@ -180,7 +196,7 @@
          encryptedBuffer = NULL;
      }
  
@@ -28,30 +44,27 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
      unsigned int resizeCheck = 0;
      unsigned int appliedTier = 0;
  #if defined(__ANDROID__)
-@@ -192,7 +192,21 @@
+@@ -192,7 +208,18 @@
      unsigned int batchTarget = 2, fullBatches = 0, sparseBatches = 0;
  #endif
      while (!PltIsThreadInterrupted(&receiveThread)) {
 -        PRTP_PACKET packet;
 +        PRTP_PACKET packet;
-+        // Check real elapsed time even during silence or invalid datagrams.
-+        if (!receivedDataFromPeer && PltGetMillis() - videoReceiveStartedMs >= FIRST_FRAME_TIMEOUT_SEC * 1000) {
-+            Limelog("Terminating connection due to lack of valid video traffic\n");
-+            ListenerCallbacks.connectionTerminated(ML_ERROR_NO_VIDEO_TRAFFIC);
-+            break;
++        // Stop checking the clock after the first complete frame.
++        bool fullFrame = __atomic_load_n(&receivedFullFrame, __ATOMIC_RELAXED);
++        if (!receivedDataFromPeer || !fullFrame) {
++            int startupError = videoStartupError(PltGetMillis(), videoReceiveStartedMs,
++                    firstDataTimeMs, receivedDataFromPeer, fullFrame);
++            if (startupError != 0) {
++                Limelog("Video startup deadline exceeded: %d\n", startupError);
++                ListenerCallbacks.connectionTerminated(startupError);
++                break;
++            }
 +        }
-+#ifndef LC_FUZZING
-+        if (receivedDataFromPeer && !__atomic_load_n(&receivedFullFrame, __ATOMIC_RELAXED) &&
-+                PltGetMillis() - firstDataTimeMs >= FIRST_FRAME_TIMEOUT_SEC * 1000) {
-+            Limelog("Terminating connection due to lack of a successful video frame\n");
-+            ListenerCallbacks.connectionTerminated(ML_ERROR_NO_VIDEO_FRAME);
-+            break;
-+        }
-+#endif
          // Socket owner applies changes at a sampled cadence, never under a JNI lock.
          if ((resizeCheck++ & 127) == 0) {
              unsigned int tier = __atomic_load_n(&adaptiveVideoBufferTier, __ATOMIC_RELAXED);
-@@ -285,43 +299,13 @@
+@@ -285,43 +312,13 @@
              ListenerCallbacks.connectionTerminated(LastSocketFail());
              break;
          }
@@ -102,7 +115,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
  
          // Decrypt the packet into the buffer if encryption is enabled
          if (encrypted) {
-@@ -363,7 +347,16 @@
+@@ -363,7 +360,16 @@
              }
          }
  
@@ -120,7 +133,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
          packet = (PRTP_PACKET)&buffer[0];
          packet->sequenceNumber = BE16(packet->sequenceNumber);
          packet->timestamp = BE32(packet->timestamp);
-@@ -394,7 +387,7 @@
+@@ -394,7 +400,7 @@
  
  void notifyKeyFrameReceived(void) {
      // Remember that we got a full frame successfully

@@ -24,7 +24,7 @@ DEST="$ROOT/third_party/moonlight-android"
 WORK="$ROOT/third_party/.moonlight-download"
 MARKER_NAME=".ambient-moonlight-pins"
 # Bump when the staged file set changes, so existing trees are prepared again.
-STAGING_VERSION=5
+STAGING_VERSION=6
 OPUS_REF=22244de5a79bd1d6d623c32e72bf1954b56235be
 
 [[ "$UPSTREAM" == "https://github.com/moonlight-stream/moonlight-android.git" ]] || die "unexpected upstream"
@@ -113,6 +113,8 @@ git init -q "$OPUS_SOURCE"
 git -C "$OPUS_SOURCE" remote add origin https://github.com/xiph/opus.git
 git -C "$OPUS_SOURCE" fetch -q --depth 1 origin "$OPUS_REF"
 git -C "$OPUS_SOURCE" checkout -q --detach FETCH_HEAD
+git -C "$OPUS_SOURCE" fetch -q --depth 1 origin refs/tags/v1.6.1:refs/tags/v1.6.1
+[[ "$(git -C "$OPUS_SOURCE" rev-parse 'v1.6.1^{commit}')" == "$OPUS_REF" ]] || die "Opus release tag mismatch"
 [[ "$(git -C "$OPUS_SOURCE" rev-parse HEAD)" == "$OPUS_REF" ]] || die "Opus source pin mismatch"
 [[ -f "$OPUS_SOURCE/CMakeLists.txt" && -f "$OPUS_SOURCE/COPYING" ]] || die "Opus source incomplete"
 

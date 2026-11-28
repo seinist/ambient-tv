@@ -2,6 +2,10 @@ name: Moonlight native verification
 
 # Audit the native protocol and application integration, including shared input and build changes.
 on:
+  # The integration branch also needs native validation while merge conflicts
+  # prevent pull_request workflows from creating a synthetic merge commit.
+  push:
+    branches: ['feature/moonlight-native-integration']
   pull_request:
     paths:
       - 'moonlight_wrapper/**'
@@ -40,7 +44,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: moonlight-native-${{ github.ref }}
+  group: moonlight-native-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -79,6 +83,8 @@ jobs:
       - name: Prepare Ambient TV's mandatory LibretroDroid build dependency
         shell: bash
         run: bash scripts/fetch_libretrodroid.sh
+      - name: Install source-build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build
       - name: Fetch exact Moonlight release and verify audited source patches
         shell: bash
         run: bash scripts/fetch_moonlight_sources.sh
