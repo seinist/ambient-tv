@@ -1,6 +1,7 @@
 #include "display_owner.h"
 #include "conversion_cache.h"
 #include "submission.h"
+#include "queue_retirement.h"
 #include "slot_pool.h"
 #include "queue_transfer.h"
 #include <array>
@@ -63,7 +64,7 @@ struct ambient_ahb_owner {
     bool failed{};
     bool retired{};
     bool device_lost{};
-    VkFence retirement_fence{};
+    QueueRetirement retirement_fence;
 
     bool init() {
         auto get = reinterpret_cast<PFN_vkGetDeviceProcAddr>(c.get_proc(c.instance, "vkGetDeviceProcAddr"));
@@ -174,6 +175,7 @@ struct ambient_ahb_owner {
     }
 
     void poll() {
+        if (failed || retired) return;
         for (auto &s : slots) {
             if (!s.ticket || pool.state(s.ticket.index) == State::Quarantined) continue;
             if (s.submission && !s.converted) {
@@ -363,30 +365,19 @@ struct ambient_ahb_owner {
     bool retire() {
         if (retired) return true;
         if (device_lost || !queue) { retired = true; return true; }
-        if (!retirement_fence) {
-            VkFenceCreateInfo info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-            VkResult result = sync.create_fence(c.device, &info, nullptr, &retirement_fence);
-            if (result == VK_SUCCESS) {
-                QueueLock lock(c);
-                result = sync.submit(queue, 0, nullptr, retirement_fence);
-            }
-            if (result == VK_ERROR_DEVICE_LOST) {
-                device_lost = retired = true;
-                return true;
-            }
-            if (result != VK_SUCCESS) { failed = true; return false; }
+        VkResult result;
+        {
+            QueueLock lock(c);
+            result = retirement_fence.begin(c.device, queue, sync);
         }
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        do {
-            VkResult result = sync.fence_status(c.device, retirement_fence);
-            if (result == VK_SUCCESS) { retired = true; return true; }
-            if (result == VK_ERROR_DEVICE_LOST) {
-                device_lost = retired = true;
-                return true;
-            }
-            if (result != VK_NOT_READY) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        } while (std::chrono::steady_clock::now() < deadline);
+        if (result == VK_NOT_READY) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            result = retirement_fence.wait(c.device, sync,
+                [&] { return std::chrono::steady_clock::now() < deadline; },
+                [] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); });
+        }
+        if (result == VK_SUCCESS) { retired = true; return true; }
+        if (result == VK_ERROR_DEVICE_LOST) { device_lost = retired = true; return true; }
         // Keep the fence, owner, decoder leases and device alive on timeout.
         failed = true;
         return false;
@@ -405,9 +396,7 @@ struct ambient_ahb_owner {
             s.lease.reset();
             s.cache.reset();
         }
-        if (retirement_fence) sync.destroy_fence(c.device, retirement_fence, nullptr);
-        retirement_fence = VK_NULL_HANDLE;
-        return true;
+        return retirement_fence.release(c.device, sync, device_lost);
     }
     ~ambient_ahb_owner() {
         if (pipeline_cache) commands.destroy_pipeline_cache(c.device, pipeline_cache, nullptr);

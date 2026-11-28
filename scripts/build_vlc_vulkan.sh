@@ -16,7 +16,7 @@ fi
 if [[ "${1:-}" == "--hash" ]]; then
     (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch
         bash scripts/prepare_svp_sources.sh --hash vlc
-        sha256sum native/vlc-aar/build.gradle.kts native/vlc-aar/settings.gradle.kts gradle/wrapper/gradle-wrapper.properties
+        sha256sum native/vlc-aar/build.gradle.kts native/vlc-aar/settings.gradle.kts native/vlc-aar/consumer-rules.pro gradle/libs.versions.toml gradle/wrapper/gradle-wrapper.properties
         if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
             sha256sum scripts/prepare_vlc_ahb_experimental.sh
             find native/vlc-aar/experimental -type f -print0 | sort -z | xargs -0 sha256sum
@@ -62,7 +62,26 @@ if [[ ! -d "$JNI/vlc/.git" ]]; then
 fi
 [[ "$(git -C "$JNI" rev-parse HEAD)" == "$JNI_REF" ]] || { echo "Expected libvlcjni $JNI_REF" >&2; exit 1; }
 [[ "$(git -C "$JNI/vlc" rev-parse HEAD)" == "$VLC_REF" ]] || { echo "Expected VLC $VLC_REF" >&2; exit 1; }
-printf '%s\n' "$SOURCE_HASH" > "$JNI/.ambient-source-hash"
+# A source-keyed stage is immutable. Verify the complete tracked diff and
+# generated source inputs before reusing it; never undo another patch.
+stage_signature() {
+    (
+        git -C "$JNI" diff --binary --ignore-submodules=all HEAD
+        git -C "$JNI/vlc" diff --binary HEAD
+        cd "$JNI/vlc"
+        git ls-files --others --exclude-standard -z -- \
+            modules/video_output/libplacebo modules/codec/omxil modules/demux/mp4 \
+            modules/video_filter contrib/src/ffmpeg contrib/src/libplacebo |
+            sort -z | xargs -0 -r sha256sum
+    ) | sha256sum | cut -d ' ' -f1
+}
+if [[ -f "$JNI/.ambient-stage-signature" ]]; then
+    [[ -f "$JNI/.ambient-source-hash" && "$(<"$JNI/.ambient-stage-signature")" == "$(stage_signature)" ]] ||
+        { echo "VLC staged sources changed; use a fresh VLC_BUILD_ROOT" >&2; exit 1; }
+else
+    git -C "$JNI" diff --quiet --ignore-submodules=all HEAD &&
+        git -C "$JNI/vlc" diff --quiet HEAD ||
+        { echo "Unverified VLC build tree; use a fresh VLC_BUILD_ROOT" >&2; exit 1; }
 # Keep JNI return types in sync with this revision's Java wrapper.
 for patch in "$ROOT"/native/vlc-aar/jni-patches/*.patch; do
     if git -C "$JNI" apply --check "$patch" 2>/dev/null; then
@@ -140,6 +159,9 @@ fi
 # Upstream's probe used `which` as a standalone command under set -e.
 perl -0777 -i -pe 's/which autopoint >\/dev\/null\nif \[ ! \$\? -eq 0 \];then/if ! command -v autopoint >\/dev\/null; then/' "$JNI/buildsystem/build-libvlc.sh"
 perl -i -pe 's/find \$1 -name \x27\$2\x27/find "\$1" -name "\$2"/' "$JNI/buildsystem/build-libvlc.sh"
+    stage_signature > "$JNI/.ambient-stage-signature"
+    printf '%s\n' "$SOURCE_HASH" > "$JNI/.ambient-source-hash"
+fi
 export EXTRA_PARAMS="--enable-vulkan --enable-libplacebo"
 export PATH="$JNI/vlc/extras/tools/build/bin:$PATH"
 # Some distributions install gettext without autopoint. Only its generated shell

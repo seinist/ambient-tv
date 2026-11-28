@@ -19,6 +19,9 @@ done
 "${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -Wno-missing-field-initializers \
     -fsanitize=address,undefined "$SRC/test_submission.cpp" -o "$TMP/test_submission"
 "$TMP/test_submission"
+"${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -Wno-missing-field-initializers \
+    -fsanitize=address,undefined "$SRC/test_queue_retirement.cpp" -o "$TMP/test_queue_retirement"
+"$TMP/test_queue_retirement"
 "${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     "$SRC/test_conversion_key.cpp" -o "$TMP/test_conversion_key"
 "$TMP/test_conversion_key"

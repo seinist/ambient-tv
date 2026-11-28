@@ -203,8 +203,10 @@ object Media3AudioProcessing {
                             bufferIndex, bufferFlags, sampleCount, bufferPresentationTimeUs,
                             isDecodeOnlyBuffer, isLastBuffer, format)
                         val ptsUs = bufferPresentationTimeUs - getOutputStreamOffsetUs()
-                        if (consumed && !isDecodeOnlyBuffer) frameTimeline.decoded(ptsUs)
-                        frameTimeline.pending(if (!consumed && !isDecodeOnlyBuffer) ptsUs else -1L)
+                        val picture = !isDecodeOnlyBuffer && bufferFlags and
+                            (android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG or android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0
+                        if (consumed && picture) frameTimeline.decoded(ptsUs)
+                        frameTimeline.pending(if (!consumed && picture) ptsUs else -1L)
                         return consumed
                     }
 

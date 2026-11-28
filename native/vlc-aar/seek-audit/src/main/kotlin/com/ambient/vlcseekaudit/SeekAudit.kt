@@ -41,7 +41,16 @@ class SeekAudit : Instrumentation() {
                     val media = Media(lib, Uri.fromFile(file))
                     try { player.media = media } finally { media.release() }
                     player.play()
-                    SystemClock.sleep(1200)
+                    // If the demux is still active, exercise video track
+                    // reselection against the failed output before reopening.
+                    SystemClock.sleep(1500)
+                    val video = player.getTracks(1)?.firstOrNull()
+                    if (video != null && player.isPlaying) {
+                        player.unselectTrackType(1)
+                        SystemClock.sleep(100)
+                        player.selectTrack(video.id)
+                        SystemClock.sleep(500)
+                    }
                     player.stop()
                 }
             } finally { player.release() }
