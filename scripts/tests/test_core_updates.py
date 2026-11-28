@@ -170,11 +170,9 @@ class CoreUpdateTest(unittest.TestCase):
         self.assertEqual(withheld, {"first": NEW})
 
     def test_build_system_preflight_runs_production_helpers(self):
-        from core_hotpath_remaining import PATCHES
         for name, jni, required, helper in (
                 ("mupen64plus_next_gles3", "libretro", {"libretro/jni/Android.mk", "libretro-common/libco/amd64.c"}, "prepare_ndk"),
                 ("snes9x2010", ".", {"jni/Android.mk", "build/Makefile.common"}, "prepare_ndk"),
-                ("panda3ds", ".", {"CMakeLists.txt"}, "prepare_cmake"),
                 ("swanstation", ".", {"CMakeLists.txt"}, "prepare_cmake")):
             core = {"core": name, "jni": jni, "repo": "https://github.com/a/b", "commit": "a"*40}
             with mock.patch.object(updater, "get_bytes", return_value=b"source") as fetch, mock.patch(
@@ -184,10 +182,34 @@ class CoreUpdateTest(unittest.TestCase):
                 self.assertTrue(required <= {call.args[0].split(NEW+"/", 1)[1] for call in fetch.call_args_list})
                 prepare.assert_called_once()
 
+    def test_snes9x2010_build_only_preflight_checks_real_recipe(self):
+        core = {"core": "snes9x2010", "jni": ".", "repo": "https://github.com/a/b", "commit": "a"*40}
+        files = {
+            "jni/Android.mk": b"include $(CORE_DIR)/build/Makefile.common\nLOCAL_CFLAGS := $(COREFLAGS)\n",
+            "build/Makefile.common": b"ifneq ($(HAVE_THREADS),0)\nrthreads/retro_eventcount.c rthreads/rthreads.c\nendif\n",
+        }
+        def fetch(url):
+            return files[url.split(NEW + "/", 1)[1]]
+        with mock.patch.object(updater, "get_bytes", side_effect=fetch), mock.patch(
+                "core_hotpath_patches.prepare_hotpaths") as patcher:
+            self.assertTrue(updater.core_candidate_compatible(core, NEW))
+            files["jni/Android.mk"] = b"changed recipe"
+            self.assertFalse(updater.core_candidate_compatible(core, NEW))
+            patcher.assert_not_called()
+
+    def test_upstream_only_core_has_no_artificial_patch_preflight(self):
+        for name in ("picodrive", "panda3ds"):
+            core = {"core": name, "jni": ".", "repo": "https://github.com/a/b", "commit": "a"*40}
+            with mock.patch.object(updater, "get_bytes") as fetch:
+                self.assertTrue(updater.core_candidate_compatible(core, NEW))
+                fetch.assert_not_called()
+
     def test_candidate_anchor_preflight(self):
         from core_hotpath_remaining import PATCHES
-        path, old, _ = PATCHES["picodrive"][0]
-        core = {"core": "picodrive", "repo": "https://github.com/a/b", "commit": "a"*40}
+        # Exercise an active single-anchor patch. PicoDrive now selects
+        # its upstream SH2 dynarec via build flags, not this patch table.
+        path, old, _ = PATCHES["pcsx_rearmed"][0]
+        core = {"core": "pcsx_rearmed", "repo": "https://github.com/a/b", "commit": "a"*40}
         with mock.patch.object(updater, "get_bytes", return_value=old.encode()) as fetch:
             self.assertTrue(updater.core_candidate_compatible(core, NEW))
             fetch.assert_called_once_with(f"https://raw.githubusercontent.com/a/b/{NEW}/{path}")
