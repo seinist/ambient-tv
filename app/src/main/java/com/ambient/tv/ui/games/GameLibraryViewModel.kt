@@ -572,7 +572,7 @@ class GameLibraryViewModel @Inject constructor(
             scanProcessed = 0, scanDiscovered = 0) }
         if (scanFiles) metadata.importLocalFolder(folder.id, systemId = systemId)
         try {
-            metadata.enrichFolder(folder.id, automatic = scanFiles, systemId = systemId) { processed, known ->
+            metadata.enrichFolder(folder.id, automatic = scanFiles, systemId = systemId, maxParallelism = 2) { processed, known ->
                 mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
             }
         } catch (error: GameMetadataBatchException) {

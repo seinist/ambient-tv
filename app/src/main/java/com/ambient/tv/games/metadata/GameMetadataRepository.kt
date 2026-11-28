@@ -283,6 +283,7 @@ class GameMetadataRepository @Inject constructor(
         if (!options.enabled) return@withGame false
         val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
         var old = library.metadata(current.fileId)
+        var lookupGame = current
         // Avoid repeating local catalog searches for a completed automatic lookup.
         // Manual matches still get their dedicated recovery path.
         val initialProvider = old?.takeIf { it.matchLocked }?.provider ?: GameMetadataPlatforms.automaticProvider(
@@ -308,6 +309,7 @@ class GameMetadataRepository @Inject constructor(
             currentCoroutineContext().ensureActive()
             if (!library.saveMetadata(ticket, named)) return@withGame false
             old = library.metadata(current.fileId)
+            lookupGame = current.copy(metadataTitle = old?.title)
         }
         val platformQuery = GameMetadataQuery(current.systemId, current.title, current.filename)
         val provider = old?.takeIf { it.matchLocked }?.provider ?: GameMetadataPlatforms.automaticProvider(
@@ -316,9 +318,9 @@ class GameMetadataRepository @Inject constructor(
         if (old?.matchLocked == true && provider !in providers.availableProviders())
             throw GameMetadataProviderException(GameMetadataFailure.CREDENTIALS)
         val known = old?.takeIf { it.provider == provider }
-        val query = gameMetadataQuery(current, known, settings.language(), options.region,
+        val query = gameMetadataQuery(lookupGame, known, settings.language(), options.region,
             ticket.crc32, provider = provider)
-        val fingerprint = gameMetadataLookupFingerprint(provider, gameMetadataFingerprint(current, query))
+        val fingerprint = gameMetadataLookupFingerprint(provider, gameMetadataFingerprint(lookupGame, query))
         // A manually chosen catalog name may still lack a proven thumbnail namespace.
         // Neither an earlier miss nor the recent text edit can postpone resolving it.
         val unresolvedLibretro = known?.provider == GameMetadataProviderIds.LIBRETRO &&
@@ -461,6 +463,7 @@ class GameMetadataRepository @Inject constructor(
     suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
                              prioritizedFileIds: () -> List<String> = SharedGameArtworkPriority::prioritizedFileIds,
                              systemId: String? = null,
+                             maxParallelism: Int = 1,
                              onProgress: (Int, Int) -> Unit = { _, _ -> }): Unit =
         withContext(Dispatchers.IO) {
             coroutineScope {
@@ -498,33 +501,49 @@ class GameMetadataRepository @Inject constructor(
                         }
                     }
                     try {
-                    onProgress(0, total)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        if (library.folders().none { it.id == folderId }) break
-                        val game = queue.next() ?: break
-                        currentCoroutineContext().ensureActive()
-                        try {
-                            refresh(game)
-                        } catch (error: IOException) {
-                            // A bad response for one ROM must not strand the rest of a NAS
-                            // library. Connectivity, credentials, quotas and storage errors
-                            // still stop immediately; a missing match is not an error.
-                            if (error !is GameArtworkValidationException &&
-                                (error !is GameMetadataProviderException || error.kind != GameMetadataFailure.INVALID_RESPONSE))
-                                throw error
-                            failed++
-                            if (firstFailure == null) firstFailure = error
+                        onProgress(0, total)
+                        // The queue is single-owner under this mutex. Only the public
+                        // Libretro image endpoint gets a second worker; authenticated
+                        // providers retain serial requests and their quota behavior.
+                        val batchLock = Mutex()
+                        val parallelism = if (options.provider == GameMetadataProviderIds.LIBRETRO)
+                            maxParallelism.coerceIn(1, 2) else 1
+                        suspend fun worker() {
+                            while (true) {
+                                currentCoroutineContext().ensureActive()
+                                val game = batchLock.withLock {
+                                    if (library.folders().none { it.id == folderId }) null else queue.next()
+                                } ?: break
+                                currentCoroutineContext().ensureActive()
+                                val failure = try {
+                                    refresh(game)
+                                    null
+                                } catch (error: IOException) {
+                                    // Transport, credentials, rate limits and storage
+                                    // failures still cancel the entire structured batch.
+                                    if (error !is GameArtworkValidationException &&
+                                        (error !is GameMetadataProviderException || error.kind != GameMetadataFailure.INVALID_RESPONSE))
+                                        throw error
+                                    error
+                                }
+                                batchLock.withLock {
+                                    if (failure != null) {
+                                        failed++
+                                        if (firstFailure == null) firstFailure = failure
+                                    }
+                                    completed++
+                                    if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
+                                        library.flushMetadataBatch()
+                                        onProgress(completed, total)
+                                        lastPulse = System.nanoTime()
+                                    }
+                                }
+                            }
                         }
-                        completed++
-                        if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
-                            library.flushMetadataBatch()
-                            onProgress(completed, total)
-                            lastPulse = System.nanoTime()
-                        }
-                    }
-                    onProgress(completed, total)
-                    firstFailure?.let { throw GameMetadataBatchException(failed, completed, it) }
+                        if (parallelism == 1) worker()
+                        else (0 until parallelism).map { async { worker() } }.awaitAll()
+                        onProgress(completed, total)
+                        firstFailure?.let { throw GameMetadataBatchException(failed, completed, it) }
                     } finally { publisher.cancel() }
                 } finally { library.endMetadataBatch(); unregister(folderId, job) }
             }
