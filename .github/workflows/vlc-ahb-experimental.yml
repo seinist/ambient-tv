@@ -413,6 +413,8 @@ jobs:
           diagnostics() {
             adb devices -l || true
             timeout 20 adb logcat -d -t 4000 > "$logs/logcat.txt" 2>&1 || true
+            timeout 20 adb logcat -b crash -d > "$logs/crash.txt" 2>&1 || true
+            tail -n 100 "$logs/crash.txt" || true
             for log in "$logs"/emulator-*.log; do
               [[ ! -f "$log" ]] || tail -n 120 "$log"
             done

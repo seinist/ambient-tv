@@ -37,7 +37,7 @@ class SeekAudit : Instrumentation() {
                 inbox.offer(session, it)
                 if (it is VlcTimedMetadataPacket.Message.Epoch) received.offer(it)
             }).use { receiver ->
-                val lib = LibVLC(targetContext, arrayListOf("--vout=dummy", "--avcodec-hw=none", "--no-audio", "--verbose=2"))
+                val lib = LibVLC(targetContext, arrayListOf("--window=wdummy", "--vout=dummy", "--codec=avcodec", "--avcodec-hw=none", "--no-audio", "--verbose=2"))
                 try {
                     val player = MediaPlayer(lib)
                     try {

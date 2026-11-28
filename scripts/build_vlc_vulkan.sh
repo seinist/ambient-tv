@@ -144,6 +144,11 @@ if ! grep -q 'wildcard.*libintl.a' "$JNI/libvlc/jni/libvlc.mk"; then
 fi
 # Keep the visualizer used by the app (upstream's minimal Android build omits it).
 sed -i '/^[[:space:]]*visual$/d' "$JNI/buildsystem/build-libvlc.sh"
+# The linked seek audit uses VLC's real headless window/display modules.
+# Upstream builds their archives but excludes both from the static Android link.
+if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
+    sed -i '/^[[:space:]]*\.dummy[[:space:]]*$/d' "$JNI/buildsystem/build-libvlc.sh"
+fi
 # Upstream's probe used `which` as a standalone command under set -e.
 perl -0777 -i -pe 's/which autopoint >\/dev\/null\nif \[ ! \$\? -eq 0 \];then/if ! command -v autopoint >\/dev\/null; then/' "$JNI/buildsystem/build-libvlc.sh"
 perl -i -pe 's/find \$1 -name \x27\$2\x27/find "\$1" -name "\$2"/' "$JNI/buildsystem/build-libvlc.sh"
