@@ -19,8 +19,9 @@ compiler build is not proof of correct gameplay or a performance improvement.
   predecoded native MOV memory path, or prebound original opcode handler for
   complex operations. All MOV addressing forms preserve mapped bus callbacks,
   register aliasing, sign extension, retry cycles and write notifications.
-  Complex MAC, system-register, exception and delay-slot memory operations
-  retain their exact pinned handlers. This is not a full native SH2 JIT.
+  Predecoded complex memory operations include TAS, byte read-modify-write,
+  system-register loads/stores, MAC.W/MAC.L, TRAPA and RTE. Delay-slot execution
+  retains its original handler. This is not a full native SH2 JIT.
 * Both are artifact-only until the CI and device acceptance gates pass. Public
   channels do not silently select these binaries.
 

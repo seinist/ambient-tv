@@ -46,6 +46,26 @@ static inline uint32_t ambient_mem_address(AmbientMemOp a,const uint32_t* r,uint
     default:return 0;
     }
 }
+enum AmbientComplexMode { AC_NONE, AC_TST, AC_AND, AC_XOR, AC_OR, AC_TAS,
+                          AC_LOAD_SYS, AC_STORE_SYS, AC_MACW, AC_MACL, AC_TRAP, AC_RTE };
+typedef struct {
+    uint8_t mode, n, m, control, sys, imm;
+} AmbientComplexMem;
+static inline AmbientComplexMem ambient_complex_decode(uint16_t op) {
+    AmbientComplexMem a={0,(op>>8)&15,(op>>4)&15,0,0,op&255};
+    if ((op&0xff00)>=0xcc00 && (op&0xff00)<=0xcf00)
+        a.mode=AC_TST+((op>>8)&3);
+    else if ((op&0xf0ff)==0x401b) a.mode=AC_TAS;
+    else if ((op&0xf000)==0x4000 && a.m<=2 &&
+             ((op&15)==2||(op&15)==3||(op&15)==6||(op&15)==7)) {
+        a.mode=(op&4)?AC_LOAD_SYS:AC_STORE_SYS;
+        a.control=op&1;a.sys=a.m;
+    } else if ((op&0xf00f)==0x400f) a.mode=AC_MACW;
+    else if ((op&0xf00f)==0x000f) a.mode=AC_MACL;
+    else if ((op&0xff00)==0xc300) a.mode=AC_TRAP;
+    else if (op==0x002b) a.mode=AC_RTE;
+    return a;
+}
 #if defined(AMBIENT_SH2_ARM64_JIT)
 static inline void ambient_mem_execute(SH2_struct* sh,AmbientMemOp a) {
     const u32 addr=ambient_mem_address(a,sh->regs.R,sh->regs.PC,sh->regs.GBR);
@@ -72,6 +92,90 @@ static inline void ambient_mem_execute(SH2_struct* sh,AmbientMemOp a) {
         if(a.mode==AM_PRE)sh->regs.R[a.base]-=a.size;
     }
     sh->regs.PC+=2;++sh->cycles;
+}
+
+static inline u32* ambient_sysreg(SH2_struct* sh,AmbientComplexMem a) {
+    if(a.control) {
+        switch(a.sys){case 0:return &sh->regs.SR.all;case 1:return &sh->regs.GBR;default:return &sh->regs.VBR;}
+    }
+    switch(a.sys){case 0:return &sh->regs.MACH;case 1:return &sh->regs.MACL;default:return &sh->regs.PR;}
+}
+static inline void ambient_complex_execute(SH2_struct* sh,AmbientComplexMem a) {
+    unsigned cycles=1;
+    switch(a.mode) {
+    case AC_TST:case AC_AND:case AC_XOR:case AC_OR: {
+        u32 value=sh->MappedMemoryReadByte(sh,sh->regs.GBR+sh->regs.R[0]);
+        if(a.mode==AC_TST)sh->regs.SR.part.T=(value&a.imm)==0;
+        else {
+            if(a.mode==AC_AND)value&=a.imm;
+            else if(a.mode==AC_XOR)value^=a.imm;
+            else value|=a.imm;
+            sh->MappedMemoryWriteByte(sh,sh->regs.GBR+sh->regs.R[0],value);
+        }
+        cycles=3;break;
+    }
+    case AC_TAS: {
+        u32 value=sh->MappedMemoryReadByte(sh,sh->regs.R[a.n]);
+        sh->regs.SR.part.T=value==0;
+        sh->MappedMemoryWriteByte(sh,sh->regs.R[a.n],value|128u);
+        cycles=4;break;
+    }
+    case AC_LOAD_SYS: {
+        u32 value=sh->MappedMemoryReadLong(sh,sh->regs.R[a.n]);
+        if(a.control && a.sys==0)value&=0x3f3u;
+        *ambient_sysreg(sh,a)=value;
+        sh->regs.R[a.n]+=4;
+        cycles=a.control?3:1;break;
+    }
+    case AC_STORE_SYS:
+        sh->regs.R[a.n]-=4;
+        sh->MappedMemoryWriteLong(sh,sh->regs.R[a.n],*ambient_sysreg(sh,a));
+        cycles=a.control?2:1;break;
+    case AC_MACW: {
+        const s16 n=(s16)sh->MappedMemoryReadWord(sh,sh->regs.R[a.n]);sh->regs.R[a.n]+=2;
+        const s16 m=(s16)sh->MappedMemoryReadWord(sh,sh->regs.R[a.m]);sh->regs.R[a.m]+=2;
+        const int64_t product=(int32_t)n*(int32_t)m;
+        if(sh->regs.SR.part.S) {
+            const int64_t sum=(int64_t)(s32)sh->regs.MACL+product;
+            sh->regs.MACL=sum>INT32_MAX?INT32_MAX:sum<INT32_MIN?(u32)INT32_MIN:(u32)sum;
+        } else {
+            const uint64_t acc=((uint64_t)sh->regs.MACH<<32)|sh->regs.MACL;
+            const uint64_t result=acc+(uint64_t)product;
+            sh->regs.MACH=(u32)(result>>32);sh->regs.MACL=(u32)result;
+        }
+        cycles=3;break;
+    }
+    case AC_MACL: {
+        const s32 n=(s32)sh->MappedMemoryReadLong(sh,sh->regs.R[a.n]);sh->regs.R[a.n]+=4;
+        const s32 m=(s32)sh->MappedMemoryReadLong(sh,sh->regs.R[a.m]);sh->regs.R[a.m]+=4;
+        const uint64_t product=(uint64_t)((int64_t)n*m);
+        const uint64_t low=(uint64_t)sh->regs.MACL+(u32)product;
+        u32 high=(u32)(product>>32)+(u32)(low>>32);
+        u32 result=(u32)low;
+        if(sh->regs.SR.part.S) {
+            // Preserve the pinned core's exact MACH saturation arithmetic,
+            // including its historical high-half sign-extension convention.
+            if(!(sh->regs.MACH&0x8000u))high+=sh->regs.MACH|0xffff0000u;
+            high+=sh->regs.MACH&0xffffu;
+            if((s32)high<0 && high<0xffff8000u){high=0x8000;result=0;}
+            if((s32)high>0 && high>0x7fffu){high=0x7fff;result=0xffffffffu;}
+        } else high+=sh->regs.MACH;
+        sh->regs.MACH=high;sh->regs.MACL=result;cycles=3;break;
+    }
+    case AC_TRAP:
+        sh->regs.R[15]-=4;sh->MappedMemoryWriteLong(sh,sh->regs.R[15],sh->regs.SR.all);
+        sh->regs.R[15]-=4;sh->MappedMemoryWriteLong(sh,sh->regs.R[15],sh->regs.PC+2);
+        sh->regs.PC=sh->MappedMemoryReadLong(sh,sh->regs.VBR+(u32)a.imm*4);
+        sh->cycles+=8;return;
+    case AC_RTE: {
+        const u32 pc=sh->regs.PC;
+        sh->regs.PC=sh->MappedMemoryReadLong(sh,sh->regs.R[15]);sh->regs.R[15]+=4;
+        sh->regs.SR.all=sh->MappedMemoryReadLong(sh,sh->regs.R[15])&0x3f3u;sh->regs.R[15]+=4;
+        sh->cycles+=4;SH2delay(sh,pc+2);return;
+    }
+    default:return;
+    }
+    sh->regs.PC+=2;sh->cycles+=cycles;
 }
 #endif
 #endif

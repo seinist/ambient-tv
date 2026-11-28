@@ -243,6 +243,7 @@ typedef struct {
     uint16_t terminal;
     unsigned has_terminal;
     AmbientMemOp memory;
+    AmbientComplexMem complex_memory;
     opcodefunc terminal_handler;
     void* code;
     size_t bytes;
@@ -303,6 +304,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
                                                    context->regs.SR.all);
                 if (cost) context->cycles += cost;
                 else if (block->memory.mode) ambient_mem_execute(context, block->memory);
+                else if (block->complex_memory.mode) ambient_complex_execute(context, block->complex_memory);
                 else {
                     // Delay-slot, MMIO, bus-wait and self-modifying store
                     // semantics remain in the exact existing opcode handler.
@@ -342,6 +344,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
             if (count >= 2) {
                 block->terminal = op;
                 block->memory = ambient_mem_decode(op);
+                block->complex_memory = ambient_complex_decode(op);
                 block->terminal_handler = ((opcodefunc*)context->opcodes)[op];
                 block->has_terminal = 1;
             }

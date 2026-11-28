@@ -126,8 +126,8 @@ int main() {
 typedef uint32_t u32; typedef int32_t s32; typedef int16_t s16; typedef int8_t s8;
 typedef struct SH2_struct SH2_struct;
 struct SH2_struct {
-    struct {u32 R[16],PC,GBR;} regs;
-    u32 cycles, addr, value, calls, width, stalled;
+    struct {u32 R[16],PC,GBR,VBR,MACH,MACL,PR; union {u32 all;struct {u32 T:1,S:1;} part;} SR;} regs;
+    u32 cycles, addr, value, calls, width, stalled, delay_addr;
     u32 (*MappedMemoryReadByte)(SH2_struct*,u32);
     u32 (*MappedMemoryReadWord)(SH2_struct*,u32);
     u32 (*MappedMemoryReadLong)(SH2_struct*,u32);
@@ -139,6 +139,7 @@ static int sh2_check_wait(SH2_struct* s,u32 a,int w){(void)a;(void)w;return s->s
 #define READ(N) static u32 read##N(SH2_struct* s,u32 a){s->addr=a;s->width=N;++s->calls;return s->value;}
 #define WRITE(N) static void write##N(SH2_struct* s,u32 a,u32 v){s->addr=a;s->width=N;s->value=v;++s->calls;}
 READ(1) READ(2) READ(4) WRITE(1) WRITE(2) WRITE(4)
+static void SH2delay(SH2_struct* s,u32 addr){s->delay_addr=addr;}
 #define AMBIENT_SH2_ARM64_JIT 1
 #include "sh2_memory.h"
 int main(void) {
@@ -173,6 +174,40 @@ int main(void) {
     assert(supported==23552);
     assert(ambient_mem_decode(0x6125).mode==AM_POST);
     assert(ambient_mem_decode(0x2116).mode==AM_PRE);
+    unsigned complex=0;
+    for(unsigned op=0;op<65536;++op) {
+        AmbientComplexMem a=ambient_complex_decode(op);
+        if(!a.mode)continue;
+        ++complex;
+        assert(!ambient_mem_decode(op).mode);
+        for(unsigned i=0;i<16;++i)s.regs.R[i]=0x1000+i*16;
+        s.regs.PC=0x1002;s.regs.GBR=0x5000;s.regs.VBR=0x8000;
+        s.regs.SR.all=0;s.regs.MACH=0;s.regs.MACL=0;s.regs.PR=0x9876;
+        s.calls=0;s.cycles=0;s.value=3;s.stalled=0;s.delay_addr=0;
+        ambient_complex_execute(&s,a);
+        switch(a.mode) {
+        case AC_TST:assert(s.calls==1&&s.cycles==3&&s.regs.SR.part.T==((3&a.imm)==0));break;
+        case AC_AND:assert(s.calls==2&&s.cycles==3&&s.value==(3u&a.imm));break;
+        case AC_XOR:assert(s.calls==2&&s.cycles==3&&s.value==(3u^a.imm));break;
+        case AC_OR:assert(s.calls==2&&s.cycles==3&&s.value==(3u|a.imm));break;
+        case AC_TAS:assert(s.calls==2&&s.cycles==4&&s.value==131&&!s.regs.SR.part.T);break;
+        case AC_LOAD_SYS:assert(s.calls==1&&s.cycles==(a.control?3u:1u)&&s.regs.R[a.n]==0x1004+a.n*16u&&*ambient_sysreg(&s,a)==3);break;
+        case AC_STORE_SYS:assert(s.calls==1&&s.cycles==(a.control?2u:1u)&&s.regs.R[a.n]==0xffc+a.n*16u&&s.value==*ambient_sysreg(&s,a));break;
+        case AC_MACW:case AC_MACL:assert(s.calls==2&&s.cycles==3&&s.regs.MACL==9&&s.regs.MACH==0);break;
+        case AC_TRAP:assert(s.calls==3&&s.cycles==8&&s.regs.R[15]==0x10e8&&s.addr==0x8000+a.imm*4u);break;
+        case AC_RTE:assert(s.calls==2&&s.cycles==4&&s.regs.R[15]==0x10f8&&s.delay_addr==0x1004);break;
+        default:assert(0);
+        }
+        if(a.mode!=AC_TRAP&&a.mode!=AC_RTE)assert(s.regs.PC==0x1004);
+    }
+    assert(complex==2001);
+    // Signed overflow, negative products and same-register memory aliases.
+    s.regs.R[1]=0x2000;s.regs.MACL=INT32_MAX;s.regs.SR.all=2;s.value=0x7fff;
+    ambient_complex_execute(&s,ambient_complex_decode(0x411f));
+    assert(s.regs.MACL==INT32_MAX&&s.regs.R[1]==0x2004);
+    s.regs.R[1]=0x2000;s.regs.MACL=0;s.regs.MACH=0;s.regs.SR.all=0;s.value=0x80000000u;
+    ambient_complex_execute(&s,ambient_complex_decode(0x011f));
+    assert(s.regs.MACH==0x40000000u&&s.regs.MACL==0&&s.regs.R[1]==0x2008);
 }
 """)
             binary=path.with_suffix("")
