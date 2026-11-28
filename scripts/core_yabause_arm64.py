@@ -17,6 +17,8 @@ def prepare(root):
     path.write_text(source)
     shutil.copyfile(Path(__file__).parent / "native_core_candidates/sh2_arm64.h",
                     path.with_name("ambient_sh2_arm64.h"))
+    shutil.copyfile(Path(__file__).parent / "native_core_candidates/sh2_memory.h",
+                    path.with_name("ambient_sh2_memory.h"))
     makefile = root / "yabause/src/libretro/jni/Android.mk"
     source = makefile.read_text()
     marker = "COREFLAGS := $(FLAGS)"

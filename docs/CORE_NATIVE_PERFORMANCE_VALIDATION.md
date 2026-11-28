@@ -16,8 +16,11 @@ compiler build is not proof of correct gameplay or a performance improvement.
   differential tests cover emitted opcode encodings including shift/rotate T
   flags, carry/borrow, overflow, CMP/STR and mixed instruction blocks. Non-delay BT/BF branches use their exact cycle charge in the block
   exit; other terminal operations reuse a validated fetch and invoke the
-  original opcode handler (including memory/MMIO, bus waits and delay slots).
-  This is intentionally not a claim of full native SH2 instruction coverage.
+  predecoded native MOV memory path, or prebound original opcode handler for
+  complex operations. All MOV addressing forms preserve mapped bus callbacks,
+  register aliasing, sign extension, retry cycles and write notifications.
+  Complex MAC, system-register, exception and delay-slot memory operations
+  retain their exact pinned handlers. This is not a full native SH2 JIT.
 * Both are artifact-only until the CI and device acceptance gates pass. Public
   channels do not silently select these binaries.
 

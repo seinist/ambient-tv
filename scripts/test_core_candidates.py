@@ -113,3 +113,69 @@ int main() {
             subprocess.run([compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
                             "-pthread", "-I", str(header), str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
+
+    def test_sh2_memory_addressing_and_bus_semantics(self):
+        compiler=shutil.which("cc")
+        self.assertIsNotNone(compiler)
+        header=Path(__file__).parent/"native_core_candidates"
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"memory.c"
+            path.write_text(r"""
+#include <assert.h>
+#include <stdint.h>
+typedef uint32_t u32; typedef int32_t s32; typedef int16_t s16; typedef int8_t s8;
+typedef struct SH2_struct SH2_struct;
+struct SH2_struct {
+    struct {u32 R[16],PC,GBR;} regs;
+    u32 cycles, addr, value, calls, width, stalled;
+    u32 (*MappedMemoryReadByte)(SH2_struct*,u32);
+    u32 (*MappedMemoryReadWord)(SH2_struct*,u32);
+    u32 (*MappedMemoryReadLong)(SH2_struct*,u32);
+    void (*MappedMemoryWriteByte)(SH2_struct*,u32,u32);
+    void (*MappedMemoryWriteWord)(SH2_struct*,u32,u32);
+    void (*MappedMemoryWriteLong)(SH2_struct*,u32,u32);
+};
+static int sh2_check_wait(SH2_struct* s,u32 a,int w){(void)a;(void)w;return s->stalled;}
+#define READ(N) static u32 read##N(SH2_struct* s,u32 a){s->addr=a;s->width=N;++s->calls;return s->value;}
+#define WRITE(N) static void write##N(SH2_struct* s,u32 a,u32 v){s->addr=a;s->width=N;s->value=v;++s->calls;}
+READ(1) READ(2) READ(4) WRITE(1) WRITE(2) WRITE(4)
+#define AMBIENT_SH2_ARM64_JIT 1
+#include "sh2_memory.h"
+int main(void) {
+    SH2_struct s={0};
+    s.MappedMemoryReadByte=read1;s.MappedMemoryReadWord=read2;s.MappedMemoryReadLong=read4;
+    s.MappedMemoryWriteByte=write1;s.MappedMemoryWriteWord=write2;s.MappedMemoryWriteLong=write4;
+    unsigned supported=0;
+    for(unsigned op=0;op<65536;++op) {
+        AmbientMemOp a=ambient_mem_decode(op);
+        if(!a.mode)continue;
+        ++supported;
+        assert(a.size==1||a.size==2||a.size==4);
+        for(unsigned i=0;i<16;++i)s.regs.R[i]=0x1000+i*16;
+        s.regs.PC=0x1002;s.regs.GBR=0x5000;s.calls=0;s.cycles=0;s.value=0xdead8080u;s.stalled=0;
+        u32 addr=ambient_mem_address(a,s.regs.R,s.regs.PC,s.regs.GBR);
+        u32 oldbase=s.regs.R[a.base],oldvalue=s.regs.R[a.reg];
+        ambient_mem_execute(&s,a);
+        assert(s.calls==1&&s.addr==addr&&s.width==a.size&&s.cycles==1&&s.regs.PC==0x1004);
+        if(a.load) {
+            assert(s.regs.R[a.reg]==(a.size==1?0xffffff80u:a.size==2?0xffff8080u:0xdead8080u));
+            if(a.mode==AM_POST && a.reg!=a.base)assert(s.regs.R[a.base]==oldbase+a.size);
+        } else {
+            assert(s.value==oldvalue);
+            if(a.mode==AM_PRE)assert(s.regs.R[a.base]==oldbase-a.size);
+        }
+        if(a.wait) {
+            s.stalled=1;s.calls=0;s.cycles=0;s.regs.PC=0x1002;
+            ambient_mem_execute(&s,a);
+            assert(!s.calls&&s.cycles==1&&s.regs.PC==0x1002);
+        }
+    }
+    assert(supported==23552);
+    assert(ambient_mem_decode(0x6125).mode==AM_POST);
+    assert(ambient_mem_decode(0x2116).mode==AM_PRE);
+}
+""")
+            binary=path.with_suffix("")
+            subprocess.run([compiler,"-std=c99","-O2","-Wall","-Wextra","-Werror",
+                            "-fsanitize=undefined","-I",str(header),str(path),"-o",str(binary)],check=True)
+            subprocess.run([str(binary)],check=True)

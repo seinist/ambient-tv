@@ -232,6 +232,7 @@ static inline unsigned ambient_sh2_branch(uint16_t op, uint32_t* pc, uint32_t sr
 #include <sys/mman.h>
 #include <unistd.h>
 #include <string.h>
+#include "ambient_sh2_memory.h"
 #define AMBIENT_SH2_SLOTS 64
 #define AMBIENT_SH2_HOT 4
 
@@ -241,6 +242,8 @@ typedef struct {
     unsigned count, hits;
     uint16_t terminal;
     unsigned has_terminal;
+    AmbientMemOp memory;
+    opcodefunc terminal_handler;
     void* code;
     size_t bytes;
 } AmbientSh2Block;
@@ -299,11 +302,12 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
                 unsigned cost = ambient_sh2_branch(block->terminal, &context->regs.PC,
                                                    context->regs.SR.all);
                 if (cost) context->cycles += cost;
+                else if (block->memory.mode) ambient_mem_execute(context, block->memory);
                 else {
                     // Delay-slot, MMIO, bus-wait and self-modifying store
                     // semantics remain in the exact existing opcode handler.
                     // End the block immediately after the potentially mutating access.
-                    ((opcodefunc*)context->opcodes)[context->instruction](context);
+                    block->terminal_handler(context);
                 }
             }
             return 1;
@@ -337,6 +341,8 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
             // precompile beyond a potentially mutating memory/control operation.
             if (count >= 2) {
                 block->terminal = op;
+                block->memory = ambient_mem_decode(op);
+                block->terminal_handler = ((opcodefunc*)context->opcodes)[op];
                 block->has_terminal = 1;
             }
             break;
