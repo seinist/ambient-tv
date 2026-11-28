@@ -1264,7 +1264,7 @@ PATCHES = {
     [
       "Common/Thread/ThreadManager.cpp",
       "\tnumComputeThreads_ = std::min(32, numRealCores * numLogicalCoresPerCpu);\n\t// Double it for the IO blocking threads.\n\tconst int numIOThreads = std::min(32, std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_) * 2);",
-      "\tconst int configured = std::max(1, std::min(32, std::min(32, std::max(1, numRealCores)) *\n\t    std::min(32, std::max(1, numLogicalCoresPerCpu))));\n\tnumComputeThreads_ = configured;\n#ifdef __ANDROID__\n\t// Respect the current Android cpuset, not merely the installed CPUs.\n\t// Reserve capacity for the emulation/render threads and keep independent\n\t// IO workers so blocking storage cannot starve the compute pool.\n\tcpu_set_t available;\n\tCPU_ZERO(&available);\n\tint effective = configured;\n\tif (sched_getaffinity(0, sizeof(available), &available) == 0) {\n\t\tconst int count = CPU_COUNT(&available);\n\t\tif (count > 0) effective = std::min(configured, count);\n\t}\n\tnumComputeThreads_ = std::max(1, effective - (effective >= 4 ? 2 : 1));\n\tconst int numIOThreads = std::min(16, std::max(MIN_IO_BLOCKING_THREADS, effective));\n#else\n\tconst int numIOThreads = std::min(32, std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_) * 2);\n#endif"
+      "\tconst int configured = std::max(1, std::min(32, std::min(32, std::max(1, numRealCores)) *\n\t    std::min(32, std::max(1, numLogicalCoresPerCpu))));\n\tnumComputeThreads_ = configured;\n#ifdef __ANDROID__\n\t// Keep stable worker indices for pinned tasks; adapt the width of\n\t// future parallel loops to the frontend's current Android cpuset.\n\tnumComputeThreads_ = ambient_compute_width(configured, configured);\n\tbudgetRefreshFrames_ = 0;\n\tRefreshComputeBudget();\n\tconst int numIOThreads = std::min(16, std::max(MIN_IO_BLOCKING_THREADS, configured));\n#else\n\tconst int numIOThreads = std::min(32, std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_) * 2);\n\tactiveComputeThreads_.store(numComputeThreads_, std::memory_order_relaxed);\n#endif"
     ],
     [
       "libretro/libretro.cpp",
@@ -1290,6 +1290,56 @@ PATCHES = {
       "libretro/libretro.cpp",
       "   int32_t values = numSamples * 2; // stereo\n   if (output_audio_buffer.capacity - output_audio_buffer.size < values) {\n      if (!ensure_output_audio_buffer_capacity((int32_t)((output_audio_buffer.capacity + values) * 1.5f)))\n         return;\n   }\n\n   // Convert straight into the output buffer.\n   int16_t *dst = output_audio_buffer.data + output_audio_buffer.size;\n   for (int32_t i = 0; i < values; i++)\n      dst[i] = Clamp16(audio[i]);\n   output_audio_buffer.size += values;",
       "   // Bound exceptional backlog to one second of stereo audio. Avoid\n   // signed overflow or an enormous allocation after a stalled frontend.\n   constexpr int32_t maxValues = SAMPLERATE * 2;\n   if (numSamples > maxValues / 2)\n      return;\n   const int32_t values = numSamples * 2;\n   if (output_audio_buffer.size > maxValues - values)\n      return;\n   const int32_t required = output_audio_buffer.size + values;\n   if (output_audio_buffer.capacity < required) {\n      const int32_t grown = output_audio_buffer.capacity + output_audio_buffer.capacity / 2;\n      const int32_t capacity = std::min(maxValues, std::max(required, grown));\n      if (!ensure_output_audio_buffer_capacity(capacity))\n         return;\n   }\n\n   // Preserve the PSP core's unusual -32767 lower clamp exactly.\n   int16_t *dst = output_audio_buffer.data + output_audio_buffer.size;\n   int32_t i = 0;\n#if defined(__ARM_NEON) || defined(__aarch64__)\n   const int16x8_t lower = vdupq_n_s16(-32767);\n   for (; i + 8 <= values; i += 8) {\n      const int16x8_t packed = vcombine_s16(vqmovn_s32(vld1q_s32(audio + i)),\n                                          vqmovn_s32(vld1q_s32(audio + i + 4)));\n      vst1q_s16(dst + i, vmaxq_s16(packed, lower));\n   }\n#endif\n   for (; i < values; ++i)\n      dst[i] = Clamp16(audio[i]);\n   output_audio_buffer.size += values;"
+    ],
+    [
+      "Common/Thread/ThreadManager.h",
+      "#include <cstdint>",
+      "#include <cstdint>\n#include <atomic>"
+    ],
+    [
+      "Common/Thread/ThreadManager.h",
+      "\tint GetNumLooperThreads() const;",
+      "\tint GetNumLooperThreads() const;\n\t// Call from the serialized frontend frame boundary, not from workers.\n\tvoid RefreshComputeBudget();"
+    ],
+    [
+      "Common/Thread/ThreadManager.h",
+      "\tint numComputeThreads_ = 0;",
+      "\tint numComputeThreads_ = 0;\n\tstd::atomic<int> activeComputeThreads_{1};\n\tuint32_t budgetRefreshFrames_ = 0;"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "void ThreadManager::Init(int numRealCores, int numLogicalCoresPerCpu) {",
+      "[[maybe_unused]] static int ambient_compute_width(int capacity, int available) {\n\tavailable = std::max(1, available);\n\treturn std::max(1, std::min(capacity, available - (available >= 4 ? 2 : 1)));\n}\n\nvoid ThreadManager::RefreshComputeBudget() {\n#ifdef __ANDROID__\n\tif (budgetRefreshFrames_++ % 60 != 0)\n\t\treturn;\n\tcpu_set_t available;\n\tCPU_ZERO(&available);\n\tint count = 0;\n\tif (sched_getaffinity(0, sizeof(available), &available) == 0)\n\t\tcount = CPU_COUNT(&available);\n\tif (count > 0)\n\t\tactiveComputeThreads_.store(ambient_compute_width(numComputeThreads_, count), std::memory_order_relaxed);\n\telse\n\t\tactiveComputeThreads_.store(numComputeThreads_, std::memory_order_relaxed);\n#endif\n}\n\nvoid ThreadManager::Init(int numRealCores, int numLogicalCoresPerCpu) {"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "\t\tmaxThread = numComputeThreads_;",
+      "\t\tmaxThread = GetNumLooperThreads();"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "\tstd::atomic<int> roundRobin;",
+      "\tstd::atomic<uint32_t> roundRobin;"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "\tint chosenIndex = global_->roundRobin++;\n\tchosenIndex = minThread + (chosenIndex % (maxThread - minThread));",
+      "\tconst uint32_t ticket = global_->roundRobin.fetch_add(1, std::memory_order_relaxed);\n\tconst int chosenIndex = minThread + static_cast<int>(ticket % static_cast<uint32_t>(maxThread - minThread));"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "\t\t\tstd::unique_lock<std::mutex> lock(thread->mutex);\n\t\t\tthread->private_queue[queueIndex].push_back(task);",
+      "\t\t\tstd::unique_lock<std::mutex> lock(thread->mutex);\n\t\t\tif (thread->queue_size.load() != 0)\n\t\t\t\tcontinue;\n\t\t\tthread->private_queue[queueIndex].push_back(task);"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "int ThreadManager::GetNumLooperThreads() const {\n\treturn numComputeThreads_;\n}",
+      "int ThreadManager::GetNumLooperThreads() const {\n\treturn activeComputeThreads_.load(std::memory_order_relaxed);\n}"
+    ],
+    [
+      "libretro/libretro.cpp",
+      "void retro_run(void) {\n   // Hold the graphics context",
+      "void retro_run(void) {\n   g_threadManager.RefreshComputeBudget();\n   // Hold the graphics context"
     ]
   ],
   "prosystem": [

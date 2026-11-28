@@ -212,3 +212,10 @@ RAM retains exact entry validation at scheduler boundaries. ARM64 indirect
 branches may directly invoke a validated, matching predicted successor, and
 BT/BF loops account for taken and not-taken guest cycles independently.
 Code slots share per-CPU W^X pages, reducing 16 KiB mapping overhead.
+
+PPSSPP refreshes its compute scheduling budget at the frontend frame boundary
+(every 60 frames on Android) using the current CPU affinity. Parallel-loop
+width and new global compute dispatch follow that budget, while existing
+worker indices and independent IO workers remain stable; no active tasks
+are cancelled or migrated during a cpuset change. Worker count is fixed
+until core teardown, intentionally avoiding unsafe live pool resizing.

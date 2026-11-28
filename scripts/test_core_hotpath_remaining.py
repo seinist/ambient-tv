@@ -17,6 +17,33 @@ def replacement(core, needle):
 
 
 class RemainingCoreHotpathTests(unittest.TestCase):
+    def test_ppsspp_adaptive_compute_width(self):
+        compiler = shutil.which("c++")
+        self.assertIsNotNone(compiler)
+        _, code = replacement("ppsspp", "void ThreadManager::Init(int numRealCores")
+        helper = code.split("void ThreadManager::RefreshComputeBudget")[0]
+        source = "#include <algorithm>\n#include <cassert>\n" + helper + r"""
+int main() {
+    assert(ambient_compute_width(6, 8)==6);
+    assert(ambient_compute_width(4, 6)==4);
+    assert(ambient_compute_width(4, 4)==2);
+    assert(ambient_compute_width(4, 2)==1);
+    assert(ambient_compute_width(4, 1)==1);
+    assert(ambient_compute_width(4, 32)==4);
+    for (int cap=1;cap<=32;++cap)
+        for (int cpus=0;cpus<=64;++cpus) {
+            const int n=ambient_compute_width(cap,cpus);
+            assert(n>=1 && n<=cap);
+        }
+}
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"budget.cpp"
+            path.write_text(source)
+            subprocess.run([compiler,"-std=c++17","-O2","-Wall","-Wextra","-Werror",
+                            str(path),"-o",str(path.with_suffix(""))],check=True)
+            subprocess.run([str(path.with_suffix(""))],check=True)
+
     def test_picodrive_hash_folds_mirrored_pc_bits(self):
         compiler=shutil.which("cc")
         self.assertIsNotNone(compiler)
