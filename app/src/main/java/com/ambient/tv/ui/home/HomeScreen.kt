@@ -51,6 +51,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.layout.width
@@ -979,16 +980,36 @@ internal fun LibraryContent(
         // Keep active-row visual state out of the parent composition. Each row's tiny layer
         // modifier observes this state independently, so a vertical focus change cannot rebuild
         // the whole Home row column.
-        val activeRowIndex = remember(state.playbackReturnRevision) {
-            mutableIntStateOf(middleStart + if (restoreArmed) restoreListIndex else 0)
+        val activeRowKey = remember(state.playbackReturnRevision) {
+            mutableStateOf(cyclicRows.getOrNull(middleStart + if (restoreArmed) restoreListIndex else 0))
         }
         // Covers the few frames between scroll completion and the target tile taking focus.
         // Read only from draw/layer lambdas below.
         val pendingVisualRow = remember { mutableStateOf<CyclicRowFocusKey?>(null) }
-        // The row that really holds focus. activeRowIndex only follows row-entry events, and a
-        // row whose focus never left (cancelled Up/Down, return from live TV) sends none: the
-        // index then pointed elsewhere and the focused row stayed invisible under the hero.
+        // Keep identities, not indices: Live TV and other background rows can be inserted or
+        // removed while a lazy column is settling. An old index may then identify a different row.
         val focusedRowKey = remember { mutableStateOf<CyclicRowFocusKey?>(null) }
+        val heroClipPx = with(density) { (heroHeight.toPx() * .96f).toInt() }
+        val visualRowKeys = remember(cyclicRows) { cyclicRows.mapTo(hashSetOf(), ::homePhysicalRowKey) }
+        val visibleHeroRow = remember(rowListState, cyclicIndices, visualRowKeys, heroClipPx) {
+            derivedStateOf {
+                val preferred = listOfNotNull(pendingVisualRow.value, focusedRowKey.value, activeRowKey.value)
+                    .firstOrNull { it in cyclicIndices }?.let(::homePhysicalRowKey)
+                val layout = rowListState.layoutInfo
+                // Lazy item offsets are relative to the content origin, not to the screen.
+                // Keep the outgoing row visible until the incoming row actually reaches the
+                // unmasked viewport. This matters when a live shelf has a different height.
+                homeVisibleHeroRow(
+                    preferred,
+                    layout.visibleItemsInfo.mapNotNull { item ->
+                        val key = item.key as? String ?: return@mapNotNull null
+                        if (key !in visualRowKeys) null else HomeHeroRowBounds(key, item.offset, item.size)
+                    },
+                    layout.viewportStartOffset + heroClipPx,
+                    layout.viewportEndOffset,
+                )
+            }
+        }
         LaunchedEffect(rowListState) {
             // A vertical move that never lands (target row not focusable in time) must not
             // keep its destination as the only visible row forever.
@@ -1021,7 +1042,7 @@ internal fun LibraryContent(
                 if (pending != null && pending != key) return@collectLatest
                 val index = cyclicIndices[key] ?: return@collectLatest
                 val alreadyCentered = rowCenteringGate.consume(key)
-                activeRowIndex.intValue = index
+                activeRowKey.value = key
                 if (pending == key) {
                     pendingVisualRow.value = null
                     // Focus arrives while the D-pad glide is still running; it centers the row.
@@ -1064,10 +1085,10 @@ internal fun LibraryContent(
                 val targetFirst = cyclicHomeRebaseViewportIndex(first, state.rowKeys.size, source.lap)
                     ?: return@collect
                 val targetRow = CyclicRowFocusKey(source.logical, HOME_CYCLIC_REBASE_LAP)
-                val physicalTarget = cyclicIndices[targetRow] ?: return@collect
+                if (targetRow !in cyclicIndices) return@collect
                 rowCenteringGate.markCentered(targetRow)
                 rowListState.scrollToItem(targetFirst, rowListState.firstVisibleItemScrollOffset)
-                activeRowIndex.intValue = physicalTarget
+                activeRowKey.value = targetRow
                 // Focus target is created lazily after the snap. The original physical tile
                 // may have left composition, so keep the request bounded to a few frames.
                 repeat(12) {
@@ -1154,7 +1175,7 @@ internal fun LibraryContent(
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                itemsIndexed(cyclicRows, key = { _, key -> "home-row:${key.lap}:${key.logical}" }, contentType = { _, key ->
+                itemsIndexed(cyclicRows, key = { _, key -> homePhysicalRowKey(key) }, contentType = { _, key ->
                     when {
                         key.logical in state.tvRows -> "live-tv-row"
                         key.logical.startsWith("shortcut:") || key.logical.startsWith(HOME_OFFLINE_ROW_PREFIX) -> "shortcut-row"
@@ -1162,22 +1183,17 @@ internal fun LibraryContent(
                     }
                 }) { rowIndex, physicalKey ->
                     val rowKey = physicalKey.logical
+                    val visualKey = homePhysicalRowKey(physicalKey)
                     Box(Modifier.onFocusChanged {
                         if (it.hasFocus) {
                             focusedRowKey.value = physicalKey
                             // Also what stays visible once focus moves on to the sidebar.
-                            if (pendingVisualRow.value == null && rowIndex >= 0) activeRowIndex.intValue = rowIndex
+                            if (pendingVisualRow.value == null) activeRowKey.value = physicalKey
                         } else if (focusedRowKey.value == physicalKey) focusedRowKey.value = null
-                    }.onlyActiveHeroRow(
-                        rowIndex,
-                        activeIndex = {
-                            // Change the only visible row at the start of a vertical glide,
-                            // not after the destination tile finally acquires focus.
-                            pendingVisualRow.value?.let(cyclicIndices::get)
-                                ?: focusedRowKey.value?.let(cyclicIndices::get)
-                                ?: activeRowIndex.intValue
-                        },
-                    ).then(
+                    }.graphicsLayer {
+                        // Only the draw layer observes scroll geometry; no row recomposition.
+                        alpha = if (visibleHeroRow.value == visualKey) 1f else 0f
+                    }.then(
                         if (rowIndex == middleStart) Modifier.onSizeChanged {
                             val height = with(density) { it.height.toDp() }
                             firstRowHeight = height
