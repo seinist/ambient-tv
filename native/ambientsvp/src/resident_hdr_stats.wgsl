@@ -322,7 +322,6 @@ fn collect(@builtin(global_invocation_id) id:vec3u){
 }
 var<workgroup> totals:array<u32,64>;
 var<workgroup> starts:array<u32,64>;
-var<workgroup> sums:array<f32,64>;
 var<workgroup> peaks:array<u32,64>;
 var<workgroup> pixels:u32;
 @compute @workgroup_size(64)
@@ -333,21 +332,20 @@ fn summarize(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lan
     let base=w*BINS;
     let begin=lane*1563u;
     let end=min(begin+1563u,BINS);
-    var n=0u;var sum=0.0;var peak=0u;
+    var n=0u;var peak=0u;
     for(var i=begin;i<end;i++){
         let count=atomicLoad(&hist[base+i]);
-        n+=count;sum+=f32(i)*f32(count);
+        n+=count;
         if count>0u{peak=i;}
     }
-    totals[lane]=n;sums[lane]=sum;peaks[lane]=peak;
+    totals[lane]=n;peaks[lane]=peak;
     workgroupBarrier();
     if lane==0u{
-        var all=0u;var acc=0.0;var highest=0u;
+        var all=0u;var highest=0u;
         for(var i=0u;i<64u;i++){
-            starts[i]=all;all+=totals[i];acc+=sums[i];highest=max(highest,peaks[i]);
+            starts[i]=all;all+=totals[i];highest=max(highest,peaks[i]);
         }
         pixels=all;
-        atomicStore(&words[o+23u],u32(round(acc/f32(max(all,1u)))));
         atomicStore(&words[o+39u],all);
         atomicStore(&words[o+40u],atomicLoad(&hist[base+highest]));
     }
