@@ -370,15 +370,32 @@ jobs:
           sudo setfacl -m "u:$(id -un):rw" /dev/kvm
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
-          "$sdkmanager" 'emulator' 'platform-tools' 'system-images;android-35;google_apis;x86_64'
-          printf 'no\n' | "$avdmanager" create avd --force --name vlc-seek --package 'system-images;android-35;google_apis;x86_64'
+          mkdir -p "$RUNNER_TEMP/vlc-seek-logs"
+          logs="$RUNNER_TEMP/vlc-seek-logs"
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'emulator' 'platform-tools' 'system-images;android-35;google_apis;x86_64'
+          # cmdline-tools and the emulator may otherwise resolve different
+          # AVD homes on hosted runners (including legacy SDK_HOME).
+          export ANDROID_SDK_HOME="$RUNNER_TEMP/vlc-seek-android"
+          export ANDROID_USER_HOME="$ANDROID_SDK_HOME/.android"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          avd_path="$ANDROID_AVD_HOME/vlc-seek.avd"
+          printf 'no\n' | "$avdmanager" create avd --force --name vlc-seek \
+            --package 'system-images;android-35;google_apis;x86_64' --abi x86_64 \
+            --path "$avd_path" 2>&1 | tee "$logs/avd-create.log"
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           export ANDROID_SERIAL=emulator-5554
           emulator="$ANDROID_HOME/emulator/emulator"
+          # Fail with useful evidence instead of retrying a nonexistent AVD.
+          "$avdmanager" list avd 2>&1 | tee "$logs/avd-manager-list.log"
+          "$emulator" -list-avds | tee "$logs/emulator-avd-list.log"
+          test -s "$ANDROID_AVD_HOME/vlc-seek.ini"
+          test -s "$avd_path/config.ini"
+          grep -Fxq "path=$avd_path" "$ANDROID_AVD_HOME/vlc-seek.ini"
+          grep -Fxq 'vlc-seek' "$logs/emulator-avd-list.log"
           "$emulator" -accel-check
           adb start-server
-          mkdir -p "$RUNNER_TEMP/vlc-seek-logs"
-          logs="$RUNNER_TEMP/vlc-seek-logs"
           emulator_pid=
           stop_emulator() {
             if [[ -n "$emulator_pid" ]]; then
