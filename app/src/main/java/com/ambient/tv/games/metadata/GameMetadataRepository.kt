@@ -280,7 +280,9 @@ class GameMetadataRepository @Inject constructor(
         if (!options.enabled) return@withGame false
         val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
         val old = library.metadata(current.fileId)
-        val provider = old?.provider?.takeIf { old.matchLocked } ?: options.provider
+        val platformQuery = GameMetadataQuery(current.systemId, current.title, current.filename)
+        val provider = old?.provider?.takeIf { old.matchLocked } ?: GameMetadataPlatforms.automaticProvider(
+            platformQuery, options.provider, providers.availableProviders())
         // A manually identified game must not silently switch sources when its key is removed.
         if (old?.matchLocked == true && provider !in providers.availableProviders())
             throw GameMetadataProviderException(GameMetadataFailure.CREDENTIALS)
