@@ -13,6 +13,7 @@ internal data class ModuleAvailability(
     val runtime: ModuleRuntimeState,
     val installedVersion: Long? = null,
     val restartRequired: Boolean = false,
+    val incompatibleSelection: Boolean = false,
 ) {
     val usable: Boolean get() = runtime == ModuleRuntimeState.ACTIVE_BUNDLED ||
         runtime == ModuleRuntimeState.ACTIVE_EXTERNAL
@@ -33,8 +34,6 @@ internal object SystemModuleAvailability {
         SystemModule.PROJECTM, SystemModule.MPV, SystemModule.SVP -> BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SHADERS -> BuildConfig.SHADER_RUNTIME_BUNDLED
         SystemModule.MOONLIGHT -> BuildConfig.MOONLIGHT_MODULE_BUNDLED
-        // These engines are not yet removed from the base build.
-        else -> true
     }
 
     private val registry = ModuleAvailabilityRegistry(::bundled)
@@ -42,6 +41,7 @@ internal object SystemModuleAvailability {
     fun state(module: SystemModule) = registry.state(module)
     fun observeSelection(module: SystemModule, version: Long?) = registry.observeSelection(module, version)
     fun selectionChanged(module: SystemModule, version: Long?) = registry.selectionChanged(module, version)
+    fun reportIncompatibleSelection(module: SystemModule, version: Long) = registry.reportIncompatibleSelection(module, version)
     fun reportProbe(module: SystemModule, external: Boolean, success: Boolean) {
         val offered = state(module).usable
         registry.reportProbe(module, external, success)
@@ -75,14 +75,20 @@ internal class ModuleAvailabilityRegistry(private val bundled: (SystemModule) ->
             installedVersion = version,
             runtime = when (previous.runtime) {
                 ModuleRuntimeState.ACTIVE_BUNDLED, ModuleRuntimeState.ACTIVE_EXTERNAL, ModuleRuntimeState.FAILED -> previous.runtime
-                else -> if (version != null) ModuleRuntimeState.EXTERNAL_UNVERIFIED
+                else -> if (previous.incompatibleSelection && bundled(module)) ModuleRuntimeState.BUNDLED_UNVERIFIED
+                    else if (version != null) ModuleRuntimeState.EXTERNAL_UNVERIFIED
                     else if (bundled(module)) ModuleRuntimeState.BUNDLED_UNVERIFIED else ModuleRuntimeState.MISSING
             },
         )
     }
 
     fun selectionChanged(module: SystemModule, version: Long?) = change(module) {
-        it.copy(installedVersion = version, restartRequired = true)
+        it.copy(installedVersion = version, restartRequired = true, incompatibleSelection = false)
+    }
+
+    fun reportIncompatibleSelection(module: SystemModule, version: Long) = change(module) {
+        it.copy(installedVersion = version, incompatibleSelection = true,
+            runtime = if (bundled(module)) ModuleRuntimeState.BUNDLED_UNVERIFIED else ModuleRuntimeState.FAILED)
     }
 
     fun reportProbe(module: SystemModule, external: Boolean, success: Boolean) = change(module) {

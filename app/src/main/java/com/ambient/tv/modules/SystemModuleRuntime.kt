@@ -44,6 +44,8 @@ internal class SystemModuleRuntime(
         val dexNativeRoots: Set<String> = emptySet(),
         val dexAlternative: Contract? = null,
         val requireSoname: Boolean = false,
+        // Module-to-module dependencies require an explicit reviewed host contract.
+        val allowedModuleDependencies: Set<SystemModule> = emptySet(),
     )
 
     data class Loaded(
@@ -134,6 +136,7 @@ internal class SystemModuleRuntime(
     fun matchesHost(module: SystemModule, build: SystemModuleBuild): Boolean {
         val contract = contractFor(module, build)
         if (build.module != module.id || build.hostBindingSha256 != contract.hostBindingSha256 ||
+            !dependenciesAllowed(contract, build) ||
             !contract.hostLibraries.containsAll(build.hostNativeSha256.keys)) return false
         if (contract.entryClass != null && build.hostNativeSha256.isNotEmpty()) return false
         val bundled = hostLoader as? BaseDexClassLoader
@@ -147,7 +150,7 @@ internal class SystemModuleRuntime(
     @Synchronized
     fun validateCandidate(module: SystemModule, pkg: SystemModuleStore.Package) {
         val contract = contractFor(module, pkg.build)
-        if (pkg.build.module != module.id ||
+        if (pkg.build.module != module.id || !dependenciesAllowed(contract, pkg.build) ||
             !contract.hostLibraries.containsAll(pkg.build.hostNativeSha256.keys))
             throw SystemModuleTrustException("Unapproved module or host native dependency")
         val prepared = SystemModuleMaterializer.prepare(pkg, root, pageSize, pkg.build.hostNativeSha256.keys)
@@ -165,6 +168,8 @@ internal class SystemModuleRuntime(
     }
 
     private fun validateContract(contract: Contract, files: SystemModuleMaterializer.Materialized) {
+        if (!dependenciesAllowed(contract, files.build))
+            throw SystemModuleTrustException("Undeclared host module dependency")
         if (files.build.hostBindingSha256 != contract.hostBindingSha256)
             throw SystemModuleTrustException("Host language binding fingerprint mismatch")
         val modes = listOf(contract.entryClass != null, contract.nativeRoots.isNotEmpty(), contract.assetOnly).count { it }
@@ -263,6 +268,9 @@ internal class SystemModuleRuntime(
     }
 
     companion object {
+        internal fun dependenciesAllowed(contract: Contract, build: SystemModuleBuild): Boolean =
+            build.dependencies.all { SystemModule.fromId(it.module) in contract.allowedModuleDependencies }
+
         internal fun nativeOrder(
             libraries: Map<String, SystemModuleBinary.Native>,
             roots: Set<String>,

@@ -241,14 +241,21 @@ internal object SystemModuleHost {
         SystemModuleAvailability.selectionChanged(module, new?.version)
     }
 
-    // Only absent packages fall back. Do not mix bundled and downloaded JNI
-    // after an override fails: native constructors may already have executed.
+    // A missing or authenticated-but-incompatible selection may fall back
+    // before native execution. Corrupt packages, failed activation and linkage
+    // never fall back: native constructors may already have executed.
     private val processSelections = mutableMapOf<SystemModule, Result<SystemModuleRuntime.Loaded?>>()
     @Synchronized
     fun loadSelected(module: SystemModule): SystemModuleRuntime.Loaded? {
         return processSelections.getOrPut(module) {
             runCatching {
-                if (selected(module) == null) null else session.runtime.load(module)
+                val candidate = selected(module)
+                if (candidate == null) null
+                else if (!session.runtime.matchesHost(module, candidate)) {
+                    SystemModuleAvailability.reportIncompatibleSelection(module, candidate.version)
+                    if (SystemModuleAvailability.bundled(module)) null
+                    else throw SystemModuleTrustException("Downloaded module is incompatible with installed APK")
+                } else session.runtime.load(module)
             }
         }.onFailure { SystemModuleAvailability.reportFailure(module) }.getOrThrow()
     }

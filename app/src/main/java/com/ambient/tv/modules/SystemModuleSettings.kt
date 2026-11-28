@@ -109,6 +109,7 @@ private fun ModuleDialog(dismiss: () -> Unit) {
         }
         Text(stringResource(stateLabel), style = MaterialTheme.typography.bodyMedium)
         if (status.restartRequired) Text(stringResource(R.string.module_settings_restart))
+        if (status.incompatibleSelection) Text(stringResource(R.string.module_settings_incompatible_selection), style = MaterialTheme.typography.bodySmall)
         if (selected == SystemModule.SPOTIFY) Text(stringResource(R.string.module_settings_spotify_experimental), style = MaterialTheme.typography.bodySmall)
         if (!SystemModuleHost.downloadsEnabled) Text(stringResource(R.string.module_settings_no_key))
         notice?.let { Text(stringResource(it), style = MaterialTheme.typography.bodySmall) }

@@ -535,7 +535,12 @@ and shared Android libraries remain host-owned pending an API/SPI boundary
 review. VLC and LibretroDroid Java bindings still need a separate typed
 host-interface refactor; their native-only isolation is unchanged.
 
-The runtime rejects extra native roots, memoizes verified host-library
+The runtime rejects undeclared cross-module dependencies and extra native roots.
+An authenticated selection whose host fingerprint no longer matches may fall back
+to the bundled Full engine before executing any module code; Modular requires a
+matching update. The settings dialog preserves and explains the incompatible
+selection. Invalid signatures, corrupted archives and failed activation still
+fail closed. The runtime memoizes verified host-library
 fingerprints for the installed APK process and explicitly loads each
 shared SONAME at most once. The persisted version floor also records the
 signed identity per ABI/profile, preventing a conflicting same-version

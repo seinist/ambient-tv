@@ -48,6 +48,25 @@ class SystemModuleAvailabilityTest {
         assertEquals(ModuleRuntimeState.FAILED, registry.state(module).runtime)
     }
 
+    @Test fun incompatibleSelectionCanUseBundledCodeOnlyAfterProbe() {
+        val registry = ModuleAvailabilityRegistry { true }
+        registry.observeSelection(module, 2)
+        registry.reportIncompatibleSelection(module, 2)
+        assertTrue(registry.state(module).incompatibleSelection)
+        assertFalse(registry.state(module).usable)
+        registry.observeSelection(module, 2)
+        assertEquals(ModuleRuntimeState.BUNDLED_UNVERIFIED, registry.state(module).runtime)
+        registry.reportProbe(module, external = false, success = true)
+        assertTrue(registry.state(module).usable)
+        assertTrue(registry.state(module).incompatibleSelection)
+        registry.selectionChanged(module, 3)
+        assertFalse(registry.state(module).incompatibleSelection)
+        assertTrue(registry.state(module).restartRequired)
+        val modular = ModuleAvailabilityRegistry { false }
+        modular.reportIncompatibleSelection(module, 2)
+        assertEquals(ModuleRuntimeState.FAILED, modular.state(module).runtime)
+    }
+
     @Test fun bundledEngineRemainsUsableWhileNewSelectionAwaitsRestart() {
         val registry = ModuleAvailabilityRegistry { true }
         registry.reportProbe(module, external = false, success = true)

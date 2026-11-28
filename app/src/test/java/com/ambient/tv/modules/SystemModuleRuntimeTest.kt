@@ -149,6 +149,13 @@ class SystemModuleRuntimeTest {
         } }
     }
 
+    @Test fun crossModuleDependenciesRequireExplicitHostPermission() {
+        val pkg = packageFile(dependencies = listOf(SystemModuleDependency("shaders", 2)))
+        assertFalse(SystemModuleRuntime.dependenciesAllowed(SystemModuleRuntime.Contract(assetOnly = true), pkg.build))
+        assertTrue(SystemModuleRuntime.dependenciesAllowed(SystemModuleRuntime.Contract(assetOnly = true,
+            allowedModuleDependencies = setOf(SystemModule.SHADERS)), pkg.build))
+    }
+
     @Test fun nativeOnlyLoadOrderIncludesDependenciesFirst() {
         val libs = mapOf(
             "liba.so" to SystemModuleBinary.Native("liba.so", setOf("libb.so")),
