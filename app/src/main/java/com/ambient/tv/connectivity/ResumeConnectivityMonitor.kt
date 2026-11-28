@@ -397,7 +397,7 @@ class ResumeConnectivityMonitor @Inject constructor(
         val sweep = fileWakePauses.sweep(endpoints)
         var allOk = true
         for ((machine, source) in targets) {
-            val noticeKey = "files:offline:${source.id}"
+            val noticeKey = "connection:files:${source.id}"
             val ok = sweep.check(machine) {
                 if (wakeOnLan.isReachable(source)) return@check true
                 if (fileWakePauses.isPaused(machine)) return@check false
