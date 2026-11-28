@@ -65,6 +65,8 @@ class HdrScenePassTest {
         cache.writeText("AMBIENTSVP_SCENE_CACHE_1\n" + "b".repeat(64) + "\n")
         assertFalse(session.advance())
         cache.writeText("AMBIENTSVP_SCENE_CACHE_1\n$key\n")
+        assertFalse(session.advance())
+        cache.appendText("mpv:fixture\n128 64\n0 20 1 1000 1000 1000 500 100 0 255 200 300 400 500 800 1000 321\n")
         assertTrue(session.advance()) // native pass 2 performs full interval/profile validation
         assertEquals(2,session.mode)
         assertFalse(session.advance())
