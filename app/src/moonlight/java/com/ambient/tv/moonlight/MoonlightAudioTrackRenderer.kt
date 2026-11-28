@@ -6,6 +6,8 @@ import android.media.AudioTrack
 import com.limelight.nvstream.av.audio.AudioRenderer
 import com.limelight.nvstream.jni.MoonBridge
 import kotlin.math.max
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /** Non-blocking PCM sink. Only a single owner may write, stop or release the AudioTrack. */
 class MoonlightAudioTrackRenderer(private val pacing: String, private val onError: (String) -> Unit) : AudioRenderer {
@@ -146,6 +148,23 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         inputChannels != outputChannels && outputChannels == 2 && track != null
     }
 
+    override fun supportsDirectPcm(channels: Int): Boolean = synchronized(lock) {
+        track != null && channels == outputChannels
+    }
+
+    override fun playDirectPcm(pcm: ByteBuffer, samples: Int) {
+        if (recovering) { lostSamples.addAndGet(samples.toLong()); return }
+        synchronized(lock) {
+            val t = track ?: return
+            if (closing || recovering || !playing || muted || samples != frameSamples * outputChannels ||
+                !pcm.isDirect || samples > pcm.capacity() / 2) return
+            pcm.clear()
+            pcm.limit(samples * 2)
+            pcm.order(ByteOrder.nativeOrder())
+            writePcm(t, samples, null, pcm)
+        }
+    }
+
     override fun playDecodedAudio(audioData: ShortArray) {
         if (recovering) { lostSamples.addAndGet(audioData.size.toLong()); return }
         synchronized(lock) {
@@ -175,6 +194,12 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                 data = audioData
                 length = audioData.size
             }
+            writePcm(t, length, data, null)
+        }
+    }
+
+    // Called under the sole audio owner lock. Native views are never stored.
+    private fun writePcm(t: AudioTrack, length: Int, data: ShortArray?, pcm: ByteBuffer?) {
             try {
                 val now = System.nanoTime()
                 // The native queue is a slow-moving latency estimate, not a per-packet
@@ -230,7 +255,15 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     // If the older tail could not drain, bound latency by dropping it.
                     if (pendingLength > 0) discardPending()
                 }
-                val written = t.write(data, 0, length, AudioTrack.WRITE_NON_BLOCKING)
+                val written = if (pcm != null) {
+                    val bytes = t.write(pcm, length * 2, AudioTrack.WRITE_NON_BLOCKING)
+                    if (bytes < 0) bytes
+                    else if (bytes > length * 2 || bytes % (outputChannels * 2) != 0) {
+                        // Do not continue with a channel-shifted PCM stream.
+                        onError("Moonlight audio device returned an invalid PCM write size")
+                        return
+                    } else bytes / 2
+                } else t.write(checkNotNull(data), 0, length, AudioTrack.WRITE_NON_BLOCKING)
                 if (written < 0) {
                     lostSamples.addAndGet(length.toLong())
                     handleWriteError(written)
@@ -242,7 +275,11 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                 val remaining = length - written
                 if (remaining > 0) {
                     if (remaining <= pending.size) {
-                        data.copyInto(pending, 0, written, length)
+                        // Copy only an unwritten tail. Native storage is reused immediately
+                        // after the callback returns, so the pending queue must own its data.
+                        if (pcm != null) {
+                            for (i in 0 until remaining) pending[i] = pcm.getShort((written + i) * 2)
+                        } else checkNotNull(data).copyInto(pending, 0, written, length)
                         pendingOffset = 0
                         pendingLength = remaining
                         pendingSince = now
@@ -273,7 +310,6 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
             } catch (_: Exception) {
                 if (++failures >= 3) onError("Moonlight audio device failed")
             }
-        }
     }
 
     private fun discardPending() {
