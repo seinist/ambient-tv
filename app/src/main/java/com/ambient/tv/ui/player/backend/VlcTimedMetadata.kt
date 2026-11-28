@@ -100,7 +100,8 @@ internal class VlcTimedMetadataInbox {
     }
     internal data class SeekFence(val session: Long, val epoch: Long, val previous: Long,
         val previousTargetUs: Long?, val previousId: Long, val serial: Long,
-        val previousEvents: List<VlcTimedMetadata>, val previousBytes: Int, val changed: Boolean) {
+        val previousEvents: List<VlcTimedMetadata>, val previousBytes: Int, val changed: Boolean,
+        val requestId: Long) {
         var rejected = false
     }
 
@@ -109,7 +110,7 @@ internal class VlcTimedMetadataInbox {
         // barrier or events that arrived while its playback clock settles.
         val changed = requestId == 0L || requestId != requestedId || targetUs != requestedTargetUs
         val fence = SeekFence(generation, epoch, discardedThroughEpoch, requestedTargetUs, requestedId,
-            ++fenceSerial, mutable.value, bytes, changed)
+            ++fenceSerial, mutable.value, bytes, changed, requestId)
         if (!changed) return fence
         // The native API normally completes synchronously. Bound the outstanding
         // journal even if a future caller overlaps more than one request.
@@ -131,6 +132,11 @@ internal class VlcTimedMetadataInbox {
         // requests must not roll it back if a later request fails.
         while (pendingFences.isNotEmpty() && pendingFences.first().serial <= fence.serial)
             pendingFences.removeFirst()
+    }
+
+    @Synchronized fun completeRequest(requestId: Long, success: Boolean) {
+        val fence = pendingFences.lastOrNull { it.requestId == requestId } ?: return
+        if (success) acceptSeek(fence) else rejectSeek(fence)
     }
 
     @Synchronized fun rejectSeek(fence: SeekFence) {

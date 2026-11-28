@@ -92,7 +92,7 @@ class SeekAudit : Instrumentation() {
                         fun seek(id: Long) {
                             val fence = inbox.clearForSeek(2000000, id)
                             check(tagged.invoke(player, 2000L, id) == true) { "Native queue rejected $id" }
-                            inbox.acceptSeek(fence)
+                            // JNI returned queue acceptance, not demux completion.
                             val deadline = SystemClock.elapsedRealtime() + 12000
                             var barrier: VlcTimedMetadataPacket.Message.Epoch? = null
                             while (SystemClock.elapsedRealtime() < deadline) {
@@ -102,6 +102,8 @@ class SeekAudit : Instrumentation() {
                             val completed = checkNotNull(barrier) { "No native completed seek for $id" }
                             check(completed.epoch > lastEpoch && completed.seekTargetUs == 2000000L)
                             lastEpoch = completed.epoch
+                            waitFor("native demux result for $id") { player.ambientSeekResult() == id }
+                            inbox.acceptSeek(fence)
                             waitFor("native position and real emsg for $id") {
                                 player.time in 2000L..3900L && inbox.events.value.any {
                                     it.seekRequestId == id && it.seekEpoch == lastEpoch &&

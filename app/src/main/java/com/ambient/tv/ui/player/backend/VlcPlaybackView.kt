@@ -532,6 +532,9 @@ class VlcPlaybackController(
     private val taggedSeekMethod by lazy {
         runCatching { MediaPlayer::class.java.getMethod("ambientSetTimeWithId", java.lang.Long.TYPE, java.lang.Long.TYPE) }.getOrNull()
     }
+    private val seekResultMethod by lazy {
+        runCatching { MediaPlayer::class.java.getMethod("ambientSeekResult") }.getOrNull()
+    }
     private var pendingRestorePositionMs: Long?
         get() = seekState.targetMs
         set(value) {
@@ -1929,7 +1932,7 @@ class VlcPlaybackController(
         val target = pendingRestorePositionMs ?: return
         // Precise seeking avoids exposing a preceding keyframe as the requested landing.
         if (metadataSeekId == 0L) metadataSeekId = ++nextMetadataSeekId
-        val tagged = if (timedMetadataReceiver != null) taggedSeekMethod else null
+        val tagged = if (timedMetadataReceiver != null && seekResultMethod != null) taggedSeekMethod else null
         // Never encode an ID into an ordinary playback timestamp. Older AARs
         // still seek normally, but cannot prove post-seek metadata identity.
         val metadataFence = timedMetadataInbox.clearForSeek(
@@ -1938,8 +1941,10 @@ class VlcPlaybackController(
             if (tagged != null) tagged.invoke(player, target, metadataSeekId) == true
             else player.setTime(target, false) >= 0L
         }.getOrDefault(false)
-        if (accepted) timedMetadataInbox.acceptSeek(metadataFence)
-        else timedMetadataInbox.rejectSeek(metadataFence)
+        if (!accepted) timedMetadataInbox.rejectSeek(metadataFence)
+        else if (tagged == null) timedMetadataInbox.acceptSeek(metadataFence)
+        // Tagged queue acceptance is provisional until the demux result or
+        // matching AFM epoch confirms execution.
         seekState.submitted(accepted, now)
         // VLC 4 can keep its native clock frozen on a paused seek, especially zero.
         // Decode silently until the requested native clock is confirmed, then pause again.
@@ -1951,7 +1956,20 @@ class VlcPlaybackController(
     }
 
     private fun observePendingSeek() {
-        if (released || dvPrimeWaiting || openingOrRestarting || errorMessage != null) return
+        if (nativeCommandsBlocked() || dvPrimeWaiting || openingOrRestarting || errorMessage != null) return
+        if (pendingRestorePositionMs != null && metadataSeekId != 0L && timedMetadataReceiver != null && seekResultMethod != null) {
+            val result = runCatching { (seekResultMethod?.invoke(player) as? Long) ?: 0L }.getOrDefault(0L)
+            if (result == metadataSeekId) timedMetadataInbox.completeRequest(metadataSeekId, true)
+            else if (result == -metadataSeekId) {
+                timedMetadataInbox.completeRequest(metadataSeekId, false)
+                if (ahbExperimentActive && fallbackVulkan("ahb_seek_demux_failed")) return
+                errorMessage = context.getString(R.string.player_seek_failed)
+                pauseAfterRestorePositionMs = null
+                player.pause()
+                restorePausedSeekVolume()
+                return
+            } else if (taggedSeekMethod != null) return // no completed native control yet
+        }
         if (!seekState.observe(player.time, android.os.SystemClock.elapsedRealtime())) return
         lastPlaybackTimeMs = player.time.coerceAtLeast(0L)
         lastPlaybackSeekable = player.isSeekable
@@ -1977,6 +1995,7 @@ class VlcPlaybackController(
                     // Preserve the request for a renderer fallback/retry. Continuing at zero
                     // would silently lose the user's position and rewrite server progress.
                     Timber.w("AV-AUDIT VLC seek not confirmed; target=%d", pendingRestorePositionMs)
+                    timedMetadataInbox.completeRequest(metadataSeekId, false)
                     // The experimental decoder may fail specifically after a flush/seek.
                     // Retry the same pending position on the safe route before reporting failure.
                     if (ahbExperimentActive && fallbackVulkan("ahb_seek_stalled")) return

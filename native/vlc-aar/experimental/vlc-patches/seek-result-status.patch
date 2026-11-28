@@ -1,0 +1,158 @@
+diff --git a/src/input/input_internal.h b/src/input/input_internal.h
+--- a/src/input/input_internal.h
++++ b/src/input/input_internal.h
+@@ -493,9 +493,10 @@
+ /** Private input fields */
+ typedef struct input_thread_private_t
+ {
+-    struct input_thread_t input;
+-
+-    const struct vlc_input_thread_callbacks *cbs;
++    struct input_thread_t input;
++    atomic_int_fast64_t ambient_seek_result;
++
++    const struct vlc_input_thread_callbacks *cbs;
+     void *cbs_data;
+ 
+     enum input_type type;
+diff --git a/src/input/input.c b/src/input/input.c
+--- a/src/input/input.c
++++ b/src/input/input.c
+@@ -329,7 +329,8 @@
+     input_resource_SetInput( priv->p_resource, p_input );
+ 
+     /* Init control buffer */
+-    vlc_mutex_init( &priv->lock_control );
++    vlc_mutex_init( &priv->lock_control );
++    atomic_init(&priv->ambient_seek_result, 0);
+     vlc_cond_init( &priv->wait_control );
+     priv->i_control = 0;
+     vlc_interrupt_init(&priv->interrupt);
+@@ -2100,7 +2101,9 @@
+         {
+             if( priv->b_recording )
+             {
+-                msg_Err( p_input, "INPUT_CONTROL_SET_TIME ignored while recording" );
++                if (param.time.ambient_seek_id)
++                    atomic_store(&priv->ambient_seek_result, -(int64_t)param.time.ambient_seek_id);
++                msg_Err( p_input, "INPUT_CONTROL_SET_TIME ignored while recording" );
+                 break;
+             }
+ 
+@@ -2109,8 +2112,11 @@
+             ResetFramePrevious( p_input );
+             priv->next_frame_need_data = false;
+ 
+-            int i_ret = ControlSetTime( p_input, param.time.i_val,
+-                                        param.time.b_fast_seek, param.time.ambient_seek_id );
++            int i_ret = ControlSetTime( p_input, param.time.i_val,
++                                        param.time.b_fast_seek, param.time.ambient_seek_id );
++            if (param.time.ambient_seek_id)
++                atomic_store(&priv->ambient_seek_result, i_ret == VLC_SUCCESS ?
++                    (int64_t)param.time.ambient_seek_id : -(int64_t)param.time.ambient_seek_id);
+ 
+             if( i_ret )
+                 msg_Warn( p_input, "INPUT_CONTROL_SET_TIME @%"PRId64
+diff --git a/src/player/player.c b/src/player/player.c
+--- a/src/player/player.c
++++ b/src/player/player.c
+@@ -1485,8 +1485,15 @@
+         vlc_player_input_SeekByPos(input, position, speed, whence);
+ }
+ 
+-int
+-vlc_player_SeekByTimeWithId(vlc_player_t *player, vlc_tick_t time, uint64_t request_id)
++int64_t
++vlc_player_AmbientSeekResult(vlc_player_t *player)
++{
++    struct vlc_player_input *input = vlc_player_get_input_locked(player);
++    return input ? atomic_load(&input_priv(input->thread)->ambient_seek_result) : 0;
++}
++
++int
++vlc_player_SeekByTimeWithId(vlc_player_t *player, vlc_tick_t time, uint64_t request_id)
+ {
+     struct vlc_player_input *input = vlc_player_get_input_locked(player);
+     if (!input || !request_id)
+diff --git a/include/vlc_player.h b/include/vlc_player.h
+--- a/include/vlc_player.h
++++ b/include/vlc_player.h
+@@ -730,7 +730,8 @@
+                       enum vlc_player_whence whence);
+ 
+ VLC_API int
+-vlc_player_SeekByTimeWithId(vlc_player_t *player, vlc_tick_t time, uint64_t request_id);
++vlc_player_SeekByTimeWithId(vlc_player_t *player, vlc_tick_t time, uint64_t request_id);
++VLC_API int64_t vlc_player_AmbientSeekResult(vlc_player_t *player);
+ 
+ /**
+  * Helper to set the absolute position precisely
+diff --git a/src/libvlccore.sym b/src/libvlccore.sym
+--- a/src/libvlccore.sym
++++ b/src/libvlccore.sym
+@@ -917,8 +917,9 @@
+ vlc_player_Resume
+ vlc_player_SeekByPos
+ vlc_player_SeekByTime
+-vlc_player_SeekByTimeWithId
+-vlc_player_SelectCategoryLanguage
++vlc_player_SeekByTimeWithId
++vlc_player_AmbientSeekResult
++vlc_player_SelectCategoryLanguage
+ vlc_player_SelectChapter
+ vlc_player_SelectChapterIdx
+ vlc_player_SelectEsId
+diff --git a/lib/media_player.c b/lib/media_player.c
+--- a/lib/media_player.c
++++ b/lib/media_player.c
+@@ -1469,10 +1469,19 @@
+     return vlc_ambient_output_quarantined();
+ }
+ 
+-int libvlc_media_player_ambient_set_time_with_id(libvlc_media_player_t *p_mi,
++int64_t libvlc_media_player_ambient_seek_result(libvlc_media_player_t *p_mi)
++{
++    vlc_player_t *player = p_mi->player;
++    vlc_player_Lock(player);
++    int64_t result = vlc_player_AmbientSeekResult(player);
++    vlc_player_Unlock(player);
++    return result;
++}
++
++int libvlc_media_player_ambient_set_time_with_id(libvlc_media_player_t *p_mi,
+                                                  libvlc_time_t time, uint64_t request_id)
+ {
+-    if (time < 0 || time > INT64_MAX / 1000 || !request_id)
++    if (time < 0 || time > INT64_MAX / 1000 || !request_id || request_id > INT64_MAX)
+         return -1;
+     vlc_player_t *player = p_mi->player;
+     vlc_player_Lock(player);
+diff --git a/include/vlc/libvlc_media_player.h b/include/vlc/libvlc_media_player.h
+--- a/include/vlc/libvlc_media_player.h
++++ b/include/vlc/libvlc_media_player.h
+@@ -1325,7 +1325,9 @@
+  * \param b_fast prefer fast seeking or precise seeking
+  * \return 0 on success, -1 on error
+  */
+-LIBVLC_API bool libvlc_ambient_output_quarantined(void);
++LIBVLC_API bool libvlc_ambient_output_quarantined(void);
++/* Positive request ID: demux succeeded; negative: failed; zero: none. */
++LIBVLC_API int64_t libvlc_media_player_ambient_seek_result(libvlc_media_player_t *p_mi);
+ 
+ LIBVLC_API int libvlc_media_player_ambient_set_time_with_id(libvlc_media_player_t *p_mi,
+     libvlc_time_t time, uint64_t request_id);
+diff --git a/lib/libvlc.sym b/lib/libvlc.sym
+--- a/lib/libvlc.sym
++++ b/lib/libvlc.sym
+@@ -174,8 +174,9 @@
+ libvlc_media_player_set_renderer
+ libvlc_media_player_set_role
+ libvlc_media_player_set_time
+-libvlc_media_player_ambient_set_time_with_id
+-libvlc_ambient_output_quarantined
++libvlc_media_player_ambient_set_time_with_id
++libvlc_media_player_ambient_seek_result
++libvlc_ambient_output_quarantined
+ libvlc_media_player_jump_time
+ libvlc_media_player_set_title
+ libvlc_media_player_set_xwindow
