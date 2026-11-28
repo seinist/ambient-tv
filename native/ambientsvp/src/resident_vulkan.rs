@@ -17,7 +17,7 @@ type Result<T>=std::result::Result<T,String>;
 fn err(e:vk::Result)->String{format!("Vulkan result {}",e.as_raw())}
 fn spirv(source:&str,uniform:&str,entry:&str)->Result<Vec<u32>>{
     if source.matches(uniform).count()!=1{return Err("invalid resident uniform contract".into());}
-    let name=if matches!(entry,"analyse"|"scene"){"geometry"}else{"params"};
+    let name=if matches!(entry,"analyse"|"scene"|"snapshot"){"geometry"}else{"params"};
     let source=source.replace(uniform,&format!("var<push_constant> {name}:vec4u;"));
     let module=naga::front::wgsl::parse_str(&source).map_err(|e|e.emit_to_string(&source))?;
     let info=naga::valid::Validator::new(naga::valid::ValidationFlags::all(),
@@ -150,6 +150,33 @@ impl ResidentTuning{
     }
     fn step(self)->u32{self.block-self.overlap}
 }
+/// Separate optional ABI: all reference penalty parameters plus the
+/// superframe upscaler. Existing tuning structure size is unchanged.
+#[repr(C)]
+#[derive(Clone,Copy,Debug)]
+pub struct ResidentSearchWeights{
+    pub filter:u32,pub lambda:u32,pub lsad:u32,pub plevel_q16:u32,
+    pub levels:u32,pub level:u32,pub pnew:i32,pub pzero:i32,
+    pub pglobal:i32,pub pnbour:i32,pub preverse:i32,pub sad_gate:u32,
+}
+impl ResidentSearchWeights{
+    fn legacy(t:ResidentTuning)->Self{
+        Self{filter:0,lambda:t.lambda*t.pel*t.pel,lsad:t.block*t.block*250,
+            plevel_q16:65536,levels:1,level:0,pnew:t.pnew as i32,pzero:100,
+            pglobal:50,pnbour:50,preverse:0,sad_gate:0}
+    }
+    fn valid(self)->bool{
+        self.filter<=2&&self.lambda<=1_000_000&&(1..=1_000_000).contains(&self.lsad)&&
+        (65536..=655360).contains(&self.plevel_q16)&&(1..=16).contains(&self.levels)&&
+        self.level<self.levels&&self.sad_gate<=1&&
+        [self.pnew,self.pzero,self.pglobal,self.pnbour,self.preverse].iter().all(|p|(-256..=256).contains(p))
+    }
+    fn scaled_lambda(self,pel:u32,mode:u32)->u32{
+        let scale=(f64::from(self.plevel_q16)/65536.0).powi((self.levels-self.level-1) as i32);
+        let depth=if mode==0{1.0}else{4.0};
+        (f64::from(self.lambda)*depth/scale/f64::from(pel*pel)).min(21_474_836.0) as u32
+    }
+}
 fn tuned_motion_spirv(mode:u32,t:ResidentTuning)->Result<Vec<u32>>{
     let sample=t.block/8;
     let mut source=MOTION.replace("y<16;y+=2",&format!("y<{};y+={sample}",t.block))
@@ -164,14 +191,23 @@ fn tuned_motion_spirv(mode:u32,t:ResidentTuning)->Result<Vec<u32>>{
     }
     spirv(&source,"@group(0) @binding(3) var<uniform> geometry:vec4u;","analyse")
 }
+#[cfg(test)]
 fn quality_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
+    quality_spirv_weighted(mode,t,ResidentSearchWeights::legacy(t),entry)
+}
+fn quality_spirv_weighted(mode:u32,t:ResidentTuning,w:ResidentSearchWeights,entry:&str)->Result<Vec<u32>>{
+    if !t.valid()||!w.valid(){return Err("invalid weighted search configuration".into());}
     let scale=match mode{0=>"255.0",1|4=>"65535.0/64.0",2|5=>"65535.0",3=>"1023.0",_=>return Err("unknown quality format".into())};
     let mut source=include_str!("resident_quality.wgsl").to_owned();
     for (name,value) in [("SVP_BLOCK",t.block.to_string()),("SVP_STEP",t.step().to_string()),
         ("SVP_PEL",t.pel.to_string()),("SVP_RADIUS",t.radius.to_string()),("SVP_SCALE",scale.into()),
         ("SVP_CODE_MAX",if mode==0{"255"}else{"1023"}.into()),("SVP_SATD",(t.satd!=0).to_string()),
-        ("SVP_CHROMA",(t.chroma!=0).to_string()),("SVP_LAMBDA",format!("{}u",t.lambda)),
-        ("SVP_PNEW",format!("{}u",t.pnew)),("SVP_SCENE",format!("{}u",t.scene))]{
+        ("SVP_CHROMA",(t.chroma!=0).to_string()),("SVP_LAMBDA",format!("{}u",w.scaled_lambda(t.pel,mode))),
+        ("SVP_PNEW",w.pnew.to_string()),("SVP_SCENE",format!("{}u",t.scene)),
+        ("SVP_FILTER",w.filter.to_string()),("SVP_LSAD",format!("{}u",w.lsad*if mode==0{1}else{4})),
+        ("SVP_PZERO",w.pzero.to_string()),("SVP_PGLOBAL",w.pglobal.to_string()),
+        ("SVP_PNBOUR",w.pnbour.to_string()),("SVP_PREVERSE",w.preverse.to_string()),
+        ("SVP_SAD_GATE",(w.sad_gate!=0).to_string())]{
         if source.matches(name).count()!=1{return Err(format!("quality shader placeholder {name}"));}
         source=source.replace(name,&value);
     }
@@ -346,7 +382,7 @@ struct Core{
     device:ash::Device,
     memory:vk::PhysicalDeviceMemoryProperties,
     motion:Pipeline,synthesis:Pipeline,
-    quality:Option<(Pipeline,Pipeline)>,tuning:Option<ResidentTuning>,
+    quality:Option<(Pipeline,Pipeline,Pipeline)>,tuning:Option<ResidentTuning>,
     width:u32,height:u32,gw:u32,gh:u32,field_size:u64,mode:u32,
     in_flight:AtomicU32,
     idle:Mutex<Vec<PairResources>>,
@@ -444,7 +480,7 @@ impl VulkanPair{
             p.pool=d.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(1+MAX_PHASES as u32+extra)
                 .pool_sizes(&pool_sizes),None).map_err(err)?;
             let mut layouts=vec![c.synthesis.set;MAX_PHASES+1];layouts[0]=c.motion.set;
-            if let Some((q,_))=&c.quality{layouts.push(q.set);}
+            if let Some((q,_,_))=&c.quality{layouts.push(q.set);}
             p.sets=d.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(p.pool)
                 .set_layouts(&layouts)).map_err(err)?;
         }
@@ -507,7 +543,7 @@ impl VulkanPair{
                 c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
                     vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
             }
-            if let Some((quality,scene))=&c.quality{
+            if let Some((quality,scene,snapshot))=&c.quality{
                 let set=self.sets[MAX_PHASES+1];
                 let [ay,au,av]=self.a.views();let [by,bu,bv]=self.b.views();
                 let sampled=vk::DescriptorType::SAMPLED_IMAGE;
@@ -515,9 +551,14 @@ impl VulkanPair{
                     (3,by,sampled),(4,bu,sampled),(5,bv,sampled)],6);
                 let flags=c.gh|((self.a.nv12==1) as u32)<<16|((self.b.nv12==1) as u32)<<17|
                     ((self.a.rgb()) as u32)<<18;
-                quality.dispatch(self.command,set,[c.width,c.height,c.gw,flags],c.gw,c.gh*2);
+                snapshot.dispatch(self.command,set,[c.width,c.height,c.gw,flags],2,1);
                 c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
                     vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
+                for wave in 0..c.gw+2*(c.gh-1){
+                    quality.dispatch(self.command,set,[c.width,c.height,c.gw,flags|(wave<<19)],c.gh,2);
+                    c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
+                }
                 scene.dispatch(self.command,set,[c.width,c.height,c.gw,flags],1,1);
                 c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
                     vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
@@ -565,8 +606,8 @@ impl VulkanPair{
     }
 }
 
-fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Device,width:u32,height:u32,mode:u32,tuning:Option<ResidentTuning>)->Result<VulkanResident>{
-    if tuning.is_some_and(|t|!t.valid()){return Err("invalid resident tuning".into());}
+fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Device,width:u32,height:u32,mode:u32,tuning:Option<ResidentTuning>,weights:Option<ResidentSearchWeights>)->Result<VulkanResident>{
+    if tuning.is_some_and(|t|!t.valid())||weights.is_some_and(|w|!w.valid())||weights.is_some()&&tuning.is_none(){return Err("invalid resident tuning".into());}
     if width<32 || height<32 || width>3840 || height>2160 || (width|height)&1!=0 || u64::from(width)*u64::from(height)>MAX_PIXELS{
         return Err("unsupported resident dimensions".into());
     }
@@ -576,12 +617,16 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     let step=tuning.map_or(16,ResidentTuning::step);
     let (gw,gh)=(width.div_ceil(step),height.div_ceil(step));
     if tuning.is_some() && u64::from(gw)*u64::from(gh)>32768{return Err("resident quality block budget".into());}
-    let field_size=u64::from(gw)*u64::from(gh)*32+if tuning.is_some(){16}else{0};
+    // Keep the first two directional fields and scene word ABI stable;
+    // append immutable coarse snapshots and two global predictors.
+    let n=u64::from(gw)*u64::from(gh);
+    let field_size=n*32+if tuning.is_some(){n*32+48}else{0};
     if width>limits.max_image_dimension2_d || height>limits.max_image_dimension2_d
         || limits.max_per_stage_descriptor_sampled_images<6 || limits.max_per_stage_descriptor_storage_images<raw_planes(mode) as u32
         || limits.max_per_stage_descriptor_storage_buffers<1 || limits.max_push_constants_size<16
         || limits.max_compute_work_group_invocations<64 || limits.max_compute_work_group_size[0]<64
         || limits.max_compute_work_group_size[1]<8 || gw>limits.max_compute_work_group_count[0]
+        || gh>limits.max_compute_work_group_count[0] || tuning.is_some()&&limits.max_compute_shared_memory_size<8192
         || gh*2>limits.max_compute_work_group_count[1] || width.div_ceil(8)>limits.max_compute_work_group_count[0]
         || height.div_ceil(8)>limits.max_compute_work_group_count[1] || field_size>u64::from(limits.max_storage_buffer_range)
     {return Err("native Vulkan resident limits".into());}
@@ -614,8 +659,10 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     let synthesis=Pipeline::new(&device,&types,&synthesis_words,c"synthesize")?;
     let quality=if let Some(t)=tuning{
         let mut types=vec![vk::DescriptorType::SAMPLED_IMAGE;6];types.push(vk::DescriptorType::STORAGE_BUFFER);
-        Some((Pipeline::new(&device,&types,&quality_spirv(mode,t,"analyse")?,c"analyse")?,
-            Pipeline::new(&device,&types,&quality_spirv(mode,t,"scene")?,c"scene")?))
+        let w=weights.unwrap_or_else(||ResidentSearchWeights::legacy(t));
+        Some((Pipeline::new(&device,&types,&quality_spirv_weighted(mode,t,w,"analyse")?,c"analyse")?,
+            Pipeline::new(&device,&types,&quality_spirv_weighted(mode,t,w,"scene")?,c"scene")?,
+            Pipeline::new(&device,&types,&quality_spirv_weighted(mode,t,w,"snapshot")?,c"snapshot")?))
     }else{None};
     Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=3&&
@@ -637,7 +684,7 @@ pub unsafe extern "C" fn ambient_svp_vk_create_format(instance:vk::Instance,phys
         let f=ash::StaticFn{get_instance_proc_addr:get_proc.unwrap()};
         let instance=unsafe{ash::Instance::load(&f,instance)};
         let device=unsafe{ash::Device::load(instance.fp_v1_0(),device)};
-        new_core(&instance,physical,device,width,height,mode,None).map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s)))
+        new_core(&instance,physical,device,width,height,mode,None,None).map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s)))
     })).unwrap_or(ptr::null_mut())
 }
 #[unsafe(no_mangle)]
@@ -649,7 +696,21 @@ pub unsafe extern "C" fn ambient_svp_vk_create_config(instance:vk::Instance,phys
         let f=ash::StaticFn{get_instance_proc_addr:get_proc.unwrap()};
         let instance=unsafe{ash::Instance::load(&f,instance)};
         let device=unsafe{ash::Device::load(instance.fp_v1_0(),device)};
-        new_core(&instance,physical,device,width,height,mode,Some(unsafe{*tuning}))
+        new_core(&instance,physical,device,width,height,mode,Some(unsafe{*tuning}),None)
+            .map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s)))
+    })).unwrap_or(ptr::null_mut())
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_create_weighted(instance:vk::Instance,physical:vk::PhysicalDevice,device:vk::Device,
+    get_proc:Option<vk::PFN_vkGetInstanceProcAddr>,width:u32,height:u32,mode:u32,
+    tuning:*const ResidentTuning,weights:*const ResidentSearchWeights)->*mut VulkanResident{
+    if instance==vk::Instance::null()||physical==vk::PhysicalDevice::null()||device==vk::Device::null()||
+        get_proc.is_none()||mode>5||tuning.is_null()||weights.is_null(){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||{
+        let f=ash::StaticFn{get_instance_proc_addr:get_proc.unwrap()};
+        let instance=unsafe{ash::Instance::load(&f,instance)};
+        let device=unsafe{ash::Device::load(instance.fp_v1_0(),device)};
+        new_core(&instance,physical,device,width,height,mode,Some(unsafe{*tuning}),Some(unsafe{*weights}))
             .map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s)))
     })).unwrap_or(ptr::null_mut())
 }
