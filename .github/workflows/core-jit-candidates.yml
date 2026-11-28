@@ -23,7 +23,7 @@ jobs:
           cc -std=c99 -O2 -Wall -Wextra -Werror -D_GNU_SOURCE scripts/native_core_candidates/sh2_arm64_test.c -o /tmp/sh2-arm64-test
           /tmp/sh2-arm64-test
           python3 -m unittest discover -s scripts -p test_core_candidates.py
-      - name: Compare all memory opcodes with pinned Yabause handlers
+      - name: Compare memory and control opcodes with pinned Yabause handlers
         run: |
           set -euo pipefail
           tmp=$(mktemp -d)

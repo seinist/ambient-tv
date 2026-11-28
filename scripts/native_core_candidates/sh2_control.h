@@ -4,6 +4,17 @@
  */
 #ifndef AMBIENT_SH2_CONTROL_H
 #define AMBIENT_SH2_CONTROL_H
+static inline int ambient_sh2_control_supported(uint16_t op)
+{
+    const unsigned single = op & 0xf0ff, top = op & 0xf000;
+    const unsigned high = op & 0xff00, key = op & 0xf00f;
+    return top == 0xa000 || top == 0xb000 ||
+        single == 0x0023 || single == 0x0003 || single == 0x402b ||
+        single == 0x400b || single == 0x000b || single == 0x001b ||
+        high == 0x8d00 || high == 0x8f00 || high == 0xc700 ||
+        key == 0x2007 || key == 0x3004;
+}
+
 static inline int ambient_sh2_control(SH2_struct* sh, uint16_t op)
 {
     const unsigned n = (op >> 8) & 15, m = (op >> 4) & 15;

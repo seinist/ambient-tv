@@ -26,6 +26,9 @@ compiler build is not proof of correct gameplay or a performance improvement.
   CLRMAC and DIV0U with independent guest cycle accounting. Native terminal
   control handles BRA/BSR, register jumps/returns, delayed conditional branches,
   MOVA, DIV0S, DIV1 and SLEEP while delegating delay-slot execution to upstream.
+  Memory/control-only hot blocks are cached without executable allocation;
+  short ALU prefixes can now end in a native terminal. The pinned upstream
+  differential harness verifies control flow, registers, cycles and delay calls.
   The mapped no-cache bus directly specializes
   aligned High/Low WRAM loads/stores only when the exact original table target
   matches. MMIO, debug tracing, cache-enabled and unusual accesses retain

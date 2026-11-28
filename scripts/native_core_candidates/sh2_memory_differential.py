@@ -19,12 +19,13 @@ typedef int8_t s8;typedef int16_t s16;typedef int32_t s32;
 #define INSTRUCTION_C(op) (((op)>>4)&15)
 #define INSTRUCTION_D(op) ((op)&15)
 #define INSTRUCTION_CD(op) ((op)&255)
+#define INSTRUCTION_BCD(op) ((op)&4095)
 enum SHMODELTYPE {SHMT_SH1,SHMT_SH2};
 typedef struct SH2_struct SH2_struct;
 typedef void(*opcodefunc)(SH2_struct*);
 typedef struct {u32 kind,addr,value;} Event;
 struct SH2_struct {
-    struct {u32 R[16],PC,GBR,VBR,MACH,MACL,PR;union {u32 all;struct {u32 T:1,S:1;} part;} SR;} regs;
+    struct {u32 R[16],PC,GBR,VBR,MACH,MACL,PR;union {u32 all;struct {u32 T:1,S:1,reserved:6,Q:1,M:1;} part;} SR;} regs;
     u32 cycles,seed,stall,count;
     u16 instruction;
     Event events[8];
@@ -49,20 +50,23 @@ READ(1,u8) READ(2,u16) READ(4,u32) WRITE(1,u8) WRITE(2,u16) WRITE(4,u32)
 static void SH2delay(SH2_struct* s,u32 addr){event(s,16,addr,0);s->regs.PC-=2;++s->cycles;}
 #define AMBIENT_SH2_ARM64_JIT 1
 #include "sh2_memory.h"
+#include "sh2_control.h"
 """
 HARNESS = r"""
 int main(void) {
-    unsigned supported=0;
+    unsigned supported=0, controls=0;
     u32 seed=0x5ca0ffeeu;
     for(unsigned raw=0;raw<65536;++raw) {
         AmbientMemOp simple=ambient_mem_decode(raw);
         AmbientComplexMem complex=ambient_complex_decode(raw);
         opcodefunc handler=decode(SHMT_SH2,raw);
-        if(!!handler != !!(simple.mode||complex.mode) || (simple.mode&&complex.mode)) {
+        const int control=ambient_sh2_control_supported(raw);
+        if(!!handler != !!(simple.mode||complex.mode||control) ||
+           (!!simple.mode+!!complex.mode+!!control)>1) {
             fprintf(stderr,"memory decode mismatch %04x\n",raw);return 1;
         }
         if(!handler)continue;
-        ++supported;
+        if(control)++controls;else ++supported;
         for(unsigned sample=0;sample<32;++sample) {
             SH2_struct want={0},got={0};
             want.MappedMemoryReadByte=read1;want.MappedMemoryReadWord=read2;want.MappedMemoryReadLong=read4;
@@ -76,7 +80,9 @@ int main(void) {
             want.seed=next(&seed);want.stall=(sample&2)!=0;
             got=want;
             handler(&want);
-            if(simple.mode)ambient_mem_execute(&got,simple);else ambient_complex_execute(&got,complex);
+            if(simple.mode)ambient_mem_execute(&got,simple);
+            else if(complex.mode)ambient_complex_execute(&got,complex);
+            else if(!ambient_sh2_control(&got,raw))abort();
             if(memcmp(&want.regs,&got.regs,sizeof(want.regs)) || want.cycles!=got.cycles ||
                want.seed!=got.seed || want.count!=got.count ||
                memcmp(want.events,got.events,sizeof(want.events))) {
@@ -88,18 +94,21 @@ int main(void) {
         }
     }
     printf("SH2 memory: %u encodings, %u differential executions against pinned upstream handlers passed\n",supported,supported*32);
-    return supported==25553?0:1;
+    printf("SH2 control: %u encodings, %u differential executions against pinned upstream handlers passed\n",controls,controls*32);
+    return supported==25553 && controls==9568?0:1;
 }
 """
 def run(upstream: Path):
     source=upstream.read_text()
     functions={}
+    controls={"SH2"+name for name in ("bra","bsr","braf","bsrf","jmp","jsr","rts","bts","bfs",
+                                      "mova","div0s","div1","sleep")}
     for match in re.finditer(r"static void FASTCALL (SH2\w+)\(SH2_struct \* sh\)\n\{[\s\S]*?\n\}",source):
         name=match.group(1)
         body=match.group()
-        if name!="SH2undecoded" and re.search(r"MappedMemory(?:Read|Write)",body):
+        if name in controls or (name!="SH2undecoded" and re.search(r"MappedMemory(?:Read|Write)",body)):
             functions[name]=body
-    if len(functions)!=53:
+    if len(functions)!=53+len(controls) or not controls.issubset(functions):
         raise ValueError(f"Unexpected pinned memory handler count: {len(functions)}")
     decode=re.search(r"static opcodefunc decode\(enum SHMODELTYPE model, u16 instruction\)\n\{[\s\S]*?\n\}",source)
     if not decode:

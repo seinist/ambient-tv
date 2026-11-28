@@ -360,7 +360,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
     const unsigned cpu = context->isslave ? 1 : 0;
     if (ambient_sh2_disabled[cpu]) return 0;
     AmbientSh2Block* block = &ambient_sh2_cache[cpu][(pc >> 1 ^ pc >> 9) & (AMBIENT_SH2_SLOTS-1)];
-    if (block->pc == pc && block->count && block->code &&
+    if (block->pc == pc && (block->code || block->has_terminal) &&
         block->cycles <= budget - context->cycles &&
         (!block->has_terminal || block->cycles < budget - context->cycles)) {
         unsigned i;
@@ -375,10 +375,12 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         if (i == block->count && (!block->has_terminal ||
             (((fetchfunc*)context->fetchlist)[(terminal_pc >> 20) & 255] == fetch &&
              (uint16_t)fetch(context, terminal_pc) == block->terminal))) {
-            ((void (*)(u32*, u32*))block->code)(context->regs.R, &context->regs.SR.all);
-            context->instruction = block->ops[block->count-1];
-            context->regs.PC += block->count * 2;
-            context->cycles += block->cycles;
+            if (block->code) {
+                ((void (*)(u32*, u32*))block->code)(context->regs.R, &context->regs.SR.all);
+                context->instruction = block->ops[block->count-1];
+                context->regs.PC += block->count * 2;
+                context->cycles += block->cycles;
+            }
             if (block->has_terminal) {
                 context->instruction = block->terminal;
                 unsigned cost = ambient_sh2_branch(block->terminal, &context->regs.PC,
@@ -396,10 +398,11 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
             }
             return 1;
         }
-        munmap(block->code, block->bytes);
+        if (block->code) munmap(block->code, block->bytes);
         memset(block, 0, sizeof(*block));
+        block->pc = pc;
     }
-    if (block->code && block->pc == pc) return 0; /* insufficient cycle budget */
+    if ((block->code || block->has_terminal) && block->pc == pc) return 0; /* insufficient cycle budget */
     if (block->pc != pc) {
         if (block->code) munmap(block->code, block->bytes);
         memset(block, 0, sizeof(*block));
@@ -424,10 +427,13 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         if (!emitted) {
             // One terminal instruction may reuse the verified fetch. Never
             // precompile beyond a potentially mutating memory/control operation.
-            if (count >= 2) {
+            const AmbientMemOp memory = ambient_mem_decode(op);
+            const AmbientComplexMem complex_memory = ambient_complex_decode(op);
+            const unsigned branch = (op & 0xff00u) == 0x8900 || (op & 0xff00u) == 0x8b00;
+            if (count >= 2 || memory.mode || complex_memory.mode || branch || ambient_sh2_control_supported(op)) {
                 block->terminal = op;
-                block->memory = ambient_mem_decode(op);
-                block->complex_memory = ambient_complex_decode(op);
+                block->memory = memory;
+                block->complex_memory = complex_memory;
                 block->terminal_handler = ((opcodefunc*)context->opcodes)[op];
                 block->has_terminal = 1;
             }
@@ -437,7 +443,13 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         cycles += cost;
         block->ops[count++] = op;
     }
-    if (count < (block->has_terminal ? 2u : 4u)) {
+    // Memory/control-heavy loops need not contain an ALU prefix. Cache
+    // decoded terminal-only operations without allocating executable pages.
+    if (!count && block->has_terminal) {
+        block->count = block->cycles = 0;
+        return 0;
+    }
+    if (!block->has_terminal && count < 4u) {
         block->ops[0] = (uint16_t)fetch(context, pc);
         block->count = 1;
         block->has_terminal = 0;
