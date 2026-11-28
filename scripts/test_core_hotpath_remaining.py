@@ -742,9 +742,6 @@ int main() {
             subprocess.run([str(binary)], check=True)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
     def test_panda_shader_cache_collision_accuracy_and_eviction(self):
         compiler = shutil.which("c++")
         self.assertIsNotNone(compiler)
@@ -822,3 +819,7 @@ int main() {
                             "-I",str(root),str(root/"shader_rec.cpp"),str(root/"test.cpp"),
                             "-o",str(root/"test")],check=True)
             subprocess.run([str(root/"test")],check=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
