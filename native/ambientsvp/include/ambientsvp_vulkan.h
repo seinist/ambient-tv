@@ -93,6 +93,16 @@ AmbientSvpVk *ambient_svp_vk_create_quality(VkInstance,VkPhysicalDevice,VkDevice
  * No host pixel transfer; completes synchronously. */
 int ambient_svp_vk_render_held(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
     const VkSemaphore *,VkSemaphore,uint64_t,float);
+/* Optional asynchronous variant, no CPU metadata readback. On success
+ * with a non-NULL ticket the timeline signal is queued, not completed.
+ * Keep all images, waits and signal alive until ticket retirement.
+ * The queue is serialized by the caller for submit only; retire requires
+ * no queue lock. 1 consumes ticket, 0 pending, -1 unresolved.
+ * wait=1 waits for completion or confirmed device loss. */
+typedef struct HeldSubmission AmbientSvpVkHeld;
+int ambient_svp_vk_submit_held(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+    const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **);
+int ambient_svp_vk_retire_held(AmbientSvpVkHeld *,uint32_t wait);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
 /* Record motion analysis into an already-recording command buffer
  * outside a render pass; no submit. Pair retains its private resources.

@@ -27,6 +27,9 @@ static inline void svp_fel_vo_destroy(struct priv *p)
 {
     struct svp_fel_vo_cache *s=p->svp_fel;
     if(!s)return;
+#if defined(PL_HAVE_VULKAN)
+    svp_placebo_quality_retire_texture(p->gpu,&s->quality,NULL);
+#endif
     for(unsigned i=0;i<4;i++){
         pl_tex_destroy(p->gpu,&s->sources[i]);
     }
@@ -35,6 +38,14 @@ static inline void svp_fel_vo_destroy(struct priv *p)
 #endif
     pl_renderer_destroy(&s->reconstruct);
     free(s);p->svp_fel=NULL;
+}
+static inline void svp_fel_vo_retire_output(struct priv *p,pl_tex output)
+{
+#if defined(PL_HAVE_VULKAN)
+    if(p->svp_fel&&output)svp_placebo_quality_retire_texture(p->gpu,&p->svp_fel->quality,output);
+#else
+    (void)p;(void)output;
+#endif
 }
 #if PL_API_VER >= 367 && defined(PL_HAVE_DOVI) && defined(PL_HAVE_VULKAN)
 static inline bool svp_fel_target(pl_gpu gpu,pl_tex *tex,int w,int h)
@@ -62,6 +73,7 @@ static inline bool svp_fel_vo_source(struct priv *p,struct vo *vo,struct svp_fel
 {
     if(s->ids[slot]==id&&s->sources[slot])return true;
     s->ids[slot]=0;
+    if(s->sources[slot])svp_placebo_quality_retire_texture(p->gpu,&s->quality,s->sources[slot]);
     if(!svp_fel_eligible(source)||!svp_fel_target(p->gpu,&s->sources[slot],source->w,source->h))return false;
     struct mp_image *mpi=mp_image_new_ref(source);
     if(!mpi)return false;

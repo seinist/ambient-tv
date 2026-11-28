@@ -98,6 +98,7 @@ static inline bool ambient_svp_hdr_scene_end(struct ambient_svp_hdr_display *s,c
 static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp_hdr_display *s)
 {
     ambient_svp_hdr_scene_close(s,true);
+    svp_placebo_quality_retire_texture(gpu,&s->quality,NULL);
     ambient_fel_render_destroy(gpu,&s->fel);
     for(unsigned i=0;i<4;i++){
         pl_tex_destroy(gpu,&s->sources[i].texture);
@@ -141,6 +142,7 @@ static inline bool ambient_svp_hdr_source_load(pl_gpu gpu,pl_log log,
 {
     if(dst->id==id&&dst->texture)return true;
     dst->id=0;
+    if(dst->texture)svp_placebo_quality_retire_texture(gpu,&s->quality,dst->texture);
     struct ambient_ahb_output lease={0};
     if(ambient_display_prepare(owner,pic,&lease,raw,dovi)!=VK_SUCCESS)return false;
     struct pl_color_space color=vlc_placebo_ColorSpace(&pic->format);

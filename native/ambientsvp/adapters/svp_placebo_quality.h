@@ -17,6 +17,13 @@ struct svp_placebo_hdr {
     int32_t shifts[3][2];
     AmbientSvpHdrResult results[3];
 };
+#define SVP_PLACEBO_PENDING 4
+struct svp_placebo_pending {
+    AmbientSvpVkHeld *job;
+    unsigned count;
+    pl_tex textures[5];
+    VkSemaphore holds[5];
+};
 struct svp_placebo_quality {
     void *lib;
     AmbientSvpVk *engine;
@@ -33,15 +40,40 @@ struct svp_placebo_quality {
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,
         const AmbientSvpHdrTrack *,const uint32_t (*)[3],AmbientSvpHdrResult *,
         uint32_t (*)[4],uint32_t (*)[3],int32_t (*)[2],uint32_t,AmbientSvpHdrPass *,uint64_t);
+    int (*submit)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+        const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **);
+    int (*retire)(AmbientSvpVkHeld *,uint32_t);
+    struct svp_placebo_pending pending[SVP_PLACEBO_PENDING];
+    unsigned pending_count;
     VkSemaphore done;
     uint64_t value;
     int w,h;
     AmbientSvpQuality options;
 };
+// Retire native image views before a renderer-owned texture can be
+// destroyed or recreated. No queue mutex is held during fence waits.
+static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality *s,unsigned i,bool wait)
+{
+    struct svp_placebo_pending *p=&s->pending[i];
+    if(s->retire(p->job,wait?1:0)!=1)return false;
+    for(unsigned j=0;j<p->count;j++)pl_vulkan_sem_destroy(gpu,&p->holds[j]);
+    --s->pending_count;
+    memmove(p,p+1,(s->pending_count-i)*sizeof(*p));
+    s->pending[s->pending_count]=(struct svp_placebo_pending){0};
+    return true;
+}
+static inline void svp_placebo_quality_retire_texture(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
+{
+    for(unsigned i=0;i<s->pending_count;){
+        bool wait=texture==NULL;
+        for(unsigned j=0;j<s->pending[i].count;j++)wait|=s->pending[i].textures[j]==texture;
+        if(!svp_placebo_retire_one(gpu,s,i,wait))++i;
+    }
+}
 static inline void svp_placebo_quality_destroy(pl_gpu gpu,struct svp_placebo_quality *s)
 {
-    // All output/source textures must already have been destroyed by
-    // their respective renderer owners before destroying ext-deps.
+    svp_placebo_quality_retire_texture(gpu,s,NULL);
+    // Renderer dependencies on the shared timeline may outlive native jobs.
     if(s->done){pl_gpu_finish(gpu);pl_vulkan_sem_destroy(gpu,&s->done);}
     if(s->engine)s->destroy(s->engine);
     if(s->lib)dlclose(s->lib);
@@ -73,17 +105,28 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         s->render=dlsym(s->lib,"ambient_svp_vk_render_held");
         s->render_hdr=dlsym(s->lib,"ambient_svp_vk_render_held_hdr");
         s->render_pass=dlsym(s->lib,"ambient_svp_vk_render_held_pass");
+        s->submit=dlsym(s->lib,"ambient_svp_vk_submit_held");
+        s->retire=dlsym(s->lib,"ambient_svp_vk_retire_held");
+        if(!s->retire)s->submit=NULL;
         if(!s->create||!s->destroy||!s->render){dlclose(s->lib);s->lib=NULL;return false;}
     }
     if(hdr&&(!s->render_hdr||!hdr->count||hdr->count>3))return false;
     if(pass&&(!s->render_pass||!hdr||hdr->count<1||hdr->count>3))return false;
     const int w=a->params.w,h=a->params.h;
     if(!s->engine||w!=s->w||h!=s->h||memcmp(&s->options,options,sizeof(*options))){
+        svp_placebo_quality_retire_texture(gpu,s,NULL);
         if(s->engine)s->destroy(s->engine);
         s->engine=s->create(vk->instance,vk->phys_device,vk->device,vk->get_proc_addr,w,h,3,options);
         if(!s->engine)return false;
         s->w=w;s->h=h;s->options=*options;
     }
+    // Poll all existing jobs, then apply bounded backpressure outside
+    // the queue lock. The legacy and metadata paths also share the budget.
+    for(unsigned i=0;i<s->pending_count;)
+        if(!svp_placebo_retire_one(gpu,s,i,false))++i;
+    if(s->pending_count==SVP_PLACEBO_PENDING&&!svp_placebo_retire_one(gpu,s,0,true))return false;
+    if(*out&&((*out)->params.w!=w||(*out)->params.h!=h))
+        svp_placebo_quality_retire_texture(gpu,s,*out);
     if(!s->done)s->done=pl_vulkan_sem_create(gpu,pl_vulkan_sem_params(.type=VK_SEMAPHORE_TYPE_TIMELINE));
     if(!s->done||s->value==UINT64_MAX||*out==a||*out==b||
         (previous&&*out==previous)||(next&&*out==next)||
@@ -104,6 +147,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         for(unsigned j=0;j<i;j++)if(images[i]==images[j])return false;
     }
     unsigned held=0;bool ok=false,retired=false;
+    AmbientSvpVkHeld *job=NULL;
     for(unsigned i=0;i<count;i++){
         holds[i]=pl_vulkan_sem_create(gpu,pl_vulkan_sem_params(.type=VK_SEMAPHORE_TYPE_BINARY));
         if(!holds[i]||!pl_vulkan_hold_ex(gpu,pl_vulkan_hold_params(.tex=tex[i],
@@ -122,6 +166,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index):
         hdr?s->render_hdr(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count):
+        s->submit?s->submit(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,&job):
         s->render(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase);
     // Defensive panic recovery: if the native boundary could not
     // establish its own retirement, prove queue retirement here before
@@ -136,7 +181,14 @@ cleanup:
     for(unsigned i=0;i<held;i++)
         pl_vulkan_release_ex(gpu,pl_vulkan_release_params(.tex=tex[i],.layout=VK_IMAGE_LAYOUT_GENERAL,
             .qf=VK_QUEUE_FAMILY_IGNORED,.semaphore={retired?s->done:VK_NULL_HANDLE,retired?s->value:0}));
-    for(unsigned i=0;i<count;i++)if(holds[i])pl_vulkan_sem_destroy(gpu,&holds[i]);
+    if(job){
+        struct svp_placebo_pending *p=&s->pending[s->pending_count++];
+        p->job=job;p->count=count;
+        memcpy(p->textures,tex,count*sizeof(*tex));
+        memcpy(p->holds,holds,count*sizeof(*holds));
+    }else{
+        for(unsigned i=0;i<count;i++)if(holds[i])pl_vulkan_sem_destroy(gpu,&holds[i]);
+    }
     return ok;
 }
 static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_quality *s,

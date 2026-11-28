@@ -880,6 +880,47 @@ pub unsafe extern "C" fn ambient_svp_vk_create_quality(instance:vk::Instance,phy
         p
     })).unwrap_or(ptr::null_mut())
 }
+/// A submitted held-image job owns the native command resources until its
+/// actual fence retires. The caller retains the images and semaphores.
+pub struct HeldSubmission {
+    core:Arc<Core>,pool:vk::CommandPool,fence:vk::Fence,
+    views:Vec<vk::ImageView>,pair:*mut VulkanPair,
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_retire_held(job:*mut HeldSubmission,wait:u32)->i32{
+    if job.is_null()||wait>1{return -1;}
+    let j=unsafe{&*job};
+    let d=&j.core.device;
+    let lost=loop{
+        let status=if wait==1{unsafe{d.wait_for_fences(&[j.fence],true,u64::MAX)}.map(|_|true)}
+            else{unsafe{d.get_fence_status(j.fence)}};
+        match status{
+            Ok(true)=>break false,
+            Ok(false)=>return 0,
+            Err(vk::Result::ERROR_DEVICE_LOST)=>break true,
+            Err(_)=>if wait==0{return -1;}else{std::thread::yield_now();},
+        }
+    };
+    let j=unsafe{Box::from_raw(job)};
+    if lost{j.core.lost.store(true,Ordering::Release);}
+    unsafe{
+        if lost||ambient_svp_vk_release(j.pair)!=1{drop(Box::from_raw(j.pair));}
+        j.core.device.destroy_command_pool(j.pool,None);
+        for view in j.views{j.core.device.destroy_image_view(view,None);}
+        j.core.device.destroy_fence(j.fence,None);
+    }
+    1
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_submit_held(s:*const VulkanResident,queue:vk::Queue,family:u32,
+    images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
+    value:u64,phase:f32,job:*mut *mut HeldSubmission)->i32{
+    if job.is_null(){return -1;}
+    unsafe{*job=ptr::null_mut();}
+    unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
+        ptr::null(),ptr::null(),ptr::null(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),
+        0,ptr::null_mut(),0,job)}
+}
 /// Renderer bridge for libplacebo-held, canonical RGBA16F textures.
 /// Caller owns queue serialization and image hold/release. Waits are
 /// binary hold semaphores; signal is a caller-owned timeline semaphore.
@@ -904,6 +945,14 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
     images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
     value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
     results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],n:u32,pass:*mut TwoPass,index:u64)->i32{
+    unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
+        windows,tracks,axes,results,rects,ellipses,shifts,n,pass,index,ptr::null_mut())}
+}
+unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
+    images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
+    value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
+    results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],
+    n:u32,pass:*mut TwoPass,index:u64,async_job:*mut *mut HeldSubmission)->i32{
     if s.is_null()||queue==vk::Queue::null()||images.is_null()||waits.is_null()||
         !matches!(count,2|3|5)||count==2&&phase!=0.0||signal==vk::Semaphore::null()||value==0||
         !phase.is_finite()||!(0.0..=1.0).contains(&phase){return -1;}
@@ -924,6 +973,13 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
         let mut submitted=false;
         let mut fence_retired=false;
         let mut device_lost=false;
+        // Allocate the ticket before submitting: publishing a successful
+        // async submission must not need any fallible allocation.
+        let mut ticket=(!async_job.is_null()).then(||Box::new(HeldSubmission{
+            core:core.clone(),pool:vk::CommandPool::null(),fence:vk::Fence::null(),
+            views:Vec::new(),pair:ptr::null_mut(),
+        }));
+        let mut deferred=false;
         let result=(||->Result<()>{
             pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT),None).map_err(err)?;
@@ -965,6 +1021,14 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
             }
             submitted=true;
             let sealed=ambient_svp_vk_seal(pair,fence)==0;
+            if sealed{
+                if let Some(mut job)=ticket.take(){
+                    job.pool=pool;job.fence=fence;job.views=std::mem::take(&mut views);job.pair=pair;
+                    *async_job=Box::into_raw(job);
+                    deferred=true;
+                    return Ok(());
+                }
+            }
             match d.wait_for_fences(&[fence],true,u64::MAX){
                 Ok(())=>fence_retired=true,
                 Err(e)=>{device_lost=e==vk::Result::ERROR_DEVICE_LOST;return Err(err(e));}
@@ -983,6 +1047,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
                 ambient_svp_hdr_pass_verify_geometry(pass,pair,0,index)!=1{return Err("scene replay geometry mismatch".into());}
             Ok(())
         })();
+        if deferred{return 0;}
         if submitted{
             // A failed wait may only release resources after confirmed
             // retirement/device loss. Retry queue idle before cleanup.
@@ -2263,6 +2328,7 @@ mod gpu_tests{
             let hold=std::array::from_fn::<_,3,_>(|_|d.create_semaphore(&vk::SemaphoreCreateInfo::default(),None).unwrap());
             let mut ty=vk::SemaphoreTypeCreateInfo::default().semaphore_type(vk::SemaphoreType::TIMELINE);
             let done=d.create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut ty),None).unwrap();
+            let gate=d.create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut ty),None).unwrap();
             d.reset_fences(&[fence]).unwrap();
             d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
@@ -2274,10 +2340,19 @@ mod gpu_tests{
                     &vk::ClearColorValue{float32:[0.5,0.5,0.5,1.0]},&[range()]);}
             }
             d.end_command_buffer(cmd).unwrap();
-            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd]).signal_semaphores(&hold)],fence).unwrap();
+            let gate_wait=[gate];let gate_value=[1u64];let gate_stage=[vk::PipelineStageFlags::ALL_COMMANDS];
+            let hold_values=[0u64;3];let producer_commands=[cmd];
+            let mut gate_info=vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&gate_value).signal_semaphore_values(&hold_values);
+            let producer=vk::SubmitInfo::default().push_next(&mut gate_info).wait_semaphores(&gate_wait)
+                .wait_dst_stage_mask(&gate_stage).command_buffers(&producer_commands).signal_semaphores(&hold);
+            d.queue_submit(queue,&[producer],fence).unwrap();
             let handles=held.each_ref().map(|img|img.image);
-            assert_eq!(ambient_svp_vk_render_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,1,0.5),0);
-            assert_eq!(d.get_semaphore_counter_value(done).unwrap(),1);
+            let mut job=ptr::null_mut();
+            assert_eq!(ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,1,0.5,&mut job),0);
+            assert!(!job.is_null());
+            assert_eq!(ambient_svp_vk_retire_held(job,0),0);
+            assert_eq!(d.get_semaphore_counter_value(done).unwrap(),0);
+            d.signal_semaphore(&vk::SemaphoreSignalInfo::default().semaphore(gate).value(1)).unwrap();
             d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
             d.reset_fences(&[fence]).unwrap();
             d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
@@ -2300,8 +2375,10 @@ mod gpu_tests{
                 assert_eq!(u16::from_ne_bytes(pixel[6..8].try_into().unwrap()),0x3c00);
             }
             d.unmap_memory(readback_memory);
+            assert_eq!(ambient_svp_vk_retire_held(job,1),1);
+            assert_eq!(d.get_semaphore_counter_value(done).unwrap(),1);
             ambient_svp_vk_destroy(engine);
-            for sem in hold{d.destroy_semaphore(sem,None);}d.destroy_semaphore(done,None);
+            for sem in hold{d.destroy_semaphore(sem,None);}d.destroy_semaphore(done,None);d.destroy_semaphore(gate,None);
             for img in held{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
             d.destroy_fence(fence,None);d.destroy_command_pool(pool,None);
             d.destroy_buffer(readback,None);d.free_memory(readback_memory,None);
