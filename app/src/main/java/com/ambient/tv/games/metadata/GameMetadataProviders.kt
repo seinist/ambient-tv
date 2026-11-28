@@ -487,7 +487,16 @@ internal fun libretroArtworkMirrorUrl(primary: HttpUrl): HttpUrl? {
     // Construct afresh: no credentials, query parameters or fragments can reach the mirror.
     return HttpUrl.Builder().scheme("https").host("raw.githubusercontent.com")
         .addPathSegment("libretro-thumbnails").addPathSegment(repository).addPathSegment("master")
-        .addPathSegment(path[1]).addPathSegment(path[2]).build()
+        .addPathSegment(path[1]).addPathSegment(path[2]).buildLibretroArtworkUrl()
+}
+
+/** OkHttp permits literal square brackets in paths, but java.net.URI (our strict URL
+ * policy) does not. Encode them in generated paths without changing the thumbnail
+ * filename, double-encoding existing escapes, or relaxing the host allowlist. */
+internal fun HttpUrl.Builder.buildLibretroArtworkUrl(): HttpUrl {
+    val url = build()
+    val path = url.encodedPath.replace("[", "%5B").replace("]", "%5D")
+    return if (path == url.encodedPath) url else url.newBuilder().encodedPath(path).build()
 }
 
 /** Shared with parsers/tests: no application identity or user credentials may survive to SQLite. */
