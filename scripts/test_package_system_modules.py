@@ -163,7 +163,7 @@ class SystemModulePackageTest(unittest.TestCase):
                 packages.native_module(root, "vlc", 2, [apk], [notice])
 
     def test_svp_libretro_and_shaders_require_matching_native_contract(self):
-        for module in ("svp", "libretrodroid", "shaders"):
+        for module in ("svp", "libretrodroid", "shaders", "moonlight"):
             with self.subTest(module=module), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 apk = root / "full.apk"
