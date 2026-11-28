@@ -3100,8 +3100,11 @@ private fun AmbientTvApp(
                                 onAddSystem = { navController.navigate(Destinations.INITIAL_SETUP) { launchSingleTop = true } },
                                 onBack = ::focusSidebar,
                                 onItemClick = { ratingKey ->
+                                    val reminderId = com.ambient.tv.ui.home.homeProgrammeReminderId(ratingKey)
                                     val trailerParts = ratingKey.removePrefix("trailer-title:").split(':')
-                                    if (ratingKey.startsWith("trailer-title:") && trailerParts.size == 2) {
+                                    if (reminderId != null) {
+                                        com.ambient.tv.livetv.LiveTvReminderPrompt.select(reminderId)
+                                    } else if (ratingKey.startsWith("trailer-title:") && trailerParts.size == 2) {
                                         trailerParts[1].toIntOrNull()?.let {
                                             beginMediaSelection()
                                             navController.navigate(Destinations.tmdbTrailers(trailerParts[0], it))
