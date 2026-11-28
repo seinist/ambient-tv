@@ -1,0 +1,183 @@
+diff --git a/rs.c b/rs.c
+--- a/rs.c
++++ b/rs.c
+@@ -4,7 +4,10 @@
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+-#include <string.h>
++#include <string.h>
++#if defined(__aarch64__) && defined(__ARM_NEON)
++#include <arm_neon.h>
++#endif
+ 
+ #include "oblas_lite.h"
+ #include "rs.h"
+@@ -15,9 +18,20 @@
+         return;
+ 
+     if (u == 1) {
+-        register u8 *ap = a, *ae = &a[k], *bp = b;
+-        for (; ap < ae; ap++, bp++)
+-            *ap ^= *bp;
++        int i = 0;
++#if defined(__aarch64__) && defined(__ARM_NEON)
++        // Explicit unaligned-safe vector XOR for the coefficient-one hot path.
++        for (; k - i >= 32; i += 32) {
++            uint8x16_t a0 = vld1q_u8(a + i), b0 = vld1q_u8(b + i);
++            uint8x16_t a1 = vld1q_u8(a + i + 16), b1 = vld1q_u8(b + i + 16);
++            vst1q_u8(a + i, veorq_u8(a0, b0));
++            vst1q_u8(a + i + 16, veorq_u8(a1, b1));
++        }
++        for (; k - i >= 16; i += 16)
++            vst1q_u8(a + i, veorq_u8(vld1q_u8(a + i), vld1q_u8(b + i)));
++#endif
++        for (; i < k; i++)
++            a[i] ^= b[i];
+     } else {
+         rs->axpy(a, b, u, k);
+     }
+@@ -195,7 +209,39 @@
+     for (int i = 0; i < rs->ds; i++)
+         if (marks[i])
+             erasures[gaps++] = i;
+-    for (int i = 0, j = 0; i < rs->ds - gaps; i++, j++) {
++    if (gaps == 0)
++        return 0;
++    if (gaps > rs->ps)
++        return -1;
++
++    // Identify enough available parity shards before touching output buffers.
++    int parityCount = 0;
++    for (int j = rs->ds; j < rs->ts && parityCount < gaps; j++) {
++        if (!marks[j])
++            rowperm[parityCount++] = j - rs->ds;
++    }
++    if (parityCount < gaps)
++        return -1;
++
++    // A single missing data shard requires no matrix construction or elimination.
++    // Use the existing SIMD field kernels and the actual parity row (including
++    // GameStream's custom audio parity coefficients).
++    if (gaps == 1) {
++        int missing = erasures[0];
++        u8 *row = rs->p + rowperm[0] * rs->ds;
++        u8 coefficient = row[missing];
++        if (coefficient == 0)
++            return -1;
++        memcpy(data[missing], data[rs->ds + rowperm[0]], bs);
++        for (int i = 0; i < rs->ds; i++) {
++            if (i != missing)
++                axpy(rs, data[missing], data[i], row[i], bs);
++        }
++        scal(rs, data[missing], GF2_8_INV[coefficient], bs);
++        return 0;
++    }
++
++    for (int i = 0, j = 0; i < rs->ds - gaps; i++, j++) {
+         while (marks[j])
+             j++;
+         colperm[i] = j;
+@@ -203,17 +249,8 @@
+     for (int i = 0, j = rs->ds - gaps; i < gaps; i++, j++)
+         colperm[j] = erasures[i];
+ 
+-    int i = 0;
+-    for (int j = rs->ds; i < gaps; i++, j++) {
+-        while (j < rs->ts && marks[j])
+-            j++;
+-        if (j >= rs->ts)
+-            break;
+-        rowperm[i] = j - rs->ds;
+-        memcpy(data[erasures[i]], data[j], bs);
+-    }
+-    if (i < gaps)
+-        return -1;
++    for (int i = 0; i < gaps; i++)
++        memcpy(data[erasures[i]], data[rs->ds + rowperm[i]], bs);
+ 
+     invert_mat(rs, rs->p, wrk, data, rs->ds - gaps, rs->ds, bs, colperm, rowperm);
+     return 0;
+diff --git a/deps/obl/oblas_lite.c b/deps/obl/oblas_lite.c
+--- a/deps/obl/oblas_lite.c
++++ b/deps/obl/oblas_lite.c
+@@ -1,6 +1,9 @@
+ #include "oblas_lite.h"
+ #include <stdlib.h>
+-#include <string.h>
++#include <string.h>
++#if defined(__linux__)
++#include <pthread.h>
++#endif
+ 
+ #if defined(OBLAS_ARCH_X86)
+ #include <immintrin.h>
+@@ -9,12 +12,18 @@
+ #endif
+ 
+ static uint8_t GF2_8_MUL[65536];
+-static int gf2_8_mul_initialized = 0;
+-
+-static void oblas_lite_init(void)
+-{
+-    if (gf2_8_mul_initialized)
+-        return;
++#if defined(__linux__)
++static pthread_once_t gf2_8_mul_once = PTHREAD_ONCE_INIT;
++#else
++static int gf2_8_mul_initialized = 0;
++#endif
++
++static void oblas_lite_init(void)
++{
++#if !defined(__linux__)
++    if (gf2_8_mul_initialized)
++        return;
++#endif
+     for (int i = 0; i < 256; i++) {
+         for (int j = 0; j < 256; j++) {
+             if (i == 0 || j == 0) {
+@@ -24,7 +33,9 @@
+             }
+         }
+     }
+-    gf2_8_mul_initialized = 1;
++#if !defined(__linux__)
++   gf2_8_mul_initialized = 1;
++#endif
+ }
+ 
+ #if defined(OBLAS_TINY)
+@@ -438,8 +449,12 @@
+ #endif
+ void oblas_get_impl(struct oblas_impl *impl)
+ {
+-    oblas_lite_init();
+-#if defined(OBLAS_ARCH_X86) && !defined(_MSC_VER)
++#if defined(__linux__)
++   pthread_once(&gf2_8_mul_once, oblas_lite_init);
++#else
++   oblas_lite_init();
++#endif
++#if defined(OBLAS_ARCH_X86) && !defined(_MSC_VER)
+     __builtin_cpu_init();
+ #endif
+     /* fallback */
+@@ -450,13 +465,15 @@
+     impl->align_size = sizeof(void *);
+ 
+ #if defined(OBLAS_ARCH_X86)
+-    if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("gfni")) {
++    const int avx512 = __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
++        __builtin_cpu_supports("avx512dq") && __builtin_cpu_supports("avx512vl");
++    if (avx512 && __builtin_cpu_supports("gfni")) {
+         impl->axpy = obl_axpy_avx512_gfni;
+         impl->scal = obl_scal_avx512_gfni;
+         impl->axiy = obl_axiy_avx512_gfni;
+         impl->axpyb32 = obl_axpyb32_avx512;
+         impl->align_size = 64;
+-    } else if (__builtin_cpu_supports("avx512f")) {
++    } else if (avx512) {
+         impl->axpy = obl_axpy_avx512_std;
+         impl->scal = obl_scal_avx512_std;
+         impl->axiy = obl_axiy_avx512_std;
