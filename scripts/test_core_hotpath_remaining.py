@@ -196,8 +196,8 @@ struct Layout {
     Point top, bottom;
     ScreenLayout LayoutValue() const { return layout; }
     unsigned SecondaryScreenScale() const { return 50; }
-    ScreenLayout GetTopScreenTranslation() const { return top; }
-    ScreenLayout GetBottomScreenTranslation() const { return bottom; }
+    Point GetTopScreenTranslation() const { return top; }
+    Point GetBottomScreenTranslation() const { return bottom; }
 };
 struct Buffer {
     unsigned width, height, clears, copies;
