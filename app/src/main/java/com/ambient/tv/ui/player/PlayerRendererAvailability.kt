@@ -59,12 +59,14 @@ internal fun currentPlayerRendererAvailability(
                 sourceMetadata?.handheldHdrStandard == HdrStandard.DOLBY_VISION ||
                 observedDolbyVision || runtimeDolbyVision),
         mpvAvailable = mpvAvailable,
+        vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
     )
 }
 
 /** Runtime-aware shared selector for library, Live TV, YouTube and Monogram player panels. */
 @Composable
 internal fun rememberPlayerRendererAvailability(metadata: PlaybackMetadata?): RendererAvailability {
+    val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
     val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     val sourceMetadata = snapshot.metadata?.takeIf { sameVideoSettingsPlayback(metadata, it) } ?: metadata
     val player = (rendererHandle(sourceMetadata) as? Media3PlaybackHandle)?.player
@@ -93,7 +95,9 @@ internal fun rememberPlayerRendererAvailability(metadata: PlaybackMetadata?): Re
             player?.removeListener(tracksListener)
         }
     }
-    return currentPlayerRendererAvailability(sourceMetadata, media3DolbyVision)
+    return currentPlayerRendererAvailability(sourceMetadata, media3DolbyVision).copy(
+        vlcAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.VLC).usable,
+    )
 }
 
 /** No preference writes or engine callbacks for an unavailable or stale panel choice. */
