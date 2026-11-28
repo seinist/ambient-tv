@@ -119,8 +119,7 @@ jobs:
           readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           "$readelf" -h monogram-report/libmonogram_mtproto.so
           "$readelf" --dyn-syms --wide monogram-report/libmonogram_mtproto.so > monogram-report/symbols.txt
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaRange
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaRange          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
           grep -Fx "cpu_tune=$MONOGRAM_CPU_TUNE" app/libs/.monogram-native-version
           grep -Fx "pgo_mode=$MONOGRAM_PGO_MODE" app/libs/.monogram-native-version
           if [[ "$MONOGRAM_PGO_MODE" == generate ]]; then
@@ -156,8 +155,7 @@ jobs:
           path: monogram-report/
           if-no-files-found: ignore
  monogram-report/symbols.txt
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaParts
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaParts          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
           grep -Fx "cpu_tune=$MONOGRAM_CPU_TUNE" app/libs/.monogram-native-version
           grep -Fx "pgo_mode=$MONOGRAM_PGO_MODE" app/libs/.monogram-native-version
           if [[ "$MONOGRAM_PGO_MODE" == generate ]]; then
