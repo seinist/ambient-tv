@@ -26,6 +26,22 @@ diff --git a/src/video_output/display.c b/src/video_output/display.c
  
  /*****************************************************************************
   *
+@@ -815,8 +827,15 @@
+                                  const char *module,
+                                  const vout_display_owner_t *owner)
+ {
++    /* A timed-out driver can still own the previous Android window.
++     * Do not allow VLC's internal fallback to create a different output
++     * before the Java retirement gate has observed the quarantine. */
++    if (vlc_ambient_output_quarantined()) {
++        msg_Err(parent, "Video output quarantined until process restart");
++        return NULL;
++    }
+     vout_display_priv_t *osys = vlc_custom_create(parent, sizeof (*osys),
+                                                   "vout display");
+     if (unlikely(osys == NULL))
+         return NULL;
+ 
 diff --git a/include/vlc_vout_display.h b/include/vlc_vout_display.h
 --- a/include/vlc_vout_display.h
 +++ b/include/vlc_vout_display.h
