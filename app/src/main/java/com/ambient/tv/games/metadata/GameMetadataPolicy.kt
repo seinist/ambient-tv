@@ -22,7 +22,9 @@ internal fun gameMetadataQuery(
         ?: matched?.canonicalTitle?.takeIf(String::isNotBlank)
         ?: verified
         ?: game.metadataTitle?.takeIf(String::isNotBlank)
-    val filename = game.filename.substringBeforeLast('.').replace('_', ' ').trim()
+    val rawFilename = game.filename.substringBeforeLast('.')
+    val filename = (if (game.systemId == "nds") rawFilename.replace(Regex("""^\d{4,5}\s*[-_.]\s*"""), "") else rawFilename)
+        .replace('_', ' ').trim()
     return GameMetadataQuery(
         systemId = game.systemId,
         title = explicit ?: canonical ?: filename,
@@ -50,7 +52,7 @@ internal fun gameMetadataDigest(value: String): String = MessageDigest.getInstan
 
 /** Old primary-only Libretro misses must not hide images now available from its mirror. */
 internal fun gameMetadataLookupFingerprint(provider: String, fingerprint: String): String =
-    if (provider == GameMetadataProviderIds.LIBRETRO) gameMetadataDigest("libretro-thumbnails:v2:$fingerprint")
+    if (provider == GameMetadataProviderIds.LIBRETRO) gameMetadataDigest("libretro-thumbnails:v3:$fingerprint")
     else fingerprint
 
 /** A cached success for a query is usable only while its saved identity still answers it. */
