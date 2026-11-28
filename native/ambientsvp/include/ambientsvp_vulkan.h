@@ -61,6 +61,20 @@ typedef struct {
 } AmbientSvpVkTuning;
 AmbientSvpVk *ambient_svp_vk_create_config(VkInstance,VkPhysicalDevice,VkDevice,
     PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height,uint32_t mode,const AmbientSvpVkTuning *);
+/* Weighted quality ABI, independent of the legacy tuning struct.
+ * filter: 0=upstream rounded bilinear, 1=Catmull-Rom, 2=Wiener.
+ * lambda/lsad are unscaled 8-bit block parameters. plevel_q16
+ * expresses the level factor; level is zero for the finest stage.
+ * Relative penalties are signed in units of 1/256; sad_gate 0/1.
+ * Visible texture boundaries are clamped, not packed-canvas spills. */
+typedef struct {
+    uint32_t filter,lambda,lsad,plevel_q16,levels,level;
+    int32_t pnew,pzero,pglobal,pnbour,preverse;
+    uint32_t sad_gate;
+} AmbientSvpVkSearchWeights;
+AmbientSvpVk *ambient_svp_vk_create_weighted(VkInstance,VkPhysicalDevice,VkDevice,
+    PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height,uint32_t mode,
+    const AmbientSvpVkTuning *,const AmbientSvpVkSearchWeights *);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
 /* Record motion analysis into an already-recording command buffer
  * outside a render pass; no submit. Pair retains its private resources.
