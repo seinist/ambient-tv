@@ -247,3 +247,46 @@ impl StatsJob{
 fn hdr_statistics_shaders_compile(){
     for entry in ["collect","summarize","track"]{assert_eq!(spirv(SHADER,UNIFORM,entry).unwrap()[0],0x07230203);}
 }
+
+// ST 2094-40:2020 section 10.4. Scene-level reducer. A caller must
+// supply every frame's complete 5:1 linear BT.2020 proxy in display
+// order and finalize only at the actual scene boundary. No partial
+// scene value may be published as a measured FractionBrightPixels.
+#[derive(Default)]
+pub(crate) struct BrightScene {
+    best:Option<(f64,u32)>,
+    frames:u64,
+}
+impl BrightScene {
+    pub(crate) fn push_proxy(&mut self,proxy:&[f32])->Result<()> {
+        if proxy.is_empty()||proxy.iter().any(|v|!v.is_finite()||!(0.0..=1.0).contains(v)){
+            return Err("invalid luminance proxy".into());
+        }
+        let average=proxy.iter().map(|&v|f64::from(v)).sum::<f64>()/proxy.len() as f64;
+        if self.best.is_none_or(|(a,_)|average>=a){
+            let peak=proxy.iter().copied().fold(0.0f32,f32::max);
+            let weight=proxy.iter().map(|&v|((5.0-255.0*(f64::from(peak)-f64::from(v)))/4.0).clamp(0.0,1.0)).sum::<f64>();
+            let value=(1000.0*weight/proxy.len() as f64).round().clamp(1.0,1000.0) as u32;
+            self.best=Some((average,value));
+        }
+        self.frames=self.frames.checked_add(1).ok_or("scene frame overflow")?;
+        Ok(())
+    }
+    pub(crate) fn finish(self)->Option<u32>{self.best.map(|(_,v)|v)}
+}
+#[cfg(test)]
+#[test]
+fn bright_scene_selects_latest_highest_average_and_weighted_band(){
+    let mut scene=BrightScene::default();
+    scene.push_proxy(&[0.9,0.0,0.0,0.0]).unwrap();
+    scene.push_proxy(&[0.5,0.5,0.5,0.5]).unwrap();
+    assert_eq!(scene.finish(),Some(1000));
+    let mut scene=BrightScene::default();
+    scene.push_proxy(&[0.5,0.5]).unwrap();
+    scene.push_proxy(&[0.75,0.25]).unwrap();
+    assert_eq!(scene.finish(),Some(500));
+    let mut scene=BrightScene::default();
+    scene.push_proxy(&[1.0,1.0-3.0/255.0,0.0]).unwrap();
+    assert_eq!(scene.finish(),Some(500));
+    assert_eq!(BrightScene::default().finish(),None);
+}
