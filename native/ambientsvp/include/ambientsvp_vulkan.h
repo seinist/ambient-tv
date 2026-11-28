@@ -167,6 +167,16 @@ void ambient_svp_hdr_scene_destroy(AmbientSvpHdrScene *);
 /* Exact comparison in quantized units, contiguous intervals; 1 match,
  * 0 mismatch, -1 bad arguments. Authored brightest_frame is ignored. */
 int ambient_svp_hdr_scene_validate(uint64_t,uint64_t,const AmbientSvpHdrSceneResult *,const AmbientSvpHdrSceneResult *,uint32_t);
+/* Two-pass session: caller supplies a trusted content SHA256 and exact
+ * output profile, a scene plan, and a private create-only cache path.
+ * Mode 1 captures, mode 2 replays. Calls serialized, indices start at zero.
+ * Finish only after successful complete output; destroy aborts unpublished data. */
+typedef struct TwoPass AmbientSvpHdrPass;
+AmbientSvpHdrPass *ambient_svp_hdr_pass_open(uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t);
+int ambient_svp_hdr_pass_capture(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
+int ambient_svp_hdr_pass_lookup(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
+int ambient_svp_hdr_pass_finish(AmbientSvpHdrPass *);
+void ambient_svp_hdr_pass_destroy(AmbientSvpHdrPass *);
 /* After SUCCESSFUL submission of that command buffer, register its
  * unsignaled-at-submit fence. Caller must not destroy/reset the fence
  * until release returns 1. No more recording after sealing. */
