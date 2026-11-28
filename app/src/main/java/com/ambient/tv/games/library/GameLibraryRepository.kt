@@ -1552,15 +1552,15 @@ class GameLibraryRepository @Inject constructor(
         const val PROBE_VERSION = 3
     }
 
-    // Invalidate only DS probes so existing libraries recover new titles and alternate CRCs.
-    private fun probeVersion(systemId: String): Int = if (systemId == "nds") PROBE_VERSION + 1 else PROBE_VERSION
+    // Invalidate only DS and PSP probes so existing libraries recover new titles and alternate CRCs.
+    private fun probeVersion(systemId: String): Int = if (systemId in setOf("nds", "psp")) PROBE_VERSION + 1 else PROBE_VERSION
 
     private fun extractTitle(entry: FileEntry, session: GameScanFileSession, system: String): String? {
         if (entry.size <= 0 || system !in setOf("gb", "gba", "nds", "snes", "megadrive",
                 "n64", "gamecube", "wii", "psp")) return null
         val ext = GameSystems.extension(entry.name)
         if (ext in GameSystems.archiveExtensions || ext in setOf("cue", "m3u", "gdi", "chd",
-                "cso", "zso", "wbfs", "rvz", "ciso")) return null
+                "wbfs", "rvz", "ciso") || (ext in setOf("cso", "zso") && system != "psp")) return null
         return runCatching {
             session.open(entry.path).use { media ->
                 GameRomTitles.extract(system, entry.name) { offset, count ->
