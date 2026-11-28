@@ -78,7 +78,7 @@ def check_fate(result):
                              75,1600,90,1850,95,1950,99,2940), window
     assert window[24:] == (1,0,0,9,102,205,307,410,512,614,717,819,922), window
 
-def synthetic_payload(version, windows, *, bad_average=False, bad_marker=False):
+def synthetic_payload(version, windows, *, bad_average=False, bad_marker=False, sei_stop=False):
     """Independent bit writer for generated registered data (not player serialization)."""
     fields=[]
     def put(value,width):
@@ -125,7 +125,9 @@ def synthetic_payload(version, windows, *, bad_average=False, bad_marker=False):
         if version==0 and i>0:put(8,6)
         expected[i]+=(1,0,0,2,600,400)
     bits="".join(fields)
-    bits+="0"*((-len(bits))%8)
+    padding=(-len(bits))%8
+    if padding:
+        bits+=("1" if sei_stop else "0")+"0"*(padding-1)
     return REGISTERED+int(bits,2).to_bytes(len(bits)//8,"big"),expected
 
 def self_test(exe):
@@ -134,7 +136,11 @@ def self_test(exe):
         assert probe(exe,payload)==[(version,windows,400,1)]+expected
         for end in range(1,len(payload)):
             assert probe(exe,payload[:end]) is None, (version,windows,end)
-        assert probe(exe,payload+b"\x00") is None
+        aligned,_=synthetic_payload(version,windows,sei_stop=True)
+        assert probe(exe,aligned)==[(version,windows,400,1)]+expected
+        assert probe(exe,payload+b"\x00")==[(version,windows,400,0)]+expected
+        assert probe(exe,payload+b"\x00\x01") is None
+        assert probe(exe,payload+b"\xff") is None
         payload,expected=synthetic_payload(version,windows,bad_average=True)
         assert probe(exe,payload)==[(version,windows,400,0)]+expected
     payload,expected=synthetic_payload(1,1,bad_marker=True)
@@ -178,14 +184,19 @@ def main():
             seen.add(payload)
             result=probe(exe,payload)
             if result is None:
+                # The bytes are public test data, not a local user's media.
+                # Print only the pinned FATE sample so a parser rejection
+                # is reproducible without another network download.
+                if args.fate:
+                    print(f"FATE rejected payload ({len(payload)} bytes): {payload.hex()}")
                 continue
             valid+=1;strict+=result[0][3];versions.add(result[0][0])
             if args.fate:
                 try:
                     check_fate(result)
                     fate_match=True
-                except AssertionError:
-                    pass
+                except AssertionError as error:
+                    print(f"FATE reference mismatch: {error}; parsed={result}")
         print(f"Registered payloads: {count}; unique: {len(seen)}; parsed: {valid}; "
               f"strict authoring: {strict}; versions: {sorted(versions)}")
         if not count or not valid:
