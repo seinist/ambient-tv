@@ -2,6 +2,15 @@ package com.ambient.tv.moonlight
 
 import java.util.concurrent.atomic.AtomicLongArray
 
+/** Bound decoder input waits by frame rate while leaving direct-submit network ingress short. */
+internal fun moonlightDecoderInputTimeoutUs(mode: String, fps: Int, direct: Boolean, config: Boolean): Long {
+    if (direct) return 500L
+    if (config || mode == "smooth") return 3_000L
+    val intervalUs = 1_000_000L / fps.coerceIn(1, 240)
+    return if (mode == "latency") (intervalUs / 8).coerceIn(750L, 3_000L)
+    else (intervalUs / 4).coerceIn(1_000L, 3_000L)
+}
+
 /** Bounded presentation timestamps; no second unbounded decoder-output queue. */
 internal class MoonlightFramePacer(private val mode: String, fps: Int) {
     private val interval = 1_000_000_000L / fps.coerceIn(1, 240)
