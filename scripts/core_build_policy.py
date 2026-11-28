@@ -380,6 +380,16 @@ def prepare_citra_cmake(root):
         raise ValueError("Citra CI version template changed")
     path.write_text(source.replace(marker, 'string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR "${BUILD_REPOSITORY}")'))
 
+    # Catch2's Android debug writer calls __android_log_write from the
+    # test executable, independently of the libretro shared library.
+    tests = root / "src/tests/CMakeLists.txt"
+    source = tests.read_text()
+    marker = "target_link_libraries(tests PRIVATE common core video_core)"
+    if source.count(marker) != 1:
+        raise ValueError("Citra test linkage template changed")
+    tests.write_text(source.replace(marker, marker +
+        "\nif(ANDROID)\n    target_link_libraries(tests PRIVATE log)\nendif()"))
+
 
 def prepare_panda_cmake(root):
     path = root / "CMakeLists.txt"

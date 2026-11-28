@@ -23,8 +23,13 @@ class CoreBuildPolicyTest(unittest.TestCase):
             path = Path(temp) / "src/common/CMakeLists.txt"
             path.parent.mkdir(parents=True)
             path.write_text('string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR ${BUILD_REPOSITORY})')
+            tests = Path(temp) / "src/tests/CMakeLists.txt"
+            tests.parent.mkdir(parents=True)
+            tests.write_text("target_link_libraries(tests PRIVATE common core video_core)\n")
             prepare_cmake(Path(temp), "citra2018", "baseline")
             self.assertIn('"${BUILD_REPOSITORY}"', path.read_text())
+            self.assertIn("if(ANDROID)\n    target_link_libraries(tests PRIVATE log)\nendif()", tests.read_text())
+            self.assertEqual(tests.read_text().count("target_link_libraries(tests PRIVATE log)"), 1)
 
     def test_ndk_dotdot_source_identity(self):
         from core_acceleration_audit import evidence
