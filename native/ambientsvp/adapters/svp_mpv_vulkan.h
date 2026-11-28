@@ -446,12 +446,14 @@ static void svp_vk_hdrplus_affine(AVHDRPlusColorTransformParams *p,const float g
 static bool svp_vk_scene_metadata(struct mp_image *img,const AmbientSvpHdrSceneResult *r)
 {
     static const unsigned percentages[9]={1,5,10,25,50,75,90,95,99};
+    if(!r||!svp_hdr_scene_values(r->maxscl,r->average,r->percentiles,r->fraction))return false;
     for(int i=0;i<img->num_ff_side_data;i++){
         if(img->ff_side_data[i].type!=AV_FRAME_DATA_DYNAMIC_HDR_PLUS)continue;
         AVBufferRef *ref=img->ff_side_data[i].buf;
         if(!ref||ref->size!=sizeof(AVDynamicHDRPlus)||!av_buffer_is_writable(ref))return false;
         AVDynamicHDRPlus *m=(AVDynamicHDRPlus *)ref->data;
-        if(m->application_version!=1||m->num_windows!=1||r->fraction<1||r->fraction>1000)return false;
+        if(m->application_version!=1||m->num_windows!=1||m->targeted_system_display_actual_peak_luminance_flag||
+            m->mastering_display_actual_peak_luminance_flag||m->params[0].color_saturation_mapping_flag)return false;
         AVHDRPlusColorTransformParams *p=&m->params[0];
         if(p->num_distribution_maxrgb_percentiles!=9)return false;
         for(unsigned j=0;j<9;j++)if(p->distribution_maxrgb[j].percentage!=percentages[j])return false;
