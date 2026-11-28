@@ -363,7 +363,7 @@ jobs:
           retention-days: 7
       - name: Execute AFM3 real seek integration on Android emulator
         if: matrix.abi == 'x86_64'
-        timeout-minutes: 15
+        timeout-minutes: 40
         run: |
           set -euo pipefail
           test -c /dev/kvm
@@ -371,20 +371,70 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           "$sdkmanager" 'emulator' 'platform-tools' 'system-images;android-35;google_apis;x86_64'
-          echo no | "$avdmanager" create avd --force --name vlc-seek --package 'system-images;android-35;google_apis;x86_64'
-          "$ANDROID_HOME/emulator/emulator" -avd vlc-seek -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -accel on > "$RUNNER_TEMP/vlc-seek-emulator.log" 2>&1 &
-          emulator_pid=$!
-          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          printf 'no\n' | "$avdmanager" create avd --force --name vlc-seek --package 'system-images;android-35;google_apis;x86_64'
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           export ANDROID_SERIAL=emulator-5554
-          timeout 300 adb wait-for-device
-          timeout 300 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do sleep 2; done'
-          adb shell input keyevent 82
-          if ! timeout 120 bash scripts/run_vlc_seek_e2e.sh --run-prepared; then
-            adb logcat -d -t 4000 || true
-            cat "$RUNNER_TEMP/vlc-seek-emulator.log" || true
-            exit 1
-          fi
+          emulator="$ANDROID_HOME/emulator/emulator"
+          "$emulator" -accel-check
+          adb start-server
+          mkdir -p "$RUNNER_TEMP/vlc-seek-logs"
+          logs="$RUNNER_TEMP/vlc-seek-logs"
+          emulator_pid=
+          stop_emulator() {
+            if [[ -n "$emulator_pid" ]]; then
+              timeout 15 adb emu kill >/dev/null 2>&1 || true
+              kill "$emulator_pid" 2>/dev/null || true
+              for _ in {1..10}; do
+                kill -0 "$emulator_pid" 2>/dev/null || break
+                sleep 1
+              done
+              kill -KILL "$emulator_pid" 2>/dev/null || true
+              wait "$emulator_pid" 2>/dev/null || true
+              emulator_pid=
+            fi
+          }
+          diagnostics() {
+            adb devices -l || true
+            timeout 20 adb logcat -d -t 4000 > "$logs/logcat.txt" 2>&1 || true
+            for log in "$logs"/emulator-*.log; do
+              [[ ! -f "$log" ]] || tail -n 120 "$log"
+            done
+          }
+          trap 'status=$?; if [[ "$status" != 0 ]]; then diagnostics; fi; stop_emulator; exit "$status"' EXIT
+          booted=0
+          for attempt in 1 2; do
+            # Retry infrastructure startup only, never a failed seek assertion.
+            gpu=swiftshader_indirect
+            [[ "$attempt" == 1 ]] || gpu=swiftshader
+            "$emulator" -avd vlc-seek -port 5554 -no-window -no-audio -no-snapshot -no-boot-anim -wipe-data -gpu "$gpu" -accel on > "$logs/emulator-$attempt.log" 2>&1 &
+            emulator_pid=$!
+            deadline=$((SECONDS + 420))
+            while (( SECONDS < deadline )); do
+              if ! kill -0 "$emulator_pid" 2>/dev/null; then
+                echo "Emulator exited before boot (attempt $attempt)"
+                break
+              fi
+              if [[ "$(timeout 10 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" == 1 ]]; then
+                booted=1
+                break
+              fi
+              sleep 3
+            done
+            [[ "$booted" == 0 ]] || break
+            diagnostics
+            stop_emulator
+          done
+          [[ "$booted" == 1 ]] || { echo "Android emulator did not boot after two attempts" >&2; exit 1; }
+          timeout 20 adb shell input keyevent 82
+          timeout 180 bash scripts/run_vlc_seek_e2e.sh --run-prepared
+      - name: Retain Android emulator diagnostics
+        if: ${{ always() && matrix.abi == 'x86_64' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-seek-emulator-diagnostics
+          path: ${{ runner.temp }}/vlc-seek-logs/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Retain verified native libraries if packaging fails
         if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
         uses: actions/upload-artifact@v5
