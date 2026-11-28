@@ -430,12 +430,14 @@ modularization, and it must be validated against the final Moonlight branch.
 
 ### Compatible release discovery
 
-Release discovery walks the bounded GitHub release history lazily. Each candidate
-catalog must authenticate before ABI, SDK, profile, version-floor and exact host
-binding/native fingerprint selection. A signed incompatible catalog is skipped
-without downloading its ZIP or changing the installed selection. Invalid metadata,
-network errors and archive/preflight failures stop the search; they never trigger
-an automatic downgrade. The persisted version floor remains authoritative.
+Release discovery walks the bounded GitHub release history and authenticates
+all discovered module catalogs before downloading the highest compatible signed
+version. GitHub presentation order is not version order. Conflicting signed
+entries at the same ABI/profile/version fail closed. A signed incompatible
+catalog is skipped without downloading its ZIP or changing the installed
+selection. Invalid metadata, network errors and archive/preflight failures stop
+the search; they never trigger an automatic downgrade. Only the winning ZIP
+is downloaded. The persisted version floor is rechecked under the install lock.
 
 ### Cancellable module downloads
 

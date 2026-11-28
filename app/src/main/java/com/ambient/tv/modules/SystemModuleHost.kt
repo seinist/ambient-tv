@@ -210,10 +210,16 @@ internal object SystemModuleHost {
     fun installLatest(module: SystemModule, transfer: SystemModuleDownload = SystemModuleDownload()): SystemModuleBuild? {
         require(module in supported && downloadsEnabled)
         val transport = SystemModuleTransport(transfer)
-        // Only a signed catalog with no compatible candidate permits continuing.
-        // Trust, network and payload validation errors must stop the search.
-        return transport.releaseTags(module).firstNotNullOfOrNull { tag -> install(module, tag, transport) }
-            .also { transfer.check() }
+        val old = session.store.selectedMetadata(module)
+        val result = transport.installLatest(session.store, module, validateCandidate = {
+            session.runtime.validateCandidate(module, it)
+        }, compatible = {
+            transfer.check()
+            session.runtime.matchesHost(module, it)
+        })?.build
+        if (result != null && (result != old || SystemModuleAvailability.state(module).runtime == ModuleRuntimeState.FAILED))
+            markChanged(module, old, result)
+        return result
     }
 
     @Synchronized

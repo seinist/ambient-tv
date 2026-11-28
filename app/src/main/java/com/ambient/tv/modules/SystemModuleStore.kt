@@ -38,6 +38,47 @@ internal class SystemModuleStore(
         val highWaterBuilds: Map<String, SystemModuleBuild> = emptyMap(),
     )
     data class Package(val archive: File, val build: SystemModuleBuild)
+    data class SignedCatalog(val tag: String, val manifest: ByteArray, val signature: ByteArray)
+
+    /**
+     * Discover the highest compatible signed version, not GitHub's presentation
+     * order. Never open payloads during discovery. Recheck the version floor
+     * under the installation lock before publishing the chosen candidate.
+     */
+    fun latestCatalog(
+        module: SystemModule,
+        catalogs: Sequence<SignedCatalog>,
+        profile: String = "baseline",
+        compatible: (SystemModuleBuild) -> Boolean = { true },
+    ): SignedCatalog? {
+        val floor = locked(module) { maxOf(1, readState(it).highWater) }
+        val seen = mutableMapOf<Triple<Long, String, String>, SystemModuleBuild>()
+        var winner: SignedCatalog? = null
+        var newest: SystemModuleBuild? = null
+        for (catalog in catalogs) {
+            val manifest = SystemModuleChannel.authenticate(catalog.manifest, catalog.signature, publicKey, catalog.tag)
+            for (build in manifest.modules.filter { it.module == module.id }) {
+                val key = Triple(build.version, build.abi, build.profile)
+                val prior = seen.putIfAbsent(key, build)
+                if (prior != null && prior != build)
+                    throw SystemModuleTrustException("Conflicting signed module catalogs")
+            }
+            val candidate = SystemModuleChannel.select(manifest, module, processAbi, hostApi, sdk, profile, floor, compatible)
+                ?: continue
+            val previous = newest
+            // Current publishers emit a single version per catalog. Prefer the
+            // requested profile and concrete ABI for equal-version alternatives.
+            fun rank(build: SystemModuleBuild): Int =
+                (if (build.abi == processAbi) 10 else 0) +
+                    (if (build.profile == profile) 2 else if (build.profile == "optimized") 1 else 0)
+            if (previous == null || candidate.version > previous.version ||
+                candidate.version == previous.version && rank(candidate) > rank(previous)) {
+                winner = catalog
+                newest = candidate
+            }
+        }
+        return winner
+    }
 
     private val json = Json { ignoreUnknownKeys = false }
     private val idPattern = Regex("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")

@@ -246,6 +246,40 @@ class SystemModuleStoreTest {
             compatible = { fail("Downgrade reached compatibility probe"); true }))
     }
 
+    private fun catalog(version: Long, hash: String = "a".repeat(64), suffix: String = version.toString(),
+                        hostApi: Int = 1): SystemModuleStore.SignedCatalog {
+        val release = "modules-monogram-v$suffix"
+        val build = SystemModuleBuild(module.id, "arm64-v8a", "baseline", version, hostApi, 29,
+            "monogram--arm64-v8a--baseline.zip", 100, hash)
+        val bytes = Json.encodeToString(SystemModuleManifest(1, release, listOf(build))).encodeToByteArray()
+        val signature = Signature.getInstance("SHA256withECDSA").run {
+            initSign(key.private)
+            update(bytes)
+            sign()
+        }
+        return SystemModuleStore.SignedCatalog(release, bytes, signature)
+    }
+
+    @Test fun latestDiscoveryUsesSignedVersionRatherThanReleaseOrder() {
+        val manager = store()
+        val older = catalog(3)
+        val newer = catalog(7)
+        val incompatible = catalog(9, hostApi = 2)
+        assertSame(newer, manager.latestCatalog(module, sequenceOf(older, incompatible, newer)))
+        assertSame(newer, manager.latestCatalog(module, sequenceOf(newer, older, incompatible)))
+        install(manager, 8, zip("lib/libone.so"))
+        assertNull(manager.latestCatalog(module, sequenceOf(older, newer, incompatible)))
+    }
+
+    @Test fun latestDiscoveryRejectsConflictingOrUnauthenticatedCatalogsEvenAfterMatch() {
+        val manager = store()
+        val newest = catalog(7)
+        reject { manager.latestCatalog(module, sequenceOf(newest, catalog(7, "b".repeat(64), "other"))) }
+        val invalid = catalog(3).let { it.copy(signature = byteArrayOf(1)) }
+        reject { manager.latestCatalog(module, sequenceOf(newest, invalid)) }
+        assertNull(manager.current(module))
+    }
+
     @Test fun invalidSignatureNeverReachesCompatibilityProbe() {
         reject {
             store().install(module, tag, byteArrayOf(1), byteArrayOf(2), compatible = {

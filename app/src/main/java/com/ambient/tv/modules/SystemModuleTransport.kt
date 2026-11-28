@@ -27,11 +27,39 @@ internal class SystemModuleTransport(private val transfer: SystemModuleDownload 
         validateCandidate: (SystemModuleStore.Package) -> Unit = {},
         compatible: (SystemModuleBuild) -> Boolean = { true },
     ): SystemModuleStore.Package? {
+        return installCatalog(store, module, readCatalog(tag), profile, validateCandidate, compatible)
+    }
+
+    fun installLatest(
+        store: SystemModuleStore,
+        module: SystemModule,
+        profile: String = "baseline",
+        validateCandidate: (SystemModuleStore.Package) -> Unit = {},
+        compatible: (SystemModuleBuild) -> Boolean = { true },
+    ): SystemModuleStore.Package? {
+        val catalog = store.latestCatalog(module, releaseTags(module).map(::readCatalog), profile, compatible)
+        transfer.check()
+        return catalog?.let { installCatalog(store, module, it, profile, validateCandidate, compatible) }
+    }
+
+    private fun readCatalog(tag: String): SystemModuleStore.SignedCatalog {
         require(Regex("modules-[A-Za-z0-9][A-Za-z0-9._-]{0,100}").matches(tag))
         transfer.check()
         val manifest = readMetadata(releaseUrl(tag, "manifest.json"), SystemModuleChannel.MAX_MANIFEST_BYTES)
         val signature = readMetadata(releaseUrl(tag, "manifest.json.sig"), 256)
-        return store.install(module, tag, manifest, signature, profile, validateCandidate = { pkg ->
+        return SystemModuleStore.SignedCatalog(tag, manifest, signature)
+    }
+
+    private fun installCatalog(
+        store: SystemModuleStore,
+        module: SystemModule,
+        catalog: SystemModuleStore.SignedCatalog,
+        profile: String,
+        validateCandidate: (SystemModuleStore.Package) -> Unit,
+        compatible: (SystemModuleBuild) -> Boolean,
+    ): SystemModuleStore.Package? {
+        transfer.check()
+        return store.install(module, catalog.tag, catalog.manifest, catalog.signature, profile, validateCandidate = { pkg ->
             transfer.update(SystemModuleDownload.VERIFYING)
             validateCandidate(pkg)
             transfer.check()
@@ -40,7 +68,7 @@ internal class SystemModuleTransport(private val transfer: SystemModuleDownload 
             compatible(build)
         }, beforePublish = transfer::beginPublication) { build ->
             transfer.update(0)
-            open(releaseUrl(tag, build.asset), build.size, exactSize = true)
+            open(releaseUrl(catalog.tag, build.asset), build.size, exactSize = true)
         }.also { transfer.check() }
     }
 
@@ -71,6 +99,7 @@ internal class SystemModuleTransport(private val transfer: SystemModuleDownload 
                 out.toString("UTF-8")
             }
             val releases = org.json.JSONArray(raw)
+            if (releases.length() > 100) throw IOException("Release page exceeds bounds")
             for (i in 0 until releases.length()) {
                 val item = releases.getJSONObject(i)
                 val tag = item.optString("tag_name")
