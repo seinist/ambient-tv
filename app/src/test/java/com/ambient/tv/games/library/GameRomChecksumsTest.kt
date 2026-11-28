@@ -76,6 +76,14 @@ class GameRomChecksumsTest {
         assertFalse(GameRomChecksums.canHash("game.3ds", 4L * 1024 * 1024 * 1024 + 1))
     }
 
+    @Test fun remoteScansKeepSmallCartridgeVerificationButSkipLargeRawImages() {
+        assertTrue(GameRomChecksums.canHashDuringScan("game.sfc", 4L * 1024 * 1024, true))
+        assertTrue(GameRomChecksums.canHashDuringScan("game.nds", 16L * 1024 * 1024, true))
+        assertFalse(GameRomChecksums.canHashDuringScan("game.nds", 16L * 1024 * 1024 + 1, true))
+        assertFalse(GameRomChecksums.canHashDuringScan("game.3ds", 4L * 1024 * 1024 * 1024, true))
+        assertTrue(GameRomChecksums.canHashDuringScan("game.3ds", 4L * 1024 * 1024 * 1024, false))
+    }
+
     @Test fun explicitChecksumScansStayBoundedAndExcludeArchivesAndDiscImages() {
         assertTrue(GameRomChecksums.canHash("game.smc", 2L * 1024 * 1024))
         assertFalse(GameRomChecksums.canHash("game.smc", 128L * 1024 * 1024 + 1))

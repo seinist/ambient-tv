@@ -128,6 +128,7 @@ fun GameLibraryScreen(
     val state by model.state.collectAsState()
     val managing = startManaging || embeddedManager
     var choosingSystem by rememberSaveable { mutableStateOf(false) }
+    var reassignFolderId by rememberSaveable { mutableStateOf<String?>(null) }
     var networkEditor by remember { mutableStateOf<FileSource?>(null) }
     var removing by remember { mutableStateOf<GameLibraryFolder?>(null) }
     var metadataSettingsOpen by remember { mutableStateOf(false) }
@@ -165,7 +166,7 @@ fun GameLibraryScreen(
             controls.showOptions -> controls.closeOptions()
             choosingDatSystem -> choosingDatSystem = false
             choosingNameDatabase -> choosingNameDatabase = false
-            choosingSystem -> choosingSystem = false
+            choosingSystem -> { choosingSystem = false; reassignFolderId = null }
             state.selectedSource != null -> if (!model.folderUp()) model.closePicker()
             managerPage != GameLibraryManagerPage.HOME -> { managerPage = GameLibraryManagerPage.HOME; selectedFolderId = null }
             else -> onBack()
@@ -319,12 +320,20 @@ fun GameLibraryScreen(
                         onSelectSource = model::selectSource,
                         onEnter = model::enterFolder,
                         onAdd = { system ->
-                            if (model.assign(system)) {
+                            val reassignId = reassignFolderId
+                            if (reassignId != null) {
+                                state.folders.firstOrNull { it.id == reassignId }?.let {
+                                    model.changeFolderSystem(it, system)
+                                }
+                                choosingSystem = false
+                                reassignFolderId = null
+                            } else if (model.assign(system)) {
                                 choosingSystem = false
                                 managerPage = GameLibraryManagerPage.HOME
                                 selectedFolderId = null
                             }
                         },
+                        onChangeSystem = { reassignFolderId = it.id; choosingSystem = true },
                         onRemove = { removing = it },
                         onScan = model::scanFolder,
                         onEnrich = model::enrichFolder,
@@ -439,7 +448,7 @@ internal fun GameLibraryGames(
         // Existing local dimensions are already present in the initial query.
         // The usual shape of this result set sets the slot; a rare tall or wide cover is fitted
         // into it instead of making every other cover shrink (median, not the narrowest).
-        val gridSlotRatio = remember(section, view, gameIds) {
+        val gridSlotRatio = remember(section, view) {
             games.map { it.coverAspectRatio }.sorted().let { it[it.size / 2] }.coerceIn(.6f, 1.8f)
         }
         val rowArtworkHeight = (148f * 8f / gridColumns.coerceAtLeast(1)).coerceIn(96f, 216f).dp
@@ -630,6 +639,7 @@ private fun GameFolderManager(
     onSelectSource: (FileSource) -> Unit,
     onEnter: (com.ambient.tv.data.files.FileEntry) -> Unit,
     onAdd: (String) -> Unit,
+    onChangeSystem: (GameLibraryFolder) -> Unit,
     onRemove: (com.ambient.tv.games.library.GameLibraryFolder) -> Unit,
     onScan: (GameLibraryFolder) -> Unit,
     onEnrich: (GameLibraryFolder) -> Unit,
@@ -703,6 +713,14 @@ private fun GameFolderManager(
                                 enabled = !state.scanning && folder.id !in state.removingFolders,
                                 icon = Icons.Filled.Image)
                         }
+                    }
+                    item {
+                        com.ambient.tv.ui.common.SettingsNavigationRow(
+                            title = stringResource(R.string.game_library_change_system),
+                            summary = stringResource(R.string.game_library_change_system_hint),
+                            enabled = !state.scanning && folder.id !in state.removingFolders,
+                            icon = Icons.Filled.Refresh,
+                            onClick = { onChangeSystem(folder) })
                     }
                     item {
                         com.ambient.tv.ui.common.SettingsActionRow {
