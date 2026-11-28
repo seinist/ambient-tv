@@ -844,7 +844,7 @@ impl ResidentOptions{
     fn resolve(self,width:u32,height:u32)->Option<(ResidentTuning,ResidentSearchWeights,u32)>{
         if self.preset>4||self.overlap>4||self.search>3||self.artifacts>3||self.scene>3{return None;}
         let preset=if matches!(self.preset,0|4){1}else{self.preset};
-        let block=if self.block!=0{self.block}else if preset==1{32}else{16};
+        let block=if self.block!=0{self.block}else if preset==1||u64::from(width)*u64::from(height)>HD_PIXELS{32}else{16};
         if !matches!(block,8|16|32)||width<block||height<block{return None;}
         let mut overlap=if self.overlap!=0{self.overlap-1}else if preset==1{0}else{2};
         if block==8&&overlap==1{overlap=2;}
@@ -1392,6 +1392,11 @@ mod tests{
     #[test]
     fn common_player_quality_resolves_presets_and_rejects_invalid_options(){
         use super::ResidentOptions;
+        for preset in 1..=4{
+            let (uhd,_,_)=ResidentOptions{preset,..Default::default()}.resolve(3840,2160).unwrap();
+            assert_eq!(uhd.block,32);
+            assert!(3840u32.div_ceil(uhd.step())*2160u32.div_ceil(uhd.step())<=32768);
+        }
         let (t,w,algo)=ResidentOptions::default().resolve(1920,1080).unwrap();
         assert_eq!((t.block,t.overlap,t.pel,algo),(32,0,1,13));
         assert_eq!((w.filter,w.lambda,w.lsad,w.pnew,w.pzero,w.pglobal,w.pnbour,w.preverse),
