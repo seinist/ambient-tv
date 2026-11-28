@@ -121,7 +121,21 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
         let lower=max(max(-vec2i(rect.xy),-ellipse),vec2i(-16));
         let upper=min(min(vec2i(params.xy)-vec2i(rect.zw),vec2i(params.xy)-vec2i(1)-ellipse),vec2i(16));
         let shift=clamp(vec2i(round((prediction-center)*fade)),lower,upper);
-        let moved=vec4u(vec4i(rect)+vec4i(shift,shift));
+        var moved=vec4u(vec4i(rect)+vec4i(shift,shift));
+        // New opt-in ABI: transform the four rectangle corners about
+        // their center. HDR10+ encodes an axis-aligned bounding box.
+        if atomicLoad(&words[o+55u])==1u&&atomicLoad(&words[o+60u])==1u{
+            let gx=vec2f(bitcast<f32>(atomicLoad(&words[o+56u])),bitcast<f32>(atomicLoad(&words[o+57u])));
+            let gy=vec2f(bitcast<f32>(atomicLoad(&words[o+58u])),bitcast<f32>(atomicLoad(&words[o+59u])));
+            let half=(vec2f(rect.zw)-vec2f(rect.xy))*0.5;
+            let x=vec2f(1.0,0.0)+gx*fade*0.5;
+            let y=vec2f(0.0,1.0)+gy*fade*0.5;
+            let extent=abs(x)*half.x+abs(y)*half.y;
+            let mid=center+vec2f(shift);
+            let lo=vec2u(clamp(floor(mid-extent),vec2f(0.0),vec2f(params.xy)-vec2f(1.0)));
+            let hi=vec2u(clamp(ceil(mid+extent),vec2f(lo)+vec2f(1.0),vec2f(params.xy)));
+            if all(hi-lo>=vec2u(2u)){moved=vec4u(lo,hi);}
+        }
         for(var k=0u;k<4u;k++){atomicStore(&words[o+k],moved[k]);}
         atomicStore(&words[o+41u],bitcast<u32>(shift.x));
         atomicStore(&words[o+42u],bitcast<u32>(shift.y));
