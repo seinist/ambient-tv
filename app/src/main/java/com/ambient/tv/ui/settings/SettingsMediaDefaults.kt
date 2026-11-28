@@ -49,13 +49,20 @@ internal fun SettingsImageDefaults(state: SettingsUiState, model: SettingsViewMo
         ImageHint(stringResource(R.string.settings_defaults_renderer_hint))
         if (renderer == "mpv" && !mpvAvailable) ImageHint(stringResource(R.string.player_backend_mpv_unavailable))
         SettingsVideoAcceleration(state, model, effectiveRenderer)
-        SettingsSectionHeader(stringResource(R.string.image_motion))
-        TvSettingRow(
-            title = stringResource(R.string.settings_svp_available),
-            body = stringResource(R.string.settings_svp_available_hint),
-            checked = state.svpAvailable,
-            onCheckedChange = model::onSvpAvailableChanged,
-        )
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.ambient.tv.ui.player.backend.SvpNative.probe()
+            }
+        }
+        if (moduleStates.getValue(com.ambient.tv.modules.SystemModule.SVP).usable) {
+            SettingsSectionHeader(stringResource(R.string.image_motion))
+            TvSettingRow(
+                title = stringResource(R.string.settings_svp_available),
+                body = stringResource(R.string.settings_svp_available_hint),
+                checked = state.svpAvailable,
+                onCheckedChange = model::onSvpAvailableChanged,
+            )
+        }
     }
 }
 
