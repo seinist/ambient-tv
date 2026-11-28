@@ -974,6 +974,14 @@ pub struct HeldSubmission {
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_retire_held(job:*mut HeldSubmission,wait:u32)->i32{
+    unsafe{retire_held_impl(job,wait,ptr::null_mut(),0)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_retire_held_capture(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64)->i32{
+    if pass.is_null(){return -1;}
+    unsafe{retire_held_impl(job,wait,pass,index)}
+}
+unsafe fn retire_held_impl(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64)->i32{
     if job.is_null()||wait>1{return -1;}
     let j=unsafe{&*job};
     let d=&j.core.device;
@@ -989,13 +997,14 @@ pub unsafe extern "C" fn ambient_svp_vk_retire_held(job:*mut HeldSubmission,wait
         }
     };
     let j=unsafe{Box::from_raw(job)};
+    let captured=pass.is_null()||!lost&&unsafe{ambient_svp_hdr_pass_capture(pass,j.pair,0,index)}==1;
     if lost{j.core.lost.store(true,Ordering::Release);}
     unsafe{
         if lost||ambient_svp_vk_release(j.pair)!=1{drop(Box::from_raw(j.pair));}
         for view in j.views{j.core.device.destroy_image_view(view,None);}
         if let Some(commands)=j.commands{commands.recycle(&j.core);}
     }
-    1
+    if captured{1}else{2}
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_submit_held(s:*const VulkanResident,queue:vk::Queue,family:u32,
@@ -1016,6 +1025,18 @@ pub unsafe extern "C" fn ambient_svp_vk_submit_held_cached(s:*const VulkanReside
     unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
         ptr::null(),ptr::null(),ptr::null(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),
         0,ptr::null_mut(),0,job,generation)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_submit_held_capture(s:*const VulkanResident,queue:vk::Queue,family:u32,
+    images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
+    value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
+    n:u32,pass:*mut TwoPass,index:u64,job:*mut *mut HeldSubmission,generation:u64)->i32{
+    if job.is_null(){return -1;}
+    unsafe{*job=ptr::null_mut();}
+    if pass.is_null()||unsafe{(&*pass).mode()}!=1{return -1;}
+    unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
+        windows,tracks,axes,ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),
+        n,pass,index,job,generation)}
 }
 /// Renderer bridge for libplacebo-held, canonical RGBA16F textures.
 /// Caller owns queue serialization and image hold/release. Waits are
@@ -1053,7 +1074,7 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
         !matches!(count,2|3|5)||count==2&&phase!=0.0||signal==vk::Semaphore::null()||value==0||
         !phase.is_finite()||!(0.0..=1.0).contains(&phase){return -1;}
     if !pass.is_null()&&(n==0||n>3){return -1;}
-    if n>3||n>0&&(windows.is_null()||results.is_null()||rects.is_null()||ellipses.is_null()||shifts.is_null()||n>1&&(tracks.is_null()||axes.is_null())){return -1;}
+    if n>3||n>0&&(windows.is_null()||async_job.is_null()&&(results.is_null()||rects.is_null()||ellipses.is_null()||shifts.is_null())||n>1&&(tracks.is_null()||axes.is_null())){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
         let core=&(*s).0;
         if core.mode!=3||core.tuning.is_none()||core.lost.load(Ordering::Acquire){return -1;}

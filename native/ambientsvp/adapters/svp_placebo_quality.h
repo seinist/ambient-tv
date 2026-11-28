@@ -20,6 +20,8 @@ struct svp_placebo_hdr {
 #define SVP_PLACEBO_PENDING 4
 struct svp_placebo_pending {
     AmbientSvpVkHeld *job;
+    AmbientSvpHdrPass *capture;
+    uint64_t index;
     unsigned count;
     pl_tex textures[5];
     VkSemaphore holds[5];
@@ -46,6 +48,11 @@ struct svp_placebo_quality {
     int (*submit_cached)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **,uint64_t);
     uint64_t generation;
+    int (*submit_capture)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+        const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
+        const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
+    int (*retire_capture)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
+    bool capture_failed;
     struct svp_placebo_pending pending[SVP_PLACEBO_PENDING];
     unsigned pending_count;
     VkSemaphore done;
@@ -58,7 +65,9 @@ struct svp_placebo_quality {
 static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality *s,unsigned i,bool wait)
 {
     struct svp_placebo_pending *p=&s->pending[i];
-    if(s->retire(p->job,wait?1:0)!=1)return false;
+    int rc=p->capture&&!s->capture_failed?s->retire_capture(p->job,wait?1:0,p->capture,p->index):s->retire(p->job,wait?1:0);
+    if(rc!=1&&rc!=2)return false;
+    if(rc==2)s->capture_failed=true;
     for(unsigned j=0;j<p->count;j++)pl_vulkan_sem_destroy(gpu,&p->holds[j]);
     --s->pending_count;
     memmove(p,p+1,(s->pending_count-i)*sizeof(*p));
@@ -67,10 +76,11 @@ static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality 
 }
 static inline void svp_placebo_quality_retire_texture(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
 {
-    for(unsigned i=0;i<s->pending_count;){
+    while(s->pending_count){
         bool wait=texture==NULL;
-        for(unsigned j=0;j<s->pending[i].count;j++)wait|=s->pending[i].textures[j]==texture;
-        if(!svp_placebo_retire_one(gpu,s,i,wait))++i;
+        for(unsigned i=0;i<s->pending_count;i++)
+            for(unsigned j=0;j<s->pending[i].count;j++)wait|=s->pending[i].textures[j]==texture;
+        if(!svp_placebo_retire_one(gpu,s,0,wait))break;
     }
 }
 static inline void svp_placebo_quality_source_changed(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
@@ -97,7 +107,7 @@ static inline bool svp_placebo_quality_target(pl_gpu gpu,pl_tex *tex,int w,int h
         .w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true,.storable=storage));
 }
 static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo_quality *s,
-    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index)
+    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index,bool capture)
 {
     if(!a||!b||!options||!out||(!pass&&a==b)||!isfinite(phase)||phase<0||phase>=1||(!pass&&phase==0)|| (a==b&&phase!=0)||
         a->params.w!=b->params.w||a->params.h!=b->params.h)return false;
@@ -118,7 +128,10 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         s->submit=dlsym(s->lib,"ambient_svp_vk_submit_held");
         s->retire=dlsym(s->lib,"ambient_svp_vk_retire_held");
         s->submit_cached=dlsym(s->lib,"ambient_svp_vk_submit_held_cached");
-        if(!s->retire){s->submit=NULL;s->submit_cached=NULL;}
+        s->submit_capture=dlsym(s->lib,"ambient_svp_vk_submit_held_capture");
+        s->retire_capture=dlsym(s->lib,"ambient_svp_vk_retire_held_capture");
+        if(!s->retire_capture)s->submit_capture=NULL;
+        if(!s->retire){s->submit=NULL;s->submit_cached=NULL;s->submit_capture=NULL;}
         if(!s->create||!s->destroy||!s->render){dlclose(s->lib);s->lib=NULL;return false;}
     }
     if(hdr&&(!s->render_hdr||!hdr->count||hdr->count>3))return false;
@@ -133,9 +146,10 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     }
     // Poll all existing jobs, then apply bounded backpressure outside
     // the queue lock. The legacy and metadata paths also share the budget.
-    for(unsigned i=0;i<s->pending_count;)
-        if(!svp_placebo_retire_one(gpu,s,i,false))++i;
+    while(s->pending_count&&svp_placebo_retire_one(gpu,s,0,false)){}
+    if(capture&&s->capture_failed)return false;
     if(s->pending_count==SVP_PLACEBO_PENDING&&!svp_placebo_retire_one(gpu,s,0,true))return false;
+    if(capture&&s->capture_failed)return false;
     if(*out&&((*out)->params.w!=w||(*out)->params.h!=h))
         svp_placebo_quality_retire_texture(gpu,s,*out);
     if(!s->done)s->done=pl_vulkan_sem_create(gpu,pl_vulkan_sem_params(.type=VK_SEMAPHORE_TYPE_TIMELINE));
@@ -173,7 +187,9 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     get_queue(vk->device,family,0,&queue);
     if(!queue)goto cleanup;
     vk->lock_queue(vk,family,0);
-    int rc=pass?s->render_pass(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
+    int rc=capture&&pass&&s->submit_capture?s->submit_capture(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
+        hdr->windows,hdr->tracks,hdr->axes,hdr->count,pass,index,&job,s->generation):
+        pass?s->render_pass(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index):
         hdr?s->render_hdr(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count):
@@ -195,7 +211,7 @@ cleanup:
             .qf=VK_QUEUE_FAMILY_IGNORED,.semaphore={retired?s->done:VK_NULL_HANDLE,retired?s->value:0}));
     if(job){
         struct svp_placebo_pending *p=&s->pending[s->pending_count++];
-        p->job=job;p->count=count;
+        p->job=job;p->count=count;p->capture=capture?pass:NULL;p->index=index;
         memcpy(p->textures,tex,count*sizeof(*tex));
         memcpy(p->holds,holds,count*sizeof(*holds));
     }else{
@@ -206,7 +222,7 @@ cleanup:
 static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_quality *s,
     pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr)
 {
-    return svp_placebo_quality_render_pass(gpu,s,a,b,previous,next,out,phase,options,hdr,NULL,0);
+    return svp_placebo_quality_render_pass(gpu,s,a,b,previous,next,out,phase,options,hdr,NULL,0,false);
 }
 static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_quality *s,
     pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options)

@@ -32,7 +32,8 @@ struct svp_vk_job {
     AmbientSvpVkPair *pair;
     AVFrame *frames[SVP_VK_FRAMES];
     VkImageView views[SVP_VK_IMAGES];
-    unsigned nframes, nviews;
+    unsigned nframes, nviews, capture_count;
+    uint64_t capture_tick;
     bool submitted, sealed;
 };
 struct svp_vk_mpv {
@@ -55,6 +56,7 @@ struct svp_vk_mpv {
     int (*hdr_read_rectangles)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
     AmbientSvpHdrPass *scene_pass;
     unsigned scene_mode,scene_version;
+    bool capture_failed;
     int (*scene_stats_legacy)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],float,uint32_t);
     int (*scene_verify_geometry)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
     int (*scene_lookup_legacy)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
@@ -704,6 +706,7 @@ static void svp_vk_job_free(struct svp_vk_mpv *s,struct svp_vk_job *j)
     if (j->fence) s->destroy_fence(s->device,j->fence,NULL);
     free(j);
 }
+static void svp_vk_scene_abort(struct svp_vk_mpv *s);
 static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
 {
     unsigned outstanding=0;
@@ -713,9 +716,24 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
         for (unsigned i=0;i<SVP_VK_JOBS;i++) if (s->jobs[i]) fences[count++]=s->jobs[i]->fence;
         if (count) s->wait_fences(s->device,count,fences,VK_TRUE,3000000000ULL);
     }
+    // Consume capture jobs in output tick order, never slot order.
+    while(s->scene_pass&&s->scene_mode==1){
+        struct svp_vk_job *first=NULL;
+        for(unsigned i=0;i<SVP_VK_JOBS;i++)if(s->jobs[i]&&s->jobs[i]->capture_count&&
+            (!first||s->jobs[i]->capture_tick<first->capture_tick))first=s->jobs[i];
+        if(!first)break;
+        VkResult ready=s->wait_fences(s->device,1,&first->fence,VK_TRUE,0);
+        if(ready==VK_TIMEOUT)break;
+        bool ok=ready==VK_SUCCESS&&first->sealed;
+        for(unsigned i=0;ok&&i<first->capture_count;i++)
+            ok=s->scene_capture(s->scene_pass,first->pair,i,first->capture_tick+i)==1;
+        first->capture_count=0;
+        if(!ok){s->capture_failed=true;svp_vk_scene_abort(s);break;}
+    }
     for (unsigned i=0;i<SVP_VK_JOBS;i++) {
         struct svp_vk_job *j=s->jobs[i];
         if (!j) continue;
+        if(s->scene_pass&&j->capture_count){outstanding++;continue;}
         // A submitted pair must be released by its own fence check.
         if (j->sealed && s->release(j->pair)==1) {
             j->pair=NULL;
@@ -727,11 +745,15 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
 static void svp_vk_scene_abort(struct svp_vk_mpv *s)
 {
     if(s&&s->scene_pass){s->scene_destroy(s->scene_pass);s->scene_pass=NULL;s->scene_mode=0;}
+    if(s)for(unsigned i=0;i<SVP_VK_JOBS;i++)if(s->jobs[i])s->jobs[i]->capture_count=0;
 }
 static bool svp_vk_scene_complete(struct svp_vk_mpv *s)
 {
     if(!s||!s->scene_pass)return false;
-    bool ok=s->scene_finish(s->scene_pass)==1;
+    svp_vk_reap(s,true);
+    bool ok=s->scene_pass&&!s->capture_failed;
+    for(unsigned i=0;i<SVP_VK_JOBS;i++)if(s->jobs[i]&&s->jobs[i]->capture_count)ok=false;
+    if(ok)ok=s->scene_finish(s->scene_pass)==1;
     svp_vk_scene_abort(s);return ok;
 }
 static void svp_vk_reset_history(struct svp_vk_mpv *s)
@@ -897,6 +919,7 @@ static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_ima
         (long long)llround(img->pts*1000000.0),q->preset,q->block,q->overlap,q->pel,q->search,q->artifacts,q->scene,q->algorithm);
     if(n<=0||(size_t)n>=sizeof(profile))return false;
     s->scene_pass=open(mode,s->scene_version,plan,cache,key,profile,s->width,s->height);
+    s->capture_failed=false;
     s->scene_mode=s->scene_pass?mode:0;return s->scene_pass!=NULL;
 }
 static bool svp_vk_matches(struct svp_vk_mpv *s,struct mp_image *img)
@@ -977,7 +1000,13 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     bool tracked[SVP_VK_PHASES]={0},affine[SVP_VK_PHASES]={0},elliptic[SVP_VK_PHASES]={0};
     if (s->mode && (s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
         !dynamic && !svp_vk_hdr_metadata_same(a,b)) return false;
+    bool was_scene=s->scene_pass!=NULL;
     svp_vk_reap(s,false);
+    if(was_scene&&!s->scene_pass)return false;
+    if(s->scene_pass&&s->scene_mode==1){
+        unsigned used=0;for(unsigned i=0;i<SVP_VK_JOBS;i++)used+=s->jobs[i]!=NULL;
+        if(used==SVP_VK_JOBS){svp_vk_reap(s,true);if(!s->scene_pass)return false;}
+    }
     unsigned slot=0;while(slot<SVP_VK_JOBS && s->jobs[slot]) slot++;
     if (slot==SVP_VK_JOBS) return false;
     struct svp_vk_job *j=calloc(1,sizeof(*j));
@@ -1183,10 +1212,16 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     }
     while(locked) {struct svp_vk_ref *r=&refs[order[--locked]];r->vfc->unlock_frame(r->fc,r->frame);}
     s->jobs[slot]=j;
+    if(s->scene_pass&&s->scene_mode==1){
+        if(!j->sealed)goto submitted_fail;
+        j->capture_tick=s->tick;j->capture_count=count;
+        return true;
+    }
     // Metadata must be attached before mpv can observe the output. Only
     // dynamic HDR waits here, after all FFmpeg frame/queue locks are released.
     if(dynamic){
-        if(!j->sealed||s->wait_fences(s->device,1,&j->fence,VK_TRUE,250000000ULL)!=VK_SUCCESS)goto submitted_fail;
+        if(!j->sealed||((!s->scene_pass||s->scene_version==0)&&
+            s->wait_fences(s->device,1,&j->fence,VK_TRUE,250000000ULL)!=VK_SUCCESS))goto submitted_fail;
         if(s->scene_pass){
             for(unsigned i=0;i<count;i++){
                 AmbientSvpHdrSceneResult result;

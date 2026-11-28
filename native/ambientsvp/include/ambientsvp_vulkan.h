@@ -206,6 +206,12 @@ int ambient_svp_hdr_pass_capture(AmbientSvpHdrPass *,const AmbientSvpVkPair *,ui
 int ambient_svp_hdr_pass_lookup(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
 int ambient_svp_hdr_pass_finish(AmbientSvpHdrPass *);
 void ambient_svp_hdr_pass_destroy(AmbientSvpHdrPass *);
+/* Retire capture tickets in index order before destroying the pass.
+ * 2 consumes a failed capture ticket; 0 pending; -1 unresolved. */
+int ambient_svp_vk_submit_held_capture(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+    const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
+    const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
+int ambient_svp_vk_retire_held_capture(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
 int ambient_svp_vk_render_held_pass(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
     const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,
     const AmbientSvpHdrTrack *,const uint32_t (*)[3],AmbientSvpHdrResult *,
