@@ -373,7 +373,7 @@ interface ProgrammeReminderProbeEntryPoint {
 
 /** Persisted queue: unresolved reminders survive process death and are displayed one at a time. */
 @Composable
-fun LiveTvReminderPromptDialog() {
+fun LiveTvReminderPromptDialog(launchBlocked: Boolean = false) {
     val context = LocalContext.current.applicationContext
     val store = remember(context) { LiveTvReminderStore(context) }
     var resumed by remember { mutableStateOf(false) }
@@ -427,7 +427,7 @@ fun LiveTvReminderPromptDialog() {
         }
     }
     var lastLaunchAt by remember { mutableLongStateOf(0L) }
-    if (!resumed) return
+    if (!resumed || launchBlocked) return
     val now = System.currentTimeMillis()
     val due = reminders.filter { it.due && it.id != awaitingPlan?.id && it.isRelevant(now) &&
         (!it.youtube || it.ready || it.startEpochSeconds * 1000 > now) }.sortedBy { it.startEpochSeconds }
