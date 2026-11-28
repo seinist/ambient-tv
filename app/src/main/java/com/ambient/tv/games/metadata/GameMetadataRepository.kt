@@ -311,8 +311,19 @@ class GameMetadataRepository @Inject constructor(
         }
         val candidates = try {
             if (provider == GameMetadataProviderIds.LIBRETRO) {
-                GameMetadataPlatforms.libretroCandidates(query,
-                    listOfNotNull(current.verifiedTitle?.takeIf(String::isNotBlank)))
+                val verified = current.verifiedTitle?.takeIf(String::isNotBlank)
+                val catalog = if (verified != null) listOf(verified)
+                    else if (known?.matchLocked == true) emptyList()
+                    else {
+                        val filename = gameCatalogFilename(current.systemId, current.filename)
+                        val hints = listOfNotNull(filename.takeIf(String::isNotBlank),
+                            current.internalTitle?.takeIf(String::isNotBlank)).distinct()
+                        hints.firstNotNullOfOrNull { hint ->
+                            matchingGameCatalogTitles(hint, library.searchDatTitles(current.systemId, hint))
+                                .takeIf { it.isNotEmpty() }
+                        }.orEmpty()
+                    }
+                GameMetadataPlatforms.libretroCandidates(query, catalog)
             } else providers.search(query, provider)
         }
         catch (error: GameMetadataProviderException) {
