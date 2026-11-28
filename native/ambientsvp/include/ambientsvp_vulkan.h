@@ -75,6 +75,15 @@ typedef struct {
 AmbientSvpVk *ambient_svp_vk_create_weighted(VkInstance,VkPhysicalDevice,VkDevice,
     PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height,uint32_t mode,
     const AmbientSvpVkTuning *,const AmbientSvpVkSearchWeights *);
+/* Optional reference synthesis selection. Set before any in-flight pair.
+ * Algorithms 1,2,11,13,21,22,23; 23 requires adjacent fields.
+ * begin_extended retains three native field bundles until the center
+ * pair's actual fence retires. Caller retains all four image views.
+ * Failure before recording permits ordinary begin (23 -> 21). */
+int ambient_svp_vk_set_synthesis(const AmbientSvpVk *,uint32_t algorithm);
+AmbientSvpVkPair *ambient_svp_vk_begin_extended(const AmbientSvpVk *,VkCommandBuffer,
+    const AmbientSvpVkPicture *previous,const AmbientSvpVkPicture *a,
+    const AmbientSvpVkPicture *b,const AmbientSvpVkPicture *next);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
 /* Record motion analysis into an already-recording command buffer
  * outside a render pass; no submit. Pair retains its private resources.
