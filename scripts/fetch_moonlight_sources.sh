@@ -24,7 +24,8 @@ DEST="$ROOT/third_party/moonlight-android"
 WORK="$ROOT/third_party/.moonlight-download"
 MARKER_NAME=".ambient-moonlight-pins"
 # Bump when the staged file set changes, so existing trees are prepared again.
-STAGING_VERSION=4
+STAGING_VERSION=5
+OPUS_REF=22244de5a79bd1d6d623c32e72bf1954b56235be
 
 [[ "$UPSTREAM" == "https://github.com/moonlight-stream/moonlight-android.git" ]] || die "unexpected upstream"
 [[ "$REF" =~ ^[[:xdigit:]]{40}$ ]] || die "full pinned commit required"
@@ -39,11 +40,12 @@ shopt -s nullglob
 PATCHES=("$PATCH_DIR"/*.patch "$PATCH_DIR"/common-c/*.patch "$PATCH_DIR"/common-c/enet/*.patch "$PATCH_DIR"/common-c/nanors/*.patch)
 shopt -u nullglob
 [[ ${#PATCHES[@]} -gt 0 ]] || die "reviewed Moonlight patches missing in $PATCH_DIR"
-PATCH_SHA="$( { cat "${PATCHES[@]}" "$ROOT/scripts/moonlight/native-artifacts.git-blobs" "$ROOT/scripts/moonlight/licenses/"*.txt; printf 'staging=%s\n' "$STAGING_VERSION"; } | git hash-object --stdin)"
+PATCH_SHA="$( { cat "${PATCHES[@]}" "$ROOT/scripts/moonlight/native-artifacts.git-blobs" "$ROOT/scripts/moonlight/licenses/"*.txt; printf 'staging=%s\nopus=%s\n' "$STAGING_VERSION" "$OPUS_REF"; } | git hash-object --stdin)"
 
 if [[ -f "$DEST/$MARKER_NAME" &&
       "$(head -n 1 "$DEST/$MARKER_NAME")" == "android=$REF" &&
       "$(sed -n 's/^patch=//p' "$DEST/$MARKER_NAME")" == "$PATCH_SHA" &&
+      -f "$DEST/app/src/main/jni/moonlight-core/opus/source/CMakeLists.txt" &&
       -f "$DEST/$SUBMODULE/src/Connection.c" &&
       -f "$DEST/$SUBMODULE/enet/include/enet/enet.h" &&
       -f "$DEST/app/protocol-only-src/com/limelight/LimeLog.java" &&
@@ -103,6 +105,16 @@ while read -r expected relative; do
     [[ "$(git hash-object "$WORK/app/src/main/jni/moonlight-core/$relative")" == "$expected" ]] ||
         die "Unreviewed native dependency artifact: $relative"
 done < "$ROOT/scripts/moonlight/native-artifacts.git-blobs"
+
+# Fetch the exact corresponding source for the reviewed Opus archive. The
+# archive is verified above for provenance but never used by Ambient's build.
+OPUS_SOURCE="$WORK/app/src/main/jni/moonlight-core/opus/source"
+git init -q "$OPUS_SOURCE"
+git -C "$OPUS_SOURCE" remote add origin https://github.com/xiph/opus.git
+git -C "$OPUS_SOURCE" fetch -q --depth 1 origin "$OPUS_REF"
+git -C "$OPUS_SOURCE" checkout -q --detach FETCH_HEAD
+[[ "$(git -C "$OPUS_SOURCE" rev-parse HEAD)" == "$OPUS_REF" ]] || die "Opus source pin mismatch"
+[[ -f "$OPUS_SOURCE/CMakeLists.txt" && -f "$OPUS_SOURCE/COPYING" ]] || die "Opus source incomplete"
 
 # Reviewed, fail-closed patches. A patch that no longer applies means upstream changed the code it
 # protects: stop instead of building an unreviewed client.
@@ -177,6 +189,7 @@ NANORS_SHA="$(git -C "$WORK/$SUBMODULE/nanors" rev-parse HEAD)"
     printf 'Upstream source: %s\n' "$UPSTREAM"
     printf 'Dependency update: https://github.com/moonlight-stream/moonlight-android/commit/31b700304a9eb2827516f52c33d9da0845fc1ece\n'
     printf 'Android build scripts (NDK 29.0.14206865): https://github.com/cgutman/moonlight-mobile-deps/tree/419349aa689e8749a9fb91a22dc45531ddd3df45\n'
+    printf 'Ambient builds Opus from pinned source with scripts/build_moonlight_opus.sh (NDK 30, static, ABI-specific release tuning).\n'
     printf 'Opus 1.6.1 corresponding source: https://github.com/xiph/opus/tree/22244de5a79bd1d6d623c32e72bf1954b56235be\n'
     printf 'OpenSSL 4.0.2 corresponding source: https://github.com/openssl/openssl/tree/f089acdf4bc7ba94a79f4bf6eb7362c3e7d14aa9\n'
     printf 'Ambient TV modifications (reviewed through 2026-11-26):\n'

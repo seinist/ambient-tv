@@ -24,6 +24,7 @@ on:
       - 'gradle/libs.versions.toml'
       - 'scripts/update_external_libraries.py'
       - 'scripts/fetch_moonlight_sources.sh'
+      - 'scripts/build_moonlight_opus.sh'
       - 'scripts/tests/test_moonlight_fec_pool.py'
       - 'scripts/tests/test_moonlight_enet_packets.py'
       - 'scripts/tests/test_moonlight_udp_burst.py'
@@ -108,6 +109,7 @@ jobs:
           set -euo pipefail
           root=third_party/moonlight-android/app/src/main/jni/moonlight-core
           test -s "$root/opus/${{ matrix.abi }}/libopus.a"
+          test -f "$root/opus/source/CMakeLists.txt"
           test -s "$root/openssl/${{ matrix.abi }}/libcrypto.a"
           test -f "$root/moonlight-common-c/enet/include/enet/enet.h"
           grep -q 'this.uniqueId = uniqueId' third_party/moonlight-android/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java

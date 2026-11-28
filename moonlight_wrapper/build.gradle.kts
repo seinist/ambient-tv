@@ -9,6 +9,9 @@ val nativeRoot = upstream.resolve("src/main/jni")
 require(sourceRoot.resolve("com/limelight/nvstream/http/NvHTTP.java").isFile) {
     "Moonlight native sources missing. Run: bash scripts/fetch_moonlight_sources.sh"
 }
+require(nativeRoot.resolve("moonlight-core/opus/source/CMakeLists.txt").isFile) {
+    "Pinned Opus source missing. Re-run bash scripts/fetch_moonlight_sources.sh"
+}
 require(nativeRoot.resolve("moonlight-core/moonlight-common-c/enet/include/enet/enet.h").isFile) {
     "Pinned modified ENet source missing. Re-fetch the release recursively."
 }
@@ -34,6 +37,34 @@ for (abi in abis) {
     }
     require(nativeRoot.resolve("moonlight-core/openssl/$abi/libcrypto.a").isFile) {
         "Missing pinned upstream OpenSSL static library for $abi"
+    }
+}
+
+// Build the static archive from verified source before ndk-build configures or links.
+val opusRoot = nativeRoot.resolve("moonlight-core/opus")
+val opusScript = rootProject.file("scripts/build_moonlight_opus.sh")
+val opusOutputs = abis.map { opusRoot.resolve("ambient-built/$it/libopus.a") }
+val buildPinnedOpus = tasks.register("buildPinnedMoonlightOpus") {
+    inputs.file(opusScript)
+    inputs.dir(opusRoot.resolve("source"))
+    inputs.property("abis", abis)
+    inputs.property("ndk", "30.0.16248370")
+    outputs.files(opusOutputs)
+    val sdk = androidComponents.sdkComponents.sdkDirectory
+    doLast {
+        val ndk = sdk.get().asFile.resolve("ndk/30.0.16248370")
+        abis.forEach { abi ->
+            val process = ProcessBuilder("bash", opusScript.absolutePath,
+                opusRoot.absolutePath, ndk.absolutePath, abi)
+                .directory(rootProject.projectDir).inheritIO().start()
+            check(process.waitFor() == 0) { "Pinned Opus build failed for $abi" }
+        }
+    }
+}
+tasks.configureEach {
+    if (name == "preBuild" || name.startsWith("configureNdkBuild") ||
+        name.startsWith("buildNdkBuild") || name.startsWith("externalNativeBuild")) {
+        dependsOn(buildPinnedOpus)
     }
 }
 
