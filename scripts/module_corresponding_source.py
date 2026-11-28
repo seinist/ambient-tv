@@ -75,7 +75,7 @@ def source_files(root):
             yield path, relative
 
 
-def validate_source_archive(path, descriptor):
+def validate_source_archive(path, descriptor, notice_hashes=None):
     """Independently verify the collected source tree before signing a release.
 
     Stream regular tar members without extracting them. A matching compressed
@@ -99,6 +99,9 @@ def validate_source_archive(path, descriptor):
         expected[name] = (count, notices)
     if not set(ROOTS[module]) <= expected.keys() or sum(count for count, _ in expected.values()) > MAX_SOURCE_FILES:
         raise ValueError("Missing or oversized source roots")
+    if any(other.startswith(name + "/") for name in expected for other in expected if name != other):
+        raise ValueError("Overlapping source roots")
+    root_indices = {name: index for index, name in enumerate(expected)}
     if not path.is_file() or path.is_symlink() or path.name != descriptor.get("asset") or type(descriptor.get("size")) is not int or not 0 < path.stat().st_size <= MAX_SOURCE_BYTES or path.stat().st_size != descriptor["size"] or digest(path) != descriptor.get("sha256"):
         raise ValueError("Corresponding-source hash or size mismatch")
 
@@ -147,6 +150,10 @@ def validate_source_archive(path, descriptor):
                         vlc_contrib = json.load(archive.extractfile(member))
                 if NOTICE.match(name.rsplit("/", 1)[-1]) and 0 < member.size <= 4 * 1024 * 1024:
                     actual[root][1] += 1
+                    if notice_hashes is not None:
+                        relative = name.removeprefix(f"upstream/{root}/")
+                        notice_hashes[f"source-{root_indices[root]}/{relative}"] = (
+                            member.size, hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest())
         # Consume the remaining gzip stream, including its checksum, rather
         # than accepting an archive truncated after the tar end marker.
         trailing = 0
@@ -477,6 +484,8 @@ def collect(module, commit, output, notices, extra_roots=()):
         roots.append((resolved.relative_to(ROOT).as_posix(), resolved))
     if len({name for name, _ in roots}) != len(roots):
         raise ValueError("Duplicate corresponding-source root")
+    if any(other.startswith(name + "/") for name, _ in roots for other, _ in roots if name != other):
+        raise ValueError("Overlapping corresponding-source roots")
     for name, path in roots:
         if not path.is_dir() or path.is_symlink():
             raise ValueError(f"Missing build source root: {name}")

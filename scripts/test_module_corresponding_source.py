@@ -65,7 +65,9 @@ class CorrespondingSourceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path, descriptor = self.source_fixture(Path(temp), [
                 "upstream/native/ambientsvp/src/lib.rs", "upstream/native/ambientsvp/LICENSE"])
-            sources.validate_source_archive(path, descriptor)
+            notices = {}
+            sources.validate_source_archive(path, descriptor, notices)
+            self.assertEqual(notices, {"source-0/LICENSE": (6, sources.hashlib.sha256(b"source").hexdigest())})
             path, descriptor = self.source_fixture(Path(temp), [
                 "upstream/native/ambientsvp/src/lib.rs"])
             with self.assertRaisesRegex(ValueError, "count mismatch"):

@@ -105,6 +105,42 @@ def verify_payload(archive, module, entry):
     return native
 
 
+def verify_notices(data, source, expected_notices):
+    """Match nested license texts to the exact corresponding-source inventory."""
+    import io
+    from module_corresponding_source import safe_archive_name
+    if not 0 < len(data) <= 128 * 1024**2:
+        raise ValueError("License archive exceeds review bounds")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        entries = archive.infolist()
+        if not 1 <= len(entries) <= 32768 or sum(info.file_size for info in entries) > 128 * 1024**2:
+            raise ValueError("License archive exceeds review bounds")
+        seen = set()
+        actual = {}
+        for info in entries:
+            name = info.filename
+            if (not safe_archive_name(name) or name.casefold() in seen or info.is_dir()
+                    or info.flag_bits & 1 or info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+                    or (info.external_attr >> 16) & 0xf000 not in (0, 0x8000)
+                    or not 0 < info.file_size <= 4 * 1024**2):
+                raise ValueError("Unsafe license archive member")
+            seen.add(name.casefold())
+            contents = archive.read(info)
+            if name == "corresponding-source.json":
+                if info.file_size > 512 * 1024 or json.loads(contents) != source:
+                    raise ValueError("Source descriptor is not bound to the signed module payload")
+            elif name == "Ambient-TV-LICENSE":
+                if contents != (ROOT / "LICENSE").read_bytes():
+                    raise ValueError("Ambient TV license differs from reviewed checkout")
+            elif re.match(r"^source-[0-9]+/", name):
+                actual[name] = (len(contents), hashlib.sha256(contents).hexdigest())
+            elif not re.match(r"^reviewed-[0-9]+/", name):
+                raise ValueError("Unexpected license archive entry")
+        if not {"ambient-tv-license", "corresponding-source.json"} <= seen or actual != expected_notices:
+            raise ValueError("License archive differs from corresponding-source notices")
+    return hashlib.sha256(data).hexdigest()
+
+
 def verify(root, module, run_id, sha):
     tag, version = identity(module, run_id, sha)
     manifest_path = root / "manifest.json"
@@ -129,7 +165,9 @@ def verify(root, module, run_id, sha):
     if not source_path.is_file() or source_path.is_symlink() or not 0 < source["size"] <= 1_800_000_000 or source_path.stat().st_size != source["size"] or digest(source_path) != source["sha256"]:
         raise ValueError("Corresponding-source hash or size mismatch")
     from module_corresponding_source import validate_source_archive
-    j2v8 = validate_source_archive(source_path, source)
+    source_notices = {}
+    j2v8 = validate_source_archive(source_path, source, source_notices)
+    notice_digest = None
     expected = {"manifest.json", "provenance.json", source["asset"]}
     for entry in entries:
         abi = entry["abi"]
@@ -152,13 +190,12 @@ def verify(root, module, run_id, sha):
                 raise ValueError("Unsupported module ZIP entry type")
             if "licenses/notices.zip" not in names:
                 raise ValueError("Missing license notices")
-            import io
-            with zipfile.ZipFile(io.BytesIO(archive.read("licenses/notices.zip"))) as notices:
-                if len(notices.infolist()) > 32768 or sum(info.file_size for info in notices.infolist()) > 128 * 1024**2:
-                    raise ValueError("License archive exceeds review bounds")
-                descriptor = notices.getinfo("corresponding-source.json")
-                if descriptor.file_size > 512 * 1024 or json.loads(notices.read(descriptor)) != source:
-                    raise ValueError("Source descriptor is not bound to the signed module payload")
+            if archive.getinfo("licenses/notices.zip").file_size > 128 * 1024**2:
+                raise ValueError("License archive exceeds review bounds")
+            current_digest = verify_notices(archive.read("licenses/notices.zip"), source, source_notices)
+            if notice_digest is not None and current_digest != notice_digest:
+                raise ValueError("License archive differs between ABI packages")
+            notice_digest = current_digest
             native = verify_payload(archive, module, entry)
             if module == "smarttube":
                 row = next(item for item in j2v8["libraries"] if item["abi"] == abi)

@@ -789,6 +789,14 @@ resource IDs and shared host APIs remain permitted. Primitive/array type
 descriptors are handled explicitly. This is a conservative ASCII linkage
 policy, not a substitute for ART verification or device tests.
 
+Android now mirrors the publisher's DEX type-reference ownership checks
+before adapter initialization. Native module signing also checks every
+source-derived license notice against the exact corresponding-source tar
+member, verifies the host license, rejects unsafe nested notice ZIP entries
+and requires byte-identical notices across all ABI packages. Reviewed
+supplemental notices remain subject to human license review. The exact
+native J2V8/V8 source correspondence is still not established.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
