@@ -143,6 +143,12 @@ int ambient_svp_vk_hdr_read_ellipses(const AmbientSvpVkPair *,uint32_t,uint32_t 
 /* Affine tracking additionally changes the measured rectangle. */
 int ambient_svp_vk_hdr_stats_affine(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,float,uint32_t);
 int ambient_svp_vk_hdr_read_rectangles(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
+/* Held HDR render: 0 complete, 1 submitted/retired but metadata invalid
+ * (timeline signaled), -1 rejected/device lost, -2 panic. */
+int ambient_svp_vk_render_held_hdr(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+    const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,
+    const AmbientSvpHdrTrack *,const uint32_t (*)[3],AmbientSvpHdrResult *,
+    uint32_t (*)[4],uint32_t (*)[3],int32_t (*)[2],uint32_t);
 /* After SUCCESSFUL submission of that command buffer, register its
  * unsignaled-at-submit fence. Caller must not destroy/reset the fence
  * until release returns 1. No more recording after sealing. */
