@@ -1753,7 +1753,8 @@ mod gpu_tests{
                     if mode==3{
                         if tuned{
                             let tracks=windows.map(|window|HdrTrack{a:window.rect,b:window.rect,ellipse:[window.rect[0],window.rect[1]]});
-                            assert_eq!(ambient_svp_vk_hdr_stats_track(pair,0,windows.as_ptr(),tracks.as_ptr(),phase,3),0);
+                            let axes=[[0,0,0],[4,2,0],[4,2,90]];
+                            assert_eq!(ambient_svp_vk_hdr_stats_ellipse(pair,0,windows.as_ptr(),tracks.as_ptr(),axes.as_ptr(),phase,3),0);
                         }else{assert_eq!(ambient_svp_vk_hdr_stats(pair,0,windows.as_ptr(),3),0);}
                         assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),-1);
                     }
@@ -1772,9 +1773,22 @@ mod gpu_tests{
                             let mut shifts=[[0i32;2];3];
                             assert_eq!(ambient_svp_vk_hdr_read_track(pair,0,stats.as_mut_ptr(),shifts.as_mut_ptr(),3),1);
                             assert_eq!(shifts,[[0,0];3]);
+                            let mut boxes=[[0u32;4];3];
+                            assert_eq!(ambient_svp_vk_hdr_read_rectangles(pair,0,boxes.as_mut_ptr(),3),1);
+                            assert_eq!(boxes,windows.map(|window|window.rect));
                         }else{assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),1);}
-                        for (r,window) in stats.iter().zip(windows){
-                            assert_eq!(r.pixels,(window.rect[2]-window.rect[0])*(window.rect[3]-window.rect[1]));
+                        for (index,(r,window)) in stats.iter().zip(windows).enumerate(){
+                            let area=(window.rect[2]-window.rect[0])*(window.rect[3]-window.rect[1]);
+                            if tuned&&index>0{
+                                let (major,minor)=if index==1{(4i32,2i32)}else{(2i32,4i32)};
+                                let mut expected=0;
+                                for y in 0..(window.rect[3]-window.rect[1]) as i32{
+                                    for x in 0..(window.rect[2]-window.rect[0]) as i32{
+                                        if x*x*minor*minor+y*y*major*major<=major*major*minor*minor{expected+=1;}
+                                    }
+                                }
+                                assert_eq!(r.pixels,expected);
+                            }else{assert_eq!(r.pixels,area);}
                             assert_eq!(r.brightest,r.pixels);
                             assert_eq!(r.maxscl,[r.average;3]);
                             assert!(r.average>800 && r.average<1100,"PQ luminance {:?}",r);
