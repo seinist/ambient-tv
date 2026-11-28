@@ -350,7 +350,7 @@ class HomeViewModel @Inject constructor(
         if (appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured ||
             appPreferences.isTvheadendConfigured || appPreferences.radioEnabled ||
             (com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && appPreferences.telegramEnabled && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_TELEGRAM }) ||
-            (appPreferences.youtubeEnabled && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE }))
+            (appPreferences.youtubeEnabled && smartTubeEngine.available && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE }))
             HomeUiState.LoadingLibrary else HomeUiState.NotConfigured,
     )
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -415,7 +415,7 @@ class HomeViewModel @Inject constructor(
 
     private fun playbackRowEnabled(row: ContentRowData): Boolean = when {
         row.id.startsWith("trailers.") -> appPreferences.trailersEnabled
-        row.id.startsWith("youtube.") -> appPreferences.youtubeEnabled
+        row.id.startsWith("youtube.") -> appPreferences.youtubeEnabled && smartTubeEngine.available
         row.id.startsWith("telegram.") -> appPreferences.telegramEnabled && telegramRepository.available
         else -> false
     } && appPreferences.homeRows.any { it.enabled && "${it.system}.${it.contentKey}" == row.id }
@@ -758,7 +758,7 @@ class HomeViewModel @Inject constructor(
                 radioJob?.isActive == true || radioRows.isNotEmpty() ||
                 telegramJob?.isActive == true || telegramRows.isNotEmpty() ||
                 youtubeJob?.isActive == true || youtubeRows.isNotEmpty() ||
-                (appPreferences.youtubeEnabled && appPreferences.homeRows.any {
+                (appPreferences.youtubeEnabled && smartTubeEngine.available && appPreferences.homeRows.any {
                     it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE
                 })) {
                 // The independent TV job publishes as soon as channels are ready.
@@ -904,7 +904,7 @@ class HomeViewModel @Inject constructor(
         if (!plexOnly && !jellyfinOnly && !embyOnly) {
             addAll(liveTvRegistry.configured().map { it.source.system })
             // Reconnecting an account can restore its Home shortcuts as well as its own page.
-            if (appPreferences.youtubeEnabled && appPreferences.homeRows.any {
+            if (appPreferences.youtubeEnabled && smartTubeEngine.available && appPreferences.homeRows.any {
                 it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE
             }) add("youtube")
             if (appPreferences.spotifyEnabled && appPreferences.homeRows.any {
@@ -2860,7 +2860,7 @@ class HomeViewModel @Inject constructor(
         plexReady = plexOnly || appPreferences.isConfigured,
         jellyfinReady = jellyfinOnly || appPreferences.isJellyfinConfigured,
         tvheadendReady = appPreferences.isTvheadendConfigured,
-        youtubeReady = appPreferences.youtubeEnabled,
+        youtubeReady = appPreferences.youtubeEnabled && smartTubeEngine.available,
         spotifyReady = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized,
         radioReady = appPreferences.radioEnabled,
         gamesReady = gameLibrary.hasConfiguredFolders(),
