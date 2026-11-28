@@ -9,8 +9,8 @@
 #include <stdatomic.h>
 typedef struct {
     SvpApi api;
-    picture_t *previous;
-    uint64_t previous_id,tick;
+    picture_t *previous,*older,*lookahead;
+    uint64_t previous_id,older_id,lookahead_id,tick;
     vlc_tick_t origin;
     double source,target;
     AmbientSvpQuality quality;
@@ -21,7 +21,10 @@ static void svp_hdr_flush(filter_t *f)
 {
     SvpHdrSchedule *s=f->p_sys;
     if(s->previous)picture_Release(s->previous);
-    s->previous=NULL;s->tick=0;s->previous_id=0;
+    if(s->older)picture_Release(s->older);
+    if(s->lookahead)picture_Release(s->lookahead);
+    s->previous=s->older=s->lookahead=NULL;s->tick=0;
+    s->previous_id=s->older_id=s->lookahead_id=0;
 }
 static void svp_hdr_close(filter_t *f)
 {
@@ -40,29 +43,50 @@ static bool svp_hdr_eligible(picture_t *p)
 }
 static picture_t *svp_hdr_fallback(SvpHdrSchedule *s,picture_t *pic)
 {
-    picture_t *old=s->previous;s->previous=NULL;s->tick=0;s->previous_id=0;
-    if(old){old->p_next=pic;return old;}return pic;
+    picture_t *head=s->previous,**tail=&head;
+    if(head)tail=&head->p_next;
+    if(s->lookahead){*tail=s->lookahead;tail=&s->lookahead->p_next;}
+    *tail=pic;
+    if(s->older)picture_Release(s->older);
+    s->previous=s->older=s->lookahead=NULL;s->tick=0;
+    s->previous_id=s->older_id=s->lookahead_id=0;
+    return head;
+}
+static bool svp_hdr_compatible(picture_t *old,picture_t *next)
+{
+    const video_format_t *a=&old->format,*b=&next->format;
+    return a->transfer==b->transfer&&a->primaries==b->primaries&&a->space==b->space&&
+        a->color_range==b->color_range&&a->dovi.profile==b->dovi.profile&&
+        a->i_visible_width==b->i_visible_width&&a->i_visible_height==b->i_visible_height&&
+        a->i_x_offset==b->i_x_offset&&a->i_y_offset==b->i_y_offset;
 }
 static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
 {
     SvpHdrSchedule *s=f->p_sys;
     if(!s->api.enabled()||(pic&&!svp_hdr_eligible(pic)))return svp_hdr_fallback(s,pic);
+    bool extended=ambient_svp_quality_extended(&s->quality);
     if(!s->previous){
         if(!pic)return NULL;
         s->previous=pic;s->previous_id=svp_hdr_new_id();s->origin=pic->date;s->tick=0;return NULL;
     }
-    const video_format_t *a=&s->previous->format,*b=pic?&pic->format:a;
-    if(a->transfer!=b->transfer||a->primaries!=b->primaries||a->space!=b->space||
-        a->color_range!=b->color_range||a->dovi.profile!=b->dovi.profile||
-        a->i_visible_width!=b->i_visible_width||a->i_visible_height!=b->i_visible_height||
-        a->i_x_offset!=b->i_x_offset||a->i_y_offset!=b->i_y_offset)
-        return svp_hdr_fallback(s,pic);
+    // Drain both queued originals in timestamp order when no future
+    // picture can be obtained. Never lose a delayed decoder lease.
+    if(extended&&!pic)return svp_hdr_fallback(s,NULL);
     double expected=1000000.0/s->source;
-    vlc_tick_t end=pic?pic->date:s->previous->date+VLC_TICK_FROM_US(llround(expected));
+    picture_t *last=s->lookahead?s->lookahead:s->previous;
+    if(pic){
+        double delta=US_FROM_VLC_TICK(pic->date-last->date);
+        if(!svp_hdr_compatible(last,pic)||delta<=0||fabs(delta-expected)>fmax(3000.0,expected*.25))
+            return svp_hdr_fallback(s,pic);
+    }
+    uint64_t id=pic?svp_hdr_new_id():s->previous_id;
+    if(extended&&!s->lookahead){s->lookahead=pic;s->lookahead_id=id;return NULL;}
+    picture_t *center=extended?s->lookahead:pic;
+    uint64_t center_id=extended?s->lookahead_id:id;
+    vlc_tick_t end=center?center->date:s->previous->date+VLC_TICK_FROM_US(llround(expected));
     double delta=US_FROM_VLC_TICK(end-s->previous->date);
-    if(delta<=0||fabs(delta-expected)>fmax(3000.0,expected*.25))
-        return svp_hdr_fallback(s,pic);
-    uint64_t next=s->tick,id=pic?svp_hdr_new_id():s->previous_id;
+    if(delta<=0||fabs(delta-expected)>fmax(3000.0,expected*.25))return svp_hdr_fallback(s,pic);
+    uint64_t next=s->tick;
     picture_t *head=NULL,**tail=&head;
     unsigned count=0;
     while(next<UINT64_C(1000000000)){
@@ -72,16 +96,22 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
         if(count==8||phase<-.25||phase>1.)goto fail;
         picture_t *out=picture_Clone(s->previous);
         if(!out)goto fail;
-        if(!ambient_svp_attach_pair(out,s->previous,pic?pic:s->previous,s->previous_id,id,(float)fmax(0.,phase),&s->quality)){
+        if(!ambient_svp_attach_pair(out,s->previous,center?center:s->previous,s->previous_id,center_id,
+            (float)fmax(0.,phase),&s->quality,extended?s->older:NULL,s->older_id,extended?pic:NULL,id)){
             picture_Release(out);goto fail;
         }
         out->date=time;out->p_next=NULL;
-        *tail=out;tail=&out->p_next;
-        next++;count++;
+        *tail=out;tail=&out->p_next;next++;count++;
     }
     if(!count)goto fail;
-    picture_Release(s->previous);s->previous=pic;s->previous_id=id;s->tick=next;
-    if(!pic)s->tick=s->previous_id=0;
+    if(extended){
+        if(s->older)picture_Release(s->older);
+        s->older=s->previous;s->older_id=s->previous_id;
+        s->previous=center;s->previous_id=center_id;s->lookahead=pic;s->lookahead_id=id;
+    }else{
+        picture_Release(s->previous);s->previous=pic;s->previous_id=id;
+    }
+    s->tick=next;if(!pic)s->tick=s->previous_id=0;
     return head;
 fail:
     while(head){picture_t *nextpic=head->p_next;head->p_next=NULL;picture_Release(head);head=nextpic;}
