@@ -182,6 +182,7 @@ typedef struct {
     AmbientSvpHdrLegacyWindow windows[3];
 } AmbientSvpHdrLegacyScene;
 AmbientSvpHdrPass *ambient_svp_hdr_pass_open_version(uint32_t,uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t);
+int ambient_svp_vk_hdr_stats_scene_legacy_tracked(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],float,uint32_t);
 int ambient_svp_vk_hdr_stats_scene_legacy(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],uint32_t);
 int ambient_svp_hdr_pass_lookup_v1(AmbientSvpHdrPass *,uint64_t,const uint32_t (*)[9],AmbientSvpHdrSceneResult *);
 int ambient_svp_hdr_pass_lookup_legacy(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
