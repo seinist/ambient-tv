@@ -674,6 +674,8 @@ class MoonlightStreamEngine @Inject constructor(
                 var poorNetworkSeconds = 0
                 var lastMissing = 0L
                 val avPolicy = MoonlightAvQueuePolicy()
+                val networkBuffers = MoonlightNetworkBufferPolicy(session.profile.pacing)
+                var appliedNetworkBuffers = MoonlightNetworkBufferPolicy.Targets()
                 var lastTime = System.nanoTime()
                 while (isOwned(session)) {
                     kotlinx.coroutines.delay(1000)
@@ -695,6 +697,16 @@ class MoonlightStreamEngine @Inject constructor(
                     val intervalMissing = (video.missing - lastMissing).coerceAtLeast(0L)
                     lastReceived = video.received
                     lastMissing = video.missing
+                    val bufferTargets = networkBuffers.sample(rtt?.let { it.toInt().takeIf { n -> n >= 0 } },
+                        session.networkPoor, intervalMissing, intervalReceived)
+                    if (bufferTargets != appliedNetworkBuffers) {
+                        synchronized(inputGate) {
+                            if (isOwned(session)) runCatching {
+                                MoonBridge.setNetworkBufferTargets(bufferTargets.audioReorderMs, bufferTargets.videoBufferTier)
+                                appliedNetworkBuffers = bufferTargets
+                            }
+                        }
+                    }
                     // Do not interrupt a healthy or static stream solely because of a noisy
                     // status callback. Only opt-in, sustained packet loss permits a resume.
                     val highLoss = intervalMissing > 2 && intervalMissing * 10 > intervalReceived + intervalMissing
