@@ -872,7 +872,7 @@ impl TwoPass{
             let frames=*self.ends.last().unwrap() as usize;
             for _ in 0..frames{
                 let line=lines.next().ok_or("missing legacy geometry record")?;
-                let hex=line.strip_prefix("G ").ok_or("legacy cache requires replay geometry")?;
+                let hex=line.strip_prefix("G2 ").ok_or("legacy cache requires revised replay signature")?;
                 if hex.len()!=16{return Err("invalid legacy geometry record".into());}
                 self.geometry.push(u64::from_str_radix(hex,16).map_err(|_|"invalid legacy geometry hash")?);
             }
@@ -1019,7 +1019,7 @@ impl TwoPass{
         }
         for g in &self.geometry{
             use std::fmt::Write as _;
-            writeln!(&mut data,"G {g:016x}").map_err(|_|"geometry formatting")?;
+            writeln!(&mut data,"G2 {g:016x}").map_err(|_|"geometry formatting")?;
         }
         for r in &self.legacy_results{
             use std::fmt::Write as _;
