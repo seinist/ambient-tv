@@ -85,7 +85,20 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      if (vlc_placebo_FormatSupported(gpu, vd->source->i_chroma)) {
          fmt->i_chroma = vd->source->i_chroma;
      } else {
-@@ -184,34 +244,104 @@
+@@ -180,38 +240,123 @@
+ error:
+-    pl_renderer_destroy(&sys->renderer);
+-    vlc_placebo_Release(sys->pl);
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    if (var_InheritBool(vd, "vk-ambient-ahb") && sys->pl->ops->ambient_close_gpu) {
++        Close(vd);
++    } else
++#endif
++    {
++        pl_renderer_destroy(&sys->renderer);
++        vlc_placebo_Release(sys->pl);
++    }
+     vd->sys = NULL;
      return VLC_EGENERIC;
  }
  
@@ -127,10 +140,17 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    pl_gpu gpu = sys->pl->gpu;
 +    if (cancelled(token)) return false;
 +    pl_gpu_flush(gpu);
-+    if (cancelled(token) || !ambient_ahb_retire(sys->ahb) ||
-+        cancelled(token) || !ambient_ahb_retire_present(sys->ahb) ||
-+        cancelled(token) || !pl_vulkan_swapchain_ambient_mark_retired(sys->pl->swapchain))
-+        return false;
++    if (sys->ahb) {
++        if (cancelled(token) || !ambient_ahb_retire(sys->ahb) ||
++            cancelled(token) || !ambient_ahb_retire_present(sys->ahb) ||
++            cancelled(token) || !pl_vulkan_swapchain_ambient_mark_retired(sys->pl->swapchain))
++            return false;
++    } else {
++        // Partial Open: no external images were imported. Still bound any
++        // driver wait before freeing textures/device.
++        pl_gpu_finish(gpu);
++        if (cancelled(token)) return false;
++    }
 +    for (int i = 0; i < 4; i++) {
 +        if (cancelled(token)) return false;
 +        pl_tex_destroy(gpu, &sys->plane_tex[i]);
@@ -145,7 +165,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    ambient_hdrplus_spatial_destroy(gpu, &sys->spatial);
 +    if (cancelled(token)) return false;
 +    ambient_fel_render_destroy(gpu, &sys->fel);
-+    if (cancelled(token) || !ambient_ahb_close(sys->ahb))
++    if (cancelled(token) || (sys->ahb && !ambient_ahb_close(sys->ahb)))
 +        return false;
 +    sys->ahb = NULL;
 +    if (cancelled(token)) return false;
@@ -172,7 +192,8 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    vout_display_sys_t *sys = vd->sys;
 +    pl_gpu gpu = sys->pl->gpu;
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
-+    if (sys->ahb) {
++    if (sys->ahb || (var_InheritBool(vd,"vk-ambient-ahb") &&
++                     sys->pl->ops->ambient_close_gpu)) {
 +        /* Detach the parent-bound logger before starting terminal work. */
 +        pl_log_update(sys->pl->log, &(struct pl_log_params){0});
 +        if (!sys->pl->ops->ambient_close_gpu || sys->pl->ops->make_current) {
@@ -218,7 +239,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
  static void PictureRender(vout_display_t *vd, picture_t *pic,
                            const vlc_render_subpicture *subpicture,
-@@ -222,11 +352,40 @@
+@@ -222,11 +367,40 @@
      pl_gpu gpu = sys->pl->gpu;
      bool failed = false;
  
@@ -259,7 +280,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
          return; // Probably benign error, ignore it
      }
-@@ -238,19 +397,47 @@
+@@ -238,19 +412,47 @@
      bool need_vflip = frame.flipped;
  #endif
  
@@ -320,7 +341,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      struct vlc_ancillary *iccp = picture_GetAncillary(pic, VLC_ANCILLARY_ID_ICC);
      if (iccp) {
-@@ -264,9 +451,12 @@
+@@ -264,9 +466,12 @@
      if (hdrplus) {
          vlc_video_hdr_dynamic_metadata_t *hdm = vlc_ancillary_GetData(hdrplus);
          vlc_placebo_HdrMetadata(hdm, &img.color.hdr);
@@ -334,7 +355,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_plane_data data[4];
      if (!vlc_placebo_PlaneData(pic, data)) {
          // This should never happen, in theory
-@@ -287,6 +477,23 @@
+@@ -287,6 +492,23 @@
                                        &plane->shift_y);
      }
  
@@ -358,7 +379,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    }
 +#endif
      if (vd->cfg->icc_profile) {
-@@ -438,7 +645,41 @@
+@@ -438,7 +660,41 @@
      }
  
      // Dispatch the actual image rendering with the pre-configured parameters
@@ -401,7 +422,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          msg_Err(vd, "Failed rendering frame!");
          failed = true;
          goto done;
-@@ -445,9 +686,27 @@
+@@ -445,9 +701,27 @@
      }
  
  done:
@@ -430,7 +451,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      pl_gpu_flush(gpu);
  
-@@ -463,8 +722,14 @@
+@@ -463,8 +737,14 @@
  
      sys->fbo = NULL;
      if (vlc_placebo_MakeCurrent(sys->pl) == VLC_SUCCESS) {
@@ -446,7 +467,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          pl_swapchain_swap_buffers(sys->pl->swapchain);
          vlc_placebo_ReleaseCurrent(sys->pl);
      }
-@@ -507,6 +772,23 @@
+@@ -507,6 +787,23 @@
          break;
      }
  

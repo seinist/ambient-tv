@@ -1,17 +1,18 @@
 diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_output/libplacebo/instance_vulkan.c
 --- a/modules/video_output/libplacebo/instance_vulkan.c
 +++ b/modules/video_output/libplacebo/instance_vulkan.c
-@@ -28,6 +28,9 @@
+@@ -28,6 +28,10 @@
  #include <vlc_plugin.h>
  
  #include <libplacebo/vulkan.h>
 +#ifdef __ANDROID__
 +# include <vulkan/vulkan_android.h>
++# include "terminal_init_retirement.h"
 +#endif
  
  #include "../vulkan/platform.h"
  #include "instance.h"
-@@ -40,11 +43,13 @@
+@@ -40,11 +44,16 @@
      pl_vulkan vulkan;
  };
  
@@ -22,6 +23,9 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 -};
 +static void CloseInstance(vlc_placebo_t *pl);
 +static void CloseGpu(vlc_placebo_t *pl);
++#ifdef __ANDROID__
++static void CloseInitGpu(void *opaque) { CloseGpu(opaque); }
++#endif
 +static const struct vlc_placebo_operations instance_opts =
 +{
 +    .close = CloseInstance,
@@ -30,7 +34,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
  
  static int InitInstance(vlc_placebo_t *pl, const vout_display_cfg_t *cfg)
  {
-@@ -81,14 +86,40 @@
+@@ -81,14 +90,40 @@
  
      // Create vulkan device
      char *device_name = var_InheritString(pl, "vk-device");
@@ -74,7 +78,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
      });
      free(device_name);
      if (!sys->vulkan)
-@@ -104,6 +135,10 @@
+@@ -104,6 +139,10 @@
      pl->swapchain = pl_vulkan_create_swapchain(sys->vulkan, &swap_params);
      if (!pl->swapchain)
          goto error;
@@ -85,7 +89,22 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
  
      pl->gpu = sys->vulkan->gpu;
      pl->ops = &instance_opts;
-@@ -114,29 +149,34 @@
+@@ -112,31 +151,48 @@
+ error:
+-    CloseInstance(pl);
++#ifdef __ANDROID__
++    if (var_InheritBool(pl,"vk-ambient-ahb") && sys->instance) {
++        pl_log_update(pl->log,&(struct pl_log_params){0});
++        if (!ambient_init_retire(pl,CloseInitGpu,8000)) {
++            vlc_ambient_output_quarantine();
++            // Return module success only to prevent module-loader fallback;
++            // instance.c sees the poison bit and retains this whole object.
++            pl->ops=&instance_opts;
++            return VLC_SUCCESS;
++        }
++    }
++#endif
++    CloseInstance(pl);
      return VLC_EGENERIC;
  }
  
@@ -143,7 +162,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
  
  #define PROVIDER_TEXT N_("Vulkan platform module")
  #define PROVIDER_LONGTEXT N_( \
-@@ -196,6 +236,27 @@
+@@ -196,6 +252,27 @@
              ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
  
      set_section("Performance tuning", NULL)
@@ -185,3 +204,33 @@ diff --git a/modules/video_output/libplacebo/instance.h b/modules/video_output/l
  
      // For acquiring/releasing the context on the current thread. (Optional)
      int (*make_current)(struct vlc_placebo_t *);
+diff --git a/modules/video_output/libplacebo/instance.c b/modules/video_output/libplacebo/instance.c
+--- a/modules/video_output/libplacebo/instance.c
++++ b/modules/video_output/libplacebo/instance.c
+@@ -72,7 +72,9 @@
+  */
+ vlc_placebo_t *vlc_placebo_Create(const vout_display_cfg_t *cfg, const char *name)
+ {
+-    vlc_object_t *parent = VLC_OBJECT(cfg->window);
++    if (vlc_ambient_output_quarantined())
++        return NULL;
++    vlc_object_t *parent = VLC_OBJECT(cfg->window);
+     vlc_placebo_t *pl = vlc_object_create(parent, sizeof (*pl));
+     if (unlikely(pl == NULL))
+         return NULL;
+@@ -86,8 +88,13 @@
+     module_t *module = vlc_module_load(vlc_object_logger(parent), "libplacebo gpu",
+                                        name, false,
+                                        vlc_placebo_start, pl, cfg);
+-    if (module == NULL)
+-        goto delete_log;
++    // Activation may have quarantined a still-running GPU worker.
++    // Its context/log/native window must survive the caller and no fallback
++    // renderer may be started in this process.
++    if (vlc_ambient_output_quarantined())
++        return NULL;
++    if (module == NULL)
++        goto delete_log;
+ 
+ #if PL_API_VER >= 320
+     pl->cache = pl_cache_create(pl_cache_params(

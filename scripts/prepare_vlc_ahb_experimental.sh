@@ -75,7 +75,7 @@ for file in dovi_fel_hvce.h dovi_fel_dual.h ambient_metadata_wire.h; do
 done
 dest="$VLC/modules/video_output/libplacebo"
 for file in ahb_import.h conversion_cache.h conversion_key.h display_bridge.h display_owner.h display_owner.cpp \
-    frame_lease.h placebo_bridge.h present_retirement.h queue_transfer.h queue_retirement.h rgb_target.h sample_pass.h slot_pool.h \
+    frame_lease.h placebo_bridge.h present_retirement.h terminal_init_retirement.h queue_transfer.h queue_retirement.h rgb_target.h sample_pass.h slot_pool.h \
     submission.h sync_fd.h unique_fd.h vlc_picture_bridge.h; do
     cp "$SRC/$file" "$dest/$file"
 done

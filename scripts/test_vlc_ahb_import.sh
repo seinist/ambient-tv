@@ -24,6 +24,9 @@ done
 "$TMP/test_queue_retirement"
 "${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -pthread \
     -fsanitize=address,undefined "$SRC/test_present_retirement.cpp" -o "$TMP/test_present_retirement"
+"${CC:-clang}" -std=c11 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined \
+    "$SRC/test_terminal_init_retirement.c" -o "$TMP/test_terminal_init_retirement"
+"$TMP/test_terminal_init_retirement"
 "$TMP/test_present_retirement"
 "${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     "$SRC/test_conversion_key.cpp" -o "$TMP/test_conversion_key"
