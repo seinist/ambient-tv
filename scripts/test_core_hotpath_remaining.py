@@ -19,7 +19,7 @@ def replacement(core, needle):
 class RemainingCoreHotpathTests(unittest.TestCase):
     def test_exact_anchor_application_and_atomic_rejection(self):
         self.assertEqual(len(PATCHES), 39)
-        self.assertEqual(sum(map(len, PATCHES.values())), 219)
+        self.assertEqual(sum(map(len, PATCHES.values())), 228)
         for core, changes in PATCHES.items():
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -819,6 +819,45 @@ int main() {
                             "-I",str(root),str(root/"shader_rec.cpp"),str(root/"test.cpp"),
                             "-o",str(root/"test")],check=True)
             subprocess.run([str(root/"test")],check=True)
+
+    def test_dolphin_texture_upload_packing_and_bounds(self):
+        compiler=shutil.which("c++")
+        self.assertIsNotNone(compiler)
+        _, code=replacement("dolphin","const u32 source_pitch = CalculateStrideForFormat")
+        # Extract the production row-packing logic with a synthetic format
+        # stride helper. Cover padded rows, compressed block rows and truncation.
+        code=code.replace("return;","return false;")
+        source=r"""
+#include <cassert>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+using u8=uint8_t;using u32=uint32_t;using u64=uint64_t;
+struct Config{u32 format;};
+static u32 CalculateStrideForFormat(u32 block,u32 pixels){return ((pixels+block-1)/block)*4;}
+static bool pack(u32 block,u32 width,u32 row_length,u32 num_rows,const u8* buffer,size_t buffer_size,std::vector<u8>& out){
+    Config m_config{block};
+""" + code + r"""
+    out.resize(upload_size);copy_rows(out.data());return true;
+}
+int main(){
+    std::vector<u8> input(48),output;
+    for(unsigned i=0;i<input.size();++i)input[i]=i;
+    assert(pack(1,2,4,3,input.data(),40,output));
+    assert(output.size()==24);
+    for(unsigned row=0;row<3;++row)for(unsigned i=0;i<8;++i)assert(output[row*8+i]==input[row*16+i]);
+    assert(!pack(1,2,4,3,input.data(),39,output));
+    assert(pack(4,5,12,2,input.data(),20,output));
+    assert(output.size()==16&&output[8]==12);
+    assert(pack(1,4,4,3,input.data(),48,output)&&output==input);
+}
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"pack.cpp"
+            path.write_text(source)
+            subprocess.run([compiler,"-std=c++17","-O2","-Wall","-Wextra","-Werror",
+                            "-fsanitize=undefined","-o",str(path.with_suffix("")),str(path)],check=True)
+            subprocess.run([str(path.with_suffix(""))],check=True)
 
 
 if __name__ == "__main__":

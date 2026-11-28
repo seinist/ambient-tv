@@ -166,6 +166,16 @@ PATCHES = {
       "pcsx2-libretro/Main.cpp",
       "\t\t\tfor (const auto& m : bmap)\n\t\t\t\tpad->Set(m.ds2, input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, m.retro) ? 1.0f : 0.0f);",
       "\t\t\tconst u16 mask = ambient_input_bitmasks ? static_cast<u16>(input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK)) : 0;\n\t\t\tfor (const auto& m : bmap)\n\t\t\t\tpad->Set(m.ds2, (ambient_input_bitmasks ? ((mask >> m.retro) & 1u) :\n\t\t\t\t\t(input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, m.retro) != 0)) ? 1.0f : 0.0f);"
+    ],
+    [
+      "pcsx2/GS/Renderers/Vulkan/GSTextureVK.cpp",
+      "\tconst u32 size = upload_pitch * height;\n\tconst VkBufferCreateInfo bci",
+      "\t// Compressed formats have one storage row per block, not per pixel.\n\tconst u32 size = CalcUploadSize(height, upload_pitch);\n\tconst VkBufferCreateInfo bci"
+    ],
+    [
+      "pcsx2/GS/Renderers/Vulkan/GSTextureVK.cpp",
+      "\tStringUtil::StrideMemCpy(dst, upload_pitch, src, pitch, std::min(upload_pitch, pitch), count);",
+      "\tif (upload_pitch == pitch)\n\t\tstd::memcpy(dst, src, static_cast<size_t>(pitch) * count);\n\telse\n\t\tStringUtil::StrideMemCpy(dst, upload_pitch, src, pitch, std::min(upload_pitch, pitch), count);"
     ]
   ],
   "cemu": [
@@ -1082,6 +1092,31 @@ PATCHES = {
       "Source/Core/VideoCommon/AsyncShaderCompiler.cpp",
       "    m_worker_thread_wake.wait(pending_lock);",
       "    // Work may have been queued before a newly started worker reached wait.\n    m_worker_thread_wake.wait(pending_lock, [this] {\n      return m_exit_flag.IsSet() || !m_pending_work.empty();\n    });"
+    ],
+    [
+      "Source/Core/VideoBackends/Vulkan/VKTexture.cpp",
+      "  const u32 source_pitch = CalculateStrideForFormat(m_config.format, row_length);\n  const u32 upload_size = source_pitch * num_rows;",
+      "  const u32 source_pitch = CalculateStrideForFormat(m_config.format, row_length);\n  const u32 copy_pitch = CalculateStrideForFormat(m_config.format, width);\n  // Pack only meaningful compressed/uncompressed blocks, not source row padding.\n  const u64 required = static_cast<u64>(source_pitch) * (num_rows - 1) + copy_pitch;\n  const u64 packed = static_cast<u64>(copy_pitch) * num_rows;\n  if (!buffer || !copy_pitch || source_pitch < copy_pitch || required > buffer_size || packed > 0xffffffffu)\n    return;\n  const u32 upload_size = static_cast<u32>(packed);\n  const auto copy_rows = [&](u8* destination) {\n    if (source_pitch == copy_pitch)\n      std::memcpy(destination, buffer, upload_size);\n    else\n      for (u32 row = 0; row < num_rows; ++row)\n        std::memcpy(destination + static_cast<size_t>(row) * copy_pitch,\n                    buffer + static_cast<size_t>(row) * source_pitch, copy_pitch);\n  };"
+    ],
+    [
+      "Source/Core/VideoBackends/Vulkan/VKTexture.cpp",
+      "      if (!stream_buffer->ReserveMemory(upload_size, upload_alignment))\n        PanicAlertFmt(\"Failed to allocate space in texture upload buffer\");",
+      "      if (!stream_buffer->ReserveMemory(upload_size, upload_alignment))\n      {\n        PanicAlertFmt(\"Failed to allocate space in texture upload buffer\");\n        return;\n      }"
+    ],
+    [
+      "Source/Core/VideoBackends/Vulkan/VKTexture.cpp",
+      "    std::memcpy(stream_buffer->GetCurrentHostPointer(), buffer, upload_size);",
+      "    copy_rows(stream_buffer->GetCurrentHostPointer());"
+    ],
+    [
+      "Source/Core/VideoBackends/Vulkan/VKTexture.cpp",
+      "    temp_buffer->Write(0, buffer, upload_size, true);\n    temp_buffer->Unmap();",
+      "    copy_rows(reinterpret_cast<u8*>(temp_buffer->GetMapPointer()));\n    temp_buffer->FlushCPUCache(0, upload_size);\n    temp_buffer->Unmap();"
+    ],
+    [
+      "Source/Core/VideoBackends/Vulkan/VKTexture.cpp",
+      "      row_length,                                    // uint32_t                 bufferRowLength",
+      "      0,                                             // tightly packed bufferRowLength"
     ]
   ],
   "flycast": [
