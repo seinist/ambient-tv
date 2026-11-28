@@ -10,7 +10,7 @@ const STRIDE:u32=72u;
 @group(0) @binding(3) var<storage,read> motion:array<vec4i>;
 @group(0) @binding(4) var<storage,read> pq_table:array<vec4u>;
 fn pq_index(v:f32)->u32{
-    return min(pack2x16float(vec2f(clamp(v,0.0,1.0),0.0))&65535u,15360u);
+    return 2u*min(pack2x16float(vec2f(clamp(v,0.0,1.0),0.0))&65535u,15360u);
 }
 fn pq(v:vec3f)->vec3f{
     return vec3f(bitcast<f32>(pq_table[pq_index(v.x)].z),bitcast<f32>(pq_table[pq_index(v.y)].z),bitcast<f32>(pq_table[pq_index(v.z)].z));
@@ -262,60 +262,92 @@ fn summarize(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lan
     }
 }
 
-// Section 10.4: spatial area average in linear BT.2020. Resizing uses
-// ceil(width/5), ceil(height/5) and equal-area footprints even at edges.
-// Store only proxy luminance, not source pixels, in the extra histogram tail.
+// Section 10.4: exact area weights on a 5:1 proxy grid. Luminance
+// uses 1e-9 fixed-point per-channel BT.2020 lookup contributions.
+// Portable unsigned 64-bit arithmetic uses low/high u32 words.
+fn wide_add(a:vec2u,b:vec2u)->vec2u{
+    let low=a.x+b.x;
+    return vec2u(low,a.y+b.y+select(0u,1u,low<a.x));
+}
+fn wide_mul(a:u32,b:u32)->vec2u{
+    let a0=a&65535u;let a1=a>>16u;let b0=b&65535u;let b1=b>>16u;
+    let w0=a0*b0;let t=a1*b0+(w0>>16u);
+    let mid=a0*b1+(t&65535u);
+    return vec2u((mid<<16u)|(w0&65535u),a1*b1+(t>>16u)+(mid>>16u));
+}
+// Quotient fits u32; denominator is at most UHD area. The remainder
+// never exceeds twice that value, so the bitwise division cannot overflow.
+fn wide_div_round(v:vec2u,d:u32)->u32{
+    var rem=v.y;var q=0u;
+    for(var i=32u;i>0u;i--){
+        rem=(rem<<1u)|((v.x>>(i-1u))&1u);
+        if rem>=d{rem-=d;q|=1u<<(i-1u);}
+    }
+    return q+select(0u,1u,rem>=(d+1u)/2u);
+}
+fn pq_luminance(v:vec3f)->u32{
+    return min(1000000000u,pq_table[pq_index(v.x)+1u].x+
+        pq_table[pq_index(v.y)+1u].y+pq_table[pq_index(v.z)+1u].z);
+}
 @compute @workgroup_size(8,8)
 fn bright_proxy(@builtin(global_invocation_id) id:vec3u){
     let size=(params.xy+vec2u(4u))/5u;
     if any(id.xy>=size){return;}
-    let lo=vec2f(id.xy)*vec2f(params.xy)/vec2f(size);
-    let hi=vec2f(id.xy+vec2u(1u))*vec2f(params.xy)/vec2f(size);
-    var total=0.0;
-    for(var y=u32(floor(lo.y));y<min(u32(ceil(hi.y)),params.y);y++){
-        for(var x=u32(floor(lo.x));x<min(u32(ceil(hi.x)),params.x);x++){
-            let coverage=max(0.0,min(hi.x,f32(x+1u))-max(lo.x,f32(x)))*
-                         max(0.0,min(hi.y,f32(y+1u))-max(lo.y,f32(y)));
-            let rgb=pq(textureLoad(source,vec2i(i32(x),i32(y)),0).rgb);
-            total+=coverage*dot(rgb,vec3f(0.2627,0.678,0.0593));
+    // Rational boundaries expressed in units of proxy dimensions.
+    let lo=id.xy*params.xy;
+    let hi=(id.xy+vec2u(1u))*params.xy;
+    var total=vec2u(0u);
+    for(var y=lo.y/size.y;y<min((hi.y+size.y-1u)/size.y,params.y);y++){
+        for(var x=lo.x/size.x;x<min((hi.x+size.x-1u)/size.x,params.x);x++){
+            let wx=min(hi.x,(x+1u)*size.x)-max(lo.x,x*size.x);
+            let wy=min(hi.y,(y+1u)*size.y)-max(lo.y,y*size.y);
+            let luminance=pq_luminance(textureLoad(source,vec2i(i32(x),i32(y)),0).rgb);
+            total=wide_add(total,wide_mul(luminance,wx*wy));
         }
     }
-    let luminance=clamp(total/((hi.x-lo.x)*(hi.y-lo.y)),0.0,1.0);
-    atomicStore(&hist[params.z*BINS+id.y*size.x+id.x],bitcast<u32>(luminance));
+    let luminance=min(1000000000u,wide_div_round(total,params.x*params.y));
+    atomicStore(&hist[params.z*BINS+id.y*size.x+id.x],luminance);
 }
-var<workgroup> proxy_sums:array<f32,64>;
-var<workgroup> proxy_peaks:array<f32,64>;
-var<workgroup> proxy_peak:f32;
+var<workgroup> proxy_sums:array<vec2u,64>;
+var<workgroup> proxy_peaks:array<u32,64>;
+var<workgroup> proxy_peak:u32;
 @compute @workgroup_size(64)
 fn bright_reduce(@builtin(local_invocation_index) lane:u32){
     let size=(params.xy+vec2u(4u))/5u;
     let n=size.x*size.y;
     let base=params.z*BINS;
-    var sum=0.0;var peak=0.0;
+    var sum=vec2u(0u);var peak=0u;
     for(var i=lane;i<n;i+=64u){
-        let v=bitcast<f32>(atomicLoad(&hist[base+i]));
-        sum+=v;peak=max(peak,v);
+        let v=atomicLoad(&hist[base+i]);
+        sum=wide_add(sum,vec2u(v,0u));peak=max(peak,v);
     }
     proxy_sums[lane]=sum;proxy_peaks[lane]=peak;
     workgroupBarrier();
     if lane==0u{
-        var all=0.0;var highest=0.0;
-        for(var j=0u;j<64u;j++){all+=proxy_sums[j];highest=max(highest,proxy_peaks[j]);}
+        var all=vec2u(0u);var highest=0u;
+        for(var j=0u;j<64u;j++){all=wide_add(all,proxy_sums[j]);highest=max(highest,proxy_peaks[j]);}
         proxy_peak=highest;
-        atomicStore(&words[61u],bitcast<u32>(clamp(all/f32(n),0.0,1.0)));
+        atomicStore(&words[58u],all.x);atomicStore(&words[59u],all.y);
     }
     workgroupBarrier();
-    var weight=0.0;
+    var weight=vec2u(0u);
     for(var i=lane;i<n;i+=64u){
-        let v=bitcast<f32>(atomicLoad(&hist[base+i]));
-        weight+=clamp((5.0-255.0*(proxy_peak-v))/4.0,0.0,1.0);
+        let v=atomicLoad(&hist[base+i]);
+        let eps=proxy_peak-v;
+        // Exact weight numerator over 4e9: full through 1/255,
+        // zero from 5/255. The middle expression is modulo 2^32;
+        // its true nonnegative result fits u32.
+        var w=0u;
+        if eps<=3921568u{w=4000000000u;}
+        else if eps<19607844u{w=705032704u-eps*255u;}
+        weight=wide_add(weight,vec2u(w,0u));
     }
     proxy_sums[lane]=weight;
     workgroupBarrier();
     if lane==0u{
-        var all=0.0;
-        for(var j=0u;j<64u;j++){all+=proxy_sums[j];}
-        atomicStore(&words[62u],bitcast<u32>(clamp(all/f32(n),0.0,1.0)));
+        var all=vec2u(0u);
+        for(var j=0u;j<64u;j++){all=wide_add(all,proxy_sums[j]);}
+        atomicStore(&words[61u],all.x);atomicStore(&words[62u],all.y);
         atomicStore(&words[63u],n);
     }
 }
