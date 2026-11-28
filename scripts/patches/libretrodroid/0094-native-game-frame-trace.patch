@@ -1,0 +1,166 @@
+diff --git a/src/main/cpp/ambientgametrace.h b/src/main/cpp/ambientgametrace.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/ambientgametrace.h
+@@ -0,0 +1,46 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#if defined(__ANDROID__)
++#include <android/trace.h>
++#endif
++#include <utility>
++
++namespace libretrodroid {
++
++// Android tracing is opt-in through the system tracing session. Host tools
++// compile exactly the same frame functions with a zero-work backend.
++struct GameTraceBackend {
++#if defined(__ANDROID__)
++    static bool enabled() noexcept { return ATrace_isEnabled(); }
++    static void begin(const char* name) noexcept { ATrace_beginSection(name); }
++    static void end() noexcept { ATrace_endSection(); }
++#else
++    static constexpr bool enabled() noexcept { return false; }
++    static void begin(const char*) noexcept {}
++    static void end() noexcept {}
++#endif
++};
++
++template<class Backend = GameTraceBackend>
++class BasicGameTraceScope {
++public:
++    explicit BasicGameTraceScope(const char* name) noexcept : active(Backend::enabled()) {
++        if (active) Backend::begin(name);
++    }
++    ~BasicGameTraceScope() { if (active) Backend::end(); }
++    BasicGameTraceScope(const BasicGameTraceScope&) = delete;
++    BasicGameTraceScope& operator=(const BasicGameTraceScope&) = delete;
++private:
++    const bool active;
++};
++
++using GameTraceScope = BasicGameTraceScope<>;
++
++template<class Callable>
++decltype(auto) traceGameCall(const char* name, Callable&& call) {
++    GameTraceScope trace(name);
++    return std::forward<Callable>(call)();
++}
++
++} // namespace libretrodroid
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -36,3 +36,4 @@
+ #include "renderers/renderer.h"
+ #include "fpssync.h"
++#include "ambientgametrace.h"
+ #include "input.h"
+@@ -77,3 +78,4 @@
+ void LibretroDroid::callback_retro_set_input_poll() {
++    GameTraceScope trace("AmbientGame input poll");
+     // Pending release flush happens after retro_run() in step(), not here.
+ }
+@@ -789,7 +791,9 @@
+ void LibretroDroid::step() {
+-    checkVulkanFrameError();
+-    // GLSurfaceView swaps AFTER step returns. Wait for the previous deadline
+-    // BEFORE running the next frame, not while a finished image is waiting for EGL.
+-    // A blocking swap already consumes that wait; the timer is only the backstop.
+-    if (fpsSync && frameSpeed <= 1) fpsSync->wait();
++    GameTraceScope trace("AmbientGame step");
++    checkVulkanFrameError();
++    // GLSurfaceView swaps AFTER step returns. Wait for the previous deadline
++    // BEFORE running the next frame, not while a finished image is waiting for EGL.
++    // A blocking swap already consumes that wait; the timer is only the backstop.
++    if (fpsSync && frameSpeed <= 1)
++        traceGameCall("AmbientGame pacing wait", [&] { fpsSync->wait(); });
+     using WorkClock = std::chrono::steady_clock;
+@@ -826,3 +830,3 @@
+-                core->retro_run();
++                traceGameCall("AmbientGame rewind core", [&] { core->retro_run(); });
+                 checkVulkanFrameError();
+                 // The core now shows the popped checkpoint plus one preview frame;
+@@ -868,3 +872,4 @@
+         const bool recording = rewindEnabled && rewindBuffer;
+         if (recording && frames > 0 && rewindTimeline.shouldCapture(*rewindBuffer)) {
++            GameTraceScope captureTrace("AmbientGame rewind capture");
+             const auto captureStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
+@@ -890,5 +895,5 @@
+         for (size_t i = 0; i < frames; i++) {
+-            core->retro_run();
++            traceGameCall("AmbientGame core run", [&] { core->retro_run(); });
+             checkVulkanFrameError();
+ 
+             if (input) {
+@@ -980,2 +985,3 @@
+ void LibretroDroid::stepForNetplay() {
++    GameTraceScope trace("AmbientGame netplay step");
+     checkVulkanFrameError();
+@@ -989,4 +995,4 @@
+-    core->retro_run();
++    traceGameCall("AmbientGame netplay core", [&] { core->retro_run(); });
+     checkVulkanFrameError();
+ 
+     if (input) {
+@@ -1100,4 +1106,4 @@
+     if (video && video->isHWAccelerated()) video->bindHWContext();
+-    core->retro_run();
++    traceGameCall("AmbientGame rewind preview core", [&] { core->retro_run(); });
+     checkVulkanFrameError();
+     if (video && video->isHWAccelerated()) video->bindMainContext();
+@@ -1270,3 +1276,4 @@
+     // AHB copying and GL/Vulkan synchronization remain intact for captures/fallback.
++    GameTraceScope trace("AmbientGame GLES draw");
+     video->renderFrame(draw == NativePresentationGate::PrimaryDraw::Force);
+ }
+@@ -1470,2 +1477,2 @@
+-            glFinish();
++            traceGameCall("AmbientGame GLES bridge finish", [] { glFinish(); });
+             if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible())) {
+@@ -1483,8 +1490,8 @@
+         }
+ 
+         if (data != nullptr) video->setSourceTransfer(nextSourceTransfer);
+-        video->onNewFrame(data, width, height, pitch);
++        traceGameCall("AmbientGame source upload", [&] { video->onNewFrame(data, width, height, pitch); });
+ 
+         if (video->rendersInVideoCallback()) {
+             renderPrimaryFrame();
+         }
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -18,3 +18,4 @@
+ #include "vulkanbackend.h"
++#include "../ambientgametrace.h"
+ 
+ #include <dlfcn.h>
+@@ -1168,4 +1169,5 @@
+ bool VulkanBackend::waitForFrame() {
+     if (hasFatalError() || shutdownReady) return false;
+     if (!frameInFlight) return true;
++    GameTraceScope trace("AmbientGame Vulkan fence wait");
+     bool warned = false;
+@@ -1220,3 +1222,4 @@
+ bool VulkanBackend::presentFrame(unsigned width, unsigned height, float resolvedAspect,
+                                   bool pictureCompatible) {
++    GameTraceScope trace("AmbientGame Vulkan frame");
+     nativePresentation.invalidateFrame();
+@@ -1510,7 +1513,8 @@
+     {
++        GameTraceScope submitTrace("AmbientGame Vulkan queue submit");
+         std::lock_guard<std::mutex> lock(queueMutex);
+         result = vk.queueSubmit(queue, 1, &submit, frameFence);
+     }
+ 
+     pendingImage.waitSemaphores.clear();
+     pendingCommandBuffers.clear();
+@@ -1540,5 +1544,6 @@
+         VkResult presentResult;
+         {
++            GameTraceScope presentTrace("AmbientGame Vulkan queue present");
+             std::lock_guard<std::mutex> lock(queueMutex);
+             presentResult = vk.queuePresent(queue, &present);
+         }

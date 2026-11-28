@@ -1,0 +1,39 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1291,5 +1291,7 @@
+     const auto normalized = copied ? colorCopy.preparedImage(frameImage) : VulkanColorCopy::Image {};
+ 
+     uint32_t sdrIndex = 0;
+     bool useDirect = false;
++    NativeViewport viewport {};
++    float coreAspect = 0.0f;
+     if (nativeSdrWindow != nullptr && !nativeSdrDisabled && !pictureCompatible) {
+@@ -1322,2 +1324,9 @@
+     if (copied && nativeSdrWindow != nullptr && !nativeSdrDisabled && ensureNativeSdrSwapchain()) {
++        // Use the final swapchain geometry for both preflight and recording.
++        coreAspect = aspectRatioForGeometry(resolvedAspect, width, height);
++        viewport = nativeViewportFor(nativeSdrExtent.width, nativeSdrExtent.height,
++            width, height, coreAspect, nativeIntegerScaling, nativeIntegerScalingAuto);
++        const SlangFrameGeometry geometry {normalized.width, normalized.height,
++            nativeSdrExtent.width, nativeSdrExtent.height, static_cast<float>(viewport.x),
++            static_cast<float>(viewport.y), viewport.width, viewport.height};
+         // Both the raw presenter and Slang consume known, encoded source texels.
+@@ -1340,7 +1349,7 @@
+             disableNativeSdrSwapchain("normalized source unavailable for native presentation; GLES retained");
+         } else if (nativeSlang.requested() &&
+-                   !nativeSlang.ensure(instance, gpu, device, queue, vk.getInstanceProcAddr)) {
+-            disableNativeSdrSwapchain("librashader unavailable or preset failed; GLES retained");
++                   !nativeSlang.ensure(instance, gpu, device, queue, vk.getInstanceProcAddr, &geometry)) {
++            disableNativeSdrSwapchain("librashader unavailable, preset failed or geometry exceeds budget; GLES retained");
+         } else {
+             const VkResult acquired = vk.acquireNextImage(
+                 device, nativeSdrSwapchain, 0, nativeSdrAcquire, VK_NULL_HANDLE, &sdrIndex);
+@@ -1430,7 +1439,4 @@
+         // core-reported aspect, not blindly the VkImage width/height ratio.
+-        const float coreAspect = aspectRatioForGeometry(resolvedAspect, copyWidth, copyHeight);
+-        const auto viewport = nativeViewportFor(nativeSdrExtent.width, nativeSdrExtent.height,
+-            copyWidth, copyHeight, coreAspect, nativeIntegerScaling, nativeIntegerScalingAuto);
+         const int32_t left = viewport.x;
+         const int32_t top = viewport.y;
+         const int32_t dstW = static_cast<int32_t>(viewport.width);

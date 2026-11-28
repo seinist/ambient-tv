@@ -1,0 +1,380 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -293,40 +293,45 @@
+     return created;
+ }
+ 
+-bool VulkanBackend::appendPresentFenceInstanceExtensions(std::vector<const char*>& extensions,
++unsigned VulkanBackend::appendPresentFenceInstanceExtensions(std::vector<const char*>& extensions,
+                                                          uint32_t apiVersion) const {
+-#if defined(__ANDROID__) && defined(VK_EXT_swapchain_maintenance1) && defined(VK_EXT_surface_maintenance1)
++#if defined(__ANDROID__) && defined(VK_EXT_swapchain_maintenance1)
+     // Diagnostic opt-in, only for an entirely frontend-owned standard device.
+     char value[PROP_VALUE_MAX] {};
+     if (extensions.empty() || apiVersion < VK_API_VERSION_1_1 || negotiation || driverConfig.isCustom() ||
+             !vk.getInstanceProcAddr || __system_property_get("debug.ambient.game_present_fences", value) <= 0 ||
+-            strcmp(value, "1") != 0) return false;
++            strcmp(value, "1") != 0) return 0;
+     const auto enumerate = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
+         vk.getInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties"));
+-    if (!enumerate) return false;
++    if (!enumerate) return 0;
+     uint32_t count = 0;
+-    if (enumerate(nullptr, &count, nullptr) != VK_SUCCESS || !count) return false;
++    if (enumerate(nullptr, &count, nullptr) != VK_SUCCESS || !count) return 0;
+     std::vector<VkExtensionProperties> available(count);
+-    if (enumerate(nullptr, &count, available.data()) != VK_SUCCESS) return false;
++    if (enumerate(nullptr, &count, available.data()) != VK_SUCCESS) return 0;
+     available.resize(count);
+-    const char* required[] = {VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,
+-                             VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME};
+-    for (const auto name : required) if (!hasExtension(available, name)) return false;
+-    for (const auto name : required) {
++    if (!hasExtension(available, VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME)) return 0;
++    using Maintenance = NativePresentMaintenance;
++    const unsigned mask = Maintenance::surfaceMask(hasExtension(available, Maintenance::extSurface),
++                                                    hasExtension(available, Maintenance::khrSurface));
++    if (!mask) return 0;
++    const auto append = [&](const char* name) {
+         if (std::none_of(extensions.begin(), extensions.end(),
+                 [name](const char* extension) { return strcmp(name, extension) == 0; }))
+             extensions.push_back(name);
+-    }
+-    return true;
++    };
++    append(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
++    if (mask & Maintenance::ext) append(Maintenance::extSurface);
++    if (mask & Maintenance::khr) append(Maintenance::khrSurface);
++    return mask;
+ #else
+     (void)extensions;
+     (void)apiVersion;
+-    return false;
++    return 0;
+ #endif
+ }
+ 
+ bool VulkanBackend::createInstance() {
+-    nativePresentFenceInstance = false;
++    nativePresentFenceInstance = 0;
+     nativePresentFencesEnabled = false;
+     if (negotiation != nullptr && negotiation->interface_version >= 2 && negotiation->create_instance != nullptr) {
+         const VkApplicationInfo* app = negotiation->get_application_info != nullptr
+@@ -347,7 +352,7 @@
+ 
+     auto surfaceExtensions = surfaceInstanceExtensions();
+     const auto baseCount = surfaceExtensions.size();
+-    bool enablePresentFenceInstance = appendPresentFenceInstanceExtensions(surfaceExtensions, app.apiVersion);
++    unsigned enablePresentFenceInstance = appendPresentFenceInstanceExtensions(surfaceExtensions, app.apiVersion);
+     VkInstanceCreateInfo info { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+     info.pApplicationInfo = &app;
+     info.enabledExtensionCount = static_cast<uint32_t>(surfaceExtensions.size());
+@@ -356,7 +361,7 @@
+     if (enablePresentFenceInstance && (result == VK_ERROR_EXTENSION_NOT_PRESENT ||
+             result == VK_ERROR_INCOMPATIBLE_DRIVER || result == VK_ERROR_INITIALIZATION_FAILED)) {
+         LOGW("Optional present-fence instance creation failed; retrying baseline extensions");
+-        enablePresentFenceInstance = false;
++        enablePresentFenceInstance = 0;
+         surfaceExtensions.resize(baseCount);
+         info.enabledExtensionCount = static_cast<uint32_t>(surfaceExtensions.size());
+         info.ppEnabledExtensionNames = surfaceExtensions.data();
+@@ -992,32 +997,35 @@
+ #endif
+ }
+ 
+-bool VulkanBackend::supportsNativePresentFences() const {
++const char* VulkanBackend::nativePresentFenceExtension() const {
+ #if defined(VK_EXT_swapchain_maintenance1)
+     if (!nativePresentFenceInstance || !surface || !gpu || !vk.getInstanceProcAddr ||
+-            !vk.enumerateDeviceExtensionProperties || !vk.getPhysicalDeviceProperties) return false;
++            !vk.enumerateDeviceExtensionProperties || !vk.getPhysicalDeviceProperties) return nullptr;
+     VkPhysicalDeviceProperties properties {};
+     vk.getPhysicalDeviceProperties(gpu, &properties);
+-    if (properties.apiVersion < VK_API_VERSION_1_1) return false;
++    if (properties.apiVersion < VK_API_VERSION_1_1) return nullptr;
+     uint32_t count = 0;
+     if (vk.enumerateDeviceExtensionProperties(gpu, nullptr, &count, nullptr) != VK_SUCCESS || !count)
+-        return false;
++        return nullptr;
+     std::vector<VkExtensionProperties> available(count);
+     if (vk.enumerateDeviceExtensionProperties(gpu, nullptr, &count, available.data()) != VK_SUCCESS)
+-        return false;
++        return nullptr;
+     available.resize(count);
+-    if (!hasExtension(available, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)) return false;
++    using Maintenance = NativePresentMaintenance;
++    const char* extension = Maintenance::deviceExtension(nativePresentFenceInstance,
++        hasExtension(available, Maintenance::extSwapchain), hasExtension(available, Maintenance::khrSwapchain));
++    if (!extension) return nullptr;
+     const auto query = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
+         vk.getInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2"));
+-    if (!query) return false;
++    if (!query) return nullptr;
+     VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT presentFeature {
+         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT };
+     VkPhysicalDeviceFeatures2 features { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+     features.pNext = &presentFeature;
+     query(gpu, &features);
+-    return presentFeature.swapchainMaintenance1 == VK_TRUE;
++    return presentFeature.swapchainMaintenance1 == VK_TRUE ? extension : nullptr;
+ #else
+-    return false;
++    return nullptr;
+ #endif
+ }
+ 
+@@ -1056,9 +1064,10 @@
+ #if defined(VK_EXT_swapchain_maintenance1)
+     VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT presentFeature {
+         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT };
+-    enablePresentFences = supportsNativePresentFences();
++    const char* presentExtension = nativePresentFenceExtension();
++    enablePresentFences = presentExtension != nullptr;
+     if (enablePresentFences) {
+-        extensions.push_back(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
++        extensions.push_back(presentExtension);
+         presentFeature.swapchainMaintenance1 = VK_TRUE;
+     }
+ #endif
+@@ -1597,14 +1606,14 @@
+     if (!device || !slot.fence || !vk.waitForFences || !vk.resetFences)
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing slot fence or dispatch");
+     GameTraceScope trace("AmbientGame Vulkan fence wait");
+-    bool warned = false;
+-    for (;;) {
++    // A timeout says nothing about completion. Stop reportable operations
++    // after three finite waits; retain every object and the pending flag.
++    // The void core wait callback separately requires genuine idle/loss proof.
++    constexpr unsigned maxAttempts = 3;
++    for (unsigned attempt = 0; ; ++attempt) {
+         const VkResult result = vk.waitForFences(device, 1, &slot.fence, VK_TRUE, FENCE_TIMEOUT_NS);
+-        if (result == VK_TIMEOUT) {
+-            // A timeout says nothing about completion. Never reset/reuse the
+-            // fence, command buffer, AHB or core image while work is pending.
+-            if (!warned) LOGW("Vulkan frame is still pending; waiting for its completion");
+-            warned = true;
++        if (result == VK_TIMEOUT && attempt + 1 < maxAttempts) {
++            if (attempt == 0) LOGW("Vulkan frame is still pending; waiting for its completion");
+             continue;
+         }
+         if (!checkFrameResult(result, "wait for frame fence")) return false;
+@@ -1822,7 +1831,7 @@
+     // A confirmed frame from this exact WSI generation can remain visible
+     // while a later accepted presentation is pending. First frame and every
+     // visibility/preset/surface transition still require CPU completion.
+-    const bool nativeWasConfirmed = nativePresentation.hasPresentedFrame();
++    const bool nativeWasConfirmed = nativePresentation.hasConfirmedGeneration();
+     const VkSwapchainKHR confirmedSwapchain = nativeSdrSwapchain;
+     nativePresentation.invalidateFrame();
+     if (hasFatalError() || shutdownReady || !isStarted() || frameImage == VK_NULL_HANDLE ||
+@@ -2276,6 +2285,26 @@
+     return waitForSubmissionFrame();
+ }
+ 
++bool VulkanBackend::prepareCoreStateAccess(bool changingState) {
++    if (hasFatalError() || shutdownReady) return false;
++    if (!isStarted()) return true;
++    // A state operation must not consume a staged semaphore or command buffer:
++    // those belong to the next video callback, not a save/load/reset call.
++    if (changingState && (!pendingCommandBuffers.empty() ||
++            pendingSignalSemaphore != VK_NULL_HANDLE || !pendingImage.waitSemaphores.empty()))
++        return false;
++    if (!waitForSlotFrame(frameSlot) || !waitForSlotFrame(spareFrameSlot) ||
++            !waitForNativeSlangFrame()) return false;
++    if (changingState) {
++        nativePresentation.invalidateFrame();
++        // Never reuse a pre-reset or pre-restore VkImage. The next VALID
++        // video callback needs a fresh set_image from the core.
++        pendingImage = PendingImage {};
++        coreSourceFormat.store(0u, std::memory_order_release);
++    }
++    return true;
++}
++
+ bool VulkanBackend::beginCoreFrame() {
+     if (hasFatalError() || shutdownReady)
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "begin core frame after failure or shutdown");
+@@ -2436,7 +2465,7 @@
+     bridgeFenceEnabled = false;
+     bridgeWriteFenceEnabled = false;
+     nativePresentFencesEnabled = false;
+-    nativePresentFenceInstance = false;
++    nativePresentFenceInstance = 0;
+     device = VK_NULL_HANDLE;
+     queue = VK_NULL_HANDLE;
+     gpu = VK_NULL_HANDLE;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -162,7 +162,11 @@
+     void setNativeIntegerScalingAuto(bool enabled) { nativeIntegerScalingAuto = enabled; }
+     void setNativeShaderPresetPath(const std::string& path);
+     void setNativeFullscreenActive(bool active) { nativePresentation.setFullscreenActive(active); }
++    void beginNativeStep() { nativePresentation.beginStep(); }
+     void invalidateNativeFrame() { nativePresentation.invalidateFrame(); }
++    // Outside retro_run, explicit serialization/restore/reset cannot assume
++    // that only the current index owns frontend GPU work.
++    bool prepareCoreStateAccess(bool changingState);
+     NativePresentationGate::PrimaryDraw primaryDraw(bool force, bool canSkip) {
+         return nativePresentation.primaryDraw(force, canSkip);
+     }
+@@ -303,8 +307,8 @@
+     bool ensureNativeAcquireSemaphore(std::size_t slotIndex);
+     bool canRetireNativeWsi() const noexcept;
+     bool drainNativeAcquireSignals();
+-    bool appendPresentFenceInstanceExtensions(std::vector<const char*>& extensions, uint32_t apiVersion) const;
+-    bool supportsNativePresentFences() const;
++    unsigned appendPresentFenceInstanceExtensions(std::vector<const char*>& extensions, uint32_t apiVersion) const;
++    const char* nativePresentFenceExtension() const;
+     bool createNativePresentFences(std::size_t count);
+     bool waitNativePresentFence(VkFence fence);
+     bool prepareNativePresentFence(std::size_t index);
+@@ -489,7 +493,7 @@
+     VulkanWsiAcquireState<> nativeAcquireState;
+     std::vector<VkSemaphore> nativeSdrComplete;
+     VulkanPresentFences<VkFence> nativePresentFences;
+-    bool nativePresentFenceInstance = false;
++    unsigned nativePresentFenceInstance = 0; // actual enabled surface-extension mask
+     bool nativePresentFencesEnabled = false;
+     bool nativeSdrDisabled = false;
+     uint32_t nativeOutputTransfer = 0; // SDR by default, per-session only
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -237,6 +237,7 @@
+         );
+     }
+ 
++    if (!VulkanBackend::getInstance().prepareCoreStateAccess(true)) return false;
+     const bool result = attemptStateLoad(
+         data,
+         size,
+@@ -860,8 +861,17 @@
+     collectRewindCapture(false);
+     // Continuing from a paused seek keeps the shown point; newer history is gone.
+     if (rewindPreview.active) commitRewindPreview();
+-    VulkanBackend::getInstance().invalidateNativeFrame();
++    VulkanBackend::getInstance().beginNativeStep();
+     if (rewinding && rewindBuffer) {
++        VulkanBackend::getInstance().invalidateNativeFrame();
++        // Check before popping the ring or mutating the core.
++        if (!VulkanBackend::getInstance().prepareCoreStateAccess(true)) {
++            checkVulkanFrameError();
++            // Do not remain frozen forever with an unconsumed core callback.
++            // Continue forward on the next step so the owning run can finish.
++            rewinding = false;
++            return;
++        }
+         collectRewindCapture(true);
+         // Rewind does not use the forward advanceFrames path. Keep the pacing
+         // clock current without emulating extra frames or changing rewind distances.
+@@ -927,6 +937,10 @@
+             rewindTimeline.shouldCapture(*rewindBuffer)) {
+             GameTraceScope captureTrace("AmbientGame rewind capture");
+             const auto captureStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
++            if (!VulkanBackend::getInstance().prepareCoreStateAccess(false)) {
++                checkVulkanFrameError();
++                return;
++            }
+             const size_t sz = core->retro_serialize_size();
+             if (sz > 0 && sz <= rewindBuffer->getMaxStateSize() &&
+                 core->retro_serialize(rewindTempBuffer.get(), sz)) {
+@@ -1067,7 +1081,7 @@
+     // A netplay branch must not retain an offline capture, even if UI teardown is queued.
+     if (rewindBuffer && ((rewindCapture && rewindCapture->pending()) ||
+         rewindValidCount.load(std::memory_order_relaxed) > 0)) clearRewindBuffer();
+-    VulkanBackend::getInstance().invalidateNativeFrame();
++    VulkanBackend::getInstance().beginNativeStep();
+     if (video && video->isHWAccelerated()) {
+         video->bindHWContext();
+     }
+@@ -1169,6 +1183,7 @@
+ }
+ 
+ bool LibretroDroid::showRewindState(const uint8_t* data, size_t size) {
++    if (!VulkanBackend::getInstance().prepareCoreStateAccess(true)) return false;
+     if (!core->retro_unserialize(data, size)) return false;
+     const bool hadAudio = audioEnabled;
+     audioEnabled = false;
+@@ -1200,6 +1215,7 @@
+     if (!rewindPreview.active) {
+         if (framesBack == 0) return 0;
+         // Keep the live point, so the bar can return to it until play continues.
++        if (!VulkanBackend::getInstance().prepareCoreStateAccess(false)) return -1;
+         const size_t size = core->retro_serialize_size();
+         if (size == 0 || size > rewindBuffer->getMaxStateSize()) return -1;
+         if (!core->retro_serialize(rewindPreview.live.get(), size)) return -1;
+@@ -1772,6 +1788,10 @@
+ 
+ void LibretroDroid::reset() {
+     ScopedSignalStackGuard signalStackGuard;
++    if (!VulkanBackend::getInstance().prepareCoreStateAccess(true)) {
++        checkVulkanFrameError();
++        throw LibretroDroidError("Vulkan core has unconsumed frame work; reset refused", ERROR_GENERIC);
++    }
+     clearRewindBuffer();
+     core->retro_reset();
+ }
+@@ -1781,6 +1801,7 @@
+ }
+ 
+ std::pair<int8_t*, size_t> LibretroDroid::serializeState() {
++    if (!VulkanBackend::getInstance().prepareCoreStateAccess(false)) return {nullptr, 0};
+     size_t size = core->retro_serialize_size();
+     if (size == 0 || size > 64u * 1024u * 1024u) {
+         return std::pair(nullptr, 0);
+diff --git a/src/main/cpp/vulkan/nativepresentation.h b/src/main/cpp/vulkan/nativepresentation.h
+--- a/src/main/cpp/vulkan/nativepresentation.h
++++ b/src/main/cpp/vulkan/nativepresentation.h
+@@ -44,6 +44,26 @@
+              static_cast<int32_t>((targetHeight - height) / 2), width, height };
+ }
+ 
++// The KHR promotion retains the EXT structure ABI, but its extension-name
++// dependencies are distinct. Literal extension names also support NDK headers
++// predating the promotion. Only advertise a matching instance/device pair.
++struct NativePresentMaintenance {
++    static constexpr unsigned ext = 1u, khr = 2u;
++    static constexpr const char* extSurface = "VK_EXT_surface_maintenance1";
++    static constexpr const char* khrSurface = "VK_KHR_surface_maintenance1";
++    static constexpr const char* extSwapchain = "VK_EXT_swapchain_maintenance1";
++    static constexpr const char* khrSwapchain = "VK_KHR_swapchain_maintenance1";
++    static constexpr unsigned surfaceMask(bool extAvailable, bool khrAvailable) noexcept {
++        return (extAvailable ? ext : 0u) | (khrAvailable ? khr : 0u);
++    }
++    static constexpr const char* deviceExtension(unsigned enabledSurface,
++            bool extAvailable, bool khrAvailable) noexcept {
++        if ((enabledSurface & khr) && khrAvailable) return khrSwapchain;
++        if ((enabledSurface & ext) && extAvailable) return extSwapchain;
++        return nullptr;
++    }
++};
++
+ /** GL-thread-only: diagnostic presentation never owns the visible primary picture. */
+ class NativePresentationGate {
+ public:
+@@ -54,9 +74,13 @@
+         fullscreenActive = active;
+         invalidateFrame();
+     }
+-    void invalidateFrame() { framePresented = false; }
+-    void didPresentFrame() { framePresented = true; }
++    // Each emulation step must prove a fresh presentation before skipping GLES,
++    // but a normal step is not a change of swapchain generation.
++    void beginStep() noexcept { framePresented = false; }
++    void invalidateFrame() noexcept { framePresented = generationConfirmed = false; }
++    void didPresentFrame() noexcept { framePresented = generationConfirmed = true; }
+     bool hasPresentedFrame() const noexcept { return framePresented; }
++    bool hasConfirmedGeneration() const noexcept { return generationConfirmed; }
+     void reset() { *this = NativePresentationGate{}; }
+ 
+     PrimaryDraw primaryDraw(bool force, bool canSkip) {
+@@ -74,6 +98,7 @@
+ private:
+     bool fullscreenActive = false;
+     bool framePresented = false;
++    bool generationConfirmed = false;
+     bool primaryWasSkipped = false;
+ };
+ 

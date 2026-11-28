@@ -225,8 +225,9 @@ static std::vector<float> pixels(const void* data, VkFormat format, unsigned cou
 
 static void run(Device& d, const std::string& name, VkFormat backing, VkFormat view,
                 VkFormat target, const std::vector<uint8_t>& input, bool padded = false,
-                VkComponentMapping mapping = {}, bool subresource = false, bool oldBlit = false) {
-    const uint32_t width = 4, height = 1;
+                VkComponentMapping mapping = {}, bool subresource = false, bool oldBlit = false,
+                uint32_t width = 4) {
+    const uint32_t height = 1;
     const uint32_t targetWidth = padded ? 8 : width;
     const uint32_t targetHeight = padded ? 3 : height;
     const VkImageSubresourceRange range { VK_IMAGE_ASPECT_COLOR_BIT, subresource ? 1u : 0u,
@@ -303,8 +304,289 @@ static void run(Device& d, const std::string& name, VkFormat backing, VkFormat v
     }
 }
 
+
+using libretrodroid::VulkanColorCacheRetention;
+
+static void testRetentionPolicy() {
+    VulkanColorCacheRetention policy;
+    for (uint32_t i = 0; i < 1000; ++i) {
+        policy.reset();
+        require(!policy.retainDirectFrame(0, true), "zero allocation retained");
+        require(!policy.retainDirectFrame(1, false), "different extent retained");
+        require(!policy.retainDirectFrame(VulkanColorCacheRetention::maxIdleBytes + 1, true),
+                "oversize idle allocation retained");
+        const uint64_t bytes = i % 2 == 0 ? 1 : VulkanColorCacheRetention::maxIdleBytes;
+        for (uint32_t frame = 0; frame < VulkanColorCacheRetention::maxDirectFrames; ++frame) {
+            require(policy.retainDirectFrame(bytes, true), "small warm cache expired too soon");
+        }
+        require(!policy.retainDirectFrame(bytes, true), "idle image did not expire");
+        require(!policy.retainDirectFrame(bytes, true), "expired image was retained again");
+        policy.reset();
+        require(policy.retainDirectFrame(bytes, true), "normalization did not reset retention");
+    }
+}
+
+// Count only allocations issued by the production helper, not the test's
+// per-case input/output images. Handles alone can be recycled by the driver.
+static struct CacheAllocationCalls {
+    unsigned created = 0, destroyed = 0, allocated = 0, freed = 0;
+    VkDeviceSize lastBytes = 0;
+    unsigned formatQueries = 0;
+    bool failNextAllocation = false;
+} cacheCalls;
+
+static VKAPI_ATTR VkResult VKAPI_CALL trackedCreateImage(VkDevice device,
+        const VkImageCreateInfo* info, const VkAllocationCallbacks* allocator, VkImage* image) {
+    const auto result = vkCreateImage(device, info, allocator, image);
+    if (result == VK_SUCCESS) ++cacheCalls.created;
+    return result;
+}
+static VKAPI_ATTR void VKAPI_CALL trackedDestroyImage(VkDevice device, VkImage image,
+        const VkAllocationCallbacks* allocator) {
+    vkDestroyImage(device, image, allocator);
+    ++cacheCalls.destroyed;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL trackedAllocateMemory(VkDevice device,
+        const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* memory) {
+    if (cacheCalls.failNextAllocation) {
+        cacheCalls.failNextAllocation = false;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    const auto result = vkAllocateMemory(device, info, allocator, memory);
+    if (result == VK_SUCCESS) {
+        ++cacheCalls.allocated;
+        cacheCalls.lastBytes = info->allocationSize;
+    }
+    return result;
+}
+static VKAPI_ATTR void VKAPI_CALL trackedFreeMemory(VkDevice device, VkDeviceMemory memory,
+        const VkAllocationCallbacks* allocator) {
+    vkFreeMemory(device, memory, allocator);
+    ++cacheCalls.freed;
+}
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL trackedGetDeviceProcAddr(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkCreateImage") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(trackedCreateImage);
+    if (std::strcmp(name, "vkDestroyImage") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(trackedDestroyImage);
+    if (std::strcmp(name, "vkAllocateMemory") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(trackedAllocateMemory);
+    if (std::strcmp(name, "vkFreeMemory") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(trackedFreeMemory);
+    return vkGetDeviceProcAddr(device, name);
+}
+static VKAPI_ATTR void VKAPI_CALL trackedFormatProperties(VkPhysicalDevice gpu, VkFormat format,
+        VkFormatProperties* properties) {
+    ++cacheCalls.formatQueries;
+    vkGetPhysicalDeviceFormatProperties(gpu, format, properties);
+}
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL trackedGetInstanceProcAddr(VkInstance instance, const char* name) {
+    if (std::strcmp(name, "vkGetDeviceProcAddr") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(trackedGetDeviceProcAddr);
+    if (std::strcmp(name, "vkGetPhysicalDeviceFormatProperties") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(trackedFormatProperties);
+    return vkGetInstanceProcAddr(instance, name);
+}
+
+static void testFormatFeatureCache(Device& d) {
+    d.color.release();
+    cacheCalls = {};
+    const std::array<VkFormat, 5> formats { VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM,
+        VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32,
+        VK_FORMAT_R16G16B16A16_SFLOAT };
+    for (unsigned generation = 0; generation < 2; ++generation) {
+        require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+        for (unsigned frame = 0; frame < 64; ++frame) {
+            for (auto format : formats) {
+                VkFormatProperties actual {};
+                vkGetPhysicalDeviceFormatProperties(d.physical, format, &actual);
+                require(d.color.optimalFeatures(format) == actual.optimalTilingFeatures, "cached format mask differs");
+            }
+            require(d.color.optimalFeatures(VK_FORMAT_UNDEFINED) == 0, "unknown format was accepted");
+            // initialize is called by the real backend on every frame.
+            require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+        }
+        require(cacheCalls.formatQueries == (generation + 1) * formats.size(), "repeated driver format queries");
+        VulkanColorCopy::Source descriptor {};
+        descriptor.viewFormat = VK_FORMAT_R8G8B8A8_UNORM;
+        descriptor.width = 4;
+        descriptor.height = 1;
+        const bool supported = (d.color.optimalFeatures(formats[0]) &
+            (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) ==
+            (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
+        require(d.color.prepare(descriptor, formats[0], 8, 3) == supported,
+                "normalization feature checks changed");
+        require(cacheCalls.formatQueries == (generation + 1) * formats.size(), "normalization bypassed feature cache");
+        d.color.release();
+        require(d.color.optimalFeatures(formats[0]) == 0, "released device exposed stale capabilities");
+    }
+}
+
+static void testWarmNormalizationCache(Device& d, const std::vector<uint8_t>& rgba) {
+    d.color.release(); // the previous run has already completed its queue work
+    cacheCalls = {};
+    require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+    auto changingPixels = rgba;
+    const auto normalize = [&] {
+        changingPixels[0] ^= 31u;
+        run(d, "warm normalized", VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_FORMAT_R8G8B8A8_UNORM, changingPixels, true);
+        require(d.color.usesCache(), "normalization was bypassed");
+    };
+    const auto direct = [&] {
+        changingPixels[4] ^= 127u;
+        run(d, "warm direct", VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_FORMAT_R8G8B8A8_UNORM, changingPixels);
+        require(!d.color.usesCache(), "direct frame selected retained image");
+    };
+    const auto counts = [&](unsigned creates, unsigned destroys) {
+        require(cacheCalls.created == creates && cacheCalls.allocated == creates &&
+                cacheCalls.destroyed == destroys && cacheCalls.freed == destroys,
+                "unexpected normalization image/memory allocation or retirement");
+    };
+    normalize();
+    counts(1, 0);
+    require(cacheCalls.lastBytes > 0 && cacheCalls.lastBytes <= VulkanColorCacheRetention::maxIdleBytes,
+            "tiny test image exceeds warm cache budget");
+    for (unsigned i = 0; i < 12; ++i) {
+        direct();
+        normalize(); // overwrite every texel; readback verifies no stale source or color change
+        counts(1, 0);
+    }
+    for (unsigned i = 0; i < VulkanColorCacheRetention::maxDirectFrames; ++i) {
+        direct();
+        counts(1, 0);
+    }
+    direct();
+    counts(1, 1);
+    direct();
+    counts(1, 1);
+    normalize();
+    counts(2, 1);
+
+    VulkanColorCopy::Source descriptor {};
+    descriptor.viewFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    descriptor.width = 2;
+    descriptor.height = 1;
+    require(d.color.prepare(descriptor, VK_FORMAT_R8G8B8A8_UNORM, 2, 1), d.color.error());
+    require(!d.color.usesCache(), "resized direct frame selected retained image");
+    counts(2, 2);
+
+    descriptor.width = 2048;
+    descriptor.height = 1024;
+    require(d.color.prepare(descriptor, VK_FORMAT_R8G8B8A8_UNORM, 2049, 1024), d.color.error());
+    counts(3, 2);
+    require(cacheCalls.lastBytes > VulkanColorCacheRetention::maxIdleBytes, "large image must exceed idle budget");
+    require(d.color.prepare(descriptor, VK_FORMAT_R8G8B8A8_UNORM, 2048, 1024), d.color.error());
+    counts(3, 3);
+    normalize();
+    counts(4, 3);
+    direct();
+    counts(4, 3);
+    d.color.release(); // even an idle retained allocation must retire at device shutdown
+    counts(4, 4);
+    d.color.release();
+    counts(4, 4);
+}
+
+static void testAlternateNormalizationCache(Device& d, const std::vector<uint8_t>& rgba) {
+    d.color.release();
+    cacheCalls = {};
+    require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+    auto changing = rgba;
+    const auto normalize = [&](uint32_t width) {
+        changing[0] ^= 31u;
+        run(d, "alternate normalized", VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_FORMAT_R8G8B8A8_UNORM, changing, true, {}, false, false, width);
+    };
+    const auto counts = [&](unsigned creates, unsigned destroys, unsigned allocs, unsigned frees) {
+        require(cacheCalls.created == creates && cacheCalls.destroyed == destroys &&
+                cacheCalls.allocated == allocs && cacheCalls.freed == frees,
+                "unexpected alternate-cache allocation/retirement count");
+    };
+    normalize(4);
+    counts(1, 0, 1, 0);
+    normalize(2);
+    counts(2, 0, 2, 0);
+    for (unsigned i = 0; i < 20; ++i) {
+        normalize(4);
+        normalize(2);
+        counts(2, 0, 2, 0);
+    }
+    for (unsigned i = 0; i < libretrodroid::VulkanColorAlternatePolicy::maxIdleFrames; ++i) {
+        normalize(2);
+        counts(2, 0, 2, 0);
+    }
+    normalize(2);
+    counts(2, 1, 2, 1);
+    normalize(4);
+    counts(3, 1, 3, 1);
+    run(d, "alternate direct", VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+        VK_FORMAT_R8G8B8A8_UNORM, changing);
+    counts(3, 2, 3, 2);
+    d.color.release();
+    counts(3, 3, 3, 3);
+
+    // A retained predecessor must never turn a recoverable memory-pressure
+    // failure into a rejected frame. Actual driver allocation succeeds on retry.
+    cacheCalls = {};
+    require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+    normalize(4);
+    cacheCalls.failNextAllocation = true;
+    normalize(2);
+    counts(3, 2, 2, 1); // failed image, evicted predecessor, successful retry
+    d.color.release();
+    counts(3, 3, 2, 2);
+    d.color.release();
+    counts(3, 3, 2, 2);
+}
+
+static void testSharedNormalizationBudget(Device& d) {
+    // Use the actual driver allocation size for this exact image geometry.
+    d.color.release();
+    cacheCalls = {};
+    VulkanColorCopy::Source source {};
+    source.viewFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    source.width = 4;
+    source.height = 1;
+    const auto format = VK_FORMAT_R8G8B8A8_UNORM;
+    require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+    require(d.color.prepare(source, format, 8, 3), d.color.error());
+    require(cacheCalls.allocated == 1 && cacheCalls.lastBytes > 0, "expected a driver-sized cache allocation");
+    libretrodroid::VulkanColorAllocationBudget budget(cacheCalls.lastBytes), other;
+    d.color.release();
+    cacheCalls = {};
+    VulkanColorCopy first, second;
+    for (auto* copy : {&first, &second}) {
+        require(copy->initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), copy->error());
+        require(copy->bindAllocationBudget(budget), copy->error());
+    }
+    require(first.prepare(source, format, 8, 3), first.error());
+    require(budget.available() == 0 && budget.used() == cacheCalls.lastBytes, "driver bytes not charged");
+    require(first.bindAllocationBudget(budget), "same owner must remain valid");
+    require(!first.bindAllocationBudget(other), "live cache changed accounting owner");
+    require(!second.prepare(source, format, 8, 3), "two slots exceeded shared budget");
+    require(second.preparedImage(VK_NULL_HANDLE).image == VK_NULL_HANDLE && cacheCalls.allocated == 1,
+            "budget rejection allocated memory or published stale image");
+    // The direct bridge needs no normalization allocation, even at full capacity.
+    require(second.prepare(source, format, 4, 1) && !second.usesCache(), second.error());
+    require(budget.available() == 0 && cacheCalls.allocated == 1, "direct path changed shared usage");
+    first.release();
+    require(budget.used() == 0 && cacheCalls.freed == 1, "first slot did not return its reservation");
+    cacheCalls.failNextAllocation = true;
+    require(!second.prepare(source, format, 8, 3), "injected allocation failure unexpectedly succeeded");
+    require(budget.used() == 0 && cacheCalls.allocated == 1, "failed allocation leaked reservation");
+    require(second.prepare(source, format, 8, 3), second.error());
+    require(budget.available() == 0 && cacheCalls.allocated == 2, "retry did not reserve available capacity");
+    second.release();
+    second.release();
+    require(budget.used() == 0 && cacheCalls.freed == 2 && cacheCalls.created == cacheCalls.destroyed,
+            "shared cache leaked resources or charged bytes");
+}
+
 int main() {
     try {
+        testRetentionPolicy();
         Device d;
         const std::vector<uint8_t> rgba {128,128,128,255, 224,32,16,255, 16,64,224,255, 64,192,32,128};
         const VkComponentMapping swap { VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G,
@@ -381,6 +663,10 @@ int main() {
         require(d.color.initialize(d.instance, d.physical, d.device, vkGetInstanceProcAddr), d.color.error());
         run(d, "reinitialize", VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM,
             VK_FORMAT_R8G8B8A8_UNORM, rgba, true);
+        testFormatFeatureCache(d);
+        testWarmNormalizationCache(d, rgba);
+        testAlternateNormalizationCache(d, rgba);
+        testSharedNormalizationBudget(d);
         std::cout << "PASS " << d.cases << " GPU color cases; " << d.unsupportedCases
                   << " optional device format cases safely rejected; cache lifecycle and unsupported-input guards\n";
         return 0;

@@ -1,0 +1,340 @@
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -151,4 +151,7 @@
+     // Caller owns the returned sync FD, or receives -1 and must finish GLES.
+     int exportExternalReadFence();
++    bool canImportExternalWriteFence();
++    // Consumes a Vulkan SYNC_FD on every path; -1 means already complete.
++    bool importExternalWriteFence(int fd);
+ 
+ private:
+@@ -235,3 +238,7 @@
+     PFNEGLDUPNATIVEFENCEFDANDROIDPROC duplicateExternalFence = nullptr;
++    bool writeFenceProbed = false;
++    PFNEGLCREATESYNCKHRPROC createWriteSync = nullptr;
++    PFNEGLDESTROYSYNCKHRPROC destroyWriteSync = nullptr;
++    PFNEGLWAITSYNCKHRPROC waitWriteSync = nullptr;
+ #endif
+     void releaseExternalFrame();
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -785,5 +785,60 @@
+     return -1; // Host renderer tests do not implement Android sync-file export.
+ #endif
+ }
+ 
++bool Video::canImportExternalWriteFence() {
++#if defined(__ANDROID__)
++    const EGLDisplay display = eglGetCurrentDisplay();
++    const EGLContext context = eglGetCurrentContext();
++    if (!hwRenderTexture || !externalFrame.ownsContext(display, context)) return false;
++    if (!writeFenceProbed) {
++        writeFenceProbed = true;
++        const auto contains = [](const char* extensions, const char* name) {
++            if (!extensions) return false;
++            const size_t length = std::strlen(name);
++            for (const char* p = extensions; (p = std::strstr(p, name)); p += length) {
++                if ((p == extensions || p[-1] == ' ') && (p[length] == ' ' || p[length] == '\0'))
++                    return true;
++            }
++            return false;
++        };
++        const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
++        if (contains(extensions, "EGL_KHR_fence_sync") &&
++            contains(extensions, "EGL_ANDROID_native_fence_sync") &&
++            contains(extensions, "EGL_KHR_wait_sync") &&
++            contains(reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS)), "GL_OES_EGL_sync")) {
++            createWriteSync = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(eglGetProcAddress("eglCreateSyncKHR"));
++            destroyWriteSync = reinterpret_cast<PFNEGLDESTROYSYNCKHRPROC>(eglGetProcAddress("eglDestroySyncKHR"));
++            waitWriteSync = reinterpret_cast<PFNEGLWAITSYNCKHRPROC>(eglGetProcAddress("eglWaitSyncKHR"));
++        }
++    }
++    return createWriteSync && destroyWriteSync && waitWriteSync;
++#else
++    return false;
++#endif
++}
++
++bool Video::importExternalWriteFence(int fd) {
++    if (fd < 0) return fd == -1; // Vulkan's already-signaled SYNC_FD sentinel.
++#if defined(__ANDROID__)
++    if (canImportExternalWriteFence()) {
++        const EGLDisplay display = eglGetCurrentDisplay();
++        const EGLint attrs[] = { EGL_SYNC_NATIVE_FENCE_FD_ANDROID, fd, EGL_NONE };
++        // EGL takes ownership on the call; never close or reuse fd afterwards.
++        const EGLSyncKHR sync = createWriteSync(display, EGL_SYNC_NATIVE_FENCE_ANDROID, attrs);
++        if (sync != EGL_NO_SYNC_KHR) {
++            const bool queued = waitWriteSync(display, sync, 0) == EGL_TRUE;
++            const bool destroyed = destroyWriteSync(display, sync) == EGL_TRUE;
++            if (queued && destroyed) return true;
++        }
++        // The caller has already waited on its Vulkan CPU fence. Disable the
++        // optional server wait on failure, retaining the proven fallback.
++        waitWriteSync = nullptr;
++        return false;
++    }
++#endif
++    close(fd); // No ownership transfer took place.
++    return false;
++}
++
+ bool Video::attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height) {
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -109,2 +109,3 @@
+     bool importBridgeReadFence(int fd);
++    bool canExportBridgeWriteFence() const;
+     const retro_hw_render_interface_vulkan* getRenderInterface() const;
+@@ -145,2 +146,5 @@
+-    bool presentFrame(unsigned width, unsigned height, float resolvedAspect, bool pictureCompatible);
++    // Optional output owns an exported write-completion FD on successful return.
++    // The regular CPU completion fence is still required for this diagnostic path.
++    bool presentFrame(unsigned width, unsigned height, float resolvedAspect, bool pictureCompatible,
++                      int* writeFd = nullptr);
+     // Complete core-provided work/signals for a duplicate without copying an image.
+@@ -187,2 +191,3 @@
+         PFN_vkImportSemaphoreFdKHR importSemaphoreFd = nullptr;
++        PFN_vkGetSemaphoreFdKHR getSemaphoreFd = nullptr;
+         PFN_vkCreateAndroidSurfaceKHR createAndroidSurface = nullptr;
+@@ -220,3 +225,5 @@
+     bool createDeviceWithoutNegotiation();
+-    bool supportsBridgeReadFence() const;
++    VkExternalSemaphoreFeatureFlags bridgeFenceFeatures() const;
++    bool prepareBridgeWriteFence();
++    int exportBridgeWriteFence();
+     bool createFrameResources();
+@@ -275,5 +282,8 @@
+     bool bridgeFenceEnabled = false;
+     bool bridgeReadPending = false;
+     VkSemaphore bridgeReadSemaphore = VK_NULL_HANDLE;
++    // Separate exportable binary semaphore; never export the core completion fence.
++    bool bridgeWriteFenceEnabled = false;
++    VkSemaphore bridgeWriteSemaphore = VK_NULL_HANDLE;
+ 
+     // Higher precision is opt-in for manually selected PQ/HLG content, never for SDR.
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -716,32 +716,32 @@
+-bool VulkanBackend::supportsBridgeReadFence() const {
+-#if defined(__ANDROID__)
+-    // Experimental, default-off and limited to a device we create ourselves.
+-    // Custom drivers and core-negotiated devices retain the proven CPU handoff.
+-    char value[PROP_VALUE_MAX] {};
+-    if (__system_property_get("debug.ambient.game_sync_fd", value) <= 0 ||
+-        strcmp(value, "1") != 0 || driverConfig.isCustom() ||
+-        !vk.enumerateDeviceExtensionProperties || !vk.getPhysicalDeviceProperties) return false;
+-    VkPhysicalDeviceProperties deviceProperties {};
+-    vk.getPhysicalDeviceProperties(gpu, &deviceProperties);
+-    if (deviceProperties.apiVersion < VK_API_VERSION_1_1) return false;
+-    uint32_t count = 0;
+-    if (vk.enumerateDeviceExtensionProperties(gpu, nullptr, &count, nullptr) != VK_SUCCESS || !count) return false;
+-    std::vector<VkExtensionProperties> extensions(count);
+-    if (vk.enumerateDeviceExtensionProperties(gpu, nullptr, &count, extensions.data()) != VK_SUCCESS) return false;
+-    extensions.resize(count);
+-    if (!hasExtension(extensions, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)) return false;
+-    const auto query = reinterpret_cast<PFN_vkGetPhysicalDeviceExternalSemaphoreProperties>(
+-        vk.getInstanceProcAddr(instance, "vkGetPhysicalDeviceExternalSemaphoreProperties"));
+-    if (!query) return false;
+-    VkPhysicalDeviceExternalSemaphoreInfo info { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO };
+-    info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+-    VkExternalSemaphoreProperties properties { VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES };
+-    query(gpu, &info, &properties);
+-    return (properties.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT) != 0 &&
+-           (properties.compatibleHandleTypes & VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT) != 0;
+-#else
+-    return false;
++VkExternalSemaphoreFeatureFlags VulkanBackend::bridgeFenceFeatures() const {
++#if defined(__ANDROID__)
++    // Experimental, default-off and limited to a device we create ourselves.
++    // Custom drivers and core-negotiated devices retain the proven CPU handoff.
++    char value[PROP_VALUE_MAX] {};
++    if (__system_property_get("debug.ambient.game_sync_fd", value) <= 0 ||
++        strcmp(value, "1") != 0 || driverConfig.isCustom() ||
++        !vk.enumerateDeviceExtensionProperties || !vk.getPhysicalDeviceProperties) return 0;
++    VkPhysicalDeviceProperties deviceProperties {};
++    vk.getPhysicalDeviceProperties(gpu, &deviceProperties);
++    if (deviceProperties.apiVersion < VK_API_VERSION_1_1) return 0;
++    uint32_t count = 0;
++    if (vk.enumerateDeviceExtensionProperties(gpu, nullptr, &count, nullptr) != VK_SUCCESS || !count) return 0;
++    std::vector<VkExtensionProperties> extensions(count);
++    if (vk.enumerateDeviceExtensionProperties(gpu, nullptr, &count, extensions.data()) != VK_SUCCESS) return 0;
++    extensions.resize(count);
++    if (!hasExtension(extensions, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)) return 0;
++    const auto query = reinterpret_cast<PFN_vkGetPhysicalDeviceExternalSemaphoreProperties>(
++        vk.getInstanceProcAddr(instance, "vkGetPhysicalDeviceExternalSemaphoreProperties"));
++    if (!query) return 0;
++    VkPhysicalDeviceExternalSemaphoreInfo info { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO };
++    info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
++    VkExternalSemaphoreProperties properties { VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES };
++    query(gpu, &info, &properties);
++    return (properties.compatibleHandleTypes & VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT)
++        ? properties.externalSemaphoreFeatures : 0;
++#else
++    return 0;
+ #endif
+ }
+ 
+ bool VulkanBackend::createDeviceWithoutNegotiation() {
+@@ -791,3 +791,4 @@
+     auto extensions = requiredDeviceExtensions();
+-    bool enableBridgeFence = supportsBridgeReadFence();
++    const auto fenceFeatures = bridgeFenceFeatures();
++    bool enableBridgeFence = (fenceFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT) != 0;
+     if (enableBridgeFence) extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+@@ -804,2 +805,3 @@
+     bridgeFenceEnabled = false;
++    bridgeWriteFenceEnabled = false;
+     VkResult result = vk.createDevice(gpu, &info, nullptr, &device);
+@@ -825,2 +827,9 @@
+     bridgeFenceEnabled = enableBridgeFence;
++#if defined(__ANDROID__)
++    char outputValue[PROP_VALUE_MAX] {};
++    bridgeWriteFenceEnabled = enableBridgeFence &&
++        (fenceFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT) != 0 &&
++        __system_property_get("debug.ambient.game_sync_fd_out", outputValue) > 0 &&
++        strcmp(outputValue, "1") == 0;
++#endif
+     return true;
+@@ -949,4 +958,6 @@
+     vk.importSemaphoreFd = bridgeFenceEnabled
+         ? reinterpret_cast<PFN_vkImportSemaphoreFdKHR>(load("vkImportSemaphoreFdKHR")) : nullptr;
++    vk.getSemaphoreFd = bridgeWriteFenceEnabled
++        ? reinterpret_cast<PFN_vkGetSemaphoreFdKHR>(load("vkGetSemaphoreFdKHR")) : nullptr;
+ 
+     return vk.destroyDevice && vk.deviceWaitIdle && vk.waitForFences && vk.resetFences &&
+@@ -1320,5 +1331,42 @@
+     bridgeReadPending = true;
+     return true; // Vulkan owns fd until the temporary payload is consumed/retired.
+ }
+ 
++bool VulkanBackend::canExportBridgeWriteFence() const {
++    return bridgeWriteFenceEnabled && isStarted() && !hasFatalError() && !shutdownReady &&
++           vk.createSemaphore && vk.destroySemaphore && vk.getSemaphoreFd;
++}
++
++bool VulkanBackend::prepareBridgeWriteFence() {
++    if (!canExportBridgeWriteFence() || frameInFlight) return false;
++    if (bridgeWriteSemaphore != VK_NULL_HANDLE) return true;
++    VkExportSemaphoreCreateInfo external { VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO };
++    external.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
++    VkSemaphoreCreateInfo info { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
++    info.pNext = &external;
++    const VkResult result = vk.createSemaphore(device, &info, nullptr, &bridgeWriteSemaphore);
++    if (result == VK_SUCCESS) return true;
++    bridgeWriteSemaphore = VK_NULL_HANDLE;
++    bridgeWriteFenceEnabled = false;
++    if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "create bridge write semaphore");
++    else LOGW("Cannot create bridge write semaphore; retaining CPU fence");
++    return false;
++}
++
++int VulkanBackend::exportBridgeWriteFence() {
++    // Export only after a successful submit signalling this binary semaphore.
++    // SYNC_FD copy transference consumes the signal payload. The CPU frame fence
++    // still proves submission completion before any reuse or retirement.
++    VkSemaphoreGetFdInfoKHR info { VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR };
++    info.semaphore = bridgeWriteSemaphore;
++    info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
++    int fd = -1;
++    const VkResult result = vk.getSemaphoreFd(device, &info, &fd);
++    if (result == VK_SUCCESS) return fd;
++    bridgeWriteFenceEnabled = false; // do not re-signal a potentially unconsumed payload
++    if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "export bridge write fence");
++    else LOGW("Cannot export bridge write fence; retaining CPU fence");
++    return -1;
++}
++
+ bool VulkanBackend::waitForDeviceIdle() {
+@@ -1370,4 +1418,5 @@
+ bool VulkanBackend::presentFrame(unsigned width, unsigned height, float resolvedAspect,
+-                                  bool pictureCompatible) {
+-    GameTraceScope trace("AmbientGame Vulkan frame");
++                                  bool pictureCompatible, int* writeFd) {
++    GameTraceScope trace("AmbientGame Vulkan frame");
++    if (writeFd) *writeFd = -1;
+     nativePresentation.invalidateFrame();
+@@ -1415,3 +1464,5 @@
+     const auto normalized = copied ? colorCopy.preparedImage(frameImage) : VulkanColorCopy::Image {};
++    const bool exportWrite = copied && writeFd && prepareBridgeWriteFence();
++    if (hasFatalError()) return false;
+ 
+     uint32_t sdrIndex = 0;
+@@ -1614,7 +1665,8 @@
+-    // At most two signals: the core's optional semaphore and the WSI image.
+-    VkSemaphore signals[2] {};
+-    uint32_t signalCount = 0;
+-    if (pendingSignalSemaphore != VK_NULL_HANDLE) signals[signalCount++] = pendingSignalSemaphore;
+-    if (useDirect) signals[signalCount++] = nativeSdrComplete[sdrIndex];
++    // Preserve core and WSI signal order; the optional bridge signal is last.
++    VkSemaphore signals[3] {};
++    uint32_t signalCount = 0;
++    if (pendingSignalSemaphore != VK_NULL_HANDLE) signals[signalCount++] = pendingSignalSemaphore;
++    if (useDirect) signals[signalCount++] = nativeSdrComplete[sdrIndex];
++    if (exportWrite) signals[signalCount++] = bridgeWriteSemaphore;
+ 
+     VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+@@ -1645,7 +1697,11 @@
+     if (!checkFrameResult(result, "submit frame")) return false;
+     bridgeReadPending = false; // this submit consumes the temporary payload
+     frameInFlight = true;
+-    if (!waitForFrame()) return false;
++    const int exportedFd = exportWrite ? exportBridgeWriteFence() : -1;
++    if (!waitForFrame()) {
++        if (exportedFd >= 0) close(exportedFd);
++        return false;
++    }
+     if (shaderFailed) {
+         // Never display an incompletely recorded Slang frame; the GLES output is
+         // still rendering in parallel. The fence has completed, so retire safely.
+@@ -1700,4 +1756,9 @@
+-    return copied && !hasFatalError();
++    const bool accepted = copied && !hasFatalError();
++    if (exportedFd >= 0) {
++        if (accepted && writeFd) *writeFd = exportedFd;
++        else close(exportedFd);
++    }
++    return accepted;
+ }
+ 
+ bool VulkanBackend::completeDuplicateFrame() {
+@@ -1810,3 +1871,4 @@
+         // prepareForShutdown already established idle or device loss.
+         if (bridgeReadSemaphore != VK_NULL_HANDLE) vk.destroySemaphore(device, bridgeReadSemaphore, nullptr);
++        if (bridgeWriteSemaphore != VK_NULL_HANDLE) vk.destroySemaphore(device, bridgeWriteSemaphore, nullptr);
+         destroyFrameBuffer();
+@@ -1830,4 +1892,6 @@
+     bridgeFenceEnabled = false;
+     bridgeReadPending = false;
+     bridgeReadSemaphore = VK_NULL_HANDLE;
++    bridgeWriteFenceEnabled = false;
++    bridgeWriteSemaphore = VK_NULL_HANDLE;
+     device = VK_NULL_HANDLE;
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -1500,7 +1500,10 @@
+                 backend.rejectBridgeImport();
+                 return;
+             }
+-            if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible())) {
++            int writeFd = -1;
++            const bool exportWrite = backend.canExportBridgeWriteFence() && video->canImportExternalWriteFence();
++            if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible(),
++                                      exportWrite ? &writeFd : nullptr)) {
+                 // No new bridge image was accepted. Keep the previous frame's transfer
+                 // and dimensions; interpreting it with this rejected frame's HDR metadata
+                 // would corrupt the immediate GLES fallback. WSI-only failures still return
+@@ -1514,4 +1517,9 @@
+                 // true when the bridge copy succeeded and must accept the new source.
+                 return;
+             }
++            // The CPU fence is still complete at this boundary. Failure of the
++            // optional EGL server wait cannot expose an unfinished bridge image.
++            if (writeFd >= 0 && !video->importExternalWriteFence(writeFd)) {
++                LOGW("Cannot queue Vulkan write fence in EGL; retaining CPU completion");
++            }
+         }

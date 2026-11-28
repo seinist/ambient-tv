@@ -80,6 +80,8 @@ import com.ambient.tv.ui.theme.appControlSurface
 import kotlinx.coroutines.delay
 
 /** System & account settings pages extracted from [SettingsScreen]. Shared chrome stays there. */
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 internal fun LazyListScope.settingsSystemCategoryItems(
     category: SettingsCategory,
     handheldUi: Boolean,

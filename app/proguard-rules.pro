@@ -29,6 +29,9 @@
 -dontwarn sun.net.spi.nameservice.NameService
 -dontwarn sun.net.spi.nameservice.NameServiceDescriptor
 
+# GameArchives rejects Zstandard ZIP methods before Commons Compress can call its optional decoder.
+-dontwarn com.github.luben.zstd.ZstdInputStream
+
 # Project-owned JNI bridges use statically exported Java_com_* symbols. Keep their class and
 # native method names stable in release/R8 builds even if default Android rules change.
 -keep class com.ambient.tv.ui.player.backend.MpvNativeBridge { *; }

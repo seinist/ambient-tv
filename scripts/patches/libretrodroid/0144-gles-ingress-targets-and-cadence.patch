@@ -1,0 +1,344 @@
+diff --git a/src/main/cpp/softwareframelayout.h b/src/main/cpp/softwareframelayout.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/softwareframelayout.h
+@@ -0,0 +1,25 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <cstddef>
++#include <limits>
++
++namespace libretrodroid {
++// Validate before touching the core pointer, texture, layout or capture state.
++struct SoftwareFrameLayout {
++    std::size_t rowBytes = 0;
++    std::size_t packedBytes = 0;
++
++    static bool checked(unsigned width, unsigned height, std::size_t pitch,
++                        std::size_t bytesPerPixel, unsigned maximumDimension,
++                        SoftwareFrameLayout& result) noexcept {
++        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
++        if (!width || !height || !bytesPerPixel || width > maximumDimension ||
++            height > maximumDimension || width > maximum / bytesPerPixel) return false;
++        const auto row = std::size_t(width) * bytesPerPixel;
++        if (pitch < row || height > maximum / row ||
++            std::size_t(height - 1) > (maximum - row) / pitch) return false;
++        result = {row, row * height};
++        return true;
++    }
++};
++} // namespace libretrodroid
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -190,3 +190,5 @@
+     int framePixelFormat = 0;
++    int lastFramePixelFormat = 0;
++    GLint softwareMaximumDimension = 0;
+     std::mutex frameMutex;
+     std::vector<uint8_t> lastFrameData;
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -29,6 +29,7 @@
+ #include "libretro/libretro-common/include/libretro.h"
+ 
+ #include "video.h"
++#include "softwareframelayout.h"
+ #include "sdrtohdr.h"
+ #include <cstring>
+ #include <unistd.h>
+@@ -617,10 +618,10 @@
+                 uint8_t* dstRow = rgba.data() + (size_t) y * outWidth * 4;
+                 for (int x = 0; x < outWidth; x++) {
+                     uint8_t r, g, b;
+-                    if (framePixelFormat == RETRO_PIXEL_FORMAT_XRGB8888) {
++                    if (lastFramePixelFormat == RETRO_PIXEL_FORMAT_XRGB8888) {
+                         const uint8_t* p = srcRow + x * 4;
+                         b = p[0]; g = p[1]; r = p[2];
+-                    } else if (framePixelFormat == RETRO_PIXEL_FORMAT_HDR10_2101010) {
++                    } else if (lastFramePixelFormat == RETRO_PIXEL_FORMAT_HDR10_2101010) {
+                         // Capture keeps channel order and pixel bounds valid;
+                         // this raw 8-bit preview is NOT an authored HDR grade.
+                         uint32_t packed = 0;
+@@ -628,7 +629,7 @@
+                         r = static_cast<uint8_t>((((packed >> 20) & 1023u) * 255u + 511u) / 1023u);
+                         g = static_cast<uint8_t>((((packed >> 10) & 1023u) * 255u + 511u) / 1023u);
+                         b = static_cast<uint8_t>(((packed & 1023u) * 255u + 511u) / 1023u);
+-                    } else if (framePixelFormat == RETRO_PIXEL_FORMAT_0RGB1555) {
++                    } else if (lastFramePixelFormat == RETRO_PIXEL_FORMAT_0RGB1555) {
+                         uint16_t p = 0;
+                         std::memcpy(&p, srcRow + x * 2, sizeof(p));
+                         uint8_t r5 = (p >> 10) & 0x1F, g5 = (p >> 5) & 0x1F, b5 = p & 0x1F;
+@@ -831,20 +832,41 @@
+ 
+ void Video::onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch) {
+     if (data != nullptr && data != RETRO_HW_FRAME_BUFFER_VALID) {
++        const size_t bytesPerPixel = framePixelFormat == RETRO_PIXEL_FORMAT_XRGB8888 ||
++            framePixelFormat == RETRO_PIXEL_FORMAT_HDR10_2101010 ? 4u : 2u;
++        if (softwareMaximumDimension <= 0)
++            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &softwareMaximumDimension);
++        SoftwareFrameLayout layout;
++        if (softwareMaximumDimension <= 0 ||
++            !SoftwareFrameLayout::checked(width, height, pitch, bytesPerPixel,
++                static_cast<unsigned>(softwareMaximumDimension), layout)) return;
+         renderer->onNewFrame(data, width, height, pitch);
+         videoLayout.updateContentSize(width, height);
+         {
+             std::lock_guard<std::mutex> lock(frameMutex);
+-            int bytesPerPixel = framePixelFormat == RETRO_PIXEL_FORMAT_XRGB8888 ? 4 : 2;
+-            if (framePixelFormat == RETRO_PIXEL_FORMAT_HDR10_2101010) bytesPerPixel = 4;
+-            size_t frameBytes = height > 0
+-                ? (size_t) (height - 1) * pitch + (size_t) width * bytesPerPixel
+-                : 0;
+-            const auto* src = static_cast<const uint8_t*>(data);
+-            lastFrameData.assign(src, src + frameBytes);
++            // GLES3 XRGB8888 already owns an exact swizzled RGBA8 source.
++            // Resolve it only on capture; never retain the core-owned pointer.
++            // Preserve legacy packed-format and ES2 CPU capture semantics.
++            const bool captureFromTexture = !hwAccelerated && !externalFrames &&
++                openGLESVersion >= 3 && framePixelFormat == RETRO_PIXEL_FORMAT_XRGB8888;
++            constexpr size_t maxCaptureBytes = 128u * 1024u * 1024u;
++            if (captureFromTexture || layout.packedBytes > maxCaptureBytes) {
++                if (!lastFrameData.empty()) std::vector<uint8_t>().swap(lastFrameData);
++            } else {
++                lastFrameData.resize(layout.packedBytes);
++                const auto* src = static_cast<const uint8_t*>(data);
++                if (pitch == layout.rowBytes) {
++                    std::memcpy(lastFrameData.data(), src, layout.packedBytes);
++                } else {
++                    for (unsigned y = 0; y < height; ++y)
++                        std::memcpy(lastFrameData.data() + size_t(y) * layout.rowBytes,
++                                    src + size_t(y) * pitch, layout.rowBytes);
++                }
++            }
++            lastFramePixelFormat = framePixelFormat;
+             lastFrameWidth = (int) width;
+             lastFrameHeight = (int) height;
+-            lastFramePitch = pitch;
++            lastFramePitch = layout.rowBytes;
+         }
+         isDirty = true;
+     } else if (data == RETRO_HW_FRAME_BUFFER_VALID) {
+diff --git a/src/main/cpp/fpssync.cpp b/src/main/cpp/fpssync.cpp
+--- a/src/main/cpp/fpssync.cpp
++++ b/src/main/cpp/fpssync.cpp
+@@ -68,6 +68,6 @@
+ void FPSSync::configureCadence() {
+     useVSync = !forceSoftwareTiming && FramePacingDeadline::validRate(screenRefreshRate) &&
+-        (externalTiming || std::abs(contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE);
++        (externalTiming || FramePacingDeadline::nearMatch(contentRefreshRate, screenRefreshRate));
+     pacing.setRate(FramePacingDeadline::cadenceRate(
+         contentRefreshRate, screenRefreshRate, useVSync, externalTiming));
+ }
+diff --git a/src/main/cpp/fpssync.h b/src/main/cpp/fpssync.h
+--- a/src/main/cpp/fpssync.h
++++ b/src/main/cpp/fpssync.h
+@@ -45,4 +45,3 @@
+     bool forceSoftwareTiming;
+-    const double FPS_TOLERANCE = 5;
+ 
+     FramePacingDeadline pacing;
+diff --git a/src/main/cpp/framepacingdeadline.h b/src/main/cpp/framepacingdeadline.h
+--- a/src/main/cpp/framepacingdeadline.h
++++ b/src/main/cpp/framepacingdeadline.h
+@@ -24,5 +24,12 @@
+     static bool validRate(double fps) noexcept {
+         return std::isfinite(fps) && fps >= 1.0 && fps <= 1000000000.0;
+     }
+ 
++    // Near-match speed adjustment is bounded relative to nominal content.
++    // External BFI timing is handled separately by FPSSync.
++    static bool nearMatch(double content, double display) noexcept {
++        return validRate(content) && validRate(display) &&
++            std::abs(content - display) <= content * 0.01;
++    }
++
+     // Ordinary VSync runs at the physical display cadence (also used by
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -441,15 +441,24 @@
+     fun pauseEmulation() {
+-        isEmulationReady = false
+-        if (pausedPresentationOnDemand) refreshPresentationMode()
+-    }
+-
+-    fun resumeEmulation() {
+-        isEmulationReady = true
+-        if (pausedPresentationOnDemand) refreshPresentationMode()
+-    }
+-
+-    /** Enable only after a real frame: boot/readiness must never wait on an idle renderer. */
+-    fun enablePausedPresentationOnDemand() {
+-        pausedPresentationOnDemand = true
+-        refreshPresentationMode()
++        synchronized(glQueueLock) {
++            if (!isEmulationReady) return
++            isEmulationReady = false
++            if (pausedPresentationOnDemand) refreshPresentationMode()
++        }
++    }
++
++    fun resumeEmulation() {
++        synchronized(glQueueLock) {
++            if (isEmulationReady) return
++            isEmulationReady = true
++            if (pausedPresentationOnDemand) refreshPresentationMode()
++        }
++    }
++
++    /** Enable only after a real frame: boot/readiness must never wait on an idle renderer. */
++    fun enablePausedPresentationOnDemand() {
++        synchronized(glQueueLock) {
++            if (pausedPresentationOnDemand) return
++            pausedPresentationOnDemand = true
++            refreshPresentationMode()
++        }
+     }
+@@ -476,3 +485,3 @@
+-    fun serializeState(): ByteArray = runOnGLThread {
++    fun serializeState(): ByteArray = runOnGLThread(wakePresentation = false) {
+         LibretroDroid.serializeState()
+     }
+@@ -932,7 +941,7 @@
+-    private fun <T> runOnGLThread(block: () -> T): T {
+-        check(!isDestroyed) { "The game renderer has been destroyed" }
+-        if (Thread.currentThread().name.startsWith("GLThread")) {
+-            return block().also { wakeIdlePresentation() }
++    private fun <T> runOnGLThread(wakePresentation: Boolean = true, block: () -> T): T {
++        check(!isDestroyed) { "The game renderer has been destroyed" }
++        if (Thread.currentThread().name.startsWith("GLThread")) {
++            return block().also { if (wakePresentation) wakeIdlePresentation() }
+         }
+ 
+         val latch = CountDownLatch(1)
+@@ -951,7 +960,7 @@
+                     latch.countDown()
+                 }
+             }
+-            wakeIdlePresentation()
++            if (wakePresentation) wakeIdlePresentation()
+         }
+ 
+         check(latch.awaitUninterruptibly(GL_THREAD_OP_TIMEOUT_MS)) {
+diff --git a/src/main/cpp/renderers/es3/es3utils.h b/src/main/cpp/renderers/es3/es3utils.h
+--- a/src/main/cpp/renderers/es3/es3utils.h
++++ b/src/main/cpp/renderers/es3/es3utils.h
+@@ -37,3 +37,5 @@
+         unsigned int width = 0;
+         unsigned int height = 0;
++        bool linear = false;
++        bool floating = false;
+         ~Framebuffer();
+@@ -46,6 +48,7 @@
+     static std::unique_ptr<Framebuffers> buildShaderPasses(
+         unsigned int width,
+         unsigned int height,
+         const ShaderManager::Chain &shaders,
+-        bool gles3 = true
++        bool gles3 = true,
++        Framebuffers* previous = nullptr
+     );
+diff --git a/src/main/cpp/renderers/es3/es3utils.cpp b/src/main/cpp/renderers/es3/es3utils.cpp
+--- a/src/main/cpp/renderers/es3/es3utils.cpp
++++ b/src/main/cpp/renderers/es3/es3utils.cpp
+@@ -39,6 +39,8 @@
+     auto result = std::make_unique<Framebuffer>();
+     result->width = width;
+     result->height = height;
++    result->linear = linear;
++    result->floating = floatFramebuffer;
+ 
+     glGenFramebuffers(1, &result->framebuffer);
+     glGenTextures(1, &result->texture);
+@@ -110,14 +112,30 @@
+     unsigned int width,
+     unsigned int height,
+     const libretrodroid::ShaderManager::Chain &shaders,
+-    bool gles3
++    bool gles3,
++    Framebuffers* previous
+ ) {
+     auto result = std::make_unique<std::vector<std::unique_ptr<ES3Utils::Framebuffer>>>();
+     if (shaders.passes.empty() || shaders.passes.size() > 9)
+         throw std::runtime_error("Invalid shader pass count");
+     GLint maxTextureSize = 0;
+     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+-    uint64_t targetBytes = 0;
++    struct Target { unsigned width, height; bool linear, floating, reuse; };
++    std::vector<Target> plan;
++    constexpr uint64_t budget = 128u * 1024u * 1024u;
++    uint64_t peakBytes = 0;
++    auto reserve = [&](unsigned w, unsigned h, bool floating) {
++        const uint64_t bytesPerPixel = floating ? 16u : 4u;
++        if (!w || !h || uint64_t(w) > budget / bytesPerPixel / h)
++            throw std::runtime_error("Shader intermediate storage exceeds 128 MiB");
++        const uint64_t bytes = uint64_t(w) * h * bytesPerPixel;
++        if (bytes > budget - peakBytes)
++            throw std::runtime_error("Shader transition storage exceeds 128 MiB");
++        peakBytes += bytes;
++    };
++    // Old targets survive a failed replacement; count them before allocating.
++    if (previous) for (const auto& old : *previous)
++        if (old) reserve(old->width, old->height, old->floating);
+     for (size_t i = 0; i + 1 < shaders.passes.size(); ++i) {
+         const auto& pass = shaders.passes[i];
+         if (!std::isfinite(pass.scale) || pass.scale <= 0 || pass.scale > 8)
+@@ -127,14 +145,27 @@
+         if (scaledWidth < 0.5 || scaledHeight < 0.5 ||
+             scaledWidth > maxTextureSize || scaledHeight > maxTextureSize)
+             throw std::runtime_error("Shader target exceeds device limits");
++        if (pass.floatFramebuffer && !gles3)
++            throw std::runtime_error("Floating-point shader targets require GLES3");
+         const auto passWidth = static_cast<unsigned int>(std::lround(scaledWidth));
+         const auto passHeight = static_cast<unsigned int>(std::lround(scaledHeight));
+-        targetBytes += uint64_t(passWidth) * passHeight * (pass.floatFramebuffer ? 16u : 4u);
+-        if (targetBytes > 128u * 1024u * 1024u)
+-            throw std::runtime_error("Shader intermediate storage exceeds 128 MiB");
+-        result->push_back(createFramebuffer(passWidth, passHeight, pass.linear,
+-            false, false, false, pass.floatFramebuffer, gles3));
++        const auto* old = previous && i < previous->size() ? (*previous)[i].get() : nullptr;
++        const bool reuse = old && old->width == passWidth && old->height == passHeight &&
++            old->linear == pass.linear && old->floating == pass.floatFramebuffer;
++        if (!reuse) reserve(passWidth, passHeight, pass.floatFramebuffer);
++        plan.push_back({passWidth, passHeight, pass.linear, pass.floatFramebuffer, reuse});
+     }
++    // Preflight the entire transition, allocate new targets, then transfer
++    // compatible old targets only after all potentially failing work succeeded.
++    result->resize(plan.size());
++    for (size_t i = 0; i < plan.size(); ++i) {
++        const auto& target = plan[i];
++        if (!target.reuse)
++            (*result)[i] = createFramebuffer(target.width, target.height, target.linear,
++                false, false, false, target.floating, gles3);
++    }
++    for (size_t i = 0; i < plan.size(); ++i)
++        if (plan[i].reuse) (*result)[i] = std::move((*previous)[i]);
+ 
+     return result;
+ }
+diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+--- a/src/main/cpp/renderers/es2/imagerendereres2.cpp
++++ b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+@@ -170,3 +170,3 @@
+     if (!shaderPassesDirty && width == passWidth && height == passHeight) return;
+-    auto next = ES3Utils::buildShaderPasses(width, height, shaders, false);
++    auto next = ES3Utils::buildShaderPasses(width, height, shaders, false, framebuffers.get());
+     framebuffers = std::move(next);
+diff --git a/src/main/cpp/renderers/es3/imagerendereres3.cpp b/src/main/cpp/renderers/es3/imagerendereres3.cpp
+--- a/src/main/cpp/renderers/es3/imagerendereres3.cpp
++++ b/src/main/cpp/renderers/es3/imagerendereres3.cpp
+@@ -181,3 +181,3 @@
+     if (!shaderPassesDirty && width == passWidth && height == passHeight) return;
+-    auto next = ES3Utils::buildShaderPasses(width, height, shaders);
++    auto next = ES3Utils::buildShaderPasses(width, height, shaders, true, framebuffers.get());
+     framebuffers = std::move(next);
+diff --git a/src/main/cpp/renderers/es3/framebufferrenderer.cpp b/src/main/cpp/renderers/es3/framebufferrenderer.cpp
+--- a/src/main/cpp/renderers/es3/framebufferrenderer.cpp
++++ b/src/main/cpp/renderers/es3/framebufferrenderer.cpp
+@@ -98,3 +98,3 @@
+     if (!shaderPassesDirty && passWidth == contentWidth && passHeight == contentHeight) return;
+-    auto next = ES3Utils::buildShaderPasses(contentWidth, contentHeight, shaders);
++    auto next = ES3Utils::buildShaderPasses(contentWidth, contentHeight, shaders, true, framebuffers.get());
+     framebuffers = std::move(next);

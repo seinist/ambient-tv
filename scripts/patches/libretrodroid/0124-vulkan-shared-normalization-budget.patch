@@ -1,0 +1,143 @@
+diff --git a/src/main/cpp/vulkan/vulkancolorcopy.h b/src/main/cpp/vulkan/vulkancolorcopy.h
+--- a/src/main/cpp/vulkan/vulkancolorcopy.h
++++ b/src/main/cpp/vulkan/vulkancolorcopy.h
+@@ -8,5 +8,6 @@
+ #include "vulkancolorcachepolicy.h"
+ #include "vulkanformatfeaturecache.h"
+ #include "vulkancoloralternatepolicy.h"
++#include "vulkancolorallocationbudget.h"
+ 
+ namespace libretrodroid {
+@@ -55,5 +56,13 @@
+     bool prepare(const Source& source, VkFormat bridgeFormat, uint32_t bridgeWidth, uint32_t bridgeHeight);
++    // Bind after initialize(); a live cache cannot change its accounting owner.
++    bool bindAllocationBudget(VulkanColorAllocationBudget& budget) noexcept {
++        if (allocationBudget == &budget) return true;
++        if (active.image || alternate.image || active.bytes || alternate.bytes)
++            return fail("cannot rebind allocated normalization cache");
++        allocationBudget = &budget;
++        return true;
++    }
+     // Immutable optimal-tiling feature bits for a supported encoded format,
+     // cached for this initialized device generation, including zero results.
+     VkFormatFeatureFlags optimalFeatures(VkFormat encoded);
+     // Source is already TRANSFER_SRC/GENERAL; bridge is already TRANSFER_DST.
+@@ -100,5 +109,6 @@
+     VkDevice device = VK_NULL_HANDLE;
+     VkPhysicalDevice gpu = VK_NULL_HANDLE;
+     CachedImage active, alternate;
++    VulkanColorAllocationBudget* allocationBudget = nullptr;
+     VkFormat cacheBridgeFormat = VK_FORMAT_UNDEFINED;
+     VulkanColorCacheRetention retention;
+diff --git a/src/main/cpp/vulkan/vulkancolorcopy.cpp b/src/main/cpp/vulkan/vulkancolorcopy.cpp
+--- a/src/main/cpp/vulkan/vulkancolorcopy.cpp
++++ b/src/main/cpp/vulkan/vulkancolorcopy.cpp
+@@ -9,6 +9,7 @@
+ namespace libretrodroid {
+ namespace {
+ constexpr uint64_t MAX_CACHE_BYTES = VulkanColorAlternatePolicy::totalBudget;
++static_assert(MAX_CACHE_BYTES == VulkanColorAllocationBudget::maximum);
+ constexpr uint32_t MAX_SOURCE_DIMENSION = 8192;
+ 
+ bool componentIs(VkComponentSwizzle actual, VkComponentSwizzle identity, VkComponentSwizzle wanted) {
+@@ -260,7 +261,20 @@
+             VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+             allocation.allocationSize = requirements.size;
+             allocation.memoryTypeIndex = memoryIndex;
++            // Charge driver bytes before allocating. Only evict this slot's
++            // completed alternate; never retire another slot to make room.
++            if (allocationBudget) {
++                if (requirements.size > allocationBudget->available() && alternate.image)
++                    destroyAlternate();
++                if (!allocationBudget->reserve(requirements.size)) {
++                    destroyCache();
++                    return fail("shared normalization cache budget exhausted");
++                }
++                // Keep the reservation even if allocation/bind fails so the
++                // common destruction path returns exactly these bytes.
++                active.bytes = requirements.size;
++            }
+             result = vk.allocateMemory(device, &allocation, nullptr, &active.memory);
+             if (result == VK_SUCCESS) {
+                 result = vk.bindImageMemory(device, active.image, active.memory, 0);
+             } else {
+@@ -345,5 +359,6 @@
+ void VulkanColorCopy::destroyImage(CachedImage& image) {
+     if (device && image.image) vk.destroyImage(device, image.image, nullptr);
+     if (device && image.memory) vk.freeMemory(device, image.memory, nullptr);
++    if (allocationBudget && image.bytes) allocationBudget->release(image.bytes);
+     image = {};
+ }
+@@ -368,6 +383,7 @@
+ void VulkanColorCopy::release() {
+     destroyCache();
+     destroyAlternate();
++    allocationBudget = nullptr;
+     formatFeatures.reset();
+     device = VK_NULL_HANDLE;
+     gpu = VK_NULL_HANDLE;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -355,5 +355,7 @@
+             return true;
+         }
+     };
++    // All frame slots share the original aggregate normalization limit.
++    VulkanColorAllocationBudget normalizationBudget;
+     FrameSlot frameSlot;
+     VkResult fatalFrameError = VK_SUCCESS;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1470,6 +1470,7 @@
+         pendingImage.layout != VK_IMAGE_LAYOUT_PREINITIALIZED;
+     const bool copied = sourceRangeValid &&
+         colorCopy.initialize(instance, gpu, device, vk.getInstanceProcAddr) &&
++        colorCopy.bindAllocationBudget(normalizationBudget) &&
+         colorCopy.prepare(colorSource, fp16Frame ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM,
+                           frameWidth, frameHeight);
+     if (!copied) {
+diff --git a/src/main/cpp/vulkan/vulkancolorallocationbudget.h b/src/main/cpp/vulkan/vulkancolorallocationbudget.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkancolorallocationbudget.h
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <cstdint>
++
++namespace libretrodroid {
++
++// One render-thread-owned budget shared by every normalization slot. Charge
++// actual VkMemoryRequirements::size before allocation, and release after free.
++class VulkanColorAllocationBudget {
++public:
++    static constexpr std::uint64_t maximum = 128ull * 1024ull * 1024ull;
++    explicit VulkanColorAllocationBudget(std::uint64_t bytes = maximum) noexcept
++        : capacity(bytes <= maximum ? bytes : maximum) {}
++    VulkanColorAllocationBudget(const VulkanColorAllocationBudget&) = delete;
++    VulkanColorAllocationBudget& operator=(const VulkanColorAllocationBudget&) = delete;
++
++    std::uint64_t used() const noexcept { return reserved; }
++    std::uint64_t available() const noexcept { return capacity - reserved; }
++
++    bool reserve(std::uint64_t bytes) noexcept {
++        if (!bytes || bytes > available()) return false;
++        reserved += bytes;
++        return true;
++    }
++
++    bool release(std::uint64_t bytes) noexcept {
++        // Invalid release cannot grant additional capacity.
++        if (bytes > reserved) return false;
++        reserved -= bytes;
++        return true;
++    }
++
++private:
++    const std::uint64_t capacity;
++    std::uint64_t reserved = 0;
++};
++
++} // namespace libretrodroid

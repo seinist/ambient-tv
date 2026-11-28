@@ -371,8 +371,16 @@ int main(int argc, char** argv) {
             std::cout << "Slang GPU: " << argv[i] << std::endl;
             VulkanSlangPipeline pipeline;
             pipeline.setPresetPath(argv[i]);
+            const libretrodroid::SlangFrameGeometry invalid {32, 24, 160, 128, 16, 16, 160, 96};
+            const libretrodroid::SlangFrameGeometry valid {32, 24, 160, 128, 16, 16, 128, 96};
+            require(!pipeline.ensure(device.instance, device.physical, device.device, device.queue,
+                                     vkGetInstanceProcAddr, &invalid) && !pipeline.ready() && !pipeline.failed(),
+                    "invalid geometry allocated or poisoned the chain");
             require(pipeline.ensure(device.instance, device.physical, device.device, device.queue,
-                                     vkGetInstanceProcAddr), "ensure failed for " + std::string(argv[i]));
+                                     vkGetInstanceProcAddr, &valid), "ensure failed for " + std::string(argv[i]));
+            require(!pipeline.ensure(device.instance, device.physical, device.device, device.queue,
+                                     vkGetInstanceProcAddr, &invalid) && pipeline.ready() && !pipeline.failed(),
+                    "invalid resize destroyed or poisoned the ready chain");
             renderFrame(device, pipeline, 0);
             renderFrame(device, pipeline, 1);
             pipeline.releaseGpu(); // all submissions completed before chain/device destruction

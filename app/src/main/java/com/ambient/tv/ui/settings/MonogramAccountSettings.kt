@@ -98,6 +98,8 @@ class MonogramAccountViewModel @Inject constructor(
 }
 
 @Composable
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 internal fun MonogramAccountSettings(
     allowSignIn: Boolean = true,
     viewModel: MonogramAccountViewModel = hiltViewModel(),

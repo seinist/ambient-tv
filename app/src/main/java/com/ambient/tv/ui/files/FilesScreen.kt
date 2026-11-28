@@ -488,7 +488,7 @@ internal fun FilesBrowserRow(
     val handheld = LocalHandheldUi.current
     if (handheld) {
         androidx.compose.material3.ListItem(
-            headlineContent = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            content = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             supportingContent = detail.takeIf { it.isNotEmpty() }?.let { text -> { Text(text) } },
             leadingContent = { leading?.invoke() ?: androidx.compose.material3.Icon(icon, null) },
             trailingContent = {

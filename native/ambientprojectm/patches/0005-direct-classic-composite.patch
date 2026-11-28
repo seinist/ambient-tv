@@ -1,0 +1,111 @@
+diff --git a/src/libprojectM/MilkdropPreset/MilkdropPreset.cpp b/src/libprojectM/MilkdropPreset/MilkdropPreset.cpp
+--- a/src/libprojectM/MilkdropPreset/MilkdropPreset.cpp
++++ b/src/libprojectM/MilkdropPreset/MilkdropPreset.cpp
+@@ -145,9 +145,17 @@
+ 
+     // Todo: Song title anim would go here
+ 
+-    // y-flip the image for final compositing again
+-    m_flipTexture.Draw(m_framebuffer.GetColorAttachmentTexture(m_currentFrameBuffer, 0), nullptr, true, false);
+-    m_state.mainTexture = m_flipTexture.Texture();
++    // Arbitrary composite shaders expect the physically flipped sampler_main.
++    // Classic echo/gamma has known coordinates and can fold both flips into its draw.
++#if defined(AMBIENT_PROJECTM_DIRECT_CLASSIC_COMPOSITE)
++    if (!m_finalComposite.HasCompositeShader())
++        m_state.mainTexture = m_framebuffer.GetColorAttachmentTexture(m_currentFrameBuffer, 0);
++    else
++#endif
++    {
++        m_flipTexture.Draw(m_framebuffer.GetColorAttachmentTexture(m_currentFrameBuffer, 0), nullptr, true, false);
++        m_state.mainTexture = m_flipTexture.Texture();
++    }
+ 
+     // We no longer need the previous frame image, use it to render the final composite.
+     m_framebuffer.BindRead(m_currentFrameBuffer);
+@@ -157,11 +165,13 @@
+ 
+     // ToDo: Draw user sprites (can have evaluated code)
+ 
++#if !defined(AMBIENT_PROJECTM_DIRECT_CLASSIC_COMPOSITE)
+     if (!m_finalComposite.HasCompositeShader())
+     {
+         // Flip texture again in "previous" framebuffer as old-school effects are still upside down.
+         m_flipTexture.Draw(m_framebuffer.GetColorAttachmentTexture(m_previousFrameBuffer, 0), m_framebuffer, m_previousFrameBuffer, true, false);
+     }
++#endif
+ 
+     // Swap framebuffer IDs for the next frame.
+     std::swap(m_currentFrameBuffer, m_previousFrameBuffer);
+diff --git a/src/libprojectM/MilkdropPreset/VideoEcho.cpp b/src/libprojectM/MilkdropPreset/VideoEcho.cpp
+--- a/src/libprojectM/MilkdropPreset/VideoEcho.cpp
++++ b/src/libprojectM/MilkdropPreset/VideoEcho.cpp
+@@ -69,7 +69,11 @@
+     }
+ 
+     m_presetState.texturedShader.Bind();
++#if defined(AMBIENT_PROJECTM_DIRECT_CLASSIC_COMPOSITE)
++    m_presetState.texturedShader.SetUniformMat4x4("vertex_transformation", PresetState::orthogonalProjectionFlipped);
++#else
+     m_presetState.texturedShader.SetUniformMat4x4("vertex_transformation", PresetState::orthogonalProjection);
++#endif
+     m_presetState.texturedShader.SetUniformInt("texture_sampler", 0);
+ 
+     auto mainTexture = m_presetState.mainTexture.lock();
+@@ -105,6 +109,19 @@
+     }
+ }
+ 
++void VideoEcho::UploadVertices()
++{
++#if defined(AMBIENT_PROJECTM_DIRECT_CLASSIC_COMPOSITE)
++    // The old first copy sampled (u, 1-v); the final copy reflected the output.
++    // Keep the original UVs in m_vertices for gamma redraws and echo orientation.
++    auto vertices = m_vertices;
++    for (auto& vertex : vertices) vertex.v = 1.0f - vertex.v;
++    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizei>(sizeof(TexturedPoint) * vertices.size()), vertices.data(), GL_DYNAMIC_DRAW);
++#else
++    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizei>(sizeof(TexturedPoint) * m_vertices.size()), m_vertices.data(), GL_DYNAMIC_DRAW);
++#endif
++}
++
+ void VideoEcho::DrawVideoEcho()
+ {
+     auto const videoEchoZoom = m_presetState.videoEchoZoom;
+@@ -155,7 +172,7 @@
+             m_vertices[vertex].a = 1.0f;
+         }
+ 
+-        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizei>(sizeof(TexturedPoint) * m_vertices.size()), m_vertices.data(), GL_DYNAMIC_DRAW);
++        UploadVertices();
+         glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(m_vertices.size()));
+ 
+         if (pass == 0)
+@@ -187,7 +204,7 @@
+                     m_vertices[vertex].a = 1.0f;
+                 }
+ 
+-                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizei>(sizeof(TexturedPoint) * m_vertices.size()), m_vertices.data(), GL_DYNAMIC_DRAW);
++                UploadVertices();
+                 glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(m_vertices.size()));
+             }
+         }
+@@ -231,7 +248,7 @@
+             m_vertices[vertex].a = 1.0f;
+         }
+ 
+-        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizei>(sizeof(TexturedPoint) * m_vertices.size()), m_vertices.data(), GL_DYNAMIC_DRAW);
++        UploadVertices();
+         glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(m_vertices.size()));
+ 
+         if (redraw == 0)
+diff --git a/src/libprojectM/MilkdropPreset/VideoEcho.hpp b/src/libprojectM/MilkdropPreset/VideoEcho.hpp
+--- a/src/libprojectM/MilkdropPreset/VideoEcho.hpp
++++ b/src/libprojectM/MilkdropPreset/VideoEcho.hpp
+@@ -24,6 +24,7 @@
+ 	void Draw();
+ 
+ private:
++    void UploadVertices();
+     void DrawVideoEcho();
+ 
+     void DrawGammaAdjustment();

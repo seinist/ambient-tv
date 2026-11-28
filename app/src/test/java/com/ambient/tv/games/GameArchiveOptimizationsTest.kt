@@ -8,12 +8,14 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.Random
 import java.util.zip.CRC32
 import java.util.zip.GZIPOutputStream
@@ -21,6 +23,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry
 import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
+import org.apache.commons.compress.archivers.zip.ZipMethod
 
 /** Pure JVM tests: no emulator, NAS, CoreManager or Android application initialization. */
 class GameArchiveOptimizationsTest {
@@ -152,6 +157,34 @@ class GameArchiveOptimizationsTest {
             assertNull(GameArchives.stageSingle("many.zip", source, folder,
                 1024L * 1024) { })
             assertTrue(folder.walkTopDown().none(File::isFile))
+        } finally { folder.deleteRecursively() }
+    }
+
+    @Test fun zstandardZipEntriesCanBeListedButAreNotOpened() {
+        val rom = "rom".toByteArray()
+        // A Zstandard frame containing the three bytes above.
+        val frame = Base64.getDecoder().decode("KLUv/QRYGQAAcm9tgdGXcA==")
+        val folder = Files.createTempDirectory("ambient-game-zstd").toFile()
+        try {
+            for (method in listOf(ZipMethod.ZSTD, ZipMethod.ZSTD_DEPRECATED)) {
+                val archive = File(folder, "${method.name}.zip")
+                ZipArchiveOutputStream(archive).use { output ->
+                    val entry = ZipArchiveEntry("game.gba").apply {
+                        this.method = method.code
+                        size = rom.size.toLong()
+                        compressedSize = frame.size.toLong()
+                        crc = CRC32().apply { update(rom) }.value
+                    }
+                    output.addRawArchiveEntry(entry, ByteArrayInputStream(frame))
+                }
+                val media = Bytes(archive.readBytes())
+                val output = File(folder, "${method.name}-output")
+                assertEquals(listOf("game.gba"), GameArchives.names(archive.name, media))
+                assertNull(GameArchives.probe(archive.name, media))
+                assertNull(GameArchives.stageSingle(archive.name, media, output, 1024) { })
+                assertThrows(GameArchiveException::class.java) { GameArchives.extract(archive, output) }
+                assertTrue(output.walkTopDown().none(File::isFile))
+            }
         } finally { folder.deleteRecursively() }
     }
 

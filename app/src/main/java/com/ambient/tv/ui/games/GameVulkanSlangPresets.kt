@@ -81,6 +81,7 @@ internal object GameVulkanSlangPresets {
         selectedPack == null && shader in supported
 
     /** Returns null when a built-in preset is absent/damaged; GLES still plays the game. */
+    @Synchronized
     fun prepare(context: Context, shader: GameShader, selectedPack: String?): String? {
         if (selectedPack != null) return null
         val preset = supported[shader] ?: return null

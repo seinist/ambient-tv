@@ -1,0 +1,336 @@
+diff --git a/src/main/cpp/vulkan/vulkancolorcopy.cpp b/src/main/cpp/vulkan/vulkancolorcopy.cpp
+--- a/src/main/cpp/vulkan/vulkancolorcopy.cpp
++++ b/src/main/cpp/vulkan/vulkancolorcopy.cpp
+@@ -3,10 +3,11 @@
+ #include "vulkancolorcopy.h"
+ 
+ #include <limits>
++#include <utility>
+ 
+ namespace libretrodroid {
+ namespace {
+-constexpr uint64_t MAX_CACHE_BYTES = 128ull * 1024ull * 1024ull;
++constexpr uint64_t MAX_CACHE_BYTES = VulkanColorAlternatePolicy::totalBudget;
+ constexpr uint32_t MAX_SOURCE_DIMENSION = 8192;
+ 
+ bool componentIs(VkComponentSwizzle actual, VkComponentSwizzle identity, VkComponentSwizzle wanted) {
+@@ -141,8 +142,11 @@
+     if (direct) {
+         // A short same-extent direct burst need not retire the private image.
+         // It is never read on this path and the preceding GPU frame is complete.
+-        if (cache && !retention.retainDirectFrame(cacheAllocationBytes,
+-                                                cacheWidth == width && cacheHeight == height)) {
++        // Native/direct bursts still have the original single-image retention
++        // policy. The alternate is useful only for alternating normalized sizes.
++        destroyAlternate();
++        if (active.image && !retention.retainDirectFrame(active.bytes,
++                                                active.width == width && active.height == height)) {
+             destroyCache();
+         }
+         prepared = true;
+@@ -153,8 +157,8 @@
+     if (uint64_t(width) * height * bytesPerPixel > MAX_CACHE_BYTES) {
+         return fail("normalized source exceeds 128 MiB cache budget");
+     }
+-    if (cache && cacheFormat == format && cacheWidth == width && cacheHeight == height &&
+-        cacheBridgeFormat == bridgeFormat) {
++    if (active.matches(format, width, height) && cacheBridgeFormat == bridgeFormat) {
++        ageAlternate();
+         retention.reset();
+         prepared = true;
+         failure = "";
+@@ -172,16 +176,49 @@
+         !(destinationFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
+         return fail("normalized format conversion unavailable on device");
+     }
+-    if (cache && cacheFormat == format && cacheWidth == width && cacheHeight == height) {
++    if (active.matches(format, width, height)) {
+         // A transport precision change needs fresh destination feature validation,
+         // but can reuse the exact same normalized source allocation.
+         cacheBridgeFormat = bridgeFormat;
++        ageAlternate();
+         retention.reset();
+         prepared = true;
+         failure = "";
+         return true;
+     }
+-    destroyCache(); // caller has completed its preceding frame
++    // All prior GPU work has completed before prepare(). These are alternate
++    // allocations, not concurrent frame slots. The next record overwrites every
++    // texel and uses the same original layout/ownership transitions.
++    if (alternate.matches(format, width, height)) {
++        std::swap(active, alternate);
++        if (!VulkanColorAlternatePolicy::canRetain(alternate.bytes) ||
++            !VulkanColorAlternatePolicy::fits(active.bytes, alternate.bytes)) {
++            destroyAlternate();
++        }
++        alternatePolicy.reset();
++    } else {
++        destroyAlternate();
++        const uint64_t minimumBytes = uint64_t(width) * height * bytesPerPixel;
++        if (active.image && VulkanColorAlternatePolicy::canRetain(active.bytes) &&
++            VulkanColorAlternatePolicy::fits(minimumBytes, active.bytes)) {
++            std::swap(active, alternate); // active becomes empty, unique ownership
++            alternatePolicy.reset();
++        } else {
++            destroyCache();
++        }
++        if (!allocateCache()) {
++            destroyAlternate();
++            return false;
++        }
++    }
++    cacheBridgeFormat = bridgeFormat;
++    retention.reset();
++    prepared = true;
++    failure = "";
++    return true;
++}
++
++bool VulkanColorCopy::allocateCache() {
+     VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+     imageInfo.imageType = VK_IMAGE_TYPE_2D;
+     imageInfo.format = format;
+@@ -192,59 +229,77 @@
+     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+-    if (vk.createImage(device, &imageInfo, nullptr, &cache) != VK_SUCCESS) {
+-        cache = VK_NULL_HANDLE;
+-        return fail("normalized image allocation failed");
+-    }
+-    VkMemoryRequirements requirements {};
+-    vk.imageMemoryRequirements(device, cache, &requirements);
+-    if (requirements.size > MAX_CACHE_BYTES) {
+-        destroyCache();
+-        return fail("normalized device allocation exceeds 128 MiB budget");
+-    }
+-    VkPhysicalDeviceMemoryProperties memoryProperties {};
+-    vk.memoryProperties(gpu, &memoryProperties);
+-    uint32_t memoryIndex = memoryProperties.memoryTypeCount;
+-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i) {
+-        if ((requirements.memoryTypeBits & (1u << i)) == 0) continue;
+-        if (memoryIndex == memoryProperties.memoryTypeCount) memoryIndex = i;
+-        if (memoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+-            memoryIndex = i;
+-            break;
++    for (;;) {
++        VkResult result = vk.createImage(device, &imageInfo, nullptr, &active.image);
++        if (result != VK_SUCCESS) {
++            active.image = VK_NULL_HANDLE;
++            failure = "normalized image allocation failed";
++        } else {
++            VkMemoryRequirements requirements {};
++            vk.imageMemoryRequirements(device, active.image, &requirements);
++            if (requirements.size > MAX_CACHE_BYTES) {
++                destroyCache();
++                return fail("normalized device allocation exceeds 128 MiB budget");
++            }
++            // Charge actual driver allocation sizes, not just pixel estimates.
++            if (!VulkanColorAlternatePolicy::fits(requirements.size, alternate.bytes)) {
++                destroyAlternate();
++            }
++            VkPhysicalDeviceMemoryProperties memoryProperties {};
++            vk.memoryProperties(gpu, &memoryProperties);
++            uint32_t memoryIndex = memoryProperties.memoryTypeCount;
++            for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i) {
++                if ((requirements.memoryTypeBits & (1u << i)) == 0) continue;
++                if (memoryIndex == memoryProperties.memoryTypeCount) memoryIndex = i;
++                if (memoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
++                    memoryIndex = i;
++                    break;
++                }
++            }
++            if (memoryIndex == memoryProperties.memoryTypeCount) {
++                destroyCache();
++                return fail("normalized image memory allocation failed");
++            }
++            VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
++            allocation.allocationSize = requirements.size;
++            allocation.memoryTypeIndex = memoryIndex;
++            result = vk.allocateMemory(device, &allocation, nullptr, &active.memory);
++            if (result == VK_SUCCESS) {
++                result = vk.bindImageMemory(device, active.image, active.memory, 0);
++            } else {
++                active.memory = VK_NULL_HANDLE;
++            }
++            if (result == VK_SUCCESS) {
++                active.format = format;
++                active.width = width;
++                active.height = height;
++                active.bytes = requirements.size;
++                return true;
++            }
++            failure = "normalized image memory allocation failed";
+         }
+-    }
+-    VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+-    allocation.allocationSize = requirements.size;
+-    allocation.memoryTypeIndex = memoryIndex;
+-    if (memoryIndex == memoryProperties.memoryTypeCount ||
+-        vk.allocateMemory(device, &allocation, nullptr, &memory) != VK_SUCCESS ||
+-        vk.bindImageMemory(device, cache, memory, 0) != VK_SUCCESS) {
+         destroyCache();
+-        return fail("normalized image memory allocation failed");
++        // Retention is opportunistic: never reject a frame merely because its
++        // predecessor occupies memory. Retry once without it on memory pressure.
++        const bool retry = alternate.image && (result == VK_ERROR_OUT_OF_DEVICE_MEMORY ||
++                                               result == VK_ERROR_OUT_OF_HOST_MEMORY);
++        destroyAlternate();
++        if (!retry) return false;
+     }
+-    cacheFormat = format;
+-    cacheBridgeFormat = bridgeFormat;
+-    cacheWidth = width;
+-    cacheHeight = height;
+-    cacheAllocationBytes = requirements.size;
+-    retention.reset();
+-    prepared = true;
+-    failure = "";
+-    return true;
+ }
+ 
+ VulkanColorCopy::Image VulkanColorCopy::preparedImage(VkImage bridge) const {
+     if (!prepared) return {};
+-    return { direct ? bridge : cache, format, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, width, height, direct };
++    return { direct ? bridge : active.image, format, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, width, height, direct };
+ }
+ 
+ VulkanColorCopy::Image VulkanColorCopy::record(VkCommandBuffer commands, VkImage source,
+         VkImageLayout sourceLayout, const Source& descriptor, VkImage bridge) {
+     if (!prepared) return {};
+-    const VkImage destination = direct ? bridge : cache;
++    const VkImage destination = direct ? bridge : active.image;
+     if (!direct) {
+         // Last frame's cache has completed, and every current texel is overwritten.
+-        transition(vk.barrier, commands, cache, VK_IMAGE_LAYOUT_UNDEFINED,
++        transition(vk.barrier, commands, active.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+     }
+@@ -267,26 +322,36 @@
+         blit.dstOffsets[1] = blit.srcOffsets[1];
+         // Only known non-sRGB formats reach this conversion. PQ/HLG code values
+         // remain encoded; any verified HDR decoding belongs to the display shader.
+-        vk.blitImage(commands, cache, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, bridge,
++        vk.blitImage(commands, active.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, bridge,
+                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+     }
+     return preparedImage(bridge);
+ }
+ 
++void VulkanColorCopy::destroyImage(CachedImage& image) {
++    if (device && image.image) vk.destroyImage(device, image.image, nullptr);
++    if (device && image.memory) vk.freeMemory(device, image.memory, nullptr);
++    image = {};
++}
++
+ void VulkanColorCopy::destroyCache() {
+-    if (device && cache) vk.destroyImage(device, cache, nullptr);
+-    if (device && memory) vk.freeMemory(device, memory, nullptr);
+-    cache = VK_NULL_HANDLE;
+-    memory = VK_NULL_HANDLE;
+-    cacheFormat = VK_FORMAT_UNDEFINED;
++    destroyImage(active);
+     cacheBridgeFormat = VK_FORMAT_UNDEFINED;
+-    cacheWidth = cacheHeight = 0;
+-    cacheAllocationBytes = 0;
+     retention.reset();
+ }
+ 
++void VulkanColorCopy::destroyAlternate() {
++    destroyImage(alternate);
++    alternatePolicy.reset();
++}
++
++void VulkanColorCopy::ageAlternate() {
++    if (alternate.image && !alternatePolicy.keepUnusedFrame()) destroyAlternate();
++}
++
+ void VulkanColorCopy::release() {
+     destroyCache();
++    destroyAlternate();
+     formatFeatures.reset();
+     device = VK_NULL_HANDLE;
+     gpu = VK_NULL_HANDLE;
+diff --git a/src/main/cpp/vulkan/vulkancolorcopy.h b/src/main/cpp/vulkan/vulkancolorcopy.h
+--- a/src/main/cpp/vulkan/vulkancolorcopy.h
++++ b/src/main/cpp/vulkan/vulkancolorcopy.h
+@@ -7,6 +7,7 @@
+ #include <cstdint>
+ #include "vulkancolorcachepolicy.h"
+ #include "vulkanformatfeaturecache.h"
++#include "vulkancoloralternatepolicy.h"
+ 
+ namespace libretrodroid {
+ 
+@@ -80,17 +81,27 @@
+         PFN_vkCmdPipelineBarrier barrier = nullptr;
+     } vk;
+     bool fail(const char* reason) { failure = reason; return false; }
++    struct CachedImage {
++        VkImage image = VK_NULL_HANDLE;
++        VkDeviceMemory memory = VK_NULL_HANDLE;
++        VkFormat format = VK_FORMAT_UNDEFINED;
++        uint32_t width = 0, height = 0;
++        uint64_t bytes = 0;
++        bool matches(VkFormat candidate, uint32_t w, uint32_t h) const noexcept {
++            return image && format == candidate && width == w && height == h;
++        }
++    };
++    void destroyImage(CachedImage& image);
+     void destroyCache();
++    void destroyAlternate();
++    void ageAlternate();
++    bool allocateCache();
+     VkDevice device = VK_NULL_HANDLE;
+     VkPhysicalDevice gpu = VK_NULL_HANDLE;
+-    VkImage cache = VK_NULL_HANDLE;
+-    VkDeviceMemory memory = VK_NULL_HANDLE;
+-    VkFormat cacheFormat = VK_FORMAT_UNDEFINED;
++    CachedImage active, alternate;
+     VkFormat cacheBridgeFormat = VK_FORMAT_UNDEFINED;
+-    uint32_t cacheWidth = 0;
+-    uint32_t cacheHeight = 0;
+-    uint64_t cacheAllocationBytes = 0;
+     VulkanColorCacheRetention retention;
++    VulkanColorAlternatePolicy alternatePolicy;
+     VulkanFormatFeatureCache formatFeatures;
+     VkFormat format = VK_FORMAT_UNDEFINED;
+     uint32_t width = 0;
+diff --git a/src/main/cpp/vulkan/vulkancoloralternatepolicy.h b/src/main/cpp/vulkan/vulkancoloralternatepolicy.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkancoloralternatepolicy.h
+@@ -0,0 +1,31 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <cstdint>
++
++namespace libretrodroid {
++// One recently used exact-size normalization allocation, never an in-flight slot.
++class VulkanColorAlternatePolicy {
++public:
++    static constexpr std::uint64_t totalBudget = 128ull * 1024ull * 1024ull;
++    static constexpr std::uint64_t idleBudget = 4ull * 1024ull * 1024ull;
++    static constexpr unsigned maxIdleFrames = 8;
++
++    static bool canRetain(std::uint64_t bytes) noexcept {
++        return bytes != 0 && bytes <= idleBudget;
++    }
++    static bool fits(std::uint64_t active, std::uint64_t alternate) noexcept {
++        return active <= totalBudget && alternate <= totalBudget - active &&
++               (alternate == 0 || canRetain(alternate));
++    }
++    bool keepUnusedFrame() noexcept {
++        if (idleFrames >= maxIdleFrames) return false;
++        ++idleFrames;
++        return true;
++    }
++    void reset() noexcept { idleFrames = 0; }
++
++private:
++    unsigned idleFrames = 0;
++};
++} // namespace libretrodroid

@@ -1,0 +1,828 @@
+diff --git a/src/main/cpp/trustedcompactcoverage.h b/src/main/cpp/trustedcompactcoverage.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/trustedcompactcoverage.h
+@@ -0,0 +1,204 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <string_view>
++namespace libretrodroid {
++// Exact source allow-list from Ambient GameRetroShaders. Each body writes
++// every covered fragment; CRT_GEOMETRY's early return writes black.
++// Modified or external shader sources conservatively keep the clear.
++inline bool trustedCompactCoverage(std::string_view vertex, std::string_view fragment) noexcept {
++    constexpr std::string_view trustedVertex = R"AMBIENT(
++        attribute vec4 vPosition;
++        attribute vec2 vCoordinate;
++        varying highp vec2 coords;
++        void main() {
++            coords = vCoordinate;
++            gl_Position = vPosition;
++        }
++    )AMBIENT";
++    constexpr std::string_view header = R"AMBIENT(
++        #ifdef GL_FRAGMENT_PRECISION_HIGH
++        precision highp float;
++        #else
++        precision mediump float;
++        #endif
++        uniform sampler2D texture;
++        uniform vec2 textureSize;
++        uniform vec2 OutputSize;
++        uniform int FrameCount;
++        uniform float ambientFilterIntensity;
++        #define INTENSITY ambientFilterIntensity
++        varying highp vec2 coords;
++        float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
++        float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
++    )AMBIENT";
++    if (vertex != trustedVertex || fragment.size() < header.size() ||
++        fragment.substr(0, header.size()) != header) return false;
++    const auto body = fragment.substr(header.size());
++    constexpr std::string_view bodies[] = {
++        // SHARP_BILINEAR
++        R"AMBIENT(
++        void main() {
++            vec2 s = max(textureSize, vec2(1.0));
++            vec2 p = coords*s - 0.5;
++            vec2 f = fract(p);
++            vec2 ratio = max(OutputSize / s, vec2(1.0));
++            vec2 sharp = clamp((f-0.5)*ratio*INTENSITY+0.5, 0.0, 1.0);
++            gl_FragColor = texture2D(texture, clamp((floor(p)+sharp+0.5)/s, 0.0, 1.0));
++        }
++    )AMBIENT",
++        // PIXEL_AA
++        R"AMBIENT(
++        void main() {
++            vec2 d = 1.0 / max(textureSize, vec2(1.0));
++            vec4 c = texture2D(texture, coords);
++            vec3 l = texture2D(texture, coords-vec2(d.x, 0.0)).rgb;
++            vec3 r = texture2D(texture, coords+vec2(d.x, 0.0)).rgb;
++            vec3 u = texture2D(texture, coords-vec2(0.0, d.y)).rgb;
++            vec3 b = texture2D(texture, coords+vec2(0.0, d.y)).rgb;
++            float flatness = 1.0-smoothstep(0.06, 0.35, length(l-r)+length(u-b));
++            gl_FragColor = vec4(mix(c.rgb, (l+r+u+b)*0.25, 0.30*flatness*INTENSITY), c.a);
++        }
++    )AMBIENT",
++        // CRT_LIGHT
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture, coords);
++            float line = 0.80+0.20*cos(coords.y*max(textureSize.y, 1.0)*6.2831853);
++            gl_FragColor = vec4(c.rgb*mix(1.0, line, INTENSITY), c.a);
++        }
++    )AMBIENT",
++        // CRT_GEOMETRY
++        R"AMBIENT(
++        void main() {
++            vec2 p = coords*2.0-1.0;
++            vec2 uv = p*(1.0+0.09*INTENSITY*dot(p,p))*0.5+0.5;
++            if (uv.x<0.0 || uv.y<0.0 || uv.x>1.0 || uv.y>1.0) {
++                gl_FragColor = vec4(0.0,0.0,0.0,1.0);
++                return;
++            }
++            vec4 c = texture2D(texture, uv);
++            float scan = 0.83+0.17*cos(uv.y*max(textureSize.y,1.0)*6.2831853);
++            gl_FragColor = vec4(c.rgb*scan*max(0.0,1.0-0.15*INTENSITY*dot(p,p)),c.a);
++        }
++    )AMBIENT",
++        // CRT_APERTURE
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture, coords);
++            float slot = mod(floor(gl_FragCoord.x), 3.0);
++            vec3 m = slot<1.0 ? vec3(1.0,0.72,0.72) :
++                     (slot<2.0 ? vec3(0.72,1.0,0.72) : vec3(0.72,0.72,1.0));
++            float scan = 0.87+0.13*cos(coords.y*max(textureSize.y,1.0)*6.2831853);
++            gl_FragColor = vec4(c.rgb*mix(vec3(1.0),m*scan,INTENSITY),c.a);
++        }
++    )AMBIENT",
++        // CRT_GLOW
++        R"AMBIENT(
++        void main() {
++            vec2 d = 1.0/max(textureSize, vec2(1.0));
++            vec4 c = texture2D(texture,coords);
++            vec3 glow = (texture2D(texture,coords+vec2(d.x,0.0)).rgb +
++                         texture2D(texture,coords-vec2(d.x,0.0)).rgb +
++                         texture2D(texture,coords+vec2(0.0,d.y)).rgb +
++                         texture2D(texture,coords-vec2(0.0,d.y)).rgb)*0.25;
++            float scan = 0.90+0.10*cos(coords.y*max(textureSize.y,1.0)*6.2831853);
++            gl_FragColor = vec4(clamp(c.rgb*scan+max(glow-vec3(0.35),0.0)*0.32*INTENSITY,0.0,1.0),c.a);
++        }
++    )AMBIENT",
++        // GAMEBOY_DMG
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture,coords);
++            float q = floor(clamp(luma(c.rgb),0.0,1.0)*3.0+0.5);
++            vec3 palette = q<0.5 ? vec3(0.06,0.18,0.08) :
++                         (q<1.5 ? vec3(0.22,0.37,0.13) :
++                         (q<2.5 ? vec3(0.53,0.68,0.25) : vec3(0.75,0.83,0.49)));
++            gl_FragColor = vec4(mix(c.rgb,palette,INTENSITY),c.a);
++        }
++    )AMBIENT",
++        // GBC_GRID
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture,coords);
++            vec2 p = fract(coords*max(textureSize,vec2(1.0)));
++            float edge = smoothstep(0.0,0.15,p.x)*(1.0-smoothstep(0.85,1.0,p.x))*
++                         smoothstep(0.0,0.15,p.y)*(1.0-smoothstep(0.85,1.0,p.y));
++            vec3 limited = floor(c.rgb*31.0+0.5)/31.0;
++            gl_FragColor = vec4(mix(c.rgb,limited*mix(0.7,1.0,edge),INTENSITY),c.a);
++        }
++    )AMBIENT",
++        // GBA_COLOR
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture,coords);
++            vec3 warm = pow(max(c.rgb,vec3(0.0)),vec3(0.92,0.99,1.08));
++            warm = mix(warm,vec3(luma(warm)),0.10);
++            float row = 0.93+0.07*cos(coords.y*max(textureSize.y,1.0)*6.2831853);
++            gl_FragColor = vec4(mix(c.rgb,warm*row,INTENSITY),c.a);
++        }
++    )AMBIENT",
++        // DS_LCD
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture,coords);
++            vec2 p = fract(coords*max(textureSize,vec2(1.0)));
++            float grid = (0.93+0.07*cos(p.x*6.2831853))*(0.93+0.07*cos(p.y*6.2831853));
++            gl_FragColor = vec4(c.rgb*mix(1.0,grid,INTENSITY),c.a);
++        }
++    )AMBIENT",
++        // NTSC
++        R"AMBIENT(
++        void main() {
++            vec2 d = vec2(1.0/max(textureSize.x,1.0),0.0);
++            vec3 c = texture2D(texture,coords).rgb;
++            vec3 l = texture2D(texture,coords-d).rgb;
++            vec3 r = texture2D(texture,coords+d).rgb;
++            vec3 soft = c*0.6+(l+r)*0.2;
++            vec3 bleed = vec3(soft.r*0.9+r.r*0.1,soft.g,soft.b*0.9+l.b*0.1);
++            gl_FragColor = vec4(mix(c,bleed,INTENSITY),1.0);
++        }
++    )AMBIENT",
++        // VHS
++        R"AMBIENT(
++        void main() {
++            float t = float(FrameCount);
++            float jitter = noise(vec2(floor(coords.y*textureSize.y/8.0),floor(t/6.0)))-0.5;
++            vec2 p = coords+vec2(jitter*0.003*INTENSITY,0.0);
++            vec2 d = vec2(1.0/max(textureSize.x,1.0),0.0);
++            vec3 c = texture2D(texture,p).rgb;
++            vec3 shifted = vec3(texture2D(texture,p+d*0.65*INTENSITY).r,
++                                c.g,texture2D(texture,p-d*0.65*INTENSITY).b);
++            float grain = (noise(gl_FragCoord.xy+t)-0.5)*0.035;
++            gl_FragColor = vec4(clamp(mix(c,shifted+grain,INTENSITY),0.0,1.0),1.0);
++        }
++    )AMBIENT",
++        // FILM_GRAIN
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture,coords);
++            float n = noise(gl_FragCoord.xy+float(FrameCount)*5.31)-0.5;
++            gl_FragColor = vec4(clamp(c.rgb+vec3(n*0.05*INTENSITY),0.0,1.0),c.a);
++        }
++    )AMBIENT",
++        // DEBAND
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture,coords);
++            float n = noise(gl_FragCoord.xy*0.5)-0.5;
++            gl_FragColor = vec4(clamp(c.rgb+vec3(n/255.0*INTENSITY),0.0,1.0),c.a);
++        }
++    )AMBIENT",
++        // COLOR_BOOST
++        R"AMBIENT(
++        void main() {
++            vec4 c = texture2D(texture,coords);
++            float l = luma(c.rgb);
++            vec3 boosted = clamp(vec3(l)+(c.rgb-vec3(l))*(1.0+0.16*INTENSITY),0.0,1.0);
++            gl_FragColor = vec4(boosted,c.a);
++        }
++    )AMBIENT",
++    };
++    for (auto candidate : bodies) if (body == candidate) return true;
++    return false;
++}
++} // namespace libretrodroid
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -81,6 +81,8 @@
+         std::array<GLint, 8> gPassPrevTextureSizeHandles;
+         std::array<GLint, 8> gPassPrevInputSizeHandles;
+         bool samplerBindingsInitialized = false;
++        bool trustedFullCoverage = false;
++        ShaderUniformValue<1> coreTransferValue;
+         // Each entry owns a newly linked program. These caches die with it.
+         ShaderUniformValue<2> textureSizeValue, origTextureSizeValue, origInputSizeValue;
+         ShaderUniformValue<2> inputSizeValue, outputSizeValue;
+@@ -135,7 +137,9 @@
+ 
+     void onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch);
+ 
+-    std::vector<uint8_t> captureRawFrame(int& outWidth, int& outHeight);
++    std::vector<uint8_t> captureRawFrame(int& outWidth, int& outHeight, unsigned maxWidth = 0);
++    // A new EGL generation may recycle the old numeric GL names.
++    void abandonFrontendResources() noexcept;
+ 
+     uintptr_t getCurrentFramebuffer() {
+         if (hwRenderFBO != 0) return hwRenderFBO;
+@@ -205,6 +209,9 @@
+ 
+ private:
+     void updateProgram();
++    bool prepareFrontendGeometry();
++    bool bindFrontendGeometry(std::size_t pass, GLint position, GLint coordinate, bool first, bool last);
++    void releaseFrontendGeometry() noexcept;
+     bool tryBuildShaderChain(const ShaderManager::Chain& shaders, std::vector<ShaderChainEntry>& outChain);
+ 
+     float getScreenDensity();
+@@ -239,6 +246,25 @@
+ 
+     std::vector<ShaderChainEntry> shadersChain;
+ 
++    // Owned exclusively by this Video and its frontend EGL generation.
++    struct GeometryBinding {
++        GLuint vao = 0;
++        GLint position = -1, coordinate = -1;
++        bool first = false, last = false;
++    };
++    EGLContext frontendGeometryContext = EGL_NO_CONTEXT;
++    GLuint frontendGeometryBuffer = 0;
++    bool frontendGeometryValid = false;
++    std::array<float, 48> frontendGeometryValues {};
++    std::array<GeometryBinding, 9> frontendGeometryBindings {};
++    struct RawCaptureCache {
++        EGLContext context = EGL_NO_CONTEXT;
++        GLuint target = 0, fbo = 0, copyProgram = 0, copyVao = 0, copyBuffer = 0;
++        GLint textureUniform = -1, position = -1, coordinate = -1;
++        int width = 0, height = 0;
++        void release() noexcept;
++    } rawCapture;
++
+     bool immersiveModeEnabled = false;
+     bool backgroundFrameBehind = false;
+     ImmersiveMode immersiveMode;
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -30,7 +30,10 @@
+ 
+ #include "video.h"
+ #include "softwareframelayout.h"
++#include "ambientgametrace.h"
++#include "trustedcompactcoverage.h"
+ #include "sdrtohdr.h"
++#include <algorithm>
+ #include <cstring>
+ #include <unistd.h>
+ #include "renderers/es3/framebufferrenderer.h"
+@@ -155,6 +158,8 @@
+ 
+         shader.gScreenDensityHandle = glGetUniformLocation(shader.gProgram, "screenDensity");
+         shader.ambientIntensity = ShaderManager::Pass::normalizedIntensity(item.ambientIntensity);
++        shader.trustedFullCoverage = shader.ambientIntensity > 0.0f &&
++            trustedCompactCoverage(item.vertex, item.fragment);
+         if (shader.ambientIntensity > 0.0f)
+             shader.gAmbientIntensityHandle = glGetUniformLocation(shader.gProgram, "ambientFilterIntensity");
+ 
+@@ -307,6 +312,110 @@
+     return shaderSensorUsage;
+ }
+ 
++void Video::RawCaptureCache::release() noexcept {
++    if (context != EGL_NO_CONTEXT && context == eglGetCurrentContext()) {
++        if (copyProgram) glDeleteProgram(copyProgram);
++        if (fbo) glDeleteFramebuffers(1, &fbo);
++        if (target) glDeleteTextures(1, &target);
++        if (copyVao) glDeleteVertexArrays(1, &copyVao);
++        if (copyBuffer) glDeleteBuffers(1, &copyBuffer);
++    }
++    *this = {};
++}
++
++void Video::releaseFrontendGeometry() noexcept {
++    if (frontendGeometryContext != EGL_NO_CONTEXT &&
++        frontendGeometryContext == eglGetCurrentContext()) {
++        for (auto& binding : frontendGeometryBindings)
++            if (binding.vao) glDeleteVertexArrays(1, &binding.vao);
++        if (frontendGeometryBuffer) glDeleteBuffers(1, &frontendGeometryBuffer);
++    }
++    frontendGeometryContext = EGL_NO_CONTEXT;
++    frontendGeometryBuffer = 0;
++    frontendGeometryValid = false;
++    frontendGeometryBindings = {};
++}
++
++void Video::abandonFrontendResources() noexcept {
++    // Context recreation: do not delete old numeric names in the new context.
++    rawCapture = {};
++    frontendGeometryContext = EGL_NO_CONTEXT;
++    frontendGeometryBuffer = 0;
++    frontendGeometryValid = false;
++    frontendGeometryBindings = {};
++}
++
++bool Video::prepareFrontendGeometry() {
++    if (openGLESVersion < 3 || hwAccelerated || externalFrames || hwRenderTexture != 0)
++        return false;
++    const auto context = eglGetCurrentContext();
++    if (context == EGL_NO_CONTEXT) return false;
++    if (frontendGeometryContext != context) releaseFrontendGeometry();
++    frontendGeometryContext = context;
++    if (!frontendGeometryBuffer) glGenBuffers(1, &frontendGeometryBuffer);
++    if (!frontendGeometryBuffer) return false;
++    std::array<float, 48> next {};
++    const std::array<float, 12>* sources[] = {
++        &videoLayout.getForegroundVertices(), &videoLayout.getFramebufferVertices(),
++        &videoLayout.getTextureCoordinates(), &videoLayout.getFramebufferTextureCoordinates()
++    };
++    for (std::size_t i = 0; i < 4; ++i)
++        std::copy(sources[i]->begin(), sources[i]->end(), next.begin() + 12 * i);
++    if (!frontendGeometryValid || next != frontendGeometryValues) {
++        glBindBuffer(GL_ARRAY_BUFFER, frontendGeometryBuffer);
++        glBufferData(GL_ARRAY_BUFFER, sizeof(next), next.data(), GL_DYNAMIC_DRAW);
++        glBindBuffer(GL_ARRAY_BUFFER, 0);
++        if (glGetError() != GL_NO_ERROR) {
++            releaseFrontendGeometry();
++            return false;
++        }
++        frontendGeometryValues = next;
++        frontendGeometryValid = true;
++    }
++    return true;
++}
++
++bool Video::bindFrontendGeometry(std::size_t pass, GLint position, GLint coordinate,
++                                 bool first, bool last) {
++    if (pass >= frontendGeometryBindings.size()) return false;
++    auto& binding = frontendGeometryBindings[pass];
++    if (binding.vao && (binding.position != position || binding.coordinate != coordinate ||
++            binding.first != first || binding.last != last)) {
++        glDeleteVertexArrays(1, &binding.vao);
++        binding = {};
++    }
++    if (binding.vao) {
++        glBindVertexArray(binding.vao);
++        return true;
++    }
++    glGenVertexArrays(1, &binding.vao);
++    if (!binding.vao) return false;
++    binding.position = position; binding.coordinate = coordinate;
++    binding.first = first; binding.last = last;
++    glBindVertexArray(binding.vao);
++    glBindBuffer(GL_ARRAY_BUFFER, frontendGeometryBuffer);
++    if (position >= 0) {
++        const auto offset = (last ? 0u : 12u) * sizeof(float);
++        glVertexAttribPointer(position, 2, GL_FLOAT, GL_FALSE, 0,
++                              reinterpret_cast<const void*>(offset));
++        glEnableVertexAttribArray(position);
++    }
++    if (coordinate >= 0) {
++        const auto offset = (first ? 24u : 36u) * sizeof(float);
++        glVertexAttribPointer(coordinate, 2, GL_FLOAT, GL_FALSE, 0,
++                              reinterpret_cast<const void*>(offset));
++        glEnableVertexAttribArray(coordinate);
++    }
++    glBindBuffer(GL_ARRAY_BUFFER, 0);
++    if (glGetError() != GL_NO_ERROR) {
++        glBindVertexArray(0);
++        glDeleteVertexArrays(1, &binding.vao);
++        binding = {};
++        return false;
++    }
++    return true;
++}
++
+ void Video::renderFrame(bool force) {
+     bool shaderPending = !loadedShaderType.has_value() || !(loadedShaderType.value() == requestedShaderConfig);
+     if (!force && skipDuplicateFrames && !bfiEnabled && !isDirty && !shaderPending) {
+@@ -365,6 +474,9 @@
+         );
+     }
+ 
++    const bool cachedGeometry = prepareFrontendGeometry();
++    const bool canDiscardIntermediate = openGLESVersion >= 3 && !hwAccelerated &&
++        !externalFrames && hwRenderTexture == 0 && !frameDrawsBehind && !immersiveModeEnabled;
+     float originalTextureWidth = hwRenderTexture != 0 ? hwFBOWidth : getTextureWidth();
+     float originalTextureHeight = hwRenderTexture != 0 ? hwFBOHeight : getTextureHeight();
+     for (int i = 0; i < shadersChain.size(); ++i) {
+@@ -376,7 +488,15 @@
+         if (!isLastPass && !passData.framebuffer.has_value())
+             throw std::runtime_error("Missing intermediate shader framebuffer");
+         glBindFramebuffer(GL_FRAMEBUFFER, passData.framebuffer.value_or(0));
+-        if (!isLastPass) glClear(GL_COLOR_BUFFER_BIT);
++        if (!isLastPass) {
++            // Only exact audited fullscreen passes may discard old target contents.
++            if (canDiscardIntermediate && shader.trustedFullCoverage) {
++                const GLenum attachment = GL_COLOR_ATTACHMENT0;
++                glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &attachment);
++            } else {
++                glClear(GL_COLOR_BUFFER_BIT);
++            }
++        }
+ 
+         glViewport(
+             0,
+@@ -387,18 +507,22 @@
+ 
+         glUseProgram(shader.gProgram);
+ 
+-        auto vertices = isLastPass ? videoLayout.getForegroundVertices() : videoLayout.getFramebufferVertices();
+-        if (shader.gvPositionHandle != -1) {
+-            glVertexAttribPointer(shader.gvPositionHandle, 2, GL_FLOAT, GL_FALSE, 0, vertices.data());
+-            glEnableVertexAttribArray(shader.gvPositionHandle);
+-        }
+-
+-        auto coordinates = i == 0
+-            ? videoLayout.getTextureCoordinates()
+-            : videoLayout.getFramebufferTextureCoordinates();
+-        if (shader.gvCoordinateHandle != -1) {
+-            glVertexAttribPointer(shader.gvCoordinateHandle, 2, GL_FLOAT, GL_FALSE, 0, coordinates.data());
+-            glEnableVertexAttribArray(shader.gvCoordinateHandle);
++        const bool privateVao = cachedGeometry &&
++            bindFrontendGeometry(static_cast<std::size_t>(i), shader.gvPositionHandle,
++                                 shader.gvCoordinateHandle, i == 0, isLastPass);
++        const auto& vertices = isLastPass ? videoLayout.getForegroundVertices() : videoLayout.getFramebufferVertices();
++        const auto& coordinates = i == 0 ? videoLayout.getTextureCoordinates()
++                                         : videoLayout.getFramebufferTextureCoordinates();
++        if (!privateVao) {
++            if (cachedGeometry) glBindVertexArray(0);
++            if (shader.gvPositionHandle != -1) {
++                glVertexAttribPointer(shader.gvPositionHandle, 2, GL_FLOAT, GL_FALSE, 0, vertices.data());
++                glEnableVertexAttribArray(shader.gvPositionHandle);
++            }
++            if (shader.gvCoordinateHandle != -1) {
++                glVertexAttribPointer(shader.gvCoordinateHandle, 2, GL_FLOAT, GL_FALSE, 0, coordinates.data());
++                glEnableVertexAttribArray(shader.gvCoordinateHandle);
++            }
+         }
+ 
+         const GLuint immediateTexture = (i > 0 && passData.texture.has_value())
+@@ -539,9 +663,10 @@
+         if (shader.gFrameCountHandle != -1)
+             glUniform1i(shader.gFrameCountHandle, static_cast<GLint>(frameCount));
+ 
+-        if (shader.gFrameDirectionHandle != -1)
++        if (shader.gFrameDirectionHandle != -1 && writeSamplerBindings)
+             glUniform1i(shader.gFrameDirectionHandle, 1);
+-        if (shader.gCoreTransferHandle != -1)
++        if (shader.gCoreTransferHandle != -1 &&
++            shader.coreTransferValue.needsWrite(cacheSamplerBindings, {static_cast<float>(sourceTransfer)}))
+             glUniform1i(shader.gCoreTransferHandle, static_cast<GLint>(sourceTransfer));
+         if (shader.gGyroscopeHandle != -1)
+             glUniform3fv(shader.gGyroscopeHandle, 1, shaderSensorState.data());
+@@ -550,7 +675,7 @@
+         if (shader.gAccelerometerRestHandle != -1)
+             glUniform3fv(shader.gAccelerometerRestHandle, 1, shaderSensorState.data() + 6);
+ 
+-        if (shader.gMVPMatrixHandle != -1) {
++        if (shader.gMVPMatrixHandle != -1 && writeSamplerBindings) {
+             static const GLfloat identity[16] = {
+                 1, 0, 0, 0,
+                 0, 1, 0, 0,
+@@ -562,8 +687,12 @@
+ 
+         glDrawArrays(GL_TRIANGLES, 0, 6);
+ 
+-        if (shader.gvPositionHandle != -1) glDisableVertexAttribArray(shader.gvPositionHandle);
+-        if (shader.gvCoordinateHandle != -1) glDisableVertexAttribArray(shader.gvCoordinateHandle);
++        if (privateVao) {
++            glBindVertexArray(0);
++        } else {
++            if (shader.gvPositionHandle != -1) glDisableVertexAttribArray(shader.gvPositionHandle);
++            if (shader.gvCoordinateHandle != -1) glDisableVertexAttribArray(shader.gvCoordinateHandle);
++        }
+ 
+         for (int unit = 1; unit < nextTextureUnit; ++unit) {
+             glActiveTexture(GL_TEXTURE0 + unit);
+@@ -604,7 +733,7 @@
+     return renderer->lastFrameSize.second;
+ }
+ 
+-std::vector<uint8_t> Video::captureRawFrame(int& outWidth, int& outHeight) {
++std::vector<uint8_t> Video::captureRawFrame(int& outWidth, int& outHeight, unsigned maxWidth) {
+     constexpr size_t maxCapturePixels = 128u * 1024u * 1024u / 4u;
+     {
+         std::lock_guard<std::mutex> lock(frameMutex);
+@@ -648,9 +777,17 @@
+         }
+     }
+ 
+-    outWidth = (int)getTextureWidth();
+-    outHeight = (int)getTextureHeight();
++    const int sourceWidth = (int)getTextureWidth();
++    const int sourceHeight = (int)getTextureHeight();
++    outWidth = sourceWidth;
++    outHeight = sourceHeight;
+     if (outWidth <= 0 || outHeight <= 0) return {};
++    const bool downscale = maxWidth > 0 && static_cast<unsigned>(sourceWidth) > maxWidth;
++    if (downscale) {
++        outWidth = static_cast<int>(maxWidth);
++        outHeight = std::max(1, static_cast<int>((uint64_t(sourceHeight) * maxWidth +
++            sourceWidth / 2u) / static_cast<unsigned>(sourceWidth)));
++    }
+     if (static_cast<size_t>(outWidth) > maxCapturePixels / static_cast<size_t>(outHeight)) return {};
+     const size_t pixelCount = static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight);
+     // Raw capture samples the same imported texture outside the normal draw.
+@@ -660,6 +797,15 @@
+     // FP16 AHBs are sampleable but need not be renderable/readable as RGBA/UBYTE.
+     // Resolve raw source code values to an ordinary RGBA8 target first. This
+     // deliberately bypasses picture filters and the window's PQ output wrapper.
++    // Keep at most 8 MiB of capture targets; larger captures remain temporary.
++    constexpr size_t retainedCapturePixels = 8u * 1024u * 1024u / 4u;
++    const bool retain = pixelCount <= retainedCapturePixels;
++    RawCaptureCache temporary;
++    auto& resources = retain ? rawCapture : temporary;
++    const auto context = eglGetCurrentContext();
++    if (context == EGL_NO_CONTEXT) return {};
++    if (resources.context != context) resources.release();
++    resources.context = context;
+     struct CaptureTarget {
+         GLint framebuffer = 0, program = 0, activeTexture = GL_TEXTURE0;
+         GLint texture = 0, arrayBuffer = 0, packAlignment = 4, viewport[4] {};
+@@ -671,14 +817,20 @@
+         GLboolean colorMask[4] {};
+         const GLenum caps[5] { GL_BLEND, GL_DEPTH_TEST, GL_SCISSOR_TEST, GL_CULL_FACE, GL_STENCIL_TEST };
+         GLboolean enabled[5] {};
+-        GLuint target = 0, fbo = 0, copyProgram = 0, copyVao = 0, copyBuffer = 0;
++        RawCaptureCache& resources;
++        bool retain;
++        GLuint &target, &fbo, &copyProgram, &copyVao, &copyBuffer;
+         GLuint source = 0;
+         GLint minFilter = GL_NEAREST, magFilter = GL_NEAREST;
+         struct Attribute {
+             GLint index = -1, enabled = 0, size = 4, type = GL_FLOAT, normalized = 0, stride = 0, buffer = 0;
+             void* pointer = nullptr;
+         } attributes[2];
+-        explicit CaptureTarget(GLuint sourceTexture, bool supportsEs3) : source(sourceTexture) {
++        explicit CaptureTarget(GLuint sourceTexture, bool supportsEs3, bool linear,
++                               RawCaptureCache& cache, bool keep)
++            : resources(cache), retain(keep), target(cache.target), fbo(cache.fbo),
++              copyProgram(cache.copyProgram), copyVao(cache.copyVao), copyBuffer(cache.copyBuffer),
++              source(sourceTexture) {
+             es3 = supportsEs3;
+             glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+             glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+@@ -702,7 +854,7 @@
+                 glGetIntegerv(GL_SAMPLER_BINDING, &sampler);
+                 glBindSampler(0, 0);
+                 glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+-                glGenVertexArrays(1, &copyVao);
++                if (!copyVao) glGenVertexArrays(1, &copyVao);
+                 glBindVertexArray(copyVao);
+                 rasterizerDiscard = glIsEnabled(GL_RASTERIZER_DISCARD);
+                 glDisable(GL_RASTERIZER_DISCARD);
+@@ -711,8 +863,8 @@
+             glBindTexture(GL_TEXTURE_2D, source);
+             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minFilter);
+             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &magFilter);
+-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+         }
+         void saveAttribute(size_t slot, GLint index) {
+             if (es3) return; // private VAO owns every changed attribute on ES3
+@@ -754,24 +906,35 @@
+             glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+             glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
+             for (size_t i = 0; i < 5; ++i) if (enabled[i]) glEnable(caps[i]);
+-            if (copyProgram) glDeleteProgram(copyProgram);
+-            if (fbo) glDeleteFramebuffers(1, &fbo);
+-            if (target) glDeleteTextures(1, &target);
+-            if (copyVao) glDeleteVertexArrays(1, &copyVao);
+-            if (copyBuffer) glDeleteBuffers(1, &copyBuffer);
++            if (!retain) resources.release();
+         }
+-    } capture(hwRenderTexture != 0 ? hwRenderTexture : renderer->getTexture(), openGLESVersion >= 3);
+-    glGenTextures(1, &capture.target);
+-    glBindTexture(GL_TEXTURE_2D, capture.target);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, outWidth, outHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+-    glGenFramebuffers(1, &capture.fbo);
++    } capture(hwRenderTexture != 0 ? hwRenderTexture : renderer->getTexture(),
++              openGLESVersion >= 3, downscale, resources, retain);
++    if (openGLESVersion >= 3 && !capture.copyVao) return {};
++    if (!capture.target) {
++        glGenTextures(1, &capture.target);
++        if (!capture.target) return {};
++        glBindTexture(GL_TEXTURE_2D, capture.target);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    } else {
++        glBindTexture(GL_TEXTURE_2D, capture.target);
++    }
++    const bool resize = resources.width != outWidth || resources.height != outHeight;
++    if (resize)
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, outWidth, outHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++    if (!capture.fbo) glGenFramebuffers(1, &capture.fbo);
++    if (!capture.fbo) return {};
+     glBindFramebuffer(GL_FRAMEBUFFER, capture.fbo);
+     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, capture.target, 0);
+-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return {};
++    const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
++    if (!complete || glGetError() != GL_NO_ERROR) {
++        resources.width = resources.height = 0;
++        return {};
++    }
++    resources.width = outWidth; resources.height = outHeight;
+ 
+     const char* rawVertex =
+         "#ifdef GL_FRAGMENT_PRECISION_HIGH\n#define CAPTURE_P highp\n#else\n#define CAPTURE_P mediump\n#endif\n"
+@@ -781,25 +944,31 @@
+         "#ifdef GL_FRAGMENT_PRECISION_HIGH\n#define CAPTURE_P highp\n#else\n#define CAPTURE_P mediump\n#endif\n"
+         "precision CAPTURE_P float; uniform CAPTURE_P sampler2D texture; varying CAPTURE_P vec2 coords;\n"
+         "void main() { gl_FragColor = vec4(texture2D(texture, coords).rgb, 1.0); }\n";
+-    capture.copyProgram = createProgram(rawVertex, rawFragment);
+-    if (!capture.copyProgram) return {};
++    if (!capture.copyProgram) {
++        capture.copyProgram = createProgram(rawVertex, rawFragment);
++        if (!capture.copyProgram) return {};
++        resources.textureUniform = glGetUniformLocation(capture.copyProgram, "texture");
++        resources.position = glGetAttribLocation(capture.copyProgram, "vPosition");
++        resources.coordinate = glGetAttribLocation(capture.copyProgram, "vCoordinate");
++    }
+     glUseProgram(capture.copyProgram);
+     glViewport(0, 0, outWidth, outHeight);
+     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+     glBindTexture(GL_TEXTURE_2D, capture.source);
+-    glUniform1i(glGetUniformLocation(capture.copyProgram, "texture"), 0);
++    glUniform1i(resources.textureUniform, 0);
+     const float u = hwRenderTexture != 0 && hwFBOWidth > 0
+-        ? std::min(1.f, static_cast<float>(outWidth) / hwFBOWidth) : 1.f;
++        ? std::min(1.f, static_cast<float>(sourceWidth) / hwFBOWidth) : 1.f;
+     const float v = hwRenderTexture != 0 && hwFBOHeight > 0
+-        ? std::min(1.f, static_cast<float>(outHeight) / hwFBOHeight) : 1.f;
++        ? std::min(1.f, static_cast<float>(sourceHeight) / hwFBOHeight) : 1.f;
+     const GLfloat vertices[] { -1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1 };
+     const GLfloat coordinates[] { 0,0, u,0, 0,v, 0,v, u,0, u,v };
+-    const GLint position = glGetAttribLocation(capture.copyProgram, "vPosition");
+-    const GLint coordinate = glGetAttribLocation(capture.copyProgram, "vCoordinate");
++    const GLint position = resources.position;
++    const GLint coordinate = resources.coordinate;
+     if (position < 0 || coordinate < 0) return {};
+     capture.saveAttribute(0, position);
+     capture.saveAttribute(1, coordinate);
+-    glGenBuffers(1, &capture.copyBuffer);
++    if (!capture.copyBuffer) glGenBuffers(1, &capture.copyBuffer);
++    if (!capture.copyBuffer) return {};
+     glBindBuffer(GL_ARRAY_BUFFER, capture.copyBuffer);
+     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices) + sizeof(coordinates), nullptr, GL_STREAM_DRAW);
+     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+@@ -940,6 +1109,8 @@
+ }
+ 
+ Video::~Video() {
++    rawCapture.release();
++    releaseFrontendGeometry();
+     for (auto& entry : shadersChain) {
+         if (entry.gProgram) glDeleteProgram(entry.gProgram);
+     }
+@@ -1055,13 +1226,19 @@
+ }
+ 
+ void Video::bindHWContext() {
+-    if (hwCtx != EGL_NO_CONTEXT) {
++    if (hwCtx != EGL_NO_CONTEXT &&
++        (eglGetCurrentContext() != hwCtx || eglGetCurrentDisplay() != eglDisplay ||
++         eglGetCurrentSurface(EGL_DRAW) != eglSurface || eglGetCurrentSurface(EGL_READ) != eglSurface)) {
++        GameTraceScope trace("AmbientGame EGL core context");
+         eglMakeCurrent(eglDisplay, eglSurface, eglSurface, hwCtx);
+     }
+ }
+ 
+ void Video::bindMainContext() {
+-    if (mainCtx != EGL_NO_CONTEXT) {
++    if (mainCtx != EGL_NO_CONTEXT &&
++        (eglGetCurrentContext() != mainCtx || eglGetCurrentDisplay() != eglDisplay ||
++         eglGetCurrentSurface(EGL_DRAW) != eglSurface || eglGetCurrentSurface(EGL_READ) != eglSurface)) {
++        GameTraceScope trace("AmbientGame EGL frontend context");
+         eglMakeCurrent(eglDisplay, eglSurface, eglSurface, mainCtx);
+     }
+ }
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -300,2 +300,2 @@
+-std::vector<uint8_t> LibretroDroid::captureRawFrame(int& outWidth, int& outHeight) {
++std::vector<uint8_t> LibretroDroid::captureRawFrame(int& outWidth, int& outHeight, unsigned maxWidth) {
+     if (video == nullptr || VulkanBackend::getInstance().hasFatalError()) {
+@@ -308,5 +308,5 @@
+-    // The bridge always retains the latest source, even when native WSI hid GLES.
+-    // Restore its primary picture too, so a following menu/fallback is immediately ready.
+-    renderPrimaryFrame(true);
+-    return video->captureRawFrame(outWidth, outHeight);
++    // Only native WSI needs a forced draw to restore its hidden GLES picture.
++    if (video->presentsExternalFrames()) renderPrimaryFrame(true);
++    else if (video->isHWAccelerated()) video->bindMainContext();
++    return video->captureRawFrame(outWidth, outHeight, maxWidth);
+ }
+@@ -358,7 +358,8 @@
+     struct retro_system_av_info system_av_info {};
+     core->retro_get_system_av_info(&system_av_info);
+ 
++    if (video) video->abandonFrontendResources();
+     // GLSurfaceView calls onSurfaceCreated for a newly created EGL context.
+     // Never reuse the preceding generation's bridge just because its dimensions
+     // match. Keep the old EGL lease alive while retiring the Vulkan import;
+     // invalidating its context also prevents GL deletion on a recycled handle.
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -94,3 +94,3 @@
+-    std::vector<uint8_t> captureRawFrame(int& outWidth, int& outHeight);
++    std::vector<uint8_t> captureRawFrame(int& outWidth, int& outHeight, unsigned maxWidth = 0);
+ 
+     void onSurfaceCreated();
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -266,16 +266,26 @@
+-JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_captureRawFrame(
+-    JNIEnv* env,
+-    jclass obj
+-) {
+-    int w, h;
+-    auto pixels = LibretroDroid::getInstance().captureRawFrame(w, h);
+-    if (pixels.empty()) return nullptr;
+-
+-    jsize totalSize = 8 + (jsize)pixels.size();
+-    jbyteArray result = env->NewByteArray(totalSize);
+-    int32_t dims[2] = { w, h };
+-    env->SetByteArrayRegion(result, 0, 8, reinterpret_cast<jbyte*>(dims));
+-    env->SetByteArrayRegion(result, 8, (jsize)pixels.size(),
+-        reinterpret_cast<const jbyte*>(pixels.data()));
+-    return result;
++static jbyteArray captureRawFrameBytes(JNIEnv* env, unsigned maxWidth) {
++    int w, h;
++    auto pixels = LibretroDroid::getInstance().captureRawFrame(w, h, maxWidth);
++    if (pixels.empty()) return nullptr;
++
++    jsize totalSize = 8 + (jsize)pixels.size();
++    jbyteArray result = env->NewByteArray(totalSize);
++    if (!result) return nullptr;
++    int32_t dims[2] = { w, h };
++    env->SetByteArrayRegion(result, 0, 8, reinterpret_cast<jbyte*>(dims));
++    env->SetByteArrayRegion(result, 8, (jsize)pixels.size(),
++        reinterpret_cast<const jbyte*>(pixels.data()));
++    return result;
++}
++
++JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_captureRawFrame(
++    JNIEnv* env, jclass obj
++) {
++    return captureRawFrameBytes(env, 0);
++}
++
++JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_captureRawFrameScaled(
++    JNIEnv* env, jclass obj, jint maxWidth
++) {
++    return captureRawFrameBytes(env, maxWidth > 0 ? static_cast<unsigned>(maxWidth) : 0u);
+ }
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -175,3 +175,4 @@
+     public static native byte[] captureRawFrame();
++    public static native byte[] captureRawFrameScaled(int maxWidth);
+ 
+     public static native void setCheat(int index, boolean enable, String code);
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -488,3 +488,3 @@
+-    fun getSerializeSize(): Long = runOnGLThread {
++    fun getSerializeSize(): Long = runOnGLThread(wakePresentation = false) {
+         LibretroDroid.getSerializeSize()
+     }
+@@ -529,3 +529,3 @@
+-    fun getMemoryData(memoryType: Int): ByteArray? = runOnGLThread {
++    fun getMemoryData(memoryType: Int): ByteArray? = runOnGLThread(wakePresentation = false) {
+         LibretroDroid.getMemoryData(memoryType)
+     }
+@@ -541,3 +541,3 @@
+-    fun getMemorySize(memoryType: Int): Int = runOnGLThread {
++    fun getMemorySize(memoryType: Int): Int = runOnGLThread(wakePresentation = false) {
+         LibretroDroid.getMemorySize(memoryType)
+     }
+@@ -551,3 +551,4 @@
+-    fun captureRawFrame(): Bitmap? = runOnGLThread {
+-        val data = LibretroDroid.captureRawFrame()
++    fun captureRawFrame(maxWidth: Int = 0): Bitmap? = runOnGLThread {
++        val data = if (maxWidth > 0) LibretroDroid.captureRawFrameScaled(maxWidth)
++                   else LibretroDroid.captureRawFrame()
+         if (data == null || data.size < 8) return@runOnGLThread null
+@@ -620,3 +621,3 @@
+-    fun getVariables(): Array<Variable> = runOnGLThread {
++    fun getVariables(): Array<Variable> = runOnGLThread(wakePresentation = false) {
+         LibretroDroid.getVariables()
+     }

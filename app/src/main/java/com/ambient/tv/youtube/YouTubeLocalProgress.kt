@@ -146,6 +146,7 @@ object YouTubeLocalProgress {
     fun discardLive(videoId: String) {
         val before = knownPercent(videoId)
         lastRemote.remove(videoId)
+        remoteBeforeReady.remove(videoId)
         val removed = entries.remove(videoId) != null
         // A live stream identified before cold loading must not resurrect an old VOD clock.
         if (removed || (database != null && !loaded)) persist(videoId, immediate = true)

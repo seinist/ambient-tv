@@ -18,10 +18,11 @@
 #   ./build.sh monogram       # build ONLY Monogram's native MTProto AAR, opt-in
 #   ./build.sh monogram-check / monogram-update  # check/update only the Monogram pin
 #   ./build.sh monogram-size [arm64|armv7|x86|x86_64|all]  # compare complete release APK sizes
-#   ./build.sh cores [id[,id...]]  # build pinned Libretro cores on GitHub Actions
+#   ./build.sh cores [id[,id...]] [--profile ...] [--abis ...]  # build pinned Libretro cores on GitHub Actions
 #   ./build.sh cores-key [--manual]  # configure signing or prepare the key for a browser upload
 #   ./build.sh cores-release      # build and publish all signed Libretro cores
 #   ./build.sh cores-status       # show recent Core workflow runs
+#   ./build.sh cores-rename-releases [--apply] # normalize release titles, never tags/assets
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
@@ -471,6 +472,9 @@ projectm_libs_ready() {
     [[ -f "$marker" ]] || return 1
     grep -Fx "projectm_ref=${expected_ref}" "$marker" >/dev/null || return 1
     grep -Fx "pcm_tap_api=1" "$marker" >/dev/null || return 1
+    local fingerprint
+    fingerprint="$(bash "$PROJECTM_SCRIPT" --fingerprint)" || return 1
+    grep -Fx "fingerprint=${fingerprint}" "$marker" >/dev/null || return 1
     for abi in "${SUPPORTED_ABIS[@]}"; do
         local dir="$ROOT_DIR/app/src/main/jniLibs/$abi"
         [[ -s "$dir/libprojectM-4.so" && -s "$dir/libambientprojectm.so" ]] || return 1
@@ -514,7 +518,7 @@ youtube_engine_ready() {
     local shared="$ROOT_DIR/third_party/smarttube/SharedModules"
     [[ -f "$engine_version" ]] || return 1
     [[ -d "$msc/.git" && -d "$shared/.git" ]] || return 1
-    grep -Fx 'COMPAT_PATCHSET=live-v106' "$engine_version" >/dev/null || return 1
+    grep -Fx 'COMPAT_PATCHSET=live-v113' "$engine_version" >/dev/null || return 1
     grep -Fx 'BUILD_INTEGRATION=host-wrappers-live-patch' "$engine_version" >/dev/null || return 1
     grep -Fx 'JVM_TARGET=17' "$engine_version" >/dev/null || return 1
     grep -Fx 'CRONET=143.7445.0' "$engine_version" >/dev/null || return 1
@@ -1287,14 +1291,14 @@ clean_android() {
 
 list_public_core_runs() {
     local repo="$1"
-    command -v python3 >/dev/null 2>&1 || fail "Install Python 3 or open https://github.com/$repo/actions/workflows/cores.yml."
+    command -v python3 >/dev/null 2>&1 || fail "Install Python 3 or open https://github.com/$repo/actions/workflows/cores-all.yml."
     python3 - "$repo" <<'PY_CORE_RUNS'
 import json
 import sys
 from urllib.request import Request, urlopen
 
 repo = sys.argv[1]
-workflow = "actions/workflows/cores.yml"
+workflow = "actions/workflows/cores-all.yml"
 url = f"https://api.github.com/repos/{repo}/{workflow}/runs?branch=main&per_page=20"
 request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "ambient-tv-build"})
 try:
@@ -1317,19 +1321,60 @@ run_cores_command() {
     local repo="seinist/ambient-tv"
     local secret_query='.[] | select(.name == "CORES_SIGNING_KEY") | .name'
     local signing_secret
-    local -a workflow=(workflow run cores.yml --repo "$repo" --ref main)
+    local -a workflow=(workflow run cores-all.yml --repo "$repo" --ref main)
     local has_gh=0
     if command -v gh >/dev/null 2>&1; then has_gh=1; fi
-    if [[ "$has_gh" == 0 && ( "$1" == cores || "$1" == cores-release ) ]]; then
+    if [[ "$has_gh" == 0 && ( "$1" == cores || "$1" == cores-release || "$1" == cores-rename-releases ) ]]; then
         fail "For terminal access install GitHub CLI (gh), or use https://github.com/$repo/actions/workflows/cores.yml in your browser."
     fi
 
     case "$1" in
         cores)
-            [[ $# -le 2 ]] || fail "Usage: $0 cores [id[,id...]]"
+            shift
             local -a inputs=(-f publish=false)
-            if [[ -n "${2:-}" ]]; then inputs+=(-f "cores=$2"); fi
-            gh "${workflow[@]}" "${inputs[@]}"
+            local selected="" profile="baseline" abis="" comparison="none" core_ref="main" publish_experimental=false force_rebuild=false
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --profile)
+                        [[ $# -ge 2 ]] || fail "--profile requires baseline, optimized, optimized-a57 or an internal diagnostic profile"
+                        profile="$2"; shift 2 ;;
+                    --abis)
+                        [[ $# -ge 2 ]] || fail "--abis requires a comma-separated ABI list"
+                        abis="$2"; shift 2 ;;
+                    --publish-experimental)
+                        publish_experimental=true; shift ;;
+                    --force)
+                        force_rebuild=true; shift ;;
+                    --comparison)
+                        [[ $# -ge 2 ]] || fail "--comparison requires baseline-thinlto or o3-o3-thinlto"
+                        comparison="$2"; shift 2 ;;
+                    --ref)
+                        [[ $# -ge 2 && -n "$2" ]] || fail "--ref requires a branch or tag"
+                        core_ref="$2"; shift 2 ;;
+                    -*)
+                        fail "Unknown cores option: $1" ;;
+                    *)
+                        [[ -z "$selected" ]] || fail "Specify core ids as one comma-separated argument"
+                        selected="$1"; shift ;;
+                esac
+            done
+            case "$profile" in baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths) ;; *) fail "Unknown core profile: $profile" ;; esac
+            if [[ -n "$selected" ]]; then inputs+=(-f "cores=$selected"); fi
+            if [[ -n "$abis" ]]; then inputs+=(-f "abis=$abis"); fi
+            if [[ "$profile" != baseline ]]; then inputs+=(-f "profile=$profile"); fi
+            case "$comparison" in none|baseline-thinlto|o3-o3-thinlto) ;; *) fail "Unknown comparison: $comparison" ;; esac
+            if [[ "$comparison" != none ]]; then
+                [[ "$profile" == baseline ]] || fail "Paired comparisons require the baseline profile"
+                inputs+=(-f "comparison=$comparison")
+            fi
+            if [[ "$publish_experimental" == true ]]; then
+                [[ "$core_ref" == main && ( "$profile" == optimized || "$profile" == optimized-a57 ) && "$comparison" == none ]] || fail "Experimental release requires main, optimized or optimized-a57, and no comparison"
+                inputs+=(-f publish_experimental=true)
+                if [[ "$force_rebuild" == true ]]; then inputs+=(-f force_rebuild=true); fi
+            elif [[ "$force_rebuild" == true ]]; then
+                fail "--force is for publishing; artifact-only runs always rebuild their selection"
+            fi
+            gh workflow run cores.yml --repo "$repo" --ref "$core_ref" "${inputs[@]}"
             ;;
         cores-key)
             [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --manual ) ]] || fail "Usage: $0 cores-key [--manual]"
@@ -1340,19 +1385,43 @@ run_cores_command() {
             bash "$ROOT_DIR/scripts/cores_signing_key.sh" "$repo" "${@:2}"
             ;;
         cores-release)
-            [[ $# -eq 1 ]] || fail "Usage: $0 cores-release"
+            [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --force ) ]] || fail "Usage: $0 cores-release [--force]"
             gh api --silent "repos/$repo/contents/cores/signing-public.pem?ref=main" ||
                 fail "The public signing key must be on GitHub main. Run $0 cores-key for initial setup, then commit and push cores/signing-public.pem."
             # Workflow dispatch can be allowed even when listing repository secrets is forbidden.
             if signing_secret="$(gh secret list --repo "$repo" --json name --jq "$secret_query" 2>/dev/null)"; then
                 [[ -n "$signing_secret" ]] || fail "CORES_SIGNING_KEY is missing on GitHub. Set up core signing before publishing."
             fi
-            gh "${workflow[@]}" -f publish=true
+            local -a release_inputs=()
+            if [[ "${2:-}" == --force ]]; then release_inputs+=(-f force_rebuild=true); fi
+            gh "${workflow[@]}" "${release_inputs[@]}"
+            ;;
+        cores-rename-releases)
+            [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --apply ) ]] || fail "Usage: $0 cores-rename-releases [--apply]"
+            local rows tag old title profile date run
+            rows="$(gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.draft == false) | [.tag_name,.name] | @tsv')"
+            while IFS=$'\t' read -r tag old; do
+                if [[ "$tag" =~ ^cores-([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]+)(-[0-9]+)?$ ]]; then
+                    date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+                    title="Ambient TV cores"
+                elif [[ "$tag" =~ ^core-experiments-(optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
+                    profile="${BASH_REMATCH[1]}"
+                    date="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}"
+                    title="Ambient TV cores – $profile"
+                else
+                    continue
+                fi
+                [[ "$old" != "$title" ]] || continue
+                printf '%s: %s\n' "$tag" "$title"
+                if [[ "${2:-}" == --apply ]]; then
+                    gh release edit "$tag" --repo "$repo" --title "$title" || return 1
+                fi
+            done <<< "$rows"
             ;;
         cores-status)
             [[ $# -eq 1 ]] || fail "Usage: $0 cores-status"
             if [[ "$has_gh" == 1 ]]; then
-                gh run list --repo "$repo" --workflow cores.yml --branch main
+                gh run list --repo "$repo" --workflow cores-all.yml --branch main
             else
                 list_public_core_runs "$repo"
             fi
@@ -1374,12 +1443,16 @@ Libraries: libs-check [svp|monogram|libretro|moonlight], libs-update [svp|monogr
            monogram-check, monogram-update, monogram-size [abi|all]
 
 Libretro cores on GitHub Actions (main):
-  cores [id[,id...]]   Build artifacts only. Omit IDs to build all cores (gh).
+  cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths] [--abis ABI[,ABI...]]
+        [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch] [--publish-experimental [--force]]
+                      Build artifacts by default. --publish-experimental signs optimized or optimized-a57 on main; other profiles are diagnostic only.
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
-  cores-release       Build and publish the full signed core catalog (gh).
+  cores-release [--force]  Build/publish baseline, optimized and optimized-a57 in one run; --force rebuilds all.
   cores-status        Show recent Core workflow runs using gh or the public API (Python 3).
-  Browser workflow    https://github.com/seinist/ambient-tv/actions/workflows/cores.yml
+  cores-rename-releases [--apply]  Preview or update only core release titles (gh).
+  Release workflow    https://github.com/seinist/ambient-tv/actions/workflows/cores-all.yml
+  Single profile      https://github.com/seinist/ambient-tv/actions/workflows/cores.yml
 EOT
 }
 
@@ -1393,7 +1466,7 @@ case "$MODE" in
         print_usage
         exit 0
         ;;
-    cores|cores-key|cores-release|cores-status)
+    cores|cores-key|cores-release|cores-status|cores-rename-releases)
         run_cores_command "$@"
         exit 0
         ;;

@@ -1,0 +1,163 @@
+diff --git a/src/main/cpp/renderers/es3/imagerendereres3.cpp b/src/main/cpp/renderers/es3/imagerendereres3.cpp
+--- a/src/main/cpp/renderers/es3/imagerendereres3.cpp
++++ b/src/main/cpp/renderers/es3/imagerendereres3.cpp
+@@ -34,54 +34,70 @@
+ }
+ 
+ void ImageRendererES3::onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch) {
++    constexpr auto maximum = std::numeric_limits<size_t>::max();
++    constexpr auto maxGLSize = std::numeric_limits<GLsizei>::max();
++    if (!data || width == 0 || height == 0 || width > maxGLSize || height > maxGLSize ||
++        glInternalFormat == 0 || size_t(width) > maximum / bytesPerPixel) return;
++    const size_t rowBytes = size_t(width) * bytesPerPixel;
++    if (pitch < rowBytes || height > maximum / rowBytes ||
++        size_t(height - 1) > (maximum - rowBytes) / pitch) return;
++
++    const void* uploadData = data;
++    size_t uploadPitch = pitch;
+     if (pixelFormat == RETRO_PIXEL_FORMAT_0RGB1555) {
+-        const auto maximum = std::numeric_limits<size_t>::max();
+-        if (!data || width == 0 || height == 0 || size_t(width) > maximum / sizeof(uint16_t)) return;
+-        const size_t rowBytes = size_t(width) * sizeof(uint16_t);
+-        if (pitch < rowBytes || height > maximum / rowBytes ||
+-            size_t(height - 1) > (maximum - rowBytes) / pitch) return;
+         convertDataFrom0RGB1555(data, width, height, pitch);
+-        data = rgb1555Upload.data();
+-        pitch = rowBytes;
+-    }
+-
+-    if (lastFrameSize.first != width || lastFrameSize.second != height || isDirty) {
+-        initializeTextures(width, height);
++        uploadData = packedUpload.data();
++        uploadPitch = rowBytes;
++    } else if (pitch % bytesPerPixel != 0 || pitch / bytesPerPixel > maxGLSize) {
++        // GLES3 expresses row length in whole pixels, not bytes. Repack only
++        // when the source stride cannot be represented, retaining its padding.
++        packedUpload.resize(rowBytes * height / sizeof(uint16_t));
++        auto* packed = reinterpret_cast<uint8_t*>(packedUpload.data());
++        for (unsigned y = 0; y < height; ++y) {
++            std::memcpy(packed + size_t(y) * rowBytes,
++                        static_cast<const uint8_t*>(data) + size_t(y) * pitch, rowBytes);
++        }
++        uploadData = packed;
++        uploadPitch = rowBytes;
+     }
+ 
+     glBindTexture(GL_TEXTURE_2D, currentTexture);
+-
+     glPixelStorei(GL_UNPACK_ALIGNMENT, bytesPerPixel);
+-    glPixelStorei(GL_UNPACK_ROW_LENGTH, pitch / bytesPerPixel);
++    glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(uploadPitch / bytesPerPixel));
++    updateTextureSampling();
+ 
+-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, data);
++    // Storage and channel swizzle belong to the actual uploaded format.
++    // Even if the dimensions are unchanged, RGB565, RGBA8 and RGB10_A2
++    // require different storage. Allocate and upload in a single call.
++    const bool sizeChanged = lastFrameSize.first != width || lastFrameSize.second != height;
++    const bool formatChanged = allocatedInternalFormat != glInternalFormat;
++    if (sizeChanged || formatChanged) {
++        glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 0, glFormat, glType, uploadData);
++        if (formatChanged) {
++            if (swapRedAndBlueChannels) applyGLSwizzle(GL_BLUE, GL_GREEN, GL_RED, GL_ALPHA);
++            else applyGLSwizzle(GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA);
++        }
++        allocatedInternalFormat = glInternalFormat;
++        if (sizeChanged) shaderPassesDirty = true;
++    } else {
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, uploadData);
++    }
+ 
+     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+-
+     glBindTexture(GL_TEXTURE_2D, 0);
+-
+     Renderer::onNewFrame(data, width, height, pitch);
+ }
+ 
+-void ImageRendererES3::initializeTextures(unsigned int width, unsigned int height) {
+-    shaderPassesDirty = true;
+-
+-    glBindTexture(GL_TEXTURE_2D, currentTexture);
+-    glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 0, glFormat, glType, nullptr);
++void ImageRendererES3::updateTextureSampling() {
++    if (samplingInitialized && appliedLinear == shaders.linearTexture) return;
++    if (!samplingInitialized) {
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    }
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, shaders.linearTexture ? GL_LINEAR : GL_NEAREST);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, shaders.linearTexture ? GL_LINEAR : GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-
+-    if (swapRedAndBlueChannels) {
+-        applyGLSwizzle(GL_BLUE, GL_GREEN, GL_RED, GL_ALPHA);
+-    } else {
+-        applyGLSwizzle(GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA);
+-    }
+-
+-    glBindTexture(GL_TEXTURE_2D, 0);
+-
+-    isDirty = false;
++    appliedLinear = shaders.linearTexture;
++    samplingInitialized = true;
+ }
+ 
+ void ImageRendererES3::applyGLSwizzle(int r, int g, int b, int a) {
+@@ -135,12 +151,12 @@
+ }
+ 
+ void ImageRendererES3::convertDataFrom0RGB1555(const void *data, unsigned int width, unsigned int height, size_t pitch) {
+-    rgb1555Upload.resize(size_t(width) * height);
++    packedUpload.resize(size_t(width) * height);
+     for (unsigned y = 0; y < height; ++y) for (unsigned x = 0; x < width; ++x) {
+         uint16_t pixel;
+         std::memcpy(&pixel, static_cast<const uint8_t*>(data) + size_t(y) * pitch + size_t(x) * 2u, 2u);
+         // Replicate the green MSB into the new LSB: white remains neutral white.
+-        rgb1555Upload[size_t(y) * width + x] = (pixel & 0x1fu) |
++        packedUpload[size_t(y) * width + x] = (pixel & 0x1fu) |
+             ((pixel & 0x7fe0u) << 1u) | ((pixel & 0x0200u) >> 4u);
+     }
+ }
+@@ -166,8 +182,7 @@
+     framebuffers = std::move(next);
+     // A filter change must retain the uploaded source, including while paused.
+     glBindTexture(GL_TEXTURE_2D, currentTexture);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, shaders.linearTexture ? GL_LINEAR : GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, shaders.linearTexture ? GL_LINEAR : GL_NEAREST);
++    updateTextureSampling();
+     glBindTexture(GL_TEXTURE_2D, 0);
+     passWidth = width;
+     passHeight = height;
+diff --git a/src/main/cpp/renderers/es3/imagerendereres3.h b/src/main/cpp/renderers/es3/imagerendereres3.h
+--- a/src/main/cpp/renderers/es3/imagerendereres3.h
++++ b/src/main/cpp/renderers/es3/imagerendereres3.h
+@@ -49,7 +49,7 @@
+     void prepareShaderPasses() override;
+ 
+ private:
+-    void initializeTextures(unsigned int width, unsigned int height);
++    void updateTextureSampling();
+     void applyGLSwizzle(int r, int g, int b, int a);
+     void convertDataFrom0RGB1555(const void *data, unsigned int width, unsigned int height, size_t pitch);
+ 
+@@ -61,13 +61,15 @@
+     unsigned int glInternalFormat = 0;
+     unsigned int glFormat = 0;
+ 
+-    bool isDirty = true;
+     bool shaderPassesDirty = true;
+     unsigned int passWidth = 0, passHeight = 0;
+ 
+     unsigned int currentTexture = 0;
+-    // Only legacy 1555 needs conversion. Other formats upload core data directly.
+-    std::vector<uint16_t> rgb1555Upload;
++    unsigned int allocatedInternalFormat = 0;
++    bool samplingInitialized = false;
++    bool appliedLinear = false;
++    // One scratch buffer for legacy 1555 or a stride not expressible in pixels.
++    std::vector<uint16_t> packedUpload;
+ 
+     ShaderManager::Chain shaders;
+     std::unique_ptr<ES3Utils::Framebuffers> framebuffers = std::make_unique<ES3Utils::Framebuffers>();

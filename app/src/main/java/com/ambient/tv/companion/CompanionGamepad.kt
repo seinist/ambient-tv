@@ -115,9 +115,16 @@ data class CompanionPointerState(
     val buttons: Int = 0, val offscreen: Boolean = false,
 ) {
     fun validate() {
-        require(kind in setOf("touch", "mouse", "gun"))
-        require(contacts.size <= 4 && contacts.map { it.index }.distinct().size == contacts.size)
-        contacts.forEach { it.validate() }
+        require(kind == "touch" || kind == "mouse" || kind == "gun")
+        require(contacts.size <= 4)
+        var seen = 0
+        for (i in contacts.indices) {
+            val contact = contacts[i]
+            contact.validate()
+            val bit = 1 shl contact.index
+            require(seen and bit == 0)
+            seen = seen or bit
+        }
         require(dx.isFinite() && dy.isFinite() && dx in -1f..1f && dy in -1f..1f)
         require(buttons in 0..15)
     }
@@ -132,8 +139,8 @@ data class CompanionMotionState(
 ) {
     fun validate() {
         require(mask in 0..3)
-        require(listOf(ax, ay, az).all { it.isFinite() && it in -16f..16f })
-        require(listOf(gx, gy, gz).all { it.isFinite() && it in -100f..100f })
+        require(validAxis(ax, 16f) && validAxis(ay, 16f) && validAxis(az, 16f))
+        require(validAxis(gx, 100f) && validAxis(gy, 100f) && validAxis(gz, 100f))
     }
 }
 
@@ -156,13 +163,30 @@ data class CompanionGamepadState(
 ) {
     fun validate() {
         require(buttons in 0..0xffff)
-        require(listOf(leftX, leftY, rightX, rightY).all { it.isFinite() && it in -1f..1f })
+        require(validAxis(leftX, 1f) && validAxis(leftY, 1f) &&
+            validAxis(rightX, 1f) && validAxis(rightY, 1f))
         require(leftTrigger == null || leftTrigger.isFinite() && leftTrigger in 0f..1f)
         require(rightTrigger == null || rightTrigger.isFinite() && rightTrigger in 0f..1f)
         require(sessionId.length <= 64 && (contextRevision == null || contextRevision >= 0L))
         require((sessionId.isEmpty()) == (contextRevision == null))
         pointer?.validate()
         motion?.validate()
+    }
+}
+
+private fun validAxis(value: Float, limit: Float): Boolean = value.isFinite() && value in -limit..limit
+
+/** Compare the ordered pressed indices without allocating filtered/mapped lists per sample. */
+private fun samePressedContacts(a: List<CompanionPointerContact>?, b: List<CompanionPointerContact>?): Boolean {
+    if (a === b) return true
+    if (a == null || b == null) return false
+    var i = 0
+    var j = 0
+    while (true) {
+        while (i < a.size && !a[i].pressed) i++
+        while (j < b.size && !b[j].pressed) j++
+        if (i == a.size || j == b.size) return i == a.size && j == b.size
+        if (a[i++].index != b[j++].index) return false
     }
 }
 
@@ -184,8 +208,7 @@ internal fun companionGamepadCriticalEdge(
         ((previous.leftTrigger ?: 0f) > 0f) != ((next.leftTrigger ?: 0f) > 0f) ||
         ((previous.rightTrigger ?: 0f) > 0f) != ((next.rightTrigger ?: 0f) > 0f) || a?.kind != b?.kind ||
         a?.buttons != b?.buttons || a?.offscreen != b?.offscreen ||
-        a?.contacts?.filter { it.pressed }?.map { it.index } !=
-            b?.contacts?.filter { it.pressed }?.map { it.index } ||
+        !samePressedContacts(a?.contacts, b?.contacts) ||
         previous.motion?.mask != next.motion?.mask
 }
 

@@ -76,6 +76,18 @@ fun quotedBuildConfigString(value: String): String =
 
 // Rewrites only the text between version markers in both READMEs (idempotent; no commit).
 // versionName: -PversionName (release builds pass the tag without "v") or VERSION_NAME from version.properties.
+// Explicit native performance experiments must never overwrite the production app.
+val libretroNativeProfile = providers.gradleProperty("LIBRETRO_NATIVE_PROFILE")
+    .orElse(providers.environmentVariable("LIBRETRO_NATIVE_PROFILE"))
+    .orElse("baseline").get()
+val libretroNativeExperiment = libretroNativeProfile != "baseline"
+require(libretroNativeProfile in setOf("baseline", "o3", "thinlto", "o3-thinlto")) {
+    "Unknown LIBRETRO_NATIVE_PROFILE: $libretroNativeProfile"
+}
+require(!libretroNativeExperiment || providers.gradleProperty("LIBRETRO_NATIVE_EXPERIMENT").orNull == "true") {
+    "Native performance candidates require -PLIBRETRO_NATIVE_EXPERIMENT=true; production builds use baseline."
+}
+
 val appVersionName: String = (project.findProperty("versionName") as? String)?.trim()?.takeIf(String::isNotEmpty)
     ?: loadProjectProperties("version.properties").getProperty("VERSION_NAME", "").trim().takeIf(String::isNotEmpty)
     ?: error("version.properties must contain VERSION_NAME")
@@ -193,6 +205,27 @@ if (monogramEnabled) {
     require(stamp.readLines().contains("patch=$patchHash")) {
         "Monogram Native patch changed; rebuild the MTProto AAR"
     }
+    val builderHash = MessageDigest.getInstance("SHA-256")
+        .digest(file("../scripts/build_monogram_native.sh").readBytes())
+        .joinToString("") { "%02x".format(it) }
+    require(stampLines.contains("builder=$builderHash") &&
+        stampLines.any { it.startsWith("build_config=") } &&
+        stampLines.contains("opt_level=" + (providers.environmentVariable("MONOGRAM_OPT_LEVEL").orNull ?: "2")) &&
+        stampLines.contains("cpu_tune=" + (providers.environmentVariable("MONOGRAM_CPU_TUNE").orNull ?: "generic")) &&
+        stampLines.contains("pgo_mode=" + (providers.environmentVariable("MONOGRAM_PGO_MODE").orNull ?: "off"))) {
+        "Monogram native compiler configuration changed; rebuild with ./build.sh monogram"
+    }
+    require((providers.environmentVariable("MONOGRAM_CPU_TUNE").orNull ?: "generic") != "cortex-a57" ||
+        selectedAbis == listOf("arm64-v8a")) { "Cortex-A57 Monogram is ARM64-only" }
+    val pgoMode = providers.environmentVariable("MONOGRAM_PGO_MODE").orNull ?: "off"
+    require(pgoMode in listOf("off", "generate", "use") && (pgoMode == "off" || selectedAbis.size == 1)) {
+        "Monogram PGO requires an explicit single ABI"
+    }
+    if (pgoMode == "use") {
+        val profile = file(requireNotNull(providers.environmentVariable("MONOGRAM_PGO_PROFILE").orNull))
+        val digest = MessageDigest.getInstance("SHA-256").digest(profile.readBytes()).joinToString("") { "%02x".format(it) }
+        require(stampLines.contains("pgo_profile=$digest")) { "Monogram PGO profile changed; rebuild the native AAR" }
+    }
     ZipFile(monogramAar).use { aar ->
         val missing = selectedAbis.filter { aar.getEntry("jni/$it/libmonogram_mtproto.so") == null }
         require(missing.isEmpty()) {
@@ -225,7 +258,11 @@ android {
             }
         }
     }
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
     ndkVersion = "30.0.16248370"
     if (moonlightNative) {
         // Only the Ambient TV adapter to the official GameStream protocol. No upstream UI.
@@ -262,6 +299,12 @@ android {
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
+        buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
+        val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
+        buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", monogramPgoGenerate.toString())
+        buildConfigField("String", "MONOGRAM_PGO_STAMP", quotedBuildConfigString(
+            if (monogramPgoGenerate) file("libs/.monogram-native-version").readText() else ""))
+        buildConfigField("boolean", "MONOGRAM_PERF_COUNTERS", (providers.environmentVariable("MONOGRAM_PERF_COUNTERS").orNull == "1").toString())
         buildConfigField("boolean", "MOONLIGHT_EXPERIMENTAL", (moonlightExperimental || moonlightNative).toString())
         buildConfigField("boolean", "MOONLIGHT_NATIVE", moonlightNative.toString())
         buildConfigField("String", "MOONLIGHT_UPSTREAM_REF", quotedBuildConfigString(externalVersion("MOONLIGHT_ANDROID_REF")))
@@ -361,6 +404,11 @@ android {
             applicationIdSuffix = providers.gradleProperty("AUDIT_APP_SUFFIX").orNull
         }
         release {
+            if (libretroNativeExperiment) {
+                applicationIdSuffix = ".nativeperf." + libretroNativeProfile.replace("-", "")
+                versionNameSuffix = "-nativeperf-$libretroNativeProfile"
+                signingConfig = signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -373,7 +421,7 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
             isDebuggable = false
-            applicationIdSuffix = ".profilecapture"
+            applicationIdSuffix = if (libretroNativeExperiment) ".profilecapture.nativeperf." + libretroNativeProfile.replace("-", "") else ".profilecapture"
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
@@ -933,3 +981,20 @@ tasks.matching { it.name == "packageRelease" }.configureEach {
     finalizedBy(generateUpdateManifest)
 }
 // generateUpdateManifest depends on packageRelease, so Gradle never runs it after a failed packageRelease.
+
+
+// Guard the resolved runtime graph, not merely the direct dependency declarations.
+configurations.configureEach {
+    if (name.endsWith("RuntimeClasspath") && isCanBeResolved) {
+        incoming.afterResolve {
+            val forbidden = resolutionResult.allComponents.mapNotNull { it.moduleVersion }
+                .filter {
+                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-common")) ||
+                        (it.group == "com.google.net.cronet" && it.name == "cronet-okhttp")
+                }
+            check(forbidden.isEmpty()) {
+                "Unexpected embedded SmartTube Cronet dependencies: " + forbidden.joinToString()
+            }
+        }
+    }
+}

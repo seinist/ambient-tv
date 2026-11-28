@@ -279,12 +279,12 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
         "effect.game.$gameKey",
     )
 
-    /** DS/3DS pointer games default to an unobstructed screen; others show buttons on phones. */
+    /** Every system offers phone buttons by default, independently of native pointer input. */
     fun touchControls(system: GameSystem): Boolean =
-        values["touch.${system.id}"]?.let { it == "1" } ?: !system.pointerInput
+        values["touch.${system.id}"]?.let { it == "1" } ?: true
 
     fun withTouchControls(system: GameSystem, on: Boolean): GameSettingsState =
-        set("touch.${system.id}", (if (on) "1" else "0").takeIf { on != !system.pointerInput })
+        set("touch.${system.id}", "0".takeIf { !on })
 
     fun touchMode(system: GameSystem): GameTouchMode = GameTouchMode.fromKey(values["touchmode.${system.id}"])
 
@@ -295,6 +295,14 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     val rewind: Boolean get() = values["rewind"] != "0"
 
     fun withRewind(on: Boolean): GameSettingsState = set("rewind", "0".takeIf { !on })
+
+    /** Global game profile; overrides only optional overhead, without editing individual choices. */
+    val performanceProfile: GamePerformanceProfile get() = GamePerformanceProfile.fromKey(values["performance.profile"])
+
+    fun withPerformanceProfile(profile: GamePerformanceProfile): GameSettingsState =
+        set("performance.profile", profile.storedKey)
+
+    val rewindForPlayback: Boolean get() = performanceProfile.effectiveRewind(rewind)
 
     /** GPU cores: ask for Vulkan instead of OpenGL ES (used when the device and core can). */
     fun vulkan(core: GameCore): Boolean =
@@ -361,8 +369,33 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
 
     /** Where cores are loaded from (the app's signed build, the libretro buildbot, or the first that has it). */
     val coreSource: GameCoreSource get() = GameCoreSource.fromKey(values["core_source"])
+        .takeIf { it in GameCoreSource.regular } ?: GameCoreSource.AUTO
 
-    fun withCoreSource(source: GameCoreSource): GameSettingsState = set("core_source", source.key.takeIf { source != GameCoreSource.AUTO })
+    fun withCoreSource(source: GameCoreSource): GameSettingsState =
+        set("core_source", source.key.takeIf { source != GameCoreSource.AUTO && source in GameCoreSource.regular })
+
+    private fun ownCoreSource(key: String): GameCoreSource? =
+        values[key]?.let(GameCoreSource::fromKey)?.takeIf { it in GameCoreSource.regular }
+
+    fun ownSystemCoreSource(system: GameSystem): GameCoreSource? = ownCoreSource("syscoresource.${system.id}")
+    fun systemCoreSource(system: GameSystem): GameCoreSource = ownSystemCoreSource(system) ?: coreSource
+    fun withSystemCoreSource(system: GameSystem, source: GameCoreSource?): GameSettingsState =
+        set("syscoresource.${system.id}", source?.takeIf { it in GameCoreSource.regular }?.key)
+
+    fun ownGameCoreSource(gameKey: String): GameCoreSource? = ownCoreSource("gamecoresource.$gameKey")
+    fun gameCoreSource(system: GameSystem, gameKey: String): GameCoreSource =
+        ownGameCoreSource(gameKey) ?: systemCoreSource(system)
+    fun withGameCoreSource(gameKey: String, source: GameCoreSource?): GameSettingsState =
+        set("gamecoresource.$gameKey", source?.takeIf { it in GameCoreSource.regular }?.key)
+
+    internal fun migrateCoreSource(): GameSettingsState =
+        if (GameCoreSource.fromKey(values["core_source"]) !in GameCoreSource.regular) {
+            withCoreSource(GameCoreSource.AUTO).withCoreExperimentsEnabled(true)
+        } else this
+
+    val coreExperimentsEnabled: Boolean get() = values["core_experiments"] == "1"
+
+    fun withCoreExperimentsEnabled(enabled: Boolean): GameSettingsState = set("core_experiments", "1".takeIf { enabled })
 
     /** Options of [core] for all its games. */
     fun coreOptions(core: GameCore): Map<String, String> = withPrefix("core.${core.id}.")
@@ -412,10 +445,14 @@ object GameSettings {
 
     fun attach(stored: Map<String, String>, save: (Map<String, String>) -> Unit) {
         persist = save
-        mutable.value = GameSettingsState(stored)
+        reload(stored)
     }
 
-    fun reload(stored: Map<String, String>) { mutable.value = GameSettingsState(stored) }
+    fun reload(stored: Map<String, String>) {
+        val migrated = GameSettingsState(stored).migrateCoreSource()
+        mutable.value = migrated
+        if (migrated.values != stored) persist(migrated.values)
+    }
 
     fun update(transform: (GameSettingsState) -> GameSettingsState) {
         val value = transform(state)

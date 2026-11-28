@@ -21,6 +21,8 @@ import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
 
 @Composable
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 fun TrailerSettings(onConnected: () -> Unit = {}) {
     val context = LocalContext.current
     val dependencies = remember { EntryPointAccessors.fromApplication(context.applicationContext, TrailerDependencies::class.java) }

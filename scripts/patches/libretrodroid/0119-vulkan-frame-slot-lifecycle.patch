@@ -1,0 +1,117 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -272,22 +272,69 @@
+     struct FrameSlot {
+         VkCommandPool pool = VK_NULL_HANDLE;
+         VkCommandBuffer command = VK_NULL_HANDLE;
+         VkFence fence = VK_NULL_HANDLE;
+         bool inFlight = false;
+ 
+         FrameSlot() = default;
+         FrameSlot(const FrameSlot&) = delete;
+         FrameSlot& operator=(const FrameSlot&) = delete;
+ 
+-        // Only after the backend has proved retirement and destroyed the handles.
+-        void clearRetiredHandles() noexcept {
+-            pool = VK_NULL_HANDLE;
+-            command = VK_NULL_HANDLE;
+-            fence = VK_NULL_HANDLE;
+-            inFlight = false;
++        // Publish handles only after all allocations succeed. Failed Vulkan
++        // calls need not write usable output handles; never adopt those values.
++        template<class Dispatch>
++        bool create(const Dispatch& vk, VkDevice device, uint32_t queueFamily) {
++            if (inFlight || pool || command || fence || !device ||
++                !vk.createCommandPool || !vk.allocateCommandBuffers || !vk.createFence ||
++                !vk.destroyCommandPool || !vk.destroyFence) return false;
++
++            VkCommandPool newPool = VK_NULL_HANDLE;
++            VkCommandPoolCreateInfo poolInfo {};
++            poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
++            poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
++            poolInfo.queueFamilyIndex = queueFamily;
++            if (vk.createCommandPool(device, &poolInfo, nullptr, &newPool) != VK_SUCCESS) return false;
++
++            VkCommandBuffer newCommand = VK_NULL_HANDLE;
++            VkCommandBufferAllocateInfo allocInfo {};
++            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
++            allocInfo.commandPool = newPool;
++            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++            allocInfo.commandBufferCount = 1;
++            if (vk.allocateCommandBuffers(device, &allocInfo, &newCommand) != VK_SUCCESS) {
++                vk.destroyCommandPool(device, newPool, nullptr);
++                return false;
++            }
++
++            VkFence newFence = VK_NULL_HANDLE;
++            VkFenceCreateInfo fenceInfo {};
++            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
++            if (vk.createFence(device, &fenceInfo, nullptr, &newFence) != VK_SUCCESS) {
++                vk.destroyCommandPool(device, newPool, nullptr);
++                return false;
++            }
++            pool = newPool;
++            command = newCommand;
++            fence = newFence;
++            return true;
++        }
++
++        // Caller must first prove GPU retirement; the slot independently
++        // refuses destruction while work is marked outstanding.
++        template<class Dispatch>
++        bool retire(const Dispatch& vk, VkDevice device) {
++            if (inFlight) return false;
++            if (!pool && !command && !fence) return true;
++            if (!device || (command && !pool) ||
++                (pool && !vk.destroyCommandPool) || (fence && !vk.destroyFence)) return false;
++            if (fence) vk.destroyFence(device, fence, nullptr);
++            if (pool) vk.destroyCommandPool(device, pool, nullptr);
++            pool = VK_NULL_HANDLE;
++            command = VK_NULL_HANDLE;
++            fence = VK_NULL_HANDLE;
++            return true;
+         }
+     };
+     FrameSlot frameSlot;
+     VkResult fatalFrameError = VK_SUCCESS;
+     bool shutdownReady = false;
+     // One temporary SYNC_FD payload. Reuse only after waitForFrame proved
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -960,17 +960,5 @@
+ bool VulkanBackend::createFrameResources() {
+-    VkCommandPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+-    poolInfo.queueFamilyIndex = queueFamily;
+-    if (vk.createCommandPool(device, &poolInfo, nullptr, &frameSlot.pool) != VK_SUCCESS) return false;
+-
+-    VkCommandBufferAllocateInfo allocInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+-    allocInfo.commandPool = frameSlot.pool;
+-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+-    allocInfo.commandBufferCount = 1;
+-    if (vk.allocateCommandBuffers(device, &allocInfo, &frameSlot.command) != VK_SUCCESS) return false;
+-
+-    VkFenceCreateInfo fenceInfo { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+-    return vk.createFence(device, &fenceInfo, nullptr, &frameSlot.fence) == VK_SUCCESS;
++    return frameSlot.create(vk, device, queueFamily);
+ }
+ 
+ bool VulkanBackend::start() {
+@@ -1889,6 +1877,8 @@
+         destroyFrameBuffer();
+         colorCopy.release();
+-        if (frameSlot.fence != VK_NULL_HANDLE) vk.destroyFence(device, frameSlot.fence, nullptr);
+-        if (frameSlot.pool != VK_NULL_HANDLE) vk.destroyCommandPool(device, frameSlot.pool, nullptr);
++        if (!frameSlot.retire(vk, device)) {
++            checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire frame slot");
++            return; // retain the device rather than discard unretired ownership
++        }
+         if (vk.destroyDevice != nullptr) vk.destroyDevice(device, nullptr);
+     }
+@@ -1906,4 +1896,3 @@
+-    frameSlot.clearRetiredHandles();
+     fatalFrameError = VK_SUCCESS;
+     shutdownReady = false;
+     bridgeFenceEnabled = false;

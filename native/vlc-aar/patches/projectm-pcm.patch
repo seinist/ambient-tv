@@ -1,22 +1,31 @@
 --- a/modules/audio_output/android/audiotrack.c
 +++ b/modules/audio_output/android/audiotrack.c
-@@ -598,6 +598,24 @@
+@@ -598,6 +598,33 @@
      return 0;
  }
  
 +#include <dlfcn.h>
++#include <stdatomic.h>
 +/* Optional in-process PCM tap; no microphone or system-wide audio capture. */
 +static void ambient_pcm_tap(int source, const void *data, size_t frames, int channels, int encoding)
 +{
 +    typedef void (*tap_fn)(int, const void *, size_t, int, int);
-+    static tap_fn tap;
-+    static unsigned retry;
-+    if (!tap && (++retry % 64 == 1)) {
++    static _Atomic(tap_fn) cached;
++    static atomic_uint retry;
++    tap_fn tap = atomic_load_explicit(&cached, memory_order_acquire);
++    if (!tap && (atomic_fetch_add_explicit(&retry, 1, memory_order_relaxed) % 64 == 0)) {
 +        void *lib = dlopen("libambientprojectm.so", RTLD_NOW | RTLD_NOLOAD);
 +        if (lib) {
-+            tap = (tap_fn)dlsym(lib, "ambient_projectm_pcm_v1");
-+            /* Retain the handle for the lifetime of the cached function pointer. */
-+            if (!tap) dlclose(lib);
++            tap_fn found = (tap_fn)dlsym(lib, "ambient_projectm_pcm_v1");
++            tap_fn expected = NULL;
++            if (found && atomic_compare_exchange_strong_explicit(&cached, &expected, found,
++                    memory_order_acq_rel, memory_order_acquire)) {
++                /* Retain the winning handle for the lifetime of the published pointer. */
++                tap = found;
++            } else {
++                dlclose(lib);
++                tap = expected;
++            }
 +        }
 +    }
 +    if (tap) tap(source, data, frames, channels, encoding);
@@ -25,11 +34,11 @@
  struct role {
      char vlc[16];
  };
-@@ -1377,6 +1395,12 @@
+@@ -1377,6 +1404,12 @@
                              p_sys->i_chans_to_reorder, p_sys->p_chan_table,
                              p_sys->fmt.i_format );
  
-+    if (!p_sys->b_passthrough &&
++    if (!p_sys->b_passthrough && p_sys->fmt.i_channels > 0 &&
 +        (p_sys->fmt.i_format == VLC_CODEC_FL32 || p_sys->fmt.i_format == VLC_CODEC_S16N))
 +        ambient_pcm_tap(1, p_buffer->p_buffer,
 +            p_buffer->i_buffer / (p_sys->fmt.i_channels * (p_sys->fmt.i_format == VLC_CODEC_FL32 ? 4 : 2)),

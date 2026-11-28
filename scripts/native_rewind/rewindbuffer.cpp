@@ -124,15 +124,21 @@ void RewindBuffer::encode(const uint8_t* data, size_t size) {
                  (!sameWord(latest.get() + offset, data + offset, wordSize(offset, size))) == literal);
         writeVarint((static_cast<uint64_t>(words) << 1) | (literal ? 1u : 0u));
         if (literal) {
+            // Batch literal runs: one ring write per chunk instead of one per
+            // 8-byte word. The on-disk/in-memory delta format is unchanged.
+            uint8_t delta[256];
             size_t position = begin;
             while (position < offset) {
-                const size_t count = wordSize(position, size);
-                uint64_t oldWord = 0;
-                uint64_t newWord = 0;
-                std::memcpy(&oldWord, latest.get() + position, count);
-                std::memcpy(&newWord, data + position, count);
-                const uint64_t delta = oldWord ^ newWord;
-                writeBytes(reinterpret_cast<const uint8_t*>(&delta), count);
+                const size_t count = std::min(sizeof(delta), offset - position);
+                for (size_t at = 0; at < count; at += WORD_BYTES) {
+                    const size_t chunk = std::min(WORD_BYTES, count - at);
+                    uint64_t oldWord = 0, newWord = 0;
+                    std::memcpy(&oldWord, latest.get() + position + at, chunk);
+                    std::memcpy(&newWord, data + position + at, chunk);
+                    const uint64_t value = oldWord ^ newWord;
+                    std::memcpy(delta + at, &value, chunk);
+                }
+                writeBytes(delta, count);
                 position += count;
             }
         }
@@ -189,16 +195,20 @@ bool RewindBuffer::decodeInto(const Record& record, uint8_t* target, size_t targ
             continue;
         }
         size_t left = count;
+        uint8_t delta[256];
         while (left != 0) {
-            const size_t chunk = std::min(WORD_BYTES, left);
-            uint64_t delta = 0;
-            uint64_t value = 0;
-            if (!readBytes(cursor, remaining, reinterpret_cast<uint8_t*>(&delta), chunk)) return false;
-            std::memcpy(&value, target + position, chunk);
-            value ^= delta;
-            std::memcpy(target + position, &value, chunk);
-            position += chunk;
-            left -= chunk;
+            const size_t batch = std::min(sizeof(delta), left);
+            if (!readBytes(cursor, remaining, delta, batch)) return false;
+            for (size_t at = 0; at < batch; at += WORD_BYTES) {
+                const size_t chunk = std::min(WORD_BYTES, batch - at);
+                uint64_t difference = 0, value = 0;
+                std::memcpy(&difference, delta + at, chunk);
+                std::memcpy(&value, target + position + at, chunk);
+                value ^= difference;
+                std::memcpy(target + position + at, &value, chunk);
+            }
+            position += batch;
+            left -= batch;
         }
     }
     return remaining == 0 && position == record.stateSize;

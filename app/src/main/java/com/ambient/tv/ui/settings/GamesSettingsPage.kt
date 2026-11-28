@@ -62,7 +62,7 @@ internal fun gamesSettingsPageForSearch(query: String): GamesSettingsPage? {
         listOf("controller", "gamepad", "belegung", "mapping", "rumble", "vibration", "tasten").any { it in q } -> GamesSettingsPage.CONTROLS
         listOf("metadaten", "metadata", "cover", "artwork", "screenscraper", "thegamesdb", "bildregion", "datenbank", "dat import").any { it in q } -> GamesSettingsPage.METADATA
         listOf("bios", "firmware", "emulator", "libretro", "core", "konsole").any { it in q } -> GamesSettingsPage.SYSTEMS
-        listOf("rewind", "zurückspul", "zurueckspul").any { it in q } -> GamesSettingsPage.PLAY
+        listOf("rewind", "zurückspul", "zurueckspul", "performance profile", "leistungsprofil", "game performance", "spieleleistung").any { it in q } -> GamesSettingsPage.PLAY
         else -> null
     }
 }
@@ -274,7 +274,7 @@ internal fun GamesSettingsScreen(
                         SettingsHint(stringResource(R.string.games_settings_no_assigned))
                     }
                     items(mySystems, key = { "assigned:" + it.id }) { current ->
-                        GamesSettingsSystemRow(current, coreManager.info(GameSettings.state.systemCore(current)) != null) {
+                        GamesSettingsSystemRow(current, coreManager.installedPreferredSource(GameSettings.state.systemCore(current), GameSettings.state.systemCoreSource(current)) != null) {
                             selectedSystemId = current.id
                             page = GamesSettingsPage.SYSTEM
                         }
@@ -287,7 +287,7 @@ internal fun GamesSettingsScreen(
                         )
                     }
                     if (showOtherSystems) items(otherSystems, key = { "other:" + it.id }) { current ->
-                        GamesSettingsSystemRow(current, coreManager.info(GameSettings.state.systemCore(current)) != null) {
+                        GamesSettingsSystemRow(current, coreManager.installedPreferredSource(GameSettings.state.systemCore(current), GameSettings.state.systemCoreSource(current)) != null) {
                             selectedSystemId = current.id
                             page = GamesSettingsPage.SYSTEM
                         }
@@ -318,11 +318,22 @@ internal fun GamesSettingsScreen(
                             )
                         }
                     }
+                    item(key = "games-system-core-source") {
+                        GameCoreSourceOverrideSelect(
+                            own = GameSettings.state.ownSystemCoreSource(system),
+                            inherited = GameSettings.state.coreSource,
+                            onSelect = { source -> GameSettings.update { it.withSystemCoreSource(system, source) } },
+                        )
+                    }
                     item(key = "games-system-emulators-heading") { SettingsSubheader(stringResource(R.string.games_settings_manage_core)) }
                     items(system.cores, key = { "core:" + it.id }) { candidate ->
                         SettingsNavigationRow(
                             title = candidate.name,
-                            summary = stringResource(if (coreManager.info(candidate) == null) R.string.games_core_missing else R.string.games_settings_ready),
+                            summary = stringResource(when {
+                                coreManager.installedPreferredSource(candidate, GameSettings.state.systemCoreSource(system)) != null -> R.string.games_settings_ready
+                                coreManager.info(candidate) != null -> R.string.games_core_wrong_source
+                                else -> R.string.games_core_missing
+                            }),
                             onClick = { selectedCoreId = candidate.id; page = GamesSettingsPage.CORE },
                         )
                     }
@@ -331,7 +342,7 @@ internal fun GamesSettingsScreen(
                     }
                 }
                 GamesSettingsPage.CORE -> if (selectedCore != null) item(key = "games-single-core") {
-                    GamesCores(onlyCoreId = selectedCore.id)
+                    GamesCores(onlyCoreId = selectedCore.id, system = system)
                 }
                 GamesSettingsPage.ALL_CORES -> item(key = "games-all-core-controls") { GamesCores() }
                 GamesSettingsPage.CONTROLS -> {

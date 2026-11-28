@@ -170,12 +170,12 @@ object PlaybackEngineFactory {
                 )
                 .build()
 
-            val streamClient = if (streamUrlRenewer == null) streamingHttpClient else streamingHttpClient.newBuilder()
-                .addInterceptor(StreamUrlRenewalInterceptor(streamUrlRenewer)).build()
-            val httpDataSourceFactory = media3HttpDataSourceFactory(context, streamTuning?.networkEngine, streamClient)
+            val httpDataSourceFactory = media3HttpDataSourceFactory(context, streamTuning?.networkEngine, streamingHttpClient)
                 .setDefaultRequestProperties(streamHeaders)
+            val networkSource = streamUrlRenewer?.let { RenewingMedia3DataSourceFactory(httpDataSourceFactory, it) }
+                ?: httpDataSourceFactory
             val mediaSourceFactory = DefaultMediaSourceFactory(context)
-                .setDataSourceFactory(dataSourceFactory ?: DefaultDataSource.Factory(context, httpDataSourceFactory))
+                .setDataSourceFactory(dataSourceFactory ?: DefaultDataSource.Factory(context, networkSource))
                 .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
 
             val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
@@ -366,8 +366,7 @@ internal fun media3TunedBuffer(key: String): Media3TunedBuffer = when (key) {
 
 /**
  * OkHttp unless SmartTube's setting picks another engine. Cronet comes from Play Services; without
- * it playback stays on OkHttp. Renewing expired googlevideo URLs is an OkHttp interceptor, so the
- * other engines play without it (a URL lasts hours).
+ * it playback stays on OkHttp.
  */
 private fun media3HttpDataSourceFactory(
     context: Context,

@@ -24,6 +24,41 @@ class GameLocalDataTest {
         sourceName = "NAS", entry = FileEntry("src", "test.sfc", "test.sfc", false),
     )
 
+    @Test fun coreProfilesShareSramAndStateDirectory() {
+        val optimized = game.copy(experimentalProfile = "optimized")
+        val a57 = game.copy(experimentalProfile = "optimized-a57")
+        try {
+            assertEquals(storage.savesDirectory(game), storage.savesDirectory(optimized))
+            assertEquals(storage.statesDirectory(game), storage.statesDirectory(a57))
+            storage.write(storage.sramFile(game), byteArrayOf(1))
+            assertEquals(1, storage.read(storage.sramFile(optimized))!!.single().toInt())
+            storage.write(storage.sramFile(a57), byteArrayOf(2))
+            assertEquals(2, storage.read(storage.sramFile(game))!!.single().toInt())
+            val entry = states.save(game, GameStateKind.MANUAL, byteArrayOf(3), null, "stable", now = 1)
+            assertEquals(entry, states.list(optimized).single())
+            assertEquals(3, states.read(a57, entry)!!.single().toInt())
+            assertTrue(GameStateStore.compatible(entry, entry.coreId, "stable", "legacy"))
+            assertTrue(!GameStateStore.compatible(entry, entry.coreId, "different", "legacy"))
+        } finally {
+            storage.statesDirectory(game).deleteRecursively()
+            storage.sramFile(game).delete()
+        }
+    }
+
+    @Test fun incompatibleAutomaticCheckpointIsPreservedBeforeReplacement() {
+        try {
+            states.save(game, GameStateKind.AUTO, byteArrayOf(1), null, "stable", now = 1)
+            states.save(game.copy(experimentalProfile = "optimized"), GameStateKind.AUTO,
+                byteArrayOf(2), null, "optimized", now = 2)
+            val archived = states.list(game).single { it.kind == GameStateKind.MANUAL }
+            assertEquals("stable", archived.coreStamp)
+            assertEquals(1, states.read(game, archived)!!.single().toInt())
+            assertEquals("optimized", states.entry(game, GameStateKind.AUTO)!!.coreStamp)
+        } finally {
+            storage.statesDirectory(game).deleteRecursively()
+        }
+    }
+
     @Test fun biosFilesAreKnownByNameAndNotOfferedAsGames() {
         assertTrue(GameSystems.isBios("SCPH5501.BIN"))
         assertEquals("psx", GameSystems.bios("scph5501.bin").single().first.id)

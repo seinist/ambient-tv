@@ -1,0 +1,66 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1697,8 +1697,30 @@
+     if (!checkFrameResult(result, "submit frame")) return false;
+     bridgeReadPending = false; // this submit consumes the temporary payload
+     frameInFlight = true;
+     const int exportedFd = exportWrite ? exportBridgeWriteFence() : -1;
++    // WSI already waits for the submitted per-image completion semaphore.
++    // Queue presentation now, rather than delaying it until the host fence.
++    // The fence still gates publication and every resource reuse/retirement.
++    const bool queueNativePresent = useDirect && !shaderFailed && !hasFatalError();
++    VkResult presentResult = VK_SUCCESS;
++    if (queueNativePresent) {
++        const VkSemaphore finished = nativeSdrComplete[sdrIndex];
++        VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
++        present.waitSemaphoreCount = 1;
++        present.pWaitSemaphores = &finished;
++        present.swapchainCount = 1;
++        present.pSwapchains = &nativeSdrSwapchain;
++        present.pImageIndices = &sdrIndex;
++        {
++            GameTraceScope presentTrace("AmbientGame Vulkan queue present");
++            std::lock_guard<std::mutex> lock(queueMutex);
++            presentResult = vk.queuePresent(queue, &present);
++        }
++        if (presentResult == VK_ERROR_DEVICE_LOST) {
++            checkFrameResult(presentResult, "present frame");
++        }
++    }
+     if (!waitForFrame()) {
+         if (exportedFd >= 0) close(exportedFd);
+         return false;
+     }
+@@ -1706,30 +1728,15 @@
+         // Never display an incompletely recorded Slang frame; the GLES output is
+         // still rendering in parallel. The fence has completed, so retire safely.
+         disableNativeSdrSwapchain("Vulkan Slang frame failed; keep GLES");
+     }
+-    if (useDirect && !shaderFailed) {
+-        const VkSemaphore finished = nativeSdrComplete[sdrIndex];
+-        VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
+-        present.waitSemaphoreCount = 1;
+-        present.pWaitSemaphores = &finished;
+-        present.swapchainCount = 1;
+-        present.pSwapchains = &nativeSdrSwapchain;
+-        present.pImageIndices = &sdrIndex;
+-        VkResult presentResult;
+-        {
+-            GameTraceScope presentTrace("AmbientGame Vulkan queue present");
+-            std::lock_guard<std::mutex> lock(queueMutex);
+-            presentResult = vk.queuePresent(queue, &present);
+-        }
++    if (queueNativePresent) {
+         if (presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR) {
+             nativePresentation.didPresentFrame();
+             nativeSdrStatus.store(7u |
+                 (nativeOutputTransfer == 1u ? 16u : nativeOutputTransfer == 2u ? 32u : 0u) |
+                 (shaderRecorded ? 64u : 0u),
+                 std::memory_order_release);
+-        } else if (presentResult == VK_ERROR_DEVICE_LOST) {
+-            checkFrameResult(presentResult, "present frame");
+         } else {
+             disableNativeSdrSwapchain("frame presentation failed; GLES retained");
+         }
+     }

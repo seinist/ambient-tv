@@ -82,6 +82,18 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
             "Save state exceeds the memory safety limit"
         }
         val directory = storage.statesDirectory(game)
+        // A shared slot must not discard the only checkpoint of another binary.
+        val previous = list(game).firstOrNull { it.kind == kind }
+        if (kind != GameStateKind.MANUAL && previous != null &&
+            (previous.coreId != coreId || previous.coreStamp != coreStamp)) {
+            val previousBytes = read(game, previous)
+                ?: throw java.io.IOException("Cannot preserve incompatible checkpoint")
+            var archivedTime = previous.createdAt.coerceAtLeast(0)
+            while (File(directory, "m$archivedTime.state").exists()) archivedTime++
+            val number = (list(game).filter { it.kind == GameStateKind.MANUAL }.maxOfOrNull { it.number } ?: 0) + 1
+            val archived = previous.copy(id = "m$archivedTime", kind = GameStateKind.MANUAL, number = number)
+            put(game, archived, previousBytes, screenshot(game, previous)?.let { storage.read(it) })
+        }
         val existing = list(game)
         // Two requests can share a millisecond. Never replace an earlier manual save.
         var identifierTime = now.coerceAtLeast(0)

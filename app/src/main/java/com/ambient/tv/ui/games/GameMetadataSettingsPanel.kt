@@ -64,6 +64,8 @@ fun GameMetadataSettingsPanel(
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 internal fun GameMetadataSettingsDialog(
     initialOptions: GameMetadataOptions,
     initialCredentials: GameMetadataCredentials,

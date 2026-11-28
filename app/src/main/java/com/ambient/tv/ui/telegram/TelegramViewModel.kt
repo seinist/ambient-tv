@@ -93,6 +93,15 @@ internal fun telegramRows(
             )
         }
 
+/** Only published Monogram cards; never prefetch YouTube artwork or full photos. */
+internal fun monogramPrefetchTargets(rows: List<ContentRowData>, limit: Int = 24):
+    List<com.ambient.tv.data.telegram.MonogramThumbRef> =
+    rows.asSequence().flatMap { it.items.asSequence() }.mapNotNull { item ->
+        (item.artUrl ?: item.thumbUrl)
+            ?.takeIf { it.startsWith(com.ambient.tv.data.telegram.MONOGRAM_THUMB_SCHEME + "://") }
+            ?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }
+    }.distinctBy { it.chatId to it.messageId }.take(limit.coerceAtLeast(0)).toList()
+
 @HiltViewModel
 class TelegramViewModel @Inject constructor(
     private val repository: TelegramRepository,
@@ -327,7 +336,6 @@ class TelegramViewModel @Inject constructor(
                 items = (old.items + row.items).distinctBy(MediaItem::ratingKey),
             )
         }
-        repository.prefetchThumbnails(pageMedia)
         val earlier = if (append) mutableState.value.media else emptyMap()
         val previousState = mutableState.value
         mutableState.value = TelegramBrowseState(
@@ -337,6 +345,12 @@ class TelegramViewModel @Inject constructor(
             playbackReturnRevision = previousState.playbackReturnRevision.takeIf { previousState.section == section } ?: 0L,
             playbackReturnKey = previousState.playbackReturnKey.takeIf { previousState.section == section },
         )
+    }
+
+    /** The screen owns cancellation: leaving, filtering or scrolling drops the old window. */
+    internal suspend fun prefetchViewport(section: String, refs: List<com.ambient.tv.data.telegram.MonogramThumbRef>, target: Int = 320) {
+        if (refs.isNotEmpty() && mutableState.value.section == section && repository.available)
+            repository.prefetchThumbnails(refs, target = target)
     }
 
     private fun playbackScope(section: String) = "telegram:$section"

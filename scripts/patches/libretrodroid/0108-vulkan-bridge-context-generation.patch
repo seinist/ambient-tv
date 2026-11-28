@@ -1,0 +1,78 @@
+diff --git a/src/main/cpp/externalframelease.h b/src/main/cpp/externalframelease.h
+--- a/src/main/cpp/externalframelease.h
++++ b/src/main/cpp/externalframelease.h
+@@ -22,8 +22,8 @@
+ 
+     bool matches(Buffer candidate, Display currentDisplay, Context currentContext,
+                  Texture texture) const noexcept {
+-        return buffer && candidate == buffer && image && texture &&
+-               display == currentDisplay && context == currentContext;
++        return buffer && candidate == buffer && texture &&
++               ownsContext(currentDisplay, currentContext);
+     }
+ 
+     void adopt(Buffer acquiredBuffer, Display ownerDisplay, Context ownerContext,
+@@ -34,6 +34,11 @@
+         image = importedImage;
+         destroy = destroyImage;
+     }
++
++    // A context-created callback identifies a new generation even if EGL
++    // recycles the old numeric context handle. Keep the image and AHB reference
++    // until normal release, but never issue GL calls through the old lease.
++    void invalidateContext() noexcept { context = {}; }
+ 
+     bool ownsContext(Display currentDisplay, Context currentContext) const noexcept {
+         return image && display && context && display == currentDisplay && context == currentContext;
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -146,6 +146,8 @@
+     bool attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height);
+     // Finish prior GLES reads before the backend may replace the shared allocation.
+     void finishExternalFrameUse();
++    // onSurfaceCreated has entered a new EGL generation, not merely a new surface.
++    void invalidateExternalFrameContext() noexcept { externalFrame.invalidateContext(); }
+ 
+ private:
+     void updateProgram();
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -98,6 +98,14 @@
+         frameStatus.store(0u, std::memory_order_release);
+         checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "import Vulkan frame into GLES");
+     }
++    // A fresh EGL context must not sample or overwrite an AHB still referenced
++    // by the preceding GL generation. Retire the Vulkan import only after its
++    // own work completes; the old EGL lease independently owns its AHB reference.
++    bool retireBridgeForContextReplacement() {
++        nativePresentation.invalidateFrame();
++        if (hasFatalError() || shutdownReady) return false;
++        return destroyFrameBuffer();
++    }
+     const retro_hw_render_interface_vulkan* getRenderInterface() const;
+ 
+     // Read-only WSI capability probe on a separate, real display ANativeWindow.
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -358,6 +358,18 @@
+     struct retro_system_av_info system_av_info {};
+     core->retro_get_system_av_info(&system_av_info);
+ 
++    // GLSurfaceView calls onSurfaceCreated for a newly created EGL context.
++    // Never reuse the preceding generation's bridge just because its dimensions
++    // match. Keep the old EGL lease alive while retiring the Vulkan import;
++    // invalidating its context also prevents GL deletion on a recycled handle.
++    if (video && video->presentsExternalFrames()) {
++        video->invalidateExternalFrameContext();
++        auto& backend = VulkanBackend::getInstance();
++        if (!backend.retireBridgeForContextReplacement()) {
++            backend.rejectBridgeImport();
++            checkVulkanFrameError();
++        }
++    }
+     video = nullptr;
+ 
+     // A hardware core renders into a target it sizes itself, up to the maximum it declares, and

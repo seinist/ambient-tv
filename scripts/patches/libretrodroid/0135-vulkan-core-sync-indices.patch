@@ -1,0 +1,225 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -45,3 +45,4 @@
+ #include "vulkanpresentfences.h"
+ #include "vulkanslanghistoryuse.h"
++#include "vulkancoresyncindices.h"
+ #include "nativepresentation.h"
+@@ -108,3 +109,6 @@
+     bool start();
++    // Reserve the libretro sync index before every retro_run invocation.
++    bool beginCoreFrame();
++    void endCoreFrame() noexcept { coreSync.finish(); }
+     bool isStarted() const { return device != VK_NULL_HANDLE; }
+     // Callback code latches errors; only the frontend's post-retro_run boundary
+@@ -385,3 +389,4 @@
+     bool clearSlotImage(FrameSlot& slot);
+     bool waitForNativeSlangFrame();
++    bool waitForCoreSyncIndex();
+     bool canRetireFrameSlots() const noexcept;
+@@ -410,3 +415,4 @@
+     FrameSlot spareFrameSlot;
+     bool spareFramePrepared = false;
++    VulkanCoreSyncIndices coreSync;
+     VkResult fatalFrameError = VK_SUCCESS;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1200,3 +1200,11 @@
++    // Publish a stable mask for the entire context lifetime. Normal-frame
++    // transport and EGL publication must support both indices before opening
++    // a two-index production session.
++    if (!coreSync.open(1)) {
++        checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "open core sync-index session");
++        shutdown();
++        return false;
++    }
+     renderInterface = {};
+     renderInterface.interface_type = RETRO_HW_RENDER_INTERFACE_VULKAN;
+     renderInterface.interface_version = RETRO_HW_RENDER_INTERFACE_VULKAN_VERSION;
+@@ -2220,4 +2228,24 @@
+-bool VulkanBackend::completeDuplicateFrame() {
+-    if (!isStarted() || !waitForFrame()) return false;
++bool VulkanBackend::waitForCoreSyncIndex() {
++    if (coreSync.mask() == 1u) {
++        // Legacy index zero covers every slot. No extra wait when idle.
++        return waitForFrame() && (!spareFrameSlot.inFlight || waitForSlotFrame(spareFrameSlot));
++    }
++    return waitForSlotFrame(coreSync.index() == 0u ? frameSlot : spareFrameSlot);
++}
++
++bool VulkanBackend::beginCoreFrame() {
++    if (hasFatalError() || shutdownReady)
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "begin core frame after failure or shutdown");
++    if (!isStarted()) return true; // software/GLES core: no Vulkan index to reserve
++    if (!coreSync.begin())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "reserve core sync index");
++    if (waitForCoreSyncIndex()) return true;
++    coreSync.cancel();
++    return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire previous core sync index");
++}
++
++bool VulkanBackend::completeDuplicateFrame() {
++    if (!isStarted() || !waitForCoreSyncIndex()) return false;
++    auto& slot = coreSync.index() == 0u ? frameSlot : spareFrameSlot;
+ 
+     // Libretro Vulkan v5: duplicates do not consume set_image waits, but
+@@ -2226,4 +2254,6 @@
+     pendingImage.waitSemaphores.clear();
+     if (pendingCommandBuffers.empty() && pendingSignalSemaphore == VK_NULL_HANDLE) return true;
+ 
++    if (!slot.fence || !vk.queueSubmit)
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing duplicate slot submission resources");
+     VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+@@ -2245,10 +2275,10 @@
+         GameTraceScope trace("AmbientGame Vulkan duplicate submit");
+         std::lock_guard<std::mutex> lock(queueMutex);
+-        result = vk.queueSubmit(queue, 1, &submit, frameSlot.fence);
+-    }
+-    pendingCommandBuffers.clear();
+-    pendingSignalSemaphore = VK_NULL_HANDLE;
+-    if (!checkFrameResult(result, "submit duplicate frame")) return false;
+-    frameSlot.inFlight = true;
+-    return waitForFrame();
++        result = vk.queueSubmit(queue, 1, &submit, slot.fence);
++    }
++    pendingCommandBuffers.clear();
++    pendingSignalSemaphore = VK_NULL_HANDLE;
++    if (!checkFrameResult(result, "submit duplicate frame")) return false;
++    slot.inFlight = true;
++    return waitForSlotFrame(slot);
+ }
+@@ -2275,7 +2305,7 @@
+-uint32_t VulkanBackend::callbackGetSyncIndex(void*) {
+-    return 0;
+-}
+-
+-uint32_t VulkanBackend::callbackGetSyncIndexMask(void*) {
+-    return 1;
++uint32_t VulkanBackend::callbackGetSyncIndex(void* handle) {
++    return static_cast<VulkanBackend*>(handle)->coreSync.index();
++}
++
++uint32_t VulkanBackend::callbackGetSyncIndexMask(void* handle) {
++    return static_cast<VulkanBackend*>(handle)->coreSync.mask();
+ }
+@@ -2290,7 +2320,4 @@
+ void VulkanBackend::callbackWaitSyncIndex(void* handle) {
+     auto* self = static_cast<VulkanBackend*>(handle);
+-    // Until distinct core sync indices are introduced, index zero covers
+-    // every slot. The dormant spare adds no Vulkan wait to the usual path.
+-    if (self->waitForFrame() && (!self->spareFrameSlot.inFlight ||
+-            self->waitForSlotFrame(self->spareFrameSlot))) return;
++    if (self->waitForCoreSyncIndex()) return;
+     if (!self->frameSlot.inFlight && !self->spareFrameSlot.inFlight) return;
+@@ -2400,3 +2427,4 @@
++    coreSync.resetAfterShutdown();
+     fatalFrameError = VK_SUCCESS;
+     shutdownReady = false;
+     bridgeFenceEnabled = false;
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -256,3 +256,4 @@
+     bool prepareSpareVulkanFrame();
++    void runCoreFrame();
+     void checkVulkanFrameError();
+     void renderPrimaryFrame(bool force = false);
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -830,3 +830,3 @@
+-                traceGameCall("AmbientGame rewind core", [&] { core->retro_run(); });
++                traceGameCall("AmbientGame rewind core", [&] { runCoreFrame(); });
+                 checkVulkanFrameError();
+                 // The core now shows the popped checkpoint plus one preview frame;
+@@ -905,4 +905,4 @@
+-            traceGameCall("AmbientGame core run", [&] { core->retro_run(); });
++            traceGameCall("AmbientGame core run", [&] { runCoreFrame(); });
+             checkVulkanFrameError();
+ 
+             if (input) {
+@@ -1020,4 +1020,4 @@
+-    traceGameCall("AmbientGame netplay core", [&] { core->retro_run(); });
++    traceGameCall("AmbientGame netplay core", [&] { runCoreFrame(); });
+     checkVulkanFrameError();
+ 
+     if (input) {
+@@ -1120,3 +1120,3 @@
+-    traceGameCall("AmbientGame rewind preview core", [&] { core->retro_run(); });
++    traceGameCall("AmbientGame rewind preview core", [&] { runCoreFrame(); });
+     checkVulkanFrameError();
+     if (video && video->isHWAccelerated()) video->bindMainContext();
+@@ -1300,2 +1300,17 @@
++void LibretroDroid::runCoreFrame() {
++    auto& backend = VulkanBackend::getInstance();
++    if (!backend.beginCoreFrame()) {
++        checkVulkanFrameError();
++        return;
++    }
++    // Finish even if a host-side exception unwinds; never rotate the index
++    // from inside a video callback or between duplicate frames in one run.
++    struct CoreRunScope {
++        VulkanBackend& backend;
++        ~CoreRunScope() { backend.endCoreFrame(); }
++    } scope {backend};
++    core->retro_run();
++}
++
+ void LibretroDroid::checkVulkanFrameError() {
+     const VkResult failure = VulkanBackend::getInstance().getFatalError();
+diff --git a/src/main/cpp/vulkan/vulkancoresyncindices.h b/src/main/cpp/vulkan/vulkancoresyncindices.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkancoresyncindices.h
+@@ -0,0 +1,49 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <atomic>
++#include <cstdint>
++
++namespace libretrodroid {
++
++// The emulation thread owns session/run transitions. Core callbacks may read
++// the published index/mask on worker threads. A session never changes its
++// mask; a new index is published only before the next retro_run().
++class VulkanCoreSyncIndices {
++public:
++    bool open(unsigned count) noexcept {
++        if (opened || active || (count != 1 && count != 2)) return false;
++        opened = true;
++        next = 0;
++        published.store(((1u << count) - 1u) << 1, std::memory_order_release);
++        return true;
++    }
++    uint32_t index() const noexcept { return published.load(std::memory_order_acquire) & 1u; }
++    uint32_t mask() const noexcept { return published.load(std::memory_order_acquire) >> 1; }
++    bool begin() noexcept {
++        if (!opened || active) return false;
++        const auto currentMask = mask();
++        published.store((currentMask << 1) | next, std::memory_order_release);
++        active = true;
++        return true;
++    }
++    void finish() noexcept {
++        if (!active) return;
++        next = mask() == 3u ? (index() ^ 1u) : 0u;
++        active = false;
++    }
++    void cancel() noexcept { active = false; }
++    // Only after the context and its GPU work have safely retired.
++    void resetAfterShutdown() noexcept {
++        active = opened = false;
++        next = 0;
++        published.store(2u, std::memory_order_release);
++    }
++private:
++    // Low bit is index, remaining bits are the advertised sync-index mask.
++    std::atomic<uint32_t> published{2u};
++    bool opened = false;
++    bool active = false;
++    uint32_t next = 0;
++};
++
++} // namespace libretrodroid

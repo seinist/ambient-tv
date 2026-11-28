@@ -39,6 +39,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
+import com.ambient.tv.games.GameCoreExperiment
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.games.library.backdropModel
@@ -61,6 +62,7 @@ import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.systemName
 import com.ambient.tv.ui.games.GameCoverArtwork
+import com.ambient.tv.ui.games.GameCoreExperimentOptions
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.screenGutter
@@ -72,6 +74,7 @@ fun RommGameDetailScreen(
     onPlay: (LibraryGame) -> Unit,
     onPlayFresh: (LibraryGame) -> Unit,
     onOpenSettings: () -> Unit,
+    onPlayExperiment: (LibraryGame, GameCoreExperiment) -> Unit,
     model: RommGameDetailViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
@@ -131,6 +134,7 @@ fun RommGameDetailScreen(
                 state.error?.let { error -> item("error") {
                     Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } }
+                item("core-tests") { GameCoreExperimentOptions(game, onPlayExperiment) }
                 item("description") {
                     DetailSummary(state.rom?.summary?.takeIf(String::isNotBlank)
                         ?: stringResource(R.string.game_detail_no_summary), maxLines = Int.MAX_VALUE)

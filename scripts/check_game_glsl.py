@@ -26,7 +26,7 @@ def main():
         out = Path(directory)
         validate(compiler, out / "game.vert", "vert", "#version 100\n"+programs["VERTEX"])
         for name in sorted(EXPECTED):
-            src = "#version 100\n"+programs["HEADER"]+"\nconst float INTENSITY = 1.0;\n"+programs[name]
+            src = compact_fragment(programs, name, "#version 100\n")
             validate(compiler, out / (name.lower()+".frag"), "frag", src)
         optional = ROOT / "shader_packs/shaders"
         optionalFiles = sorted(optional.glob("*.frag"))
@@ -38,13 +38,18 @@ def main():
     print(f"OK: {len(EXPECTED)} built-ins + {len(optionalFiles)} optional GLES 100 shaders; {len(raw)} Kotlin source bytes; "
           f"{wrapped} PQ/opaque-wrapped variants")
 
+def compact_fragment(programs, name, version=""):
+    """Match GameRetroShaders.pass: header + body, with only an optional GLSL version."""
+    return version + programs["HEADER"] + programs[name]
+
+
 def check_sdr_to_hdr(compiler, out, programs):
     """Compile the actual prepared SDR/PQ window wrappers, including later patches."""
     wrapper = build_output_wrapper(out)
     count = 0
     for name in sorted(EXPECTED):
         for version in ("#version 100\n", ""):
-            src = version + programs["HEADER"] + "\nconst float INTENSITY = 1.0;\n" + programs[name]
+            src = compact_fragment(programs, name, version)
             for mode in ("pq", "opaque"):
                 result = subprocess.run([str(wrapper), mode], input=src, capture_output=True, text=True, check=True)
                 stage_source = result.stdout if version else "#version 100\n" + result.stdout

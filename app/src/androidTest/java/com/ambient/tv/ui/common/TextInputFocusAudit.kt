@@ -31,6 +31,7 @@ internal class TextInputFocusAudit(private val instrumentation: Instrumentation,
         repeat(60) { var ready = false; main { ready = condition() }; if (ready) return; Thread.sleep(50) }
         error(label)
     }
+    @Suppress("DEPRECATION") // Exercise the value-based TvTextField password masking.
     fun run() {
         check(instrumentation.targetContext.packageName.endsWith(".settingsaudit"))
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, UiCatalogActivity::class.java)

@@ -128,6 +128,131 @@ class GameExtrasTest {
 }
 
 class GameCoreChannelTest {
+    @Test fun coreSourceDefaultsInheritAndOverrideIndependently() {
+        val system = GameSystems.byId("snes")!!
+        val other = GameSystems.byId("nes")!!
+        val global = GameSettingsState().withCoreSource(GameCoreSource.OPTIMIZED)
+        assertEquals(GameCoreSource.OPTIMIZED, global.gameCoreSource(system, "game"))
+        val scoped = global.withSystemCoreSource(system, GameCoreSource.OPTIMIZED_A57)
+        assertEquals(GameCoreSource.OPTIMIZED_A57, scoped.gameCoreSource(system, "game"))
+        assertEquals(GameCoreSource.OPTIMIZED, scoped.systemCoreSource(other))
+        val explicit = scoped.withGameCoreSource("game", GameCoreSource.AMBIENT)
+        assertEquals(GameCoreSource.AMBIENT, explicit.gameCoreSource(system, "game"))
+        assertEquals(GameCoreSource.OPTIMIZED_A57, explicit.gameCoreSource(system, "other"))
+        assertEquals(GameCoreSource.AUTO, explicit.withGameCoreSource("game", GameCoreSource.AUTO).gameCoreSource(system, "game"))
+        assertEquals(GameCoreSource.OPTIMIZED_A57, explicit.withGameCoreSource("game", null).gameCoreSource(system, "game"))
+        assertEquals(GameCoreSource.OPTIMIZED, scoped.withSystemCoreSource(system, null).systemCoreSource(system))
+        assertEquals(GameCoreSource.OPTIMIZED_A57, scoped.withGameCoreSource("game", GameCoreSource.HOTPATHS).gameCoreSource(system, "game"))
+        assertEquals(explicit, GameSettingsState(explicit.values).migrateCoreSource())
+    }
+
+    @Test fun optimizedPreferencesRespectAbiAndStaySigned() {
+        val core = GameCore("fixture", "Fixture", "MIT")
+        assertEquals(listOf(GameCoreSource.OPTIMIZED_A57, GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),
+            GameCoreSource.OPTIMIZED_A57.preferredSources(core, "arm64-v8a"))
+        assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),
+            GameCoreSource.OPTIMIZED_A57.preferredSources(core, "armeabi-v7a"))
+        assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),
+            GameCoreSource.OPTIMIZED.preferredSources(core, "x86_64"))
+        assertEquals(listOf(GameCoreSource.AMBIENT), GameCoreSource.AMBIENT.preferredSources(core, "arm64-v8a"))
+    }
+
+    @Test fun installedBuildbotIsLastResortForNormalOptimizedPlayback() = kotlinx.coroutines.runBlocking {
+        val core = GameCore("fixture", "Fixture", "MIT")
+        for (source in GameCoreSource.publicExperiments) {
+            val signed = source.preferredSources(core, "arm64-v8a")
+            val playback = source.preferredSources(core, "arm64-v8a", includeInstalledBuildbot = true)
+            assertEquals(signed + GameCoreSource.BUILDBOT, playback)
+            assertEquals(GameCoreSource.BUILDBOT, firstAvailableCoreSource(playback) {
+                it == GameCoreSource.BUILDBOT
+            })
+            assertEquals(GameCoreSource.AMBIENT, firstAvailableCoreSource(playback) {
+                it == GameCoreSource.AMBIENT || it == GameCoreSource.BUILDBOT
+            })
+            assertNull(firstAvailableCoreSource(playback) { false })
+            val failure = runCatching {
+                firstAvailableCoreSource(playback) {
+                    if (it == GameCoreSource.BUILDBOT) true else throw GameCoreSignatureException("invalid signature")
+                }
+            }.exceptionOrNull()
+            org.junit.Assert.assertTrue(failure is GameCoreSignatureException)
+        }
+        assertEquals(listOf(GameCoreSource.AMBIENT),
+            GameCoreSource.AMBIENT.preferredSources(core, "arm64-v8a", includeInstalledBuildbot = true))
+    }
+
+    @Test fun preferenceResolutionFallsBackOnlyOnAbsence() = kotlinx.coroutines.runBlocking {
+        val candidates = listOf(GameCoreSource.OPTIMIZED_A57, GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT)
+        val seen = mutableListOf<GameCoreSource>()
+        assertEquals(GameCoreSource.OPTIMIZED, firstAvailableCoreSource(candidates) {
+            seen += it
+            it == GameCoreSource.OPTIMIZED
+        })
+        assertEquals(candidates.take(2), seen)
+        assertEquals(GameCoreSource.AMBIENT, firstAvailableCoreSource(candidates) { it == GameCoreSource.AMBIENT })
+        assertEquals(null, firstAvailableCoreSource(candidates) { false })
+        seen.clear()
+        val failure = runCatching {
+            firstAvailableCoreSource(candidates) {
+                seen += it
+                throw GameCoreSignatureException("invalid signature")
+            }
+        }.exceptionOrNull()
+        org.junit.Assert.assertTrue(failure is GameCoreSignatureException)
+        assertEquals(candidates.take(1), seen)
+    }
+
+    @Test fun experimentalReleaseCannotEnterStableChannel() {
+        val tag = "core-experiments-core-hotpaths--20261126-1-1"
+        org.junit.Assert.assertTrue(GameCoreChannel.matchesChannel(tag, true, "core-hotpaths"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel(tag, true, "baseline"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel(tag, false, "core-hotpaths"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel("cores-1", false, "core-hotpaths"))
+        val manifest = GameCoreManifest(tag = tag, profile = "core-hotpaths")
+        org.junit.Assert.assertTrue(GameCoreChannel.matchesManifest(manifest, tag, "core-hotpaths"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, tag, "baseline"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, "other", "core-hotpaths"))
+        assertEquals(GameCoreSource.AUTO, GameSettingsState().withCoreSource(GameCoreSource.HOTPATHS).coreSource)
+        assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57), GameCoreSource.publicExperiments)
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel(tag, true, "optimized"))
+        org.junit.Assert.assertTrue(GameCoreChannel.matchesChannel("core-experiments-optimized--20261127-1-1", true, "optimized"))
+    }
+
+    @Test fun aLegacyGlobalTestProfileMigratesToAutomaticAndKeepsTestAccess() {
+        val legacy = GameSettingsState(mapOf("core_source" to GameCoreSource.HOTPATHS.key, "rumble" to "0"))
+        assertEquals(GameCoreSource.AUTO, legacy.coreSource)
+        val migrated = legacy.migrateCoreSource()
+        assertEquals(GameCoreSource.AUTO, migrated.coreSource)
+        org.junit.Assert.assertTrue(migrated.coreExperimentsEnabled)
+        assertNull(migrated.values["core_source"])
+        assertEquals("0", migrated.values["rumble"])
+        assertEquals(migrated, migrated.migrateCoreSource())
+        org.junit.Assert.assertFalse(GameSettingsState().coreExperimentsEnabled)
+    }
+
+    @Test fun specializedTestBuildsFollowCoreAndAbi() {
+        val picoDrive = GameSystems.byId("sega32x")!!.core
+        val snes = GameSystems.byId("snes")!!
+        val threaded = snes.core("snes9x2010")!!
+        assertEquals(listOf(GameCoreSource.AUTO, GameCoreSource.AMBIENT, GameCoreSource.BUILDBOT, GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57), GameCoreSource.regular)
+        for (source in GameCoreSource.publicExperiments) {
+            val settings = GameSettingsState().withCoreSource(source)
+            assertEquals(source, settings.coreSource)
+            assertEquals(settings, settings.migrateCoreSource())
+        }
+        org.junit.Assert.assertTrue(GameCoreSource.PICODRIVE_SH2.supportsExperiment(picoDrive, "arm64-v8a"))
+        org.junit.Assert.assertFalse(GameCoreSource.PICODRIVE_SH2.supportsExperiment(picoDrive, "armeabi-v7a"))
+        org.junit.Assert.assertFalse(GameCoreSource.PICODRIVE_SH2.supportsExperiment(snes.core, "arm64-v8a"))
+        org.junit.Assert.assertTrue(GameCoreSource.SNES_THREADED.supportsExperiment(threaded, "arm64-v8a"))
+        org.junit.Assert.assertFalse(GameCoreSource.SNES_THREADED.supportsExperiment(snes.core, "arm64-v8a"))
+        org.junit.Assert.assertTrue(GameCoreSource.OPTIMIZED.supportsExperiment(threaded, "arm64-v8a"))
+        org.junit.Assert.assertTrue(GameCoreSource.OPTIMIZED_A57.supportsExperiment(threaded, "arm64-v8a"))
+        org.junit.Assert.assertFalse(GameCoreSource.OPTIMIZED_A57.supportsExperiment(threaded, "x86"))
+        val experiment = GameCoreExperiment(threaded.id, GameCoreSource.OPTIMIZED)
+        assertEquals(experiment, GameCoreExperiment.fromKey(experiment.key))
+        assertNull(GameCoreExperiment.fromKey("snes9x2010:ambient"))
+    }
+
     @Test fun signedManifestsVerifyAndTamperedOnesDoNot() {
         val pair = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
         val manifest = """{"version":1,"tag":"cores-1","cores":[]}""".toByteArray()

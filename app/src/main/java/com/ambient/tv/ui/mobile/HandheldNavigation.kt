@@ -552,7 +552,11 @@ private fun HandheldSources(
     }
     val groupsById = groups.associateBy { it.key }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    val sheetState = rememberBottomSheetState(
+        initialValue = SheetValue.Hidden,
+        enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded),
+    )
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.mobile_sources), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             IconButton(onDismiss) { Icon(Icons.Default.Close, stringResource(R.string.action_close)) }
@@ -565,7 +569,7 @@ private fun HandheldSources(
                     item(menuItem.id) {
                         val active = handheldSourceSelected(activeRoute, Destinations.WEATHER)
                         ListItem(
-                            headlineContent = { Text(menuItem.label) },
+                            content = { Text(menuItem.label) },
                             supportingContent = if ("weather" in sidebarState.offlineSystems) {
                                 { Text(stringResource(R.string.offline_badge)) }
                             } else null,
@@ -582,7 +586,7 @@ private fun HandheldSources(
                 val groupActive = group.entries.any { handheldSourceSelected(activeRoute, it.route, it.settingsCategory) }
                 item(group.key) {
                     ListItem(
-                        headlineContent = { Text(menuItem.label) },
+                        content = { Text(menuItem.label) },
                         supportingContent = if (group.key in sidebarState.offlineSystems) {
                             { Text(stringResource(R.string.offline_badge)) }
                         } else null,
@@ -597,7 +601,7 @@ private fun HandheldSources(
                 if (open) items(group.entries, key = { "${group.key}:${it.key}" }) { entry ->
                     val active = handheldSourceSelected(activeRoute, entry.route, entry.settingsCategory)
                     ListItem(
-                        headlineContent = { Text(entry.title) },
+                        content = { Text(entry.title) },
                         leadingContent = entry.icon?.let { icon -> { Icon(icon, null, Modifier.size(28.dp)) } },
                         supportingContent = if (entry.offline) { { Text(stringResource(R.string.offline_badge)) } } else null,
                         trailingContent = { Icon(Icons.Default.ChevronRight, null) },
@@ -610,11 +614,11 @@ private fun HandheldSources(
                 }
             }
             if (canManageMenu) item("order") {
-                ListItem(headlineContent = { Text(stringResource(R.string.sidebar_manage_menu)) }, leadingContent = { Icon(Icons.Default.SwapVert, null) },
+                ListItem(content = { Text(stringResource(R.string.sidebar_manage_menu)) }, leadingContent = { Icon(Icons.Default.SwapVert, null) },
                     modifier = Modifier.clickable(onClick = onManageMenu))
             }
             item("add") {
-                ListItem(headlineContent = { Text(stringResource(R.string.sidebar_add_system)) }, leadingContent = { Icon(Icons.Default.Add, null) },
+                ListItem(content = { Text(stringResource(R.string.sidebar_add_system)) }, leadingContent = { Icon(Icons.Default.Add, null) },
                     modifier = Modifier.clickable { onNavigate(Destinations.INITIAL_SETUP) })
             }
         }

@@ -1,0 +1,215 @@
+diff --git a/src/main/cpp/externalframelease.h b/src/main/cpp/externalframelease.h
+--- a/src/main/cpp/externalframelease.h
++++ b/src/main/cpp/externalframelease.h
+@@ -1,76 +1,99 @@
+ // SPDX-License-Identifier: GPL-3.0-or-later
+ #pragma once
+ 
+ namespace libretrodroid {
+ 
+ // The frontend keeps its own AHB reference for as long as an EGL import exists.
+ // Ops supplies the actual platform handles and dispatch, or a host test driver.
+ // All calls belong to the render thread; this is not a cross-thread GPU fence.
+ template<class Ops>
+ class ExternalFrameLease {
+ public:
+     using Buffer = typename Ops::Buffer;
+     using Display = typename Ops::Display;
+     using Context = typename Ops::Context;
+     using Image = typename Ops::Image;
+     using Texture = typename Ops::Texture;
+     using Destroy = typename Ops::Destroy;
+ 
+     ExternalFrameLease() = default;
+     ExternalFrameLease(const ExternalFrameLease&) = delete;
+     ExternalFrameLease& operator=(const ExternalFrameLease&) = delete;
+ 
+     bool matches(Buffer candidate, Display currentDisplay, Context currentContext,
+                  Texture texture) const noexcept {
+         return buffer && candidate == buffer && texture &&
+                ownsContext(currentDisplay, currentContext);
+     }
+ 
+     void adopt(Buffer acquiredBuffer, Display ownerDisplay, Context ownerContext,
+                Image importedImage, Destroy destroyImage) noexcept {
+         buffer = acquiredBuffer;
+         display = ownerDisplay;
+         context = ownerContext;
+         image = importedImage;
+         destroy = destroyImage;
+-    }
+-
+-    // A context-created callback identifies a new generation even if EGL
+-    // recycles the old numeric context handle. Keep the image and AHB reference
+-    // until normal release, but never issue GL calls through the old lease.
+-    void invalidateContext() noexcept { context = {}; }
+-
+-    bool ownsContext(Display currentDisplay, Context currentContext) const noexcept {
+-        return image && display && context && display == currentDisplay && context == currentContext;
+-    }
+-
+-    void finishUse(Texture texture, Display currentDisplay, Context currentContext, Ops& ops) const {
+-        if (texture && ownsContext(currentDisplay, currentContext)) ops.finish();
+-    }
+-
+-    void release(Texture& texture, Display currentDisplay, Context currentContext, Ops& ops) {
+-        // Texture names are local to the context/share group. A surface recreation
+-        // may already have made an unrelated context current; never delete its name.
+-        if (texture && ownsContext(currentDisplay, currentContext)) {
+-            ops.finish();
+-            ops.deleteTexture(texture);
+-        }
+-        texture = {};
+-        if (image && destroy) ops.destroyImage(destroy, display, image);
+-        if (buffer) ops.releaseBuffer(buffer);
+-        buffer = {};
+-        display = {};
+-        context = {};
+-        image = {};
+-        destroy = {};
+-    }
+-
+-private:
+-    Buffer buffer{};
+-    Display display{};
+-    Context context{};
+-    Image image{};
+-    Destroy destroy{};
++        // Import and sampler setup can enqueue work even before the first draw.
++        pendingUse = true;
++    }
++
++    // A context-created callback identifies a new generation even if EGL
++    // recycles the old numeric context handle. Keep the image and AHB reference
++    // until normal release, but never issue GL calls through the old lease.
++    void invalidateContext() noexcept { context = {}; }
++
++    bool ownsContext(Display currentDisplay, Context currentContext) const noexcept {
++        return image && display && context && display == currentDisplay && context == currentContext;
++    }
++
++    // Mark before any command can access the imported texture, not just after a
++    // successful draw. An aborted/partial draw is conservatively still pending.
++    bool markUse(Texture texture, Display currentDisplay, Context currentContext) noexcept {
++        if (!texture || !ownsContext(currentDisplay, currentContext)) return false;
++        pendingUse = true;
++        return true;
++    }
++
++    // The next Vulkan write is safe only after the owning context finishes its
++    // outstanding access. Native-only frames never mark the lease, so consecutive
++    // Vulkan writes need not drain unrelated GLES work. Initial allocation may
++    // explicitly allow an empty lease; a missing/foreign import cannot be written.
++    bool finishUse(Texture texture, Display currentDisplay, Context currentContext, Ops& ops,
++                   bool allowEmpty = false) {
++        if (!image) return allowEmpty && !buffer && !texture;
++        if (!texture || !ownsContext(currentDisplay, currentContext)) return false;
++        if (pendingUse) {
++            ops.finish();
++            pendingUse = false;
++        }
++        return true;
++    }
++
++    void release(Texture& texture, Display currentDisplay, Context currentContext, Ops& ops) {
++        // Texture names are local to the context/share group. A surface recreation
++        // may already have made an unrelated context current; never delete its name.
++        if (texture && ownsContext(currentDisplay, currentContext)) {
++            ops.finish();
++            ops.deleteTexture(texture);
++        }
++        texture = {};
++        if (image && destroy) ops.destroyImage(destroy, display, image);
++        if (buffer) ops.releaseBuffer(buffer);
++        buffer = {};
++        display = {};
++        context = {};
++        image = {};
++        destroy = {};
++        pendingUse = false;
++    }
++
++private:
++    Buffer buffer{};
++    Display display{};
++    Context context{};
++    Image image{};
++    Destroy destroy{};
++    bool pendingUse = false;
+ };
+ 
+ } // namespace libretrodroid
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -147,3 +147,4 @@
+-    // Finish prior GLES reads before the backend may replace the shared allocation.
+-    void finishExternalFrameUse();
++    // Drain only outstanding reads of the owning GLES context before a Vulkan write.
++    // Initial allocation may explicitly allow a not-yet-imported bridge.
++    bool finishExternalFrameUse(bool allowEmpty = false);
+     // onSurfaceCreated has entered a new EGL generation, not merely a new surface.
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -280,6 +280,10 @@
+         return;
+     }
++    // All source sampling (primary, forced, secondary and immersive) flows
++    // through this draw. Mark before any commands, including partial draws.
++    if (externalFrames && !externalFrame.markUse(hwRenderTexture,
++            eglGetCurrentDisplay(), eglGetCurrentContext())) return;
+     isDirty = false;
+     frameCount++;
+ 
+     glDisable(GL_DEPTH_TEST);
+@@ -590,5 +594,8 @@
+     if (outWidth <= 0 || outHeight <= 0) return {};
+     if (static_cast<size_t>(outWidth) > maxCapturePixels / static_cast<size_t>(outHeight)) return {};
+     const size_t pixelCount = static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight);
++    // Raw capture samples the same imported texture outside the normal draw.
++    if (externalFrames && !externalFrame.markUse(hwRenderTexture,
++            eglGetCurrentDisplay(), eglGetCurrentContext())) return {};
+ 
+     // FP16 AHBs are sampleable but need not be renderable/readable as RGBA/UBYTE.
+@@ -731,7 +738,8 @@
+-void Video::finishExternalFrameUse() {
+-    if (!externalFrames) return;
+-    ExternalFrameOps ops;
+-    externalFrame.finishUse(hwRenderTexture, eglGetCurrentDisplay(), eglGetCurrentContext(), ops);
++bool Video::finishExternalFrameUse(bool allowEmpty) {
++    if (!externalFrames) return false;
++    ExternalFrameOps ops;
++    return externalFrame.finishUse(hwRenderTexture, eglGetCurrentDisplay(),
++                                   eglGetCurrentContext(), ops, allowEmpty);
+ }
+ 
+ void Video::releaseExternalFrame() {
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -438,5 +438,10 @@
+     // ordinary per-frame bridge finish in handleVideoRefresh. Drain the old
+     // owning GLES context first; retain the existing post-import handoff too.
+-    traceGameCall("AmbientGame GLES bridge resize finish", [&] { video->finishExternalFrameUse(); });
++    if (!traceGameCall("AmbientGame GLES bridge resize finish", [&] {
++            return video->finishExternalFrameUse(true);
++        })) {
++        backend.rejectBridgeImport();
++        return;
++    }
+     if (!backend.ensureFrameBuffer(width, height)) {
+         backend.rejectBridgeImport();
+@@ -1489,5 +1494,10 @@
+                 if (backend.hasFatalError()) return;
+             }
+-            if (!queuedReadWait)
+-                traceGameCall("AmbientGame GLES bridge finish", [] { glFinish(); });
++            if (!queuedReadWait && !traceGameCall("AmbientGame GLES bridge finish", [&] {
++                    return video->finishExternalFrameUse();
++                })) {
++                // Do not treat a missing/foreign context as a completed read.
++                backend.rejectBridgeImport();
++                return;
++            }
+             if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible())) {

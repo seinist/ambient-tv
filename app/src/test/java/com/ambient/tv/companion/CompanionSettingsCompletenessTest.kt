@@ -156,7 +156,7 @@ class CompanionSettingsCompletenessTest {
             projectmPresetShuffle = false, gaplessMusicEnabled = false, teletextSubtitleChoice = "150",
             lyricsVisible = false, lyricsOnlineEnabled = false, frameDropOverlayHistory = true,
             liveTvReminderAutoSwitch = true, autoUpdateCheck = false, projectmFavorites = setOf("chosen.milk"),
-            keyBindings = mapOf("refresh" to "183:0"), gamepadSettings = mapOf("confirm" to "b"), retroInputSettings = mapOf("dpad_stick" to "1"), gameSettings = mapOf("shader" to "crt"),
+            keyBindings = mapOf("refresh" to "183:0"), gamepadSettings = mapOf("confirm" to "b"), retroInputSettings = mapOf("dpad_stick" to "1"), gameSettings = mapOf("shader" to "crt", "performance.profile" to "low-overhead", "rewind" to "0"),
             viewTransitionStyleKey = "slide", nextUpMinimalEnabled = true, mousePointerHideSeconds = 5,
             gameMetadataOptions = com.ambient.tv.games.metadata.GameMetadataOptions(
                 provider = "thegamesdb", automatic = false, region = "jp", language = "de"),
@@ -194,7 +194,10 @@ class CompanionSettingsCompletenessTest {
             assertEquals(mapOf("refresh" to "183:0"), target.keyBindings)
             assertEquals(mapOf("confirm" to "b"), target.gamepadSettings)
             assertEquals(mapOf("dpad_stick" to "1"), target.retroInputSettings)
-            assertEquals(mapOf("shader" to "crt"), target.gameSettings)
+            assertEquals(mapOf("shader" to "crt", "performance.profile" to "low-overhead", "rewind" to "0"), target.gameSettings)
+            val restoredGameSettings = com.ambient.tv.games.GameSettingsState(target.gameSettings.orEmpty())
+            assertEquals(com.ambient.tv.games.GamePerformanceProfile.LOW_OVERHEAD, restoredGameSettings.performanceProfile)
+            assertEquals(false, restoredGameSettings.rewindForPlayback)
             assertEquals(if (device) 128 else 256, target.imageCacheMb)
             assertEquals(device, target.cardImages1080)
             assertEquals(10002, target.tvheadendHtspPort)

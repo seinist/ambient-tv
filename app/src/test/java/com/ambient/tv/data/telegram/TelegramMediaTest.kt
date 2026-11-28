@@ -36,6 +36,31 @@ class TelegramMediaTest {
         assertEquals(video.durationMs, player.durationMs)
     }
 
+    @Test fun initialPlaybackGeometryUsesOriginalVideoDimensions() {
+        for ((w, h) in listOf(1920 to 1080, 1080 to 1920, 1440 to 1080, 1920 to 800, 720 to 720)) {
+            val metadata = video.copy(width = w, height = h).playerMetadata()
+            assertEquals(w, metadata.sourceWidth)
+            assertEquals(h, metadata.sourceHeight)
+            assertEquals(w.toFloat() / h, metadata.sourceAspectRatioHint!!, 0.0001f)
+        }
+    }
+
+    @Test fun unknownGeometryAndNonVideoPostsDoNotSeedVideoAspect() {
+        for ((w, h) in listOf(0 to 1080, 1920 to 0, -1 to 1080)) {
+            val metadata = video.copy(width = w, height = h).playerMetadata()
+            assertNull(metadata.sourceAspectRatioHint)
+            assertNull(metadata.sourceWidth)
+            assertNull(metadata.sourceHeight)
+        }
+        for (kind in listOf(TelegramMediaKind.PHOTO, TelegramMediaKind.AUDIO, TelegramMediaKind.YOUTUBE)) {
+            val metadata = video.copy(kind = kind, width = 1080, height = 1920).playerMetadata()
+            assertNull(metadata.sourceAspectRatioHint)
+            assertNull(metadata.sourceWidth)
+            assertNull(metadata.sourceHeight)
+        }
+        assertNull(video.copy(width = 10000, height = 100).playerMetadata().sourceAspectRatioHint)
+    }
+
     @Test fun protectedFilesAndYoutubeDoNotEnterTelegramByteStreaming() {
         assertFalse(video.copy(protectedContent = true).playableOnTelegram)
         assertFalse(video.copy(kind = TelegramMediaKind.YOUTUBE).playableOnTelegram)

@@ -1,0 +1,83 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -300,16 +300,10 @@
+     private var previewModeEnabled = false
+ 
+-    // UI status is sampled, never a per-frame work queue. The first notification
+-    // is retained for initialisation; a slow collector sees the newest event.
+-    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(
+-        replay = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+-    )
+-    private var lastFrameEventNs = 0L
+-
+-    private fun emitFrameRendered() {
+-        val now = System.nanoTime()
+-        if (lastFrameEventNs != 0L && now - lastFrameEventNs < 100_000_000L) return
+-        lastFrameEventNs = now
+-        retroGLEventsSubject.tryEmit(GLRetroEvents.FrameRendered)
+-    }
++    // Readiness is not a sampled frame statistic and must have its own replay slot.
++    private val renderEvents = GameRenderEvents<GLRetroEvents>(
++        GLRetroEvents.SurfaceCreated, GLRetroEvents.FrameRendered,
++    )
++    private val retroGLEventsSubject = renderEvents.events
++
++    private fun emitFrameRendered() = renderEvents.frameRendered(System.nanoTime())
+     private val retroGLIssuesErrors = MutableSharedFlow<Int>(1)
+@@ -822,4 +816,3 @@
+             lastSensorState = null
+-            lastFrameEventNs = 0L
+-            retroGLEventsSubject.tryEmit(GLRetroEvents.SurfaceCreated)
++            renderEvents.surfaceCreated()
+         }
+diff --git a/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt b/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt
+new file mode 100644
+--- /dev/null
++++ b/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt
+@@ -0,0 +1,45 @@
++package com.swordfish.libretrodroid
++
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.collect
++import kotlinx.coroutines.flow.flow
++
++/** GL-thread producer; readiness and sampled frame status share one generation snapshot. */
++class GameRenderEvents<T>(private val surface: T, private val frame: T) {
++    private data class Snapshot(val generation: Long = 0, val frames: Long = 0)
++    private val state = MutableStateFlow(Snapshot())
++    private var lastFrameNs: Long? = null
++
++    // A new collector gets the current surface, then only a frame belonging
++    // to that generation. StateFlow conflates progress without queuing old frames.
++    val events = flow {
++        var seenGeneration = 0L
++        var seenFrame = 0L
++        state.collect { snapshot ->
++            if (snapshot.generation != seenGeneration) {
++                seenGeneration = snapshot.generation
++                seenFrame = 0
++                emit(surface)
++            }
++            // Emitting readiness can suspend. Recheck before delivering its frame
++            // so a surface replaced during that suspension cannot replay old evidence.
++            if (snapshot.frames != seenFrame && state.value.generation == snapshot.generation) {
++                seenFrame = snapshot.frames
++                emit(frame)
++            }
++        }
++    }
++
++    fun surfaceCreated() {
++        lastFrameNs = null
++        state.value = Snapshot(generation = state.value.generation + 1)
++    }
++
++    fun frameRendered(nowNs: Long) {
++        val previous = lastFrameNs
++        if (previous != null && nowNs - previous < 100_000_000L) return
++        lastFrameNs = nowNs
++        val current = state.value
++        state.value = current.copy(frames = current.frames + 1)
++    }
++}

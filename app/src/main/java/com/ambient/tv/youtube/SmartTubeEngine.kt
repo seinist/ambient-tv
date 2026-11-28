@@ -26,6 +26,7 @@ import timber.log.Timber
 import com.ambient.tv.util.withoutUrlQueries
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
+import java.util.concurrent.ConcurrentHashMap
 import java.io.InputStream
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -150,10 +151,11 @@ class SmartTubeEngine @Inject constructor(
             runCatching {
                 val started = System.nanoTime()
                 // Account restoration must never hold the shared format-client slot.
-                service("getMediaItemService")
+                val serviceManager = manager()
+                checkNotNull(serviceManager.call("getMediaItemService")) { "SmartTube media item service unavailable" }
                 // Actual playback wins: it restores the client itself if already in the slot.
                 if (formatClientMutex.tryLock()) {
-                    try { restoreFormatClientOnce() } finally { formatClientMutex.unlock() }
+                    try { restoreFormatClientOnce(serviceManager) } finally { formatClientMutex.unlock() }
                 }
                 com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_warmup", started)
             }.onFailure {
@@ -263,9 +265,7 @@ class SmartTubeEngine @Inject constructor(
         playbackMetadata.clear()
         rowContinuations.clear()
         val signIn = service("getSignInService")
-        Class.forName("com.liskovsoft.youtubeapi.service.internal.YouTubeAccountManager")
-            .getMethod("instance", signIn.javaClass).invoke(null, signIn)?.call("init")
-        signIn.call("invalidateCache")
+        check(signIn.invokeCompatible("reloadStoredAccounts").invoked) { "SmartTube account reload unavailable" }
     }
 
     private data class StoredAccount(val id: String, val name: String, val spec: String)
@@ -539,10 +539,7 @@ class SmartTubeEngine @Inject constructor(
 
     suspend fun metadata(videoId: String, forceRefresh: Boolean = false): YouTubeMetadata {
         YouTubeLocalProgress.awaitReady()
-        if (forceRefresh) {
-            io { service("getMediaItemService").call("invalidateCache") }
-            playbackMetadata.invalidate(videoId)
-        }
+        if (forceRefresh) playbackMetadata.invalidate(videoId)
         val generation = playbackMetadata.generation
         playbackMetadata.get(videoId)?.let { return it }
         // A post-reconnect request must not join work started against the old connection/account.
@@ -578,13 +575,15 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
-    suspend fun playback(videoId: String, isTrailer: Boolean = false, started: Long = System.nanoTime()): YouTubePlayback {
+    suspend fun playback(
+        videoId: String, isTrailer: Boolean = false, started: Long = System.nanoTime(), forceRefresh: Boolean = false,
+    ): YouTubePlayback {
         val cached = playbackMetadata.get(videoId)
         return prepareYouTubePlayback(cached,
             loadMetadata = { com.ambient.tv.util.suspendResult { metadata(videoId) }.getOrNull() },
             loadStream = {
                 // Network resolution overlaps local SQL priming; resume is still canonical.
-                val stream = resolvePlaybackStream(videoId, isTrailer, started)
+                val stream = resolvePlaybackStream(videoId, isTrailer, started, forceRefresh)
                 val progressStarted = System.nanoTime()
                 YouTubeLocalProgress.awaitReady()
                 com.ambient.tv.ui.player.logPlaybackStartup("youtube", "progress_ready", started,
@@ -596,17 +595,14 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
-    suspend fun refreshLivePlayback(videoId: String, isTrailer: Boolean = false, started: Long = System.nanoTime()): YouTubePlayback {
-        io { service("getMediaItemService").call("invalidateCache") }
-        return playback(videoId, isTrailer, started)
-    }
-
-    private suspend fun resolvePlaybackStream(videoId: String, isTrailer: Boolean, started: Long): YouTubePlayback = io {
+    private suspend fun resolvePlaybackStream(
+        videoId: String, isTrailer: Boolean, started: Long, forceRefresh: Boolean,
+    ): YouTubePlayback = io {
         val serviceStarted = System.nanoTime()
         val media = service("getMediaItemService")
         com.ambient.tv.ui.player.logPlaybackStartup("youtube", "service_ready", started,
             "stage_ms=${(System.nanoTime() - serviceStarted) / 1_000_000}")
-        val candidate = loadPlayableFormatInfo(media, videoId, isTrailer, started)
+        val candidate = loadPlayableFormatInfo(media, videoId, isTrailer, started, forceRefresh = forceRefresh)
         val info = candidate.info
         synchronized(playbackFormatInfos) { playbackFormatInfos[videoId] = info }
         if (info.callBool("isLiveOffline") == true) {
@@ -698,7 +694,7 @@ class SmartTubeEngine @Inject constructor(
         val candidate = com.ambient.tv.util.suspendResult {
             loadPlayableFormatInfo(media, videoId, expiredUrl = expiredUrl)
         }.getOrNull() ?: return@io null
-        youtubeRenewedUrl(expiredUrl, candidate.renewalUrls).also { renewed ->
+        youtubeRenewedUrl(expiredUrl, candidate.renewalUrls)?.takeIf { it != expiredUrl }.also { renewed ->
             com.ambient.tv.diagnostics.DiagnosticLog.log(
                 com.ambient.tv.diagnostics.DiagnosticLevel.INFO, "youtube-relay",
                 if (renewed != null) "Expired stream link renewed" else "Expired stream link could not be renewed",
@@ -713,75 +709,55 @@ class SmartTubeEngine @Inject constructor(
      * process at the TV client again, which often answers with SABR only: one wasted request
      * (1–5 s) before the client switch on the first video after each app start.
      */
-    private fun restoreFormatClientOnce() {
+    private fun restoreFormatClientOnce(serviceManager: Any) {
         if (formatClientRestored) return
-        runCatching {
-            val data = Class.forName("com.liskovsoft.youtubeapi.service.internal.MediaServiceData").getMethod("instance").invoke(null)
-            val ordinal = data?.callInt("getVideoInfoType")?.takeIf { it >= 0 } ?: return@runCatching
-            val service = Class.forName("com.liskovsoft.youtubeapi.videoinfo.V2.VideoInfoService").getMethod("instance").invoke(null)
-            val client = Class.forName("com.liskovsoft.youtubeapi.common.helpers.AppClient").enumConstants?.getOrNull(ordinal) ?: return@runCatching
-            val known = service.javaClass.getDeclaredField("VIDEO_INFO_TYPE_LIST").apply { isAccessible = true }.get(null) as? Array<*>
-            if (known?.contains(client) != true) return@runCatching
-            val fields = listOf("mNextInfoType", "mActualInfoType").map {
-                service.javaClass.getDeclaredField(it).apply { isAccessible = true }
-            }
-            fields.forEach { it.set(service, client) }
-            Timber.i("SmartTube format client restored: %s", client)
-        }.onSuccess { formatClientRestored = true }
-            .onFailure { Timber.d(it, "SmartTube format client restore") }
+        val result = serviceManager.invokeCompatible("restoreSavedFormatClient")
+        formatClientRestored = result.invoked
+        if (result.value == true) Timber.i("SmartTube saved format client restored")
     }
 
     private suspend fun loadPlayableFormatInfo(
         media: Any, videoId: String, isTrailer: Boolean = false, launchStarted: Long = 0L,
-        expiredUrl: String? = null,
+        expiredUrl: String? = null, forceRefresh: Boolean = false,
     ): PlaybackFormatCandidate {
         val queuedAt = System.nanoTime()
         return formatClientMutex.withLock {
-        val trace = launchStarted.takeIf { it != 0L } ?: queuedAt
-        com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_slot", trace,
-            "stage_ms=${(System.nanoTime() - queuedAt) / 1_000_000}")
-        val caller = kotlin.coroutines.coroutineContext
-        restoreFormatClientOnce()
-        // Do not overwrite a client selected by an actual format request with an old saved one.
-        formatClientRestored = true
-        if (expiredUrl != null) media.call("invalidateCache")
-        resolveYouTubeFormatInfo(
-            load = { allowInnertube ->
-                PlaybackFormatCandidate(loadFormatInfo(media, videoId, allowInnertube), videoId, isTrailer)
-            },
-            switchClient = {
-                val switched = manager().invokeCompatible("switchNextClientNow")
-                val available = if (switched.invoked) true else {
-                    val videoInfo = runCatching {
-                        Class.forName("com.liskovsoft.youtubeapi.videoinfo.V2.VideoInfoService")
-                            .getMethod("instance").invoke(null)
-                    }.getOrNull()
-                    videoInfo?.invokeCompatible("switchNextFormat", true)?.invoked == true
+            val trace = launchStarted.takeIf { it != 0L } ?: queuedAt
+            com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_slot", trace,
+                "stage_ms=${(System.nanoTime() - queuedAt) / 1_000_000}")
+            val caller = kotlin.coroutines.coroutineContext
+            val serviceManager = manager()
+            restoreFormatClientOnce(serviceManager)
+            if (forceRefresh || expiredUrl != null) {
+                check(serviceManager.invokeCompatible("invalidateFormatCache").invoked) {
+                    "SmartTube format cache cannot be invalidated"
                 }
-                if (available) media.call("invalidateCache")
-                available
-            },
-            // Renewal serves an already selected representation, possibly after a renderer
-            // switch. Match its itag/audio track rather than reselecting startup quality.
-            score = { candidate ->
-                if (expiredUrl == null) formatInfoScore(candidate)
-                else if (candidate.info.callBool("isUnplayable") == true) 0
-                else {
-                    val renewed = youtubeRenewedUrl(expiredUrl, candidate.renewalUrls)
-                    when {
-                        renewed == null -> 0
-                        renewed == expiredUrl -> 2
-                        else -> 4
+            }
+            resolveYouTubeFormatInfo(
+                load = { allowInnertube ->
+                    PlaybackFormatCandidate(loadFormatInfo(media, videoId, allowInnertube), videoId, isTrailer)
+                },
+                // The service manager also invalidates its format cache when switching clients.
+                switchClient = { serviceManager.invokeCompatible("switchNextClientNow").invoked },
+                score = { candidate ->
+                    if (expiredUrl == null) formatInfoScore(candidate)
+                    else if (candidate.info.callBool("isUnplayable") == true) 0
+                    else {
+                        val renewed = youtubeRenewedUrl(expiredUrl, candidate.renewalUrls)
+                        when {
+                            renewed == null -> 0
+                            renewed == expiredUrl -> 2
+                            else -> 4
+                        }
                     }
-                }
-            },
-            isTerminal = { it.info.callBool("isLiveOffline") == true },
-            checkActive = { caller.ensureActive() },
-            onAttempt = { attempt, score, started ->
-                com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_response", trace,
-                    "attempt=$attempt score=$score stage_ms=${(System.nanoTime() - started) / 1_000_000}")
-            },
-        )
+                },
+                isTerminal = { it.info.callBool("isLiveOffline") == true },
+                checkActive = { caller.ensureActive() },
+                onAttempt = { attempt, score, started ->
+                    com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_response", trace,
+                        "attempt=$attempt score=$score stage_ms=${(System.nanoTime() - started) / 1_000_000}")
+                },
+            )
         }
     }
 
@@ -789,7 +765,7 @@ class SmartTubeEngine @Inject constructor(
         if (formats.isEmpty()) null else youtubeAdaptivePair(
             formats,
             YouTubeDeviceVideo.videoTarget(context, appPreferences.youtubeVideoPreset, appPreferences.youtubeMaxVideoHeight),
-            YouTubeDeviceVideo.decodeCheck(),
+            YouTubeDeviceVideo.decodeCheck(context, allowHdr = true),
             youtubePreferredAudioLanguage(appPreferences.playbackAudioLanguage),
         )
 
@@ -844,6 +820,7 @@ class SmartTubeEngine @Inject constructor(
             preferLiveHls = renderer != com.ambient.tv.ui.player.backend.PlaybackBackend.VLC,
             allowOtf = media3,
             requestedMaxHeight = cap.takeIf { selectedHeight == it } ?: 0,
+            selectedNativePair = candidate.pair.takeUnless { media3 },
             hasProgressive = { candidate.direct != null },
         )
         // Try for native-compatible formats, but do not lose the only playable Media3 response.
@@ -1614,11 +1591,84 @@ class SmartTubeEngine @Inject constructor(
     }
 }
 
-private fun Any.call(name: String, vararg args: Any?): Any? {
-    val candidates = javaClass.methods.filter { it.name == name && it.parameterTypes.size == args.size }
-    val method = candidates.firstOrNull { m -> m.parameterTypes.indices.all { i -> args[i] == null || wrap(m.parameterTypes[i]).isAssignableFrom(args[i]!!.javaClass) } }
-        ?: candidates.firstOrNull() ?: return null
-    return runCatching { method.invoke(this, *args) }.onFailure { Timber.d(it, "SmartTube reflection: %s", name) }.getOrNull()
+private data class ReflectionNameKey(val name: String, val arity: Int)
+private data class ReflectionMethodKey(
+    val name: String,
+    val firstType: Class<*>?,
+    val secondType: Class<*>?,
+    val arity: Int,
+    val remainingTypes: List<Class<*>?>,
+    val allowArityFallback: Boolean,
+)
+private data class CachedReflectionMethod(val method: Method?)
+
+/** FIFO on misses only; cache hits do not acquire a monitor or update recency. */
+internal class BoundedReflectionCache<K : Any, V : Any>(private val capacity: Int) {
+    init { require(capacity > 0) }
+    private val values = ConcurrentHashMap<K, V>()
+    private val insertionOrder = java.util.ArrayDeque<K>()
+
+    val size: Int get() = values.size
+
+    fun getOrPut(key: K, create: () -> V): V =
+        values[key] ?: synchronized(insertionOrder) {
+            values[key] ?: create().also { value ->
+                if (values.size >= capacity) {
+                    values.remove(insertionOrder.removeFirst())
+                }
+                values[key] = value
+                insertionOrder.addLast(key)
+            }
+        }
+}
+
+private const val MAX_REFLECTION_CLASSES = 256
+private const val MAX_REFLECTION_SIGNATURES = 256
+private class ReflectionClassIndex(type: Class<*>) {
+    val methods = type.methods.groupBy { ReflectionNameKey(it.name, it.parameterCount) }
+    val zeroArgumentMethods = methods.filterKeys { it.arity == 0 }
+        .mapKeys { it.key.name }.mapValues { it.value.first() }
+    val resolved = BoundedReflectionCache<ReflectionMethodKey, CachedReflectionMethod>(MAX_REFLECTION_SIGNATURES)
+}
+private val reflectionIndexes = BoundedReflectionCache<Class<*>, ReflectionClassIndex>(MAX_REFLECTION_CLASSES)
+
+internal fun reflectionClassCacheSize(): Int = reflectionIndexes.size
+
+private fun reflectionIndex(type: Class<*>): ReflectionClassIndex =
+    reflectionIndexes.getOrPut(type) { ReflectionClassIndex(type) }
+
+private fun wrap(c: Class<*>) = when (c) {
+    Int::class.javaPrimitiveType -> Int::class.javaObjectType
+    Long::class.javaPrimitiveType -> Long::class.javaObjectType
+    Float::class.javaPrimitiveType -> Float::class.javaObjectType
+    Double::class.javaPrimitiveType -> Double::class.javaObjectType
+    Boolean::class.javaPrimitiveType -> Boolean::class.javaObjectType
+    else -> c
+}
+
+internal fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFallback: Boolean): Method? {
+    val index = reflectionIndex(javaClass)
+    if (args.isEmpty()) return index.zeroArgumentMethods[name]
+    val key = ReflectionMethodKey(
+        name, args[0]?.javaClass, args.getOrNull(1)?.javaClass, args.size,
+        if (args.size <= 2) emptyList() else (2 until args.size).map { args[it]?.javaClass },
+        allowArityFallback,
+    )
+    fun resolve(): CachedReflectionMethod {
+        val candidates = index.methods[ReflectionNameKey(name, args.size)].orEmpty()
+        val compatible = candidates.firstOrNull { method ->
+            val types = method.parameterTypes
+            types.indices.all { i -> args[i] == null || wrap(types[i]).isAssignableFrom(args[i]!!.javaClass) }
+        }
+        return CachedReflectionMethod(compatible ?: if (allowArityFallback) candidates.firstOrNull() else null)
+    }
+    return index.resolved.getOrPut(key) { resolve() }.method
+}
+
+internal fun Any.call(name: String, vararg args: Any?): Any? {
+    val method = cachedMethod(name, args, allowArityFallback = true) ?: return null
+    return runCatching { method.invoke(this, *args) }
+        .onFailure { Timber.d(it, "SmartTube reflection: %s", name) }.getOrNull()
 }
 private fun Any.callFirst(vararg names: String): Any? {
     for (name in names) {
@@ -1632,21 +1682,11 @@ private fun Any.callLong(name: String) = (call(name) as? Number)?.toLong()
 private fun Any.callInt(name: String) = (call(name) as? Number)?.toInt()
 private fun Any.callDouble(name: String) = (call(name) as? Number)?.toDouble()
 private fun Any.callBool(name: String) = call(name) as? Boolean
-private fun wrap(c: Class<*>) = when (c) {
-    Int::class.javaPrimitiveType -> Int::class.javaObjectType
-    Long::class.javaPrimitiveType -> Long::class.javaObjectType
-    Float::class.javaPrimitiveType -> Float::class.javaObjectType
-    Double::class.javaPrimitiveType -> Double::class.javaObjectType
-    Boolean::class.javaPrimitiveType -> Boolean::class.javaObjectType
-    else -> c
-}
 
-private data class DetailedReflectionInvocation(val found: Boolean, val value: Any?, val error: Throwable?)
-private fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflectionInvocation {
-    val candidates = javaClass.methods.filter { it.name == name && it.parameterTypes.size == args.size }
-    val method = candidates.firstOrNull { m ->
-        m.parameterTypes.indices.all { i -> args[i] == null || wrap(m.parameterTypes[i]).isAssignableFrom(args[i]!!.javaClass) }
-    } ?: candidates.firstOrNull() ?: return DetailedReflectionInvocation(false, null, null)
+internal data class DetailedReflectionInvocation(val found: Boolean, val value: Any?, val error: Throwable?)
+internal fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflectionInvocation {
+    val method = cachedMethod(name, args, allowArityFallback = true)
+        ?: return DetailedReflectionInvocation(false, null, null)
     return try {
         DetailedReflectionInvocation(true, method.invoke(this, *args), null)
     } catch (t: Throwable) {
@@ -1655,15 +1695,16 @@ private fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflect
     }
 }
 
-private data class ReflectionInvocation(val invoked: Boolean, val value: Any?)
-private fun Any.invokeCompatible(name: String, vararg args: Any?): ReflectionInvocation {
-    val candidates = javaClass.methods.filter { it.name == name && it.parameterTypes.size == args.size }
-    val method = candidates.firstOrNull { m -> m.parameterTypes.indices.all { i -> args[i] == null || wrap(m.parameterTypes[i]).isAssignableFrom(args[i]!!.javaClass) } }
+internal data class ReflectionInvocation(val invoked: Boolean, val value: Any?)
+internal fun Any.invokeCompatible(name: String, vararg args: Any?): ReflectionInvocation {
+    val method = cachedMethod(name, args, allowArityFallback = false)
         ?: return ReflectionInvocation(false, null)
     return try { ReflectionInvocation(true, method.invoke(this, *args)) }
     catch (t: Throwable) { Timber.d(t, "SmartTube reflection: %s", name); ReflectionInvocation(false, null) }
 }
-private fun Any.hasMethod(name: String, arity: Int): Boolean = javaClass.methods.any { it.name == name && it.parameterTypes.size == arity }
+internal fun Any.hasMethod(name: String, arity: Int): Boolean =
+    if (arity == 0) reflectionIndex(javaClass).zeroArgumentMethods.containsKey(name)
+    else reflectionIndex(javaClass).methods.containsKey(ReflectionNameKey(name, arity))
 private fun Any.hasAnyMethod(vararg names: String): Boolean = names.any { hasMethod(it, 0) }
 
 /** Feed/search key whose loads record row continuation handles in [SmartTubeEngine]. */

@@ -1,0 +1,113 @@
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -146,5 +146,12 @@
+     bool attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height,
+                              std::uint64_t allocationBytes);
++    // Optional secondary preparation does not select or publish a texture.
++    bool matchesPrimaryExternalFrame(AHardwareBuffer* buffer, unsigned width, unsigned height,
++                                     std::uint64_t allocationBytes) const;
++    bool prepareSpareExternalFrame(AHardwareBuffer* buffer, unsigned width, unsigned height,
++                                   std::uint64_t allocationBytes);
++    // Refuse release of the selected or foreign-context import.
++    bool releaseSpareExternalFrame();
+     // Render-thread-only accounting; Vulkan-owned identities are counted by the backend.
+     std::uint64_t retainedExternalFrameBytesExcept(AHardwareBuffer* first = nullptr,
+                                                     AHardwareBuffer* second = nullptr) const noexcept {
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -850,9 +850,43 @@
+ bool Video::attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height,
+                                 std::uint64_t allocationBytes) {
+-    // Vulkan still exposes only one slot. Do not rotate until its scheduler and
+-    // publication/ownership contract can select the completed matching slot.
+-    return prepareExternalFrameSlot(0, buffer, width, height, allocationBytes) && selectExternalFrameSlot(0);
++    // The ordinary playback path continues to publish only the primary slot.
++    return prepareExternalFrameSlot(0, buffer, width, height, allocationBytes) && selectExternalFrameSlot(0);
++}
++
++bool Video::matchesPrimaryExternalFrame(AHardwareBuffer* buffer, unsigned width, unsigned height,
++                                        std::uint64_t allocationBytes) const {
++    const auto* slot = externalFrame.get(0);
++    return externalFrames && externalFrame.selected() == 0 && slot && slot->texture == hwRenderTexture &&
++        slot->lease.matches(buffer, eglGetCurrentDisplay(), eglGetCurrentContext(), hwRenderTexture) &&
++        slot->width == width && slot->height == height && slot->allocationBytes == allocationBytes;
++}
++
++bool Video::prepareSpareExternalFrame(AHardwareBuffer* buffer, unsigned width, unsigned height,
++                                     std::uint64_t allocationBytes) {
++    // Preparation may bind a new texture but must not change the renderer's
++    // borrowed texture, geometry or selected primary import.
++    if (!externalFrames || externalFrame.selected() != 0 || !allocationBytes ||
++            !externalFrame.ownsContext(eglGetCurrentDisplay(), eglGetCurrentContext())) return false;
++    const auto* spare = externalFrame.get(1);
++    if (!spare || (spare->lease.retainsBuffer() &&
++            !spare->lease.ownsContext(eglGetCurrentDisplay(), eglGetCurrentContext()))) return false;
++    return prepareExternalFrameSlot(1, buffer, width, height, allocationBytes);
++}
++
++bool Video::releaseSpareExternalFrame() {
++    if (!externalFrames || externalFrame.selected() == 1) return false;
++    const auto* spare = externalFrame.get(1);
++    if (!spare) return false;
++    if (!spare->lease.retainsBuffer() && !spare->texture) return true;
++    const auto display = eglGetCurrentDisplay();
++    const auto context = eglGetCurrentContext();
++    // Ordinary release must prove the owning context is current. Context loss
++    // instead follows the existing generation invalidation/destruction path.
++    if (!spare->texture || !spare->lease.ownsContext(display, context)) return false;
++    ExternalFrameOps ops;
++    externalFrame.releaseSlot(1, hwRenderTexture, display, context, ops);
++    return true;
+ }
+ 
+ bool Video::prepareExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
+                                      std::uint64_t allocationBytes) {
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -255,3 +255,5 @@
+     void attachVulkanFrame(unsigned int width, unsigned int height);
++    // Optional preparation; the scheduler must separately publish a completed frame.
++    bool prepareSpareVulkanFrame();
+     void checkVulkanFrameError();
+     void renderPrimaryFrame(bool force = false);
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -438,9 +438,11 @@
+     // ordinary per-frame bridge finish in handleVideoRefresh. Drain the old
+     // owning GLES context first; retain the existing post-import handoff too.
+     if (!traceGameCall("AmbientGame GLES bridge resize finish", [&] {
+-            return video->finishExternalFrameUse(true);
++            // Retire the unselected optional EGL lease before any primary
++            // resize/precision change can retire its Vulkan-side allocation.
++            return video->finishExternalFrameUse(true) && video->releaseSpareExternalFrame();
+         })) {
+         backend.rejectBridgeImport();
+         return;
+     }
+     if (!backend.ensureFrameBuffer(width, height)) {
+@@ -463,4 +465,21 @@
+     backend.rejectBridgeImport();
+ }
+ 
++bool LibretroDroid::prepareSpareVulkanFrame() {
++    auto& backend = VulkanBackend::getInstance();
++    if (!video || backend.hasFatalError() || !video->matchesPrimaryExternalFrame(
++            backend.getFrameBuffer(), backend.getFrameBufferWidth(), backend.getFrameBufferHeight(),
++            backend.getFrameBufferAllocationBytes())) return false;
++    const auto retained = video->retainedExternalFrameBytesExcept(
++        backend.getFrameBuffer(), backend.getSpareFrameBuffer());
++    if (!backend.ensureSpareFrameBuffer(retained)) return false;
++    if (video->prepareSpareExternalFrame(backend.getSpareFrameBuffer(), backend.getFrameBufferWidth(),
++            backend.getFrameBufferHeight(), backend.getSpareFrameBufferAllocationBytes())) return true;
++    // Optional EGL import failure is not a primary bridge failure. Stop using
++    // the optional lease before retiring its independent Vulkan allocation.
++    // If EGL cannot prove safe retirement, retain both owners for teardown.
++    if (video->releaseSpareExternalFrame()) backend.releaseSpareFrameBuffer();
++    return false;
++}
++
+ void LibretroDroid::onMotionEvent(

@@ -5,7 +5,6 @@ import com.ambient.tv.games.GameShader
 import com.ambient.tv.games.GameSystems
 import com.swordfish.libretrodroid.ShaderConfig
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,12 +24,34 @@ class GameRetroShadersTest {
         }
     }
 
-    @Test fun strengthIsBoundedBeforeCompilingSource() {
-        val original = (GameRetroShaders.config(GameShader.FILM_GRAIN, 1f) as ShaderConfig.Custom).passes.single().fragment
-        val stronger = (GameRetroShaders.config(GameShader.FILM_GRAIN, 1.25f) as ShaderConfig.Custom).passes.single().fragment
-        val extreme = (GameRetroShaders.config(GameShader.FILM_GRAIN, 100f) as ShaderConfig.Custom).passes.single().fragment
-        assertFalse(original == stronger)
-        assertTrue(extreme.contains("const float INTENSITY = 1.5;"))
+    @Test fun strengthChangesOnlyBoundedUniformMetadata() {
+        for (shader in GameShader.entries.filter(GameRetroShaders::isCustom)) {
+            fun pass(value: Float) = (GameRetroShaders.config(shader, value) as ShaderConfig.Custom).passes.single()
+            val original = pass(1f)
+            assertTrue(original.fragment.contains("uniform float ambientFilterIntensity;"))
+            for ((value, expected) in listOf(
+                0.5f to 0.5f, 1.25f to 1.25f, 100f to 1.5f, -2f to 0.5f,
+                Float.NaN to 1f, Float.POSITIVE_INFINITY to 1f,
+            )) {
+                val changed = pass(value)
+                assertEquals(original.fragment, changed.fragment)
+                assertEquals(original.vertex, changed.vertex)
+                assertEquals(expected, changed.ambientIntensity, 0f)
+                assertEquals(original, changed.copy(ambientIntensity = original.ambientIntensity))
+            }
+        }
+    }
+
+    @Test fun effectAndHdrPrefixKeepIndependentUniformValues() {
+        val filter = GameShader.CRT_LIGHT.config(1.25f)
+        val withEffect = GamePictureEffect.apply(filter, GameShader.FILM_GRAIN) as ShaderConfig.Custom
+        assertEquals(listOf(1f, 1.25f), withEffect.passes.map { it.ambientIntensity })
+        val hdr = GameHdrToneMapShader.forConfig(filter, com.ambient.tv.games.GameHdrToneMap.PQ, true)
+            as ShaderConfig.PrependPass
+        assertEquals(0f, hdr.pass.ambientIntensity, 0f)
+        assertEquals(1.25f, (hdr.filter as ShaderConfig.Custom).passes.single().ambientIntensity, 0f)
+        // Signed/custom external GLSL has no implicit uniform binding.
+        assertEquals(0f, ShaderConfig.Custom.ShaderPass("vertex", "fragment").ambientIntensity, 0f)
     }
 
     @Test fun perGameShaderOverridesDoNotAffectSystemDefaults() {

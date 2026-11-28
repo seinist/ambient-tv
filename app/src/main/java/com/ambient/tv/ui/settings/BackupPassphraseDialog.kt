@@ -23,6 +23,8 @@ import com.ambient.tv.ui.common.TvTextField
  * encrypted backup. The passphrase is never stored; it only protects that one file.
  */
 @Composable
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 internal fun BackupPassphraseDialog(
     confirm: Boolean,
     wrongPassphrase: Boolean,

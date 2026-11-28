@@ -27,6 +27,8 @@ object GameInputRouting {
     private val observers = linkedMapOf<Any, () -> Unit>()
     val transitions = GameInputTransitions()
     val active: Boolean get() = session != null
+    private val _gameStartEpoch = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    val gameStartEpoch: kotlinx.coroutines.flow.StateFlow<Long> = _gameStartEpoch
     val mode: GameInputMode? get() = session?.mode
     var generation: Long = 0
         private set
@@ -41,6 +43,10 @@ object GameInputRouting {
     ) {
         val old = session
         session = Session(owner, mode, onMenu, onSettings, onInfo, context)
+        if (old == null) {
+            _gameStartEpoch.value += 1
+            com.ambient.tv.data.browse.BrowseWorkBudget.speculativeJob?.cancel()
+        }
         if (old?.owner !== owner || old.mode != mode || old.context != context) changed()
     }
 

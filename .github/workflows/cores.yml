@@ -1,4 +1,4 @@
-name: Cores
+name: Cores (manual single profile)
 
 # Builds the pinned libretro cores of cores/cores.json from source with the app's NDK (16 KB
 # pages checked) and, when publishing, puts them into a signed "cores-…" release. The app's
@@ -6,43 +6,157 @@ name: Cores
 # public half is in cores/signing-public.pem (secret CORES_SIGNING_KEY, PEM, EC P-256).
 
 on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      publish_experimental:
+        type: boolean
+        default: false
+      force_rebuild:
+        type: boolean
+        default: false
+      cores:
+        type: string
+        default: ""
+      abis:
+        type: string
+        default: ""
+      profile:
+        type: string
+        required: true
+      comparison:
+        type: string
+        default: none
+    secrets:
+      CORES_SIGNING_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       publish:
         description: Publish a signed cores release
         type: boolean
-        default: true
+        default: false
+      publish_experimental:
+        description: Publish a separate signed experimental channel (main only)
+        type: boolean
+        default: false
+      force_rebuild:
+        description: Rebuild all selected cores even if their published fingerprints match
+        type: boolean
+        default: false
       cores:
         description: Core ids to build, comma separated (empty = all)
         default: ""
-  push:
-    branches: [main]
-    paths:
-      - cores/cores.json
-      - .github/workflows/cores.yml
-      - scripts/check_elf_pages.py
+      abis:
+        description: Android ABIs, comma separated (empty = all)
+        default: ""
+      profile:
+        description: Compiler profile (optimized and optimized-a57 are public; other candidates are diagnostic)
+        type: choice
+        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
+        default: baseline
+      comparison:
+        description: Paired full-catalog builds (artifact-only; baseline profile required)
+        type: choice
+        options: [none, baseline-thinlto, o3-o3-thinlto]
+        default: none
 
 concurrency:
-  group: cores-${{ github.ref }}
-  cancel-in-progress: true
+  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   NDK_VERSION: "30.0.16248370"
 
 jobs:
+  rename-releases:
+    # Normalize existing display titles on main only, without modifying signed assets or tags.
+    if: github.ref == 'refs/heads/main' && !inputs.publish_experimental && (github.event_name == 'push' || inputs.publish)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Normalize existing core release titles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash build.sh cores-rename-releases --apply
+
   plan:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      reuse: ${{ steps.plan.outputs.reuse }}
+      publish: ${{ steps.plan.outputs.publish }}
+      count: ${{ steps.plan.outputs.count }}
+      total: ${{ steps.plan.outputs.total }}
+      artifact_pattern: ${{ steps.plan.outputs.artifact_pattern }}
     steps:
       - uses: actions/checkout@v5
+      - name: Test core build policy
+        run: |
+          python3 -m unittest discover -s scripts -p test_core_build_policy.py
+          python3 -m unittest discover -s scripts -p test_core_release_incremental.py
+          python3 -m unittest discover -s scripts -p test_core_hotpath_patches.py
+          python3 -m unittest discover -s scripts -p test_core_hotpath_remaining.py
+      - id: plan
+        env:
+          ONLY: ${{ inputs.cores }}
+          ABIS: ${{ inputs.abis }}
+          PROFILE: ${{ inputs.profile || 'baseline' }}
+          PUBLISH: ${{ inputs.publish }}
+          COMPARISON: ${{ inputs.comparison || 'none' }}
+          PUBLISH_EXPERIMENTAL: ${{ inputs.publish_experimental }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$PUBLISH_EXPERIMENTAL" = true ]; then
+            [[ ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) && "$GITHUB_REF" == refs/heads/main &&
+               "$PUBLISH" != true && ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && "$COMPARISON" == none ]] ||
+              { echo "::error::Experimental publishing requires main, optimized or optimized-a57, and no production publish/comparison"; exit 1; }
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == push && "$PROFILE" != baseline && "$PUBLISH_EXPERIMENTAL" != true ]]; then
+            echo "::error::Automatic non-baseline builds require explicit experimental channel"
+            exit 1
+          fi
+          matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
+            --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
+            --cores "$ONLY" --abis "$ABIS" --profile "$PROFILE" --comparison "$COMPARISON")
+          reuse='[]'
+          publish=false
+          total=$(jq '.include | length' <<< "$matrix")
+          if [[ "$GITHUB_EVENT_NAME" == push || "$PUBLISH" == true || "$PUBLISH_EXPERIMENTAL" == true ]]; then
+            force=()
+            if [[ "$FORCE_REBUILD" == true ]]; then force+=(--force); fi
+            result=$(python3 scripts/core_release_incremental.py plan --repo "$GITHUB_REPOSITORY" \
+              --profile "$PROFILE" --ndk "$NDK_VERSION" --matrix "$matrix" "${force[@]}")
+            matrix=$(jq -c '.matrix' <<< "$result")
+            reuse=$(jq -c '.reuse' <<< "$result")
+            publish=$(jq -r '.publish' <<< "$result")
+          fi
+          count=$(jq '.include | length' <<< "$matrix")
+          # Exact names prevent optimized from matching optimized-a57 artifacts.
+          artifact_pattern=$(jq -r '[.include[].artifact] | if length == 0 then "" elif length == 1 then .[0] else "{" + join(",") + "}" end' <<< "$matrix")
+          {
+            echo "matrix=$matrix"
+            echo "reuse=$reuse"
+            echo "publish=$publish"
+            echo "count=$count"
+            echo "total=$total"
+            echo "artifact_pattern=$artifact_pattern"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $count of $total core/ABI combinations."
+          echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi) \(.profile)"'
       # Check the secret BEFORE spending 104 core-build jobs on a release that cannot
       # be signed. Never generate a new key or publish unsigned native libraries.
       - name: Check core-release signing key
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        if: steps.plan.outputs.publish == 'true'
         env:
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
         run: |
@@ -54,37 +168,24 @@ jobs:
           key="$RUNNER_TEMP/ambient-cores-key.pem"
           pub="$RUNNER_TEMP/ambient-cores-public.pem"
           trap 'rm -f "$key" "$pub"' EXIT
+          umask 077
           printf '%s\n' "$SIGNING_KEY" > "$key"
           openssl pkey -in "$key" -pubout -out "$pub"
           cmp -s "$pub" cores/signing-public.pem || {
             echo "::error::CORES_SIGNING_KEY does not match the committed public key"
             exit 1
           }
-      - id: plan
-        env:
-          ONLY: ${{ inputs.cores }}
-        run: |
-          matrix=$(jq -c --arg only "$ONLY" '
-            ($only | split(",") | map(select(length > 0))) as $wanted
-            | { include: [ .abis[] as $abi | .cores[]
-                | select(($wanted | length) == 0 or (.core as $c | $wanted | index($c)))
-                | . + { abi: $abi } ] }' cores/cores.json)
-          echo "$matrix" | jq -e '.include | length > 0' >/dev/null || {
-            echo "::error::No matching cores in the requested build matrix"
-            exit 1
-          }
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi)"'
 
   build:
     needs: plan
+    if: needs.plan.outputs.count != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
-    name: ${{ matrix.core }} (${{ matrix.abi }})
+    name: ${{ matrix.core }} (${{ matrix.abi }}, ${{ matrix.profile }})
     steps:
       - uses: actions/checkout@v5
 
@@ -96,11 +197,40 @@ jobs:
           "$sdkmanager" "ndk;${NDK_VERSION}" > /dev/null || "$sdkmanager" --channel=3 "ndk;${NDK_VERSION}" > /dev/null
           echo "NDK=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
-      - name: Fetch ${{ matrix.core }} at its pinned commit
+      - name: Set up content-checked compiler cache
         run: |
+          if ! command -v ccache >/dev/null; then
+            # The cache is a build-time convenience, not part of the proof.
+            # Hosted runner third-party apt feeds can fail independently of NDK.
+            sudo apt-get install -y -qq ccache || {
+              sudo apt-get update -qq && sudo apt-get install -y -qq ccache
+            } || true
+          fi
+          if command -v ccache >/dev/null &&
+             ccache --set-config=compiler_check=content &&
+             ccache --set-config=max_size=512M &&
+             ccache --set-config=compression=true; then
+            echo "CORE_CCACHE=$(command -v ccache)" >> "$GITHUB_ENV"
+            echo "CCACHE_BASEDIR=$PWD" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Compiler cache unavailable; compiling without it"
+            echo "CORE_CCACHE=" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/cache@v5
+        if: env.CORE_CCACHE != ''
+        with:
+          path: ~/.cache/ccache
+          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py', 'scripts/core_hotpath_remaining.py') }}
+
+      - name: Fetch ${{ matrix.core }} at its pinned commit
+        env:
+          CORE_REPO: ${{ matrix.repo }}
+          CORE_COMMIT: ${{ matrix.commit }}
+        run: |
+          set -euo pipefail
           git init -q src
-          git -C src remote add origin "${{ matrix.repo }}"
-          git -C src fetch -q --depth 1 origin "${{ matrix.commit }}"
+          git -C src remote add origin "$CORE_REPO"
+          git -C src fetch -q --depth 1 origin "$CORE_COMMIT"
           git -C src checkout -q FETCH_HEAD
           # Direct submodules are needed; some cores carry broken nested ones (mupen64plus-nx), which
           # libretro's own CI does not fetch either.
@@ -112,65 +242,118 @@ jobs:
             # shellcheck disable=SC2086
             git -C src submodule update -q --init --recursive --depth 1 -- $paths || echo "::warning::nested submodules incomplete"
           fi
-          test "$(git -C src rev-parse HEAD)" = "${{ matrix.commit }}"
+          test "$(git -C src rev-parse HEAD)" = "$CORE_COMMIT"
 
-      - name: Build
+      - name: Build and verify
         env:
           ABI: ${{ matrix.abi }}
           CORE: ${{ matrix.core }}
+          CORE_COMMIT: ${{ matrix.commit }}
+          BUILD_KIND: ${{ matrix.build }}
           JNI: ${{ matrix.jni }}
           ARGS: ${{ matrix.args }}
           EXTRA_ENV: ${{ matrix.env }}
           CPPFLAGS_EXTRA: ${{ matrix.cppflags }}
+          PROFILE: ${{ matrix.profile }}
+          CFLAGS_EXTRA: ${{ matrix.cflags }}
+          LDFLAGS_EXTRA: ${{ matrix.ldflags }}
+          MAKEVARS: ${{ matrix.makevars }}
         run: |
           set -euo pipefail
-          mkdir -p out
-          if [ "${{ matrix.build }}" = "cmake" ]; then
-            cmake -S src -B build \
+          mkdir -p out reports
+          bin="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          read -r -a args <<< "$ARGS"
+          read -r -a extra_env <<< "$EXTRA_ENV"
+          read -r -a makevars <<< "$MAKEVARS"
+          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ]]; then
+            python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
+          fi
+          if [ "$BUILD_KIND" = "cmake" ]; then
+            python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
+            flags=()
+            if [ -n "${CORE_CCACHE:-}" ]; then
+              flags+=("-DCMAKE_C_COMPILER_LAUNCHER=$CORE_CCACHE" "-DCMAKE_CXX_COMPILER_LAUNCHER=$CORE_CCACHE")
+            fi
+            if [ -n "$CFLAGS_EXTRA" ]; then
+              flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
+            fi
+            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* ]]; then
+              flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
+            fi
+            cmake -G "Unix Makefiles" -S src -B build \
               -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
               -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-29 \
               -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
-              -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
-              -DCMAKE_BUILD_TYPE=Release $ARGS
-            cmake --build build -j"$(nproc)"
-            lib=$(find build -name '*libretro*.so' | head -n 1)
+              "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
+              "-DCMAKE_MODULE_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "${args[@]}" "${flags[@]}"
+            build_cwd="$PWD/build"
+            cp build/compile_commands.json reports/compile_commands.json
+            # GNU Make must buffer each target; otherwise concurrent diagnostics can
+            # splice into a verbose compiler/link command and corrupt the flag audit.
+            cmake --build build --verbose -j"$(nproc)" -- --output-sync=target 2>&1 | tee reports/build.log
+            lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root build --pattern '*libretro*.so')
           else
-            # Flags newer compilers need (cores.json "cppflags"), added to the core's own Application.mk.
-            if [ -n "$CPPFLAGS_EXTRA" ]; then
-              printf '\nAPP_CPPFLAGS += %s\n' "$CPPFLAGS_EXTRA" >> "src/$JNI/jni/Application.mk"
+            python3 scripts/core_build_policy.py prepare-ndk --root "src/$JNI" --core "$CORE" --profile "$PROFILE"
+            python3 scripts/core_build_policy.py ndk-flags \
+              --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
+            build_cwd="$PWD/src/$JNI/jni"
+            # BEGIN MUPEN NATIVE OFFSET LAUNCHER
+            ndk_ccache="${CORE_CCACHE:-}"
+            if [[ "$CORE" == mupen64plus_next_gles3 && "$CFLAGS_EXTRA" == *-flto=thin* ]]; then
+              test -x "$build_cwd/ambient-mupen-cc"
+              ndk_ccache="$build_cwd/ambient-mupen-cc"
             fi
-            # The same ndk-build call as libretro's buildbot (ci-templates android-jni), plus 16 KB pages.
-            env $EXTRA_ENV "$NDK/ndk-build" --no-print-directory -j"$(nproc)" -C "src/$JNI/jni" \
-              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true \
-              "APP_LDFLAGS=-Wl,-z,max-page-size=16384"
-            lib=$(find "src/$JNI/libs/$ABI" -name '*.so' | head -n 1)
+            # END MUPEN NATIVE OFFSET LAUNCHER
+            env "${extra_env[@]}" "${NDK}/ndk-build" --no-print-directory --output-sync=target -j"$(nproc)" -C "src/$JNI/jni" \
+              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true NDK_CCACHE="$ndk_ccache" V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
+            lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "src/$JNI/libs/$ABI" --pattern '*.so')
           fi
-          test -n "$lib"
-          cp "$lib" "out/${CORE}_libretro_android.so"
-          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-unneeded "out/${CORE}_libretro_android.so"
+          target="out/${CORE}_libretro_android.so"
+          cp "$lib" "$target"
+          "$bin/llvm-strip" --strip-unneeded "$target"
+          python3 scripts/check_elf_pages.py "$target"
+          python3 scripts/core_build_policy.py report --nm "$bin/llvm-nm" --readelf "$bin/llvm-readelf" --binary "$target" --linked-library "$lib" \
+            --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
+            --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --build-cwd "$build_cwd" --output reports/build.json
+          cat reports/build.json
+          if [ -n "${CORE_CCACHE:-}" ]; then ccache --show-stats || true; fi
 
-      - name: Check 16 KB pages
-        run: python3 scripts/check_elf_pages.py out/*.so
-
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
-          name: core-${{ matrix.core }}-${{ matrix.abi }}
+          name: ${{ matrix.artifact }}
           path: out/*.so
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-${{ matrix.artifact }}
+          path: reports/
+          if-no-files-found: ignore
           retention-days: 14
 
   publish:
+    permissions:
+      contents: write
     needs: [plan, build]
     if: >-
-      needs.build.result == 'success' &&
-      ((github.event_name == 'workflow_dispatch' && inputs.publish) ||
-       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+      always() && needs.plan.result == 'success' &&
+      needs.plan.outputs.publish == 'true' &&
+      (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.plan.outputs.count == '0')) &&
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.publish && inputs.profile == 'baseline') ||
+       ((github.event_name == 'workflow_dispatch' || github.event_name == 'push') && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57') && inputs.comparison == 'none') ||
+       (github.event_name == 'push' && !inputs.publish_experimental && (inputs.profile || 'baseline') == 'baseline'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
+        if: needs.plan.outputs.count != '0'
         with:
-          pattern: core-*
+          pattern: ${{ needs.plan.outputs.artifact_pattern }}
           path: artifacts
 
       - name: Package, sign and release
@@ -178,13 +361,49 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
           EXPECTED_MATRIX: ${{ needs.plan.outputs.matrix }}
+          REUSE: ${{ needs.plan.outputs.reuse }}
+          TOTAL: ${{ needs.plan.outputs.total }}
+          EXPERIMENT: ${{ inputs.publish_experimental }}
+          PROFILE: ${{ inputs.profile || 'baseline' }}
         run: |
           set -euo pipefail
           [ -n "$SIGNING_KEY" ] || { echo "::error::CORES_SIGNING_KEY is not set (scripts/cores_signing_key.sh)"; exit 1; }
           [ -f cores/signing-public.pem ] || { echo "::error::cores/signing-public.pem is missing (scripts/cores_signing_key.sh)"; exit 1; }
-          # Never publish a signed partial release: require every selected core/ABI artifact.
-          mapfile -t expected < <(jq -r '.include[] | "core-\(.core)-\(.abi)/\(.core)_libretro_android.so"' <<< "$EXPECTED_MATRIX")
-          [ "${#expected[@]}" -gt 0 ] || { echo "::error::Empty core build matrix"; exit 1; }
+          # Compare the real profile build inputs rather than whole workflow files.
+          # A scheduling-only change must not discard successfully built cores.
+          assert_current_recipe() {
+            local current
+            git fetch --no-tags --depth=1 origin refs/heads/main
+            if [ "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" ]; then
+              return
+            fi
+            current=$(mktemp -d "$RUNNER_TEMP/core-current.XXXXXX")
+            git archive FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
+                .github/workflows/cores.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
+                scripts/core_link_evidence.py scripts/check_elf_pages.py scripts/core_release_incremental.py \
+                scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py | tar -xf - -C "$current"
+            if ! python3 scripts/core_release_incremental.py assert-current \
+                --profile "$PROFILE" --ndk "$NDK_VERSION" --current-root "$current"; then
+              rm -rf "$current"
+              echo "::error::Core release inputs or trust rules changed on main; dispatch a fresh release"
+              exit 1
+            fi
+            rm -rf "$current"
+          }
+          assert_current_recipe
+          # Require every planned artifact, and ensure the profile cannot cross channels.
+          if [ "$EXPERIMENT" = true ]; then
+            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) ]] || exit 1
+            prefix="candidate-$PROFILE-"
+            tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          else
+            [ "$PROFILE" = baseline ] || exit 1
+            prefix="core-"
+            tag="cores-$(date -u +%Y%m%d)-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          fi
+          jq -e --arg p "$PROFILE" 'all(.include[]; .profile == $p)' <<< "$EXPECTED_MATRIX" >/dev/null
+          mapfile -t expected < <(jq -r '.include[] | "\(.artifact)/\(.core)_libretro_android.so"' <<< "$EXPECTED_MATRIX")
+          mkdir -p artifacts release
           for path in "${expected[@]}"; do
             test -s "artifacts/$path" || { echo "::error::Missing built core artifact: $path"; exit 1; }
           done
@@ -193,11 +412,9 @@ jobs:
             echo "::error::Expected ${#expected[@]} core builds, got $actual"
             exit 1
           }
-          tag="cores-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
-          mkdir -p release
-          entries='[]'
-          for dir in artifacts/core-*; do
-            name=${dir#artifacts/core-}
+          entries=$(python3 scripts/core_release_incremental.py reuse --repo "$GITHUB_REPOSITORY" --records "$REUSE" --destination release)
+          for dir in artifacts/"$prefix"*; do
+            name=${dir#artifacts/"$prefix"}
             abi=$(jq -r '.abis[]' cores/cores.json | while read -r a; do case "$name" in *-"$a") echo "$a";; esac; done | awk '{ print length, $0 }' | sort -rn | head -n1 | cut -d' ' -f2)
             core=${name%-"$abi"}
             so="$dir/${core}_libretro_android.so"
@@ -206,17 +423,47 @@ jobs:
             (cd "$dir" && zip -q -X "../../release/$asset" "${core}_libretro_android.so")
             entries=$(jq -c --arg core "$core" --arg abi "$abi" --arg asset "$asset" \
               --arg sha "$(sha256sum "release/$asset" | cut -d' ' -f1)" --argjson size "$(stat -c %s "release/$asset")" \
-              --slurpfile pins cores/cores.json \
+              --argjson matrix "$EXPECTED_MATRIX" \
               '. + [{ core: $core, abi: $abi, asset: $asset, sha256: $sha, size: $size,
-                      commit: ($pins[0].cores[] | select(.core == $core) | .commit),
-                      repo: ($pins[0].cores[] | select(.core == $core) | .repo) }]' <<< "$entries")
+                      commit: ($matrix.include[] | select(.core == $core and .abi == $abi) | .commit),
+                      repo: ($matrix.include[] | select(.core == $core and .abi == $abi) | .repo),
+                      fingerprint: ($matrix.include[] | select(.core == $core and .abi == $abi) | .fingerprint) }]' <<< "$entries")
           done
-          jq -n --arg tag "$tag" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
-            '{ version: 1, tag: $tag, created: $created, cores: $cores }' > release/manifest.json
-          printf '%s\n' "$SIGNING_KEY" > key.pem
-          openssl dgst -sha256 -sign key.pem -out release/manifest.json.sig release/manifest.json
-          rm -f key.pem
+          count="$TOTAL"
+          jq -e --argjson count "$count" 'length == $count and ([.[] | [.core,.abi]] | unique | length) == $count and all(.[]; .fingerprint | test("^[0-9a-f]{64}$"))' <<< "$entries" >/dev/null
+          jq -n --arg tag "$tag" --arg profile "$PROFILE" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
+            '{ version: 1, tag: $tag, profile: $profile, created: $created, cores: $cores }' > release/manifest.json
+          key="$RUNNER_TEMP/ambient-cores-release-key.pem"
+          trap 'rm -f "$key"' EXIT
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          openssl dgst -sha256 -sign "$key" -out release/manifest.json.sig release/manifest.json
+          rm -f "$key"
           openssl dgst -sha256 -verify cores/signing-public.pem -signature release/manifest.json.sig release/manifest.json
           jq -r '.cores[] | "\(.core) \(.abi)"' release/manifest.json
-          gh release create "$tag" release/* --title "Cores $(date -u +%Y-%m-%d)" --latest=false \
-            --notes "libretro cores built from cores/cores.json at ${GITHUB_SHA::7} (16 KB pages). Signed manifest for the app's core channel."
+          release_args=(--latest=false)
+          if [ "$EXPERIMENT" = true ]; then
+            release_args+=(--prerelease)
+            title="Ambient TV cores – $PROFILE"
+          else
+            title="Ambient TV cores"
+          fi
+          # Publish only after every asset has been uploaded to an invisible draft.
+          gh release create "$tag" release/* --draft --title "$title" "${release_args[@]}" --target "$GITHUB_SHA" \
+            --notes "Libretro cores at ${GITHUB_SHA::7} (16 KB pages). Profile $PROFILE; ${#expected[@]} rebuilt, $((count - ${#expected[@]})) verified/reused."
+          gh release view "$tag" --json assets --jq '.assets[].name' | LC_ALL=C sort > "$RUNNER_TEMP/uploaded-assets"
+          find release -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > "$RUNNER_TEMP/expected-assets"
+          cmp "$RUNNER_TEMP/uploaded-assets" "$RUNNER_TEMP/expected-assets"
+          assert_current_recipe
+          gh release edit "$tag" --draft=false --latest=false
+          # A successful CLI mutation alone is not proof that the published channel exists.
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$RUNNER_TEMP/published-core-release.json" &&
+               jq -e --arg tag "$tag" --argjson pre "$EXPERIMENT" '.tag_name == $tag and .draft == false and .prerelease == $pre' "$RUNNER_TEMP/published-core-release.json" >/dev/null &&
+               jq -r '.assets[].name' "$RUNNER_TEMP/published-core-release.json" | LC_ALL=C sort | cmp - "$RUNNER_TEMP/expected-assets"; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::Published core release $tag is missing or incomplete"
+          exit 1

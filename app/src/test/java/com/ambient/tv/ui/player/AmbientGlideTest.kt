@@ -3,6 +3,9 @@ package com.ambient.tv.ui.player
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertArrayEquals
 import org.junit.Test
 
 /** The ambient backdrop glides between captures instead of cross-fading snapshots. */
@@ -47,4 +50,37 @@ class AmbientGlideTest {
         assertEquals(0, red(glide.pixels()[0]))
         assertEquals(1 to 2, glide.width to glide.height)
     }
+
+    @Test fun identicalTargetsDoNotWakeSettledGlideAndStorageIsReused() {
+        val glide = AmbientGlide()
+        val capture = intArrayOf(0xFF112233.toInt(), 0xFFFF0000.toInt())
+        assertTrue(glide.setTarget(capture, 2, 1))
+        val output = glide.pixels()
+        assertFalse(glide.setTarget(capture, 2, 1))
+        capture[0] = 0 // The caller can immediately reuse its capture buffer.
+        repeat(160) {
+            glide.step(33f)
+            assertSame(output, glide.pixels())
+        }
+        assertFalse(glide.step(33f))
+        assertArrayEquals(intArrayOf(0xFF112233.toInt(), 0xFFFF0000.toInt()), output)
+        assertFalse(glide.setTarget(output, 2, 1))
+        assertTrue(glide.setTarget(intArrayOf(0xFF001122.toInt(), 0xFF000000.toInt()), 2, 1))
+        assertTrue(glide.step(Float.MAX_VALUE)) // Reduced-effects mode still snaps.
+        assertFalse(glide.step(33f))
+        assertSame(output, glide.pixels())
+        assertArrayEquals(intArrayOf(0xFF001122.toInt(), 0xFF000000.toInt()), output)
+    }
+
+    @Test fun blackCaptureWithNewDimensionsStillSignalsAReplacement() {
+        val glide = AmbientGlide()
+        assertTrue(glide.setTarget(intArrayOf(0), 1, 1))
+        val output = glide.pixels()
+        assertFalse(glide.step(33f))
+        assertTrue(glide.setTarget(intArrayOf(0, 0), 1, 2))
+        assertNotSame(output, glide.pixels())
+        assertFalse(glide.step(33f))
+        assertFalse(glide.setTarget(intArrayOf(0xFF000000.toInt(), 0), 1, 2))
+    }
+
 }

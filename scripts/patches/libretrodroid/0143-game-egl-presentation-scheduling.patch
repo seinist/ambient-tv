@@ -1,0 +1,211 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -110,11 +110,11 @@
+     override fun onResume(owner: LifecycleOwner) {
+         sensorsResumed = true
+         updateMotionSensors()
+         // SurfaceHolder/GLSurfaceView handle window loss and recreation themselves.
+         // Avoid GLSurfaceView.onResume(): it waits synchronously for the render thread
+         // and can freeze Android's main thread while a core/driver is still resuming.
+-        renderMode = RENDERMODE_CONTINUOUSLY
+-        requestRender()
++        presentationForeground = true
++        refreshPresentationMode()
+     }
+ 
+     override fun onPause(owner: LifecycleOwner) {
+@@ -122,9 +122,10 @@
+         sensorsResumed = false
+         updateMotionSensors()
+         isEmulationReady = false
+         // Keep the core/context alive, stop continuous drawing, and let the Surface
+         // lifecycle release the window. queueEvent still drains while no surface exists.
+-        renderMode = RENDERMODE_WHEN_DIRTY
++        presentationForeground = false
++        refreshPresentationMode()
+     }
+ 
+     override fun onAttachedToWindow() {
+@@ -295,5 +296,7 @@
+     @Volatile private var isDestroyed = false
+     private val glQueueLock = Any()
++    @Volatile private var presentationForeground = false
++    @Volatile private var pausedPresentationOnDemand = false
+     private var previewModeEnabled = false
+ 
+     // Readiness is not a sampled frame statistic and must have its own replay slot.
+@@ -333,9 +336,12 @@
+     // A retired Surface/shader callback must not reach a later session's native singleton.
+     // Linearize acceptance with destroyNative; already accepted checkpoint tasks still drain.
+     override fun queueEvent(r: Runnable) {
+         synchronized(glQueueLock) {
+-            if (!isDestroyed) super.queueEvent(r)
++            if (!isDestroyed) {
++                super.queueEvent(r)
++                wakeIdlePresentation()
++            }
+         }
+     }
+ 
+     /**
+@@ -435,11 +441,37 @@
+     fun pauseEmulation() {
+         isEmulationReady = false
++        if (pausedPresentationOnDemand) refreshPresentationMode()
+     }
+ 
+     fun resumeEmulation() {
+         isEmulationReady = true
++        if (pausedPresentationOnDemand) refreshPresentationMode()
+     }
+ 
++    /** Enable only after a real frame: boot/readiness must never wait on an idle renderer. */
++    fun enablePausedPresentationOnDemand() {
++        pausedPresentationOnDemand = true
++        refreshPresentationMode()
++    }
++
++    private fun refreshPresentationMode() {
++        synchronized(glQueueLock) {
++            if (isDestroyed) return
++            val continuous = IdlePresentationPolicy.continuous(
++                presentationForeground, isEmulationReady, pausedPresentationOnDemand,
++            )
++            val mode = if (continuous) RENDERMODE_CONTINUOUSLY else RENDERMODE_WHEN_DIRTY
++            if (renderMode != mode) renderMode = mode
++            if (presentationForeground) requestRender()
++        }
++    }
++
++    private fun wakeIdlePresentation() {
++        if (!isDestroyed && IdlePresentationPolicy.wakeForWork(
++                presentationForeground, isEmulationReady, pausedPresentationOnDemand,
++            )) requestRender()
++    }
++
+     fun serializeState(): ByteArray = runOnGLThread {
+         LibretroDroid.serializeState()
+     }
+@@ -737,7 +769,7 @@
+             enqueue = { action -> queueEvent { catchExceptions(action) } },
+             resumeNative = { LibretroDroid.resume() },
+             pauseNative = { LibretroDroid.pause() },
+-            onReady = { if (!suppressAutoResume) isEmulationReady = true },
++            onReady = { if (!suppressAutoResume) resumeEmulation() },
+         )
+ 
+         override fun onResume(owner: LifecycleOwner) = transitions.resume()
+@@ -900,7 +932,7 @@
+     private fun <T> runOnGLThread(block: () -> T): T {
+         check(!isDestroyed) { "The game renderer has been destroyed" }
+         if (Thread.currentThread().name.startsWith("GLThread")) {
+-            return block()
++            return block().also { wakeIdlePresentation() }
+         }
+ 
+         val latch = CountDownLatch(1)
+@@ -920,8 +952,9 @@
+                     failure = t
+                 } finally {
+                     latch.countDown()
+                 }
+             }
++            wakeIdlePresentation()
+         }
+ 
+         check(latch.awaitUninterruptibly(GL_THREAD_OP_TIMEOUT_MS)) {
+diff --git a/src/main/java/com/swordfish/libretrodroid/IdlePresentationPolicy.kt b/src/main/java/com/swordfish/libretrodroid/IdlePresentationPolicy.kt
+new file mode 100644
+--- /dev/null
++++ b/src/main/java/com/swordfish/libretrodroid/IdlePresentationPolicy.kt
+@@ -0,0 +1,12 @@
++package com.swordfish.libretrodroid
++
++/** Pure shared GLES/Vulkan presentation policy. No dependence on Android or driver state. */
++internal object IdlePresentationPolicy {
++    fun continuous(foreground: Boolean, emulating: Boolean, enabled: Boolean): Boolean =
++        foreground && (emulating || !enabled)
++
++    // A paused visible view must repaint after a queued picture mutation.
++    // Background tasks still drain but do not request unnecessary EGL swaps.
++    fun wakeForWork(foreground: Boolean, emulating: Boolean, enabled: Boolean): Boolean =
++        foreground && enabled && !emulating
++}
+diff --git a/src/main/cpp/framepacingdeadline.h b/src/main/cpp/framepacingdeadline.h
+--- a/src/main/cpp/framepacingdeadline.h
++++ b/src/main/cpp/framepacingdeadline.h
+@@ -24,6 +24,15 @@
+     static bool validRate(double fps) noexcept {
+         return std::isfinite(fps) && fps >= 1.0 && fps <= 1000000000.0;
+     }
+ 
++    // Ordinary VSync runs at the physical display cadence (also used by
++    // the audio stretch calculation). Keeping a slightly different software
++    // deadline would cause periodic drift/missed refreshes, e.g. 59.73 vs 60.
++    // External BFI timing retains its existing core-rate backstop.
++    static double cadenceRate(double content, double display, bool vsync,
++                              bool externalTiming) noexcept {
++        return vsync && !externalTiming && validRate(display) ? display : content;
++    }
++
+     void setRate(double fps) noexcept {
+         if (!validRate(fps)) return;
+diff --git a/src/main/cpp/fpssync.h b/src/main/cpp/fpssync.h
+--- a/src/main/cpp/fpssync.h
++++ b/src/main/cpp/fpssync.h
+@@ -45,5 +45,7 @@
+     bool forceSoftwareTiming;
+     const double FPS_TOLERANCE = 5;
+ 
+     FramePacingDeadline pacing;
++    bool externalTiming = false;
++    void configureCadence();
+ };
+diff --git a/src/main/cpp/fpssync.cpp b/src/main/cpp/fpssync.cpp
+--- a/src/main/cpp/fpssync.cpp
++++ b/src/main/cpp/fpssync.cpp
+@@ -29,9 +29,7 @@
+     this->contentRefreshRate = FramePacingDeadline::validRate(contentRefreshRate) ? contentRefreshRate : 60.0;
+     this->screenRefreshRate = screenRefreshRate;
+     this->forceSoftwareTiming = forceSoftwareTiming;
+-    this->useVSync = !forceSoftwareTiming && FramePacingDeadline::validRate(screenRefreshRate) &&
+-        std::abs(this->contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE;
+-    pacing.setRate(this->contentRefreshRate);
++    configureCadence();
+ }
+ 
+ void FPSSync::reset() {
+@@ -59,12 +57,6 @@
+ void FPSSync::setExternalTimingControl(bool enabled) {
+-    if (forceSoftwareTiming || !FramePacingDeadline::validRate(screenRefreshRate)) {
+-        useVSync = false;
+-    } else if (enabled) {
+-        useVSync = true;
+-    } else {
+-        useVSync = std::abs(contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE;
+-    }
+-    reset();
++    externalTiming = enabled;
++    configureCadence();
+ }
+ 
+ void FPSSync::updateContentRefreshRate(double newContentRefreshRate) {
+@@ -72,9 +64,14 @@
+     if (!FramePacingDeadline::validRate(newContentRefreshRate)) return;
+     LOGI("Updating content refresh rate from %f to %f", contentRefreshRate, newContentRefreshRate);
+     contentRefreshRate = newContentRefreshRate;
+-    pacing.setRate(contentRefreshRate);
+-    useVSync = !forceSoftwareTiming && FramePacingDeadline::validRate(screenRefreshRate) &&
+-        std::abs(contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE;
++    configureCadence();
++}
++
++void FPSSync::configureCadence() {
++    useVSync = !forceSoftwareTiming && FramePacingDeadline::validRate(screenRefreshRate) &&
++        (externalTiming || std::abs(contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE);
++    pacing.setRate(FramePacingDeadline::cadenceRate(
++        contentRefreshRate, screenRefreshRate, useVSync, externalTiming));
+ }
+ 
+ } //namespace libretrodroid

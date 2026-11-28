@@ -1,0 +1,567 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -38,6 +38,7 @@
+ #include "vulkanslangpipeline.h"
+ #include "vulkancolorcopy.h"
+ #include "vulkanbridgesync.h"
++#include "vulkanbridgeimage.h"
+ #include "nativepresentation.h"
+ 
+ struct AImageReader;
+@@ -83,5 +84,5 @@
+     void setPreferFp16Frame(bool enable);
+     void disableFp16Frame();
+-    bool isFp16Frame() const { return fp16Frame; }
++    bool isFp16Frame() const { return frameSlot.bridgeImage.fp16; }
+     // Actual frame transport, read atomically from the UI: Vulkan, FP16, requested, fallback.
+     uint32_t getFrameStatus() const { return frameStatus.load(std::memory_order_acquire); }
+@@ -133,8 +134,8 @@
+     bool ensureFrameBuffer(unsigned width, unsigned height);
+-    AHardwareBuffer* getFrameBuffer() const { return frameBuffer; }
+-    unsigned getFrameBufferWidth() const { return frameWidth; }
+-    unsigned getFrameBufferHeight() const { return frameHeight; }
++    AHardwareBuffer* getFrameBuffer() const { return frameSlot.bridgeImage.buffer; }
++    unsigned getFrameBufferWidth() const { return frameSlot.bridgeImage.width; }
++    unsigned getFrameBufferHeight() const { return frameSlot.bridgeImage.height; }
+ 
+     // No export proof is different from Vulkan's already-signaled SYNC_FD (-1).
+     static constexpr int NoBridgeWriteFence = -2;
+     // On accepted frames: >=0 transfers an owned FD, -1 proves completion,
+@@ -273,83 +274,87 @@
+     struct FrameSlot {
+         VkCommandPool pool = VK_NULL_HANDLE;
+         VkCommandBuffer command = VK_NULL_HANDLE;
+         VkFence fence = VK_NULL_HANDLE;
+         bool inFlight = false;
+         VulkanColorCopy colorCopy;
+         bool colorCopyRejected = false;
+         VulkanBridgeSync<VkSemaphore> bridgeSync;
+-
+-        FrameSlot() = default;
+-        FrameSlot(const FrameSlot&) = delete;
+-        FrameSlot& operator=(const FrameSlot&) = delete;
+-
+-        // Publish handles only after all allocations succeed. Failed Vulkan
+-        // calls need not write usable output handles; never adopt those values.
+-        template<class Dispatch>
+-        bool create(const Dispatch& vk, VkDevice device, uint32_t queueFamily) {
+-            if (inFlight || pool || command || fence || !bridgeSync.empty() || !device ||
+-                !vk.createCommandPool || !vk.allocateCommandBuffers || !vk.createFence ||
+-                !vk.destroyCommandPool || !vk.destroyFence) return false;
+-
+-            VkCommandPool newPool = VK_NULL_HANDLE;
+-            VkCommandPoolCreateInfo poolInfo {};
+-            poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+-            poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+-            poolInfo.queueFamilyIndex = queueFamily;
+-            if (vk.createCommandPool(device, &poolInfo, nullptr, &newPool) != VK_SUCCESS) return false;
+-
+-            VkCommandBuffer newCommand = VK_NULL_HANDLE;
+-            VkCommandBufferAllocateInfo allocInfo {};
+-            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+-            allocInfo.commandPool = newPool;
+-            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+-            allocInfo.commandBufferCount = 1;
+-            if (vk.allocateCommandBuffers(device, &allocInfo, &newCommand) != VK_SUCCESS) {
+-                vk.destroyCommandPool(device, newPool, nullptr);
+-                return false;
+-            }
+-
+-            VkFence newFence = VK_NULL_HANDLE;
+-            VkFenceCreateInfo fenceInfo {};
+-            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+-            if (vk.createFence(device, &fenceInfo, nullptr, &newFence) != VK_SUCCESS) {
+-                vk.destroyCommandPool(device, newPool, nullptr);
+-                return false;
+-            }
+-            pool = newPool;
+-            command = newCommand;
+-            fence = newFence;
+-            return true;
+-        }
+-
+-        // Preflight all slots before destroying any session resources.
+-        template<class Dispatch>
+-        bool canRetire(const Dispatch& vk, VkDevice device) const noexcept {
+-            if (!bridgeSync.canRetire(inFlight, device != VK_NULL_HANDLE, vk.destroySemaphore != nullptr))
+-                return false;
+-            if (!pool && !command && !fence) return true;
+-            return device && (!command || pool) &&
+-                (!pool || vk.destroyCommandPool) && (!fence || vk.destroyFence);
+-        }
+-
+-        // Caller must first prove GPU retirement; the slot independently
+-        // refuses destruction while work is marked outstanding.
+-        template<class Dispatch>
+-        bool retire(const Dispatch& vk, VkDevice device) {
+-            if (!canRetire(vk, device)) return false;
++        VulkanBridgeImage<AHardwareBuffer*, VkImage, VkDeviceMemory> bridgeImage;
++
++        FrameSlot() = default;
++        FrameSlot(const FrameSlot&) = delete;
++        FrameSlot& operator=(const FrameSlot&) = delete;
++
++        // Publish handles only after all allocations succeed. Failed Vulkan
++        // calls need not write usable output handles; never adopt those values.
++        template<class Dispatch>
++        bool create(const Dispatch& vk, VkDevice device, uint32_t queueFamily) {
++            if (inFlight || pool || command || fence || !bridgeSync.empty() || !bridgeImage.empty() || !device ||
++                !vk.createCommandPool || !vk.allocateCommandBuffers || !vk.createFence ||
++                !vk.destroyCommandPool || !vk.destroyFence) return false;
++
++            VkCommandPool newPool = VK_NULL_HANDLE;
++            VkCommandPoolCreateInfo poolInfo {};
++            poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
++            poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
++            poolInfo.queueFamilyIndex = queueFamily;
++            if (vk.createCommandPool(device, &poolInfo, nullptr, &newPool) != VK_SUCCESS) return false;
++
++            VkCommandBuffer newCommand = VK_NULL_HANDLE;
++            VkCommandBufferAllocateInfo allocInfo {};
++            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
++            allocInfo.commandPool = newPool;
++            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++            allocInfo.commandBufferCount = 1;
++            if (vk.allocateCommandBuffers(device, &allocInfo, &newCommand) != VK_SUCCESS) {
++                vk.destroyCommandPool(device, newPool, nullptr);
++                return false;
++            }
++
++            VkFence newFence = VK_NULL_HANDLE;
++            VkFenceCreateInfo fenceInfo {};
++            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
++            if (vk.createFence(device, &fenceInfo, nullptr, &newFence) != VK_SUCCESS) {
++                vk.destroyCommandPool(device, newPool, nullptr);
++                return false;
++            }
++            pool = newPool;
++            command = newCommand;
++            fence = newFence;
++            return true;
++        }
++
++        // Preflight all slots before destroying any session resources.
++        template<class Dispatch>
++        bool canRetire(const Dispatch& vk, VkDevice device) const noexcept {
++            if (!bridgeSync.canRetire(inFlight, device != VK_NULL_HANDLE, vk.destroySemaphore != nullptr) ||
++                !bridgeImage.canRetire(inFlight, device != VK_NULL_HANDLE,
++                    vk.destroyImage != nullptr, vk.freeMemory != nullptr))
++                return false;
++            if (!pool && !command && !fence) return true;
++            return device && (!command || pool) &&
++                (!pool || vk.destroyCommandPool) && (!fence || vk.destroyFence);
++        }
++
++        // Caller must first prove GPU retirement; the slot independently
++        // refuses destruction while work is marked outstanding.
++        template<class Dispatch>
++        bool retire(const Dispatch& vk, VkDevice device) {
++            // The backend retires the Vulkan image while preserving independent EGL ownership.
++            if (!canRetire(vk, device) || !bridgeImage.empty()) return false;
+             if (!bridgeSync.retire(inFlight, device != VK_NULL_HANDLE, vk.destroySemaphore != nullptr,
+                     [&](VkSemaphore semaphore) { vk.destroySemaphore(device, semaphore, nullptr); }))
+                 return false;
+             if (!pool && !command && !fence) return true;
+             colorCopy.release();
+             colorCopyRejected = false;
+             if (fence) vk.destroyFence(device, fence, nullptr);
+             if (pool) vk.destroyCommandPool(device, pool, nullptr);
+             pool = VK_NULL_HANDLE;
+             command = VK_NULL_HANDLE;
+             fence = VK_NULL_HANDLE;
+             return true;
+         }
+     };
+     FrameSlot frameSlot;
+     VkResult fatalFrameError = VK_SUCCESS;
+@@ -363,14 +368,8 @@
+     // Higher precision is opt-in for manually selected PQ/HLG content, never for SDR.
+     bool preferFp16Frame = false;
+     bool forceRgba8Frame = false;
+-    bool fp16Frame = false;
+     std::atomic<uint32_t> frameStatus { 0 };
+     std::atomic<uint32_t> coreSourceFormat { 0 };
+-    AHardwareBuffer* frameBuffer = nullptr;
+-    VkImage frameImage = VK_NULL_HANDLE;
+-    VkDeviceMemory frameMemory = VK_NULL_HANDLE;
+-    unsigned frameWidth = 0;
+-    unsigned frameHeight = 0;
+ 
+     // Render-thread-owned host descriptor storage, not GPU frame slots.
+     std::vector<VkCommandBuffer> submitCommands;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -90,14 +90,14 @@
+ void VulkanBackend::setPreferFp16Frame(bool enabled) {
+     // Called before a new core is created, on the same thread as the Vulkan frontend.
+     if (preferFp16Frame == enabled && !forceRgba8Frame) return;
+     if (hasFatalError() || shutdownReady) return;
+-    if (frameBuffer != nullptr && !destroyFrameBuffer()) return;
+-    preferFp16Frame = enabled;
+-    forceRgba8Frame = false;
+-}
+-
+-void VulkanBackend::disableFp16Frame() {
+-    if (!fp16Frame) return;
++    if (frameSlot.bridgeImage.buffer != nullptr && !destroyFrameBuffer()) return;
++    preferFp16Frame = enabled;
++    forceRgba8Frame = false;
++}
++
++void VulkanBackend::disableFp16Frame() {
++    if (!frameSlot.bridgeImage.fp16) return;
+     if (hasFatalError() || shutdownReady || !destroyFrameBuffer()) return;
+     forceRgba8Frame = true;
+ }
+@@ -1050,132 +1050,140 @@
+ }
+ 
+ bool VulkanBackend::destroyFrameBuffer() {
+-    if (device != VK_NULL_HANDLE) {
+-        if (!shutdownReady && !waitForFrame()) return false;
+-        if (frameImage != VK_NULL_HANDLE) vk.destroyImage(device, frameImage, nullptr);
+-        if (frameMemory != VK_NULL_HANDLE) vk.freeMemory(device, frameMemory, nullptr);
+-    }
+-    frameImage = VK_NULL_HANDLE;
+-    frameMemory = VK_NULL_HANDLE;
+-    if (frameBuffer != nullptr) {
+-        AHardwareBuffer_release(frameBuffer);
+-        frameBuffer = nullptr;
+-    }
+-    frameWidth = 0;
+-    frameHeight = 0;
+-    fp16Frame = false;
+-    frameStatus.store(0, std::memory_order_release);
+-    return true;
+-}
+-
+-bool VulkanBackend::ensureFrameBuffer(unsigned width, unsigned height) {
+-    if (hasFatalError() || shutdownReady || !isStarted() || width == 0 || height == 0) return false;
+-    if (frameBuffer != nullptr && width == frameWidth && height == frameHeight) return true;
+-    if (!destroyFrameBuffer()) return false;
+-
+-    const auto publishStatus = [this]() {
+-        frameStatus.store(1u | (fp16Frame ? 2u : 0u) |
+-            (preferFp16Frame ? 4u : 0u) | (forceRgba8Frame ? 8u : 0u),
+-            std::memory_order_release);
+-    };
+-    // Avoid repeatedly attempting unsupported FP16 on subsequent frame resizes.
+-    if (preferFp16Frame && !forceRgba8Frame) {
+-        if (createFrameBuffer(width, height, true)) {
+-            publishStatus();
+-            return true;
+-        }
+-        if (hasFatalError()) return false;
+-        forceRgba8Frame = true;
+-        LOGW("FP16 Vulkan/GLES bridge unavailable; using RGBA8");
+-    }
+-    if (!createFrameBuffer(width, height, false)) return false;
+-    publishStatus();
+-    return true;
+-}
+-
+-bool VulkanBackend::createFrameBuffer(unsigned width, unsigned height, bool fp16) {
+-    // Called only with no live frame buffer; failures clean up before the caller tries RGBA8.
+-
+-    AHardwareBuffer_Desc desc {};
+-    desc.width = width;
+-    desc.height = height;
+-    desc.layers = 1;
+-    const VkFormat format = fp16 ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+-    if (fp16) {
+-        if (vk.getPhysicalDeviceFormatProperties == nullptr) return false;
+-        VkFormatProperties properties {};
+-        vk.getPhysicalDeviceFormatProperties(gpu, format, &properties);
+-        if ((properties.optimalTilingFeatures &
+-             (VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) !=
+-            (VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
+-            LOGW("Vulkan GPU does not support FP16 framebuffer blit + sampling");
+-            return false;
+-        }
+-    }
+-    desc.format = fp16 ? AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT
+-                       : AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+-    desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE | AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT;
+-    if (AHardwareBuffer_allocate(&desc, &frameBuffer) != 0) {
+-        LOGW("AHardwareBuffer allocation failed for %ux%u (fp16=%d)", width, height, fp16);
+-        frameBuffer = nullptr;
+-        return false;
+-    }
+-
+-    VkAndroidHardwareBufferPropertiesANDROID properties { VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID };
+-    if (vk.getAndroidHardwareBufferProperties(device, frameBuffer, &properties) != VK_SUCCESS) {
+-        LOGE("vkGetAndroidHardwareBufferPropertiesANDROID failed");
+-        destroyFrameBuffer();
+-        return false;
+-    }
+-
+-    VkExternalMemoryImageCreateInfo externalInfo { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO };
+-    externalInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+-
+-    VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+-    imageInfo.pNext = &externalInfo;
+-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+-    imageInfo.format = format;
+-    imageInfo.extent = { width, height, 1 };
+-    imageInfo.mipLevels = 1;
+-    imageInfo.arrayLayers = 1;
+-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+-    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+-                      VK_IMAGE_USAGE_SAMPLED_BIT;
+-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+-    if (vk.createImage(device, &imageInfo, nullptr, &frameImage) != VK_SUCCESS) {
+-        LOGE("vkCreateImage failed for the shared frame image");
+-        destroyFrameBuffer();
+-        return false;
+-    }
+-
+-    VkImportAndroidHardwareBufferInfoANDROID importInfo { VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID };
+-    importInfo.buffer = frameBuffer;
+-    VkMemoryDedicatedAllocateInfo dedicatedInfo { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
+-    dedicatedInfo.pNext = &importInfo;
+-    dedicatedInfo.image = frameImage;
+-
+-    VkMemoryAllocateInfo allocInfo { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+-    allocInfo.pNext = &dedicatedInfo;
+-    allocInfo.allocationSize = properties.allocationSize;
+-    if (properties.memoryTypeBits == 0) {
+-        LOGW("AHardwareBuffer has no compatible Vulkan memory type (fp16=%d)", fp16);
+-        destroyFrameBuffer();
+-        return false;
+-    }
+-    allocInfo.memoryTypeIndex = static_cast<uint32_t>(__builtin_ctz(properties.memoryTypeBits));
+-    if (vk.allocateMemory(device, &allocInfo, nullptr, &frameMemory) != VK_SUCCESS ||
+-        vk.bindImageMemory(device, frameImage, frameMemory, 0) != VK_SUCCESS) {
+-        LOGE("Importing the shared frame buffer into Vulkan failed");
+-        destroyFrameBuffer();
+-        return false;
+-    }
+-
+-    frameWidth = width;
+-    frameHeight = height;
+-    fp16Frame = fp16;
++    if (device != VK_NULL_HANDLE && !shutdownReady && !waitForFrame()) return false;
++    auto& bridge = frameSlot.bridgeImage;
++    if (!bridge.retire(frameSlot.inFlight, device != VK_NULL_HANDLE,
++            vk.destroyImage != nullptr, vk.freeMemory != nullptr,
++            [&](VkImage image) { vk.destroyImage(device, image, nullptr); },
++            [&](VkDeviceMemory memory) { vk.freeMemory(device, memory, nullptr); },
++            [](AHardwareBuffer* buffer) { AHardwareBuffer_release(buffer); }))
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire bridge image");
++    frameStatus.store(0, std::memory_order_release);
++    return true;
++}
++
++bool VulkanBackend::ensureFrameBuffer(unsigned width, unsigned height) {
++    if (hasFatalError() || shutdownReady || !isStarted() || width == 0 || height == 0) return false;
++    const auto& bridge = frameSlot.bridgeImage;
++    if (bridge.buffer != nullptr && width == bridge.width && height == bridge.height) return true;
++    if (!destroyFrameBuffer()) return false;
++
++    const auto publishStatus = [this]() {
++        frameStatus.store(1u | (frameSlot.bridgeImage.fp16 ? 2u : 0u) |
++            (preferFp16Frame ? 4u : 0u) | (forceRgba8Frame ? 8u : 0u),
++            std::memory_order_release);
++    };
++    // Avoid repeatedly attempting unsupported FP16 on subsequent frame resizes.
++    if (preferFp16Frame && !forceRgba8Frame) {
++        if (createFrameBuffer(width, height, true)) {
++            publishStatus();
++            return true;
++        }
++        if (hasFatalError()) return false;
++        forceRgba8Frame = true;
++        LOGW("FP16 Vulkan/GLES bridge unavailable; using RGBA8");
++    }
++    if (!createFrameBuffer(width, height, false)) return false;
++    publishStatus();
++    return true;
++}
++
++bool VulkanBackend::createFrameBuffer(unsigned width, unsigned height, bool fp16) {
++    // Only adopt successfully created handles; failures retire partial ownership.
++    auto& bridge = frameSlot.bridgeImage;
++    if (!bridge.empty() || !vk.destroyImage || !vk.freeMemory) return false;
++
++    AHardwareBuffer_Desc desc {};
++    desc.width = width;
++    desc.height = height;
++    desc.layers = 1;
++    const VkFormat format = fp16 ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
++    if (fp16) {
++        if (vk.getPhysicalDeviceFormatProperties == nullptr) return false;
++        VkFormatProperties properties {};
++        vk.getPhysicalDeviceFormatProperties(gpu, format, &properties);
++        if ((properties.optimalTilingFeatures &
++             (VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) !=
++            (VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
++            LOGW("Vulkan GPU does not support FP16 framebuffer blit + sampling");
++            return false;
++        }
++    }
++    desc.format = fp16 ? AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT
++                       : AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
++    desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE | AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT;
++    AHardwareBuffer* newBuffer = nullptr;
++    if (AHardwareBuffer_allocate(&desc, &newBuffer) != 0) {
++        LOGW("AHardwareBuffer allocation failed for %ux%u (fp16=%d)", width, height, fp16);
++        return false;
++    }
++    bridge.buffer = newBuffer;
++
++    VkAndroidHardwareBufferPropertiesANDROID properties { VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID };
++    if (vk.getAndroidHardwareBufferProperties(device, bridge.buffer, &properties) != VK_SUCCESS) {
++        LOGE("vkGetAndroidHardwareBufferPropertiesANDROID failed");
++        destroyFrameBuffer();
++        return false;
++    }
++
++    VkExternalMemoryImageCreateInfo externalInfo { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO };
++    externalInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
++
++    VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
++    imageInfo.pNext = &externalInfo;
++    imageInfo.imageType = VK_IMAGE_TYPE_2D;
++    imageInfo.format = format;
++    imageInfo.extent = { width, height, 1 };
++    imageInfo.mipLevels = 1;
++    imageInfo.arrayLayers = 1;
++    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
++    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
++    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
++                      VK_IMAGE_USAGE_SAMPLED_BIT;
++    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
++    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
++    VkImage newImage = VK_NULL_HANDLE;
++    if (vk.createImage(device, &imageInfo, nullptr, &newImage) != VK_SUCCESS) {
++        LOGE("vkCreateImage failed for the shared frame image");
++        destroyFrameBuffer();
++        return false;
++    }
++
++    bridge.image = newImage;
++
++    VkImportAndroidHardwareBufferInfoANDROID importInfo { VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID };
++    importInfo.buffer = bridge.buffer;
++    VkMemoryDedicatedAllocateInfo dedicatedInfo { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
++    dedicatedInfo.pNext = &importInfo;
++    dedicatedInfo.image = bridge.image;
++
++    VkMemoryAllocateInfo allocInfo { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
++    allocInfo.pNext = &dedicatedInfo;
++    allocInfo.allocationSize = properties.allocationSize;
++    if (properties.memoryTypeBits == 0) {
++        LOGW("AHardwareBuffer has no compatible Vulkan memory type (fp16=%d)", fp16);
++        destroyFrameBuffer();
++        return false;
++    }
++    allocInfo.memoryTypeIndex = static_cast<uint32_t>(__builtin_ctz(properties.memoryTypeBits));
++    VkDeviceMemory newMemory = VK_NULL_HANDLE;
++    if (vk.allocateMemory(device, &allocInfo, nullptr, &newMemory) != VK_SUCCESS) {
++        LOGE("Importing the shared frame buffer into Vulkan failed");
++        destroyFrameBuffer();
++        return false;
++    }
++    bridge.memory = newMemory;
++    bridge.allocationBytes = properties.allocationSize;
++    if (vk.bindImageMemory(device, bridge.image, bridge.memory, 0) != VK_SUCCESS) {
++        LOGE("Binding the shared frame buffer into Vulkan failed");
++        destroyFrameBuffer();
++        return false;
++    }
++
++    bridge.width = width;
++    bridge.height = height;
++    bridge.fp16 = fp16;
+     if (!clearFrameImage()) return false;
+     LOGI("Vulkan shared frame buffer ready: %ux%u (%s)", width, height, fp16 ? "FP16" : "RGBA8");
+     return true;
+ }
+@@ -1200,7 +1208,8 @@
+ bool VulkanBackend::clearFrameImage() {
+     if (shutdownReady || !waitForFrame()) return false;
+ 
++    const VkImage frameImage = frameSlot.bridgeImage.image;
+     const VkCommandBuffer commandBuffer = frameSlot.command;
+     const VkFence frameFence = frameSlot.fence;
+     if (!checkFrameResult(vk.resetCommandBuffer(commandBuffer, 0), "reset clear command buffer")) return false;
+     VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+@@ -1450,9 +1459,13 @@
+ bool VulkanBackend::presentFrame(unsigned width, unsigned height, float resolvedAspect,
+                                   bool pictureCompatible, int* writeFd) {
+     GameTraceScope trace("AmbientGame Vulkan frame");
+     const VkCommandBuffer commandBuffer = frameSlot.command;
+     const VkFence frameFence = frameSlot.fence;
++    const auto& bridge = frameSlot.bridgeImage;
++    const VkImage frameImage = bridge.image;
++    const unsigned frameWidth = bridge.width, frameHeight = bridge.height;
++    const bool fp16Frame = bridge.fp16;
+     auto& colorCopy = frameSlot.colorCopy;
+     auto& colorCopyRejected = frameSlot.colorCopyRejected;
+     if (writeFd) *writeFd = NoBridgeWriteFence;
+     nativePresentation.invalidateFrame();
+@@ -1885,6 +1898,6 @@
+         // prepareForShutdown already established idle or device loss.
+-        destroyFrameBuffer();
++        if (!destroyFrameBuffer()) return;
+         if (!frameSlot.retire(vk, device)) {
+             checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire frame slot");
+             return; // retain the device rather than discard unretired ownership
+         }
+diff --git a/src/main/cpp/vulkan/vulkanbridgeimage.h b/src/main/cpp/vulkan/vulkanbridgeimage.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkanbridgeimage.h
+@@ -0,0 +1,48 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <cstdint>
++
++namespace libretrodroid {
++
++// The Vulkan-side AHB reference is independent of the EGL import's reference.
++// Retire only after the caller has proved GPU completion.
++template<class Buffer, class Image, class Memory>
++struct VulkanBridgeImage {
++    Buffer buffer{};
++    Image image{};
++    Memory memory{};
++    unsigned width = 0, height = 0;
++    bool fp16 = false;
++    uint64_t allocationBytes = 0;
++
++    VulkanBridgeImage() = default;
++    VulkanBridgeImage(const VulkanBridgeImage&) = delete;
++    VulkanBridgeImage& operator=(const VulkanBridgeImage&) = delete;
++
++    bool empty() const noexcept {
++        return !buffer && !image && !memory && !width && !height && !fp16 && !allocationBytes;
++    }
++
++    bool canRetire(bool inFlight, bool hasDevice, bool canDestroyImage, bool canFreeMemory) const noexcept {
++        return !inFlight && (!image || (hasDevice && canDestroyImage)) &&
++            (!memory || (hasDevice && canFreeMemory));
++    }
++
++    template<class DestroyImage, class FreeMemory, class ReleaseBuffer>
++    bool retire(bool inFlight, bool hasDevice, bool canDestroyImage, bool canFreeMemory,
++                DestroyImage destroyImage, FreeMemory freeMemory, ReleaseBuffer releaseBuffer) {
++        if (!canRetire(inFlight, hasDevice, canDestroyImage, canFreeMemory)) return false;
++        if (image) destroyImage(image);
++        if (memory) freeMemory(memory);
++        if (buffer) releaseBuffer(buffer);
++        image = {};
++        memory = {};
++        buffer = {};
++        width = height = 0;
++        fp16 = false;
++        allocationBytes = 0;
++        return true;
++    }
++};
++
++} // namespace libretrodroid

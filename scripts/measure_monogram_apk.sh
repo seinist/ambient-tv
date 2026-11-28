@@ -28,6 +28,7 @@ copy_current_apk() {
 import json
 import shutil
 import sys
+import zipfile
 from pathlib import Path
 
 metadata = Path(sys.argv[1])
@@ -37,6 +38,13 @@ matches = [e for e in outputs if abi in [
     f.get("value", f.get("identifier")) for f in e.get("filters", [])
     if f.get("filterType") == "ABI"
 ]]
+if not matches and len(outputs) == 1 and not outputs[0].get("filters"):
+    candidate = metadata.parent / outputs[0]["outputFile"]
+    with zipfile.ZipFile(candidate) as apk:
+        abis = {name.split("/")[1] for name in apk.namelist()
+                if name.startswith("lib/") and name.endswith(".so")}
+    if abis == {abi}:
+        matches = outputs
 if len(matches) != 1:
     raise SystemExit(f"Expected one ABI={abi} APK in {metadata}; got {len(matches)}")
 source = metadata.parent / matches[0]["outputFile"]
@@ -47,14 +55,25 @@ print(f"Captured {abi} release APK: {source.name} ({dest.stat().st_size} bytes)"
 PY
 }
 
+build_variant() {
+    local enabled="$1"
+    if [[ "${MONOGRAM_SIZE_GRADLE_ONLY:-0}" == 1 ]]; then
+        # Both release APKs use the same local dependencies, R8 and ABI.
+        # CI prepares the native AAR and the shared engine dependencies once.
+        CI=1 MONOGRAM_NATIVE="$enabled" ./gradlew :app:packageRelease -PAPK_ABI="$abi" -PMONOGRAM_NATIVE="$enabled"
+    else
+        env CI=1 MONOGRAM_NATIVE="$enabled" bash "$root/build.sh" "$mode"
+    fi
+}
+
 # CI=1 prevents the local versionCode auto-increment between the two variants.
 # Both builds use identical source, ABI, version and release/R8 configuration.
 echo "Building normal release baseline for $abi (Monogram disabled)..."
-env CI=1 MONOGRAM_NATIVE=0 bash "$root/build.sh" "$mode"
+build_variant 0
 copy_current_apk "$scratch/baseline.apk"
 
 echo "Building optional Monogram release for $abi..."
-env CI=1 MONOGRAM_NATIVE=1 bash "$root/build.sh" "$mode"
+build_variant 1
 copy_current_apk "$scratch/monogram.apk"
 
 python3 "$root/scripts/monogram_size_audit.py" \

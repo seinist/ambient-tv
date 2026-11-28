@@ -1,0 +1,144 @@
+diff --git a/src/main/cpp/renderers/es2/imagerendereres2.h b/src/main/cpp/renderers/es2/imagerendereres2.h
+--- a/src/main/cpp/renderers/es2/imagerendereres2.h
++++ b/src/main/cpp/renderers/es2/imagerendereres2.h
+@@ -60,6 +60,11 @@
+     std::unique_ptr<ES3Utils::Framebuffers> framebuffers = std::make_unique<ES3Utils::Framebuffers>();
+ 
+     unsigned int currentTexture = 0;
++    unsigned int allocatedInternalFormat = 0;
++    // Owned texture; raw capture restores the sampler state it borrows.
++    bool samplingInitialized = false;
++    bool appliedLinear = false;
++    void updateTextureSampling();
+     // GLES2 has no portable texture swizzle/row length. Reuse one tightly packed
+     // conversion buffer and never modify a const core-owned frame or its padding.
+     std::vector<uint8_t> uploadBuffer;
+diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+--- a/src/main/cpp/renderers/es2/imagerendereres2.cpp
++++ b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+@@ -74,96 +74,108 @@
+             }
+         }
+         uploadData = uploadBuffer.data();
++    } else if (rowBytes != pitch) {
++        // GLES2 cannot describe a padded row. Repack once into owned scratch.
++        uploadBuffer.resize(rowBytes * height);
++        for (unsigned y = 0; y < height; ++y) {
++            std::memcpy(uploadBuffer.data() + size_t(y) * rowBytes,
++                        static_cast<const uint8_t*>(data) + size_t(y) * pitch, rowBytes);
++        }
++        uploadData = uploadBuffer.data();
+     }
+ 
+     glBindTexture(GL_TEXTURE_2D, currentTexture);
+ 
+     glPixelStorei(GL_UNPACK_ALIGNMENT, bytesPerPixel);
+ 
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-
+-    if (lastFrameSize.first != width || lastFrameSize.second != height) {
+-        glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 0, glFormat, glType, nullptr);
+-    }
++    updateTextureSampling();
+ 
+-    if (convert || rowBytes == pitch) {
+-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, uploadData);
++    // Same-size core format transitions can require new texture storage.
++    // Allocate and upload in one call; subsequent frames use a single subimage.
++    if (lastFrameSize.first != width || lastFrameSize.second != height ||
++        allocatedInternalFormat != glInternalFormat) {
++        glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 0, glFormat, glType, uploadData);
++        allocatedInternalFormat = glInternalFormat;
+     } else {
+-        // Here we are forced to take the long and slow way to upload the padded texture.
+-        for (int i = 0; i < height; i++) {
+-            const auto* row = static_cast<const uint8_t*>(data) + pitch * i;
+-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, i, width, 1, glFormat, glType, row);
+-        }
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, uploadData);
+     }
+ 
+     glBindTexture(GL_TEXTURE_2D, 0);
+ 
+     Renderer::onNewFrame(data, width, height, pitch);
+ }
+ 
+ uintptr_t ImageRendererES2::getTexture() {
+     return currentTexture;
+ }
+ 
+ uintptr_t ImageRendererES2::getFramebuffer() {
+     return 0; // ImageRender does not really expose a framebuffer.
+ }
+ 
+ void ImageRendererES2::setPixelFormat(int pixelFormat) {
+     this->pixelFormat = pixelFormat;
+ 
+     switch (pixelFormat) {
+         case RETRO_PIXEL_FORMAT_XRGB8888:
+             this->glInternalFormat = GL_RGBA;
+             this->glFormat = GL_RGBA;
+             this->glType = GL_UNSIGNED_BYTE;
+             this->bytesPerPixel = 4;
+             break;
+ 
+         case RETRO_PIXEL_FORMAT_HDR10_2101010:
+             this->glInternalFormat = GL_RGBA;
+             this->glFormat = GL_RGBA;
+             this->glType = GL_UNSIGNED_BYTE;
+             this->bytesPerPixel = 4;
+             break;
+ 
+         default:
+         case RETRO_PIXEL_FORMAT_0RGB1555:
+         case RETRO_PIXEL_FORMAT_RGB565:
+             this->glInternalFormat = GL_RGB;
+             this->glFormat = GL_RGB;
+             this->glType = GL_UNSIGNED_SHORT_5_6_5;
+             this->bytesPerPixel = 2;
+             break;
+     }
+ }
+ 
+ void ImageRendererES2::updateRenderedResolution(unsigned int width, unsigned int height) {}
+ 
+ bool ImageRendererES2::rendersInVideoCallback() {
+     return false;
+ }
+ 
++void ImageRendererES2::updateTextureSampling() {
++    if (samplingInitialized && appliedLinear == linear) return;
++    if (!samplingInitialized) {
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    }
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++    appliedLinear = linear;
++    samplingInitialized = true;
++}
++
+ void ImageRendererES2::setShaders(ShaderManager::Chain newShaders) {
+     if (shaders != newShaders) {
+         shaders = std::move(newShaders);
+         linear = shaders.linearTexture;
+         shaderPassesDirty = true;
+     }
+ }
+ 
+ void ImageRendererES2::prepareShaderPasses() {
+     const unsigned width = std::max(1, lastFrameSize.first);
+     const unsigned height = std::max(1, lastFrameSize.second);
+     if (!shaderPassesDirty && width == passWidth && height == passHeight) return;
+     auto next = ES3Utils::buildShaderPasses(width, height, shaders, false);
+     framebuffers = std::move(next);
+     glBindTexture(GL_TEXTURE_2D, currentTexture);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++    updateTextureSampling();
+     glBindTexture(GL_TEXTURE_2D, 0);
+     passWidth = width;
+     passHeight = height;

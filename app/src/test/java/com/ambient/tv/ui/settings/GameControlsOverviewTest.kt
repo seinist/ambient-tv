@@ -23,7 +23,7 @@ class GameControlsOverviewTest {
 
     @Test fun consoleLegendLabelsEveryMappedButtonAndOnlyHighlightsChanges() {
         val legend = consoleLegend(snes, defaults, defaults, ::name)
-        snes.keys.filter { it.target != null && defaults.keys(RetroInputTarget.Button(it.target!!)).isNotEmpty() }
+        snes.keys.filter { it.target != null && defaults.keys(RetroInputTarget.Button(it.target)).isNotEmpty() }
             .forEach { assertTrue(it.id, it.id in legend.labels) }
         assertTrue(legend.changed.isEmpty())
 

@@ -1,0 +1,320 @@
+diff --git a/src/main/cpp/externalframelease.h b/src/main/cpp/externalframelease.h
+--- a/src/main/cpp/externalframelease.h
++++ b/src/main/cpp/externalframelease.h
+@@ -21,7 +21,9 @@
+     ExternalFrameLease() = default;
+     ExternalFrameLease(const ExternalFrameLease&) = delete;
+     ExternalFrameLease& operator=(const ExternalFrameLease&) = delete;
+ 
++    bool references(Buffer candidate) const noexcept { return buffer && candidate == buffer; }
++
+     bool matches(Buffer candidate, Display currentDisplay, Context currentContext,
+                  Texture texture) const noexcept {
+         return buffer && candidate == buffer && texture &&
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -24,5 +24,5 @@
+ #include <EGL/eglext.h>
+ #include <android/hardware_buffer.h>
+-#include "externalframelease.h"
++#include "externalframeslots.h"
+ #include <optional>
+ #include <array>
+@@ -229,5 +229,5 @@
+     bool externalFrames = false;
+-    ExternalFrameLease<ExternalFrameOps> externalFrame;
++    ExternalFrameSlots<ExternalFrameOps> externalFrame;
+ #if defined(__ANDROID__)
+     bool externalFenceProbed = false;
+     PFNEGLCREATESYNCKHRPROC createExternalSync = nullptr;
+@@ -244,4 +244,6 @@
+     PFNEGLWAITSYNCKHRPROC waitWriteSync = nullptr;
+ #endif
++    bool prepareExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height);
++    bool selectExternalFrameSlot(std::size_t index);
+     void releaseExternalFrame();
+ };
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -841,86 +841,109 @@
+     return false;
+ }
+ 
+ bool Video::attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height) {
+-    if (!externalFrames || buffer == nullptr) return false;
+-    const EGLDisplay display = eglGetCurrentDisplay();
+-    const EGLContext context = eglGetCurrentContext();
+-    if (display == EGL_NO_DISPLAY || context == EGL_NO_CONTEXT) return false;
+-
+-    // A buffer and its texture may be reused only within the same EGL context.
+-    // The AHB reference prevents recycling its identity while this import lives.
+-    if (externalFrame.matches(buffer, display, context, hwRenderTexture)) return true;
+-
+-    auto getClientBuffer = reinterpret_cast<PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC>(
+-        eglGetProcAddress("eglGetNativeClientBufferANDROID"));
+-    auto createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
+-    auto destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
+-    auto targetTexture = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
+-        eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+-    if (getClientBuffer == nullptr || createImage == nullptr || destroyImage == nullptr || targetTexture == nullptr) {
+-        LOGE("EGL cannot import AHardwareBuffer frames on this device");
+-        return false;
+-    }
+-    const auto clientBuffer = getClientBuffer(buffer);
+-    if (clientBuffer == nullptr) return false;
+-
+-    releaseExternalFrame();
+-
+-    AHardwareBuffer_acquire(buffer);
+-    EGLint attributes[] = { EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE };
+-    const EGLImageKHR image = createImage(
+-        display, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID, clientBuffer, attributes);
+-    if (image == EGL_NO_IMAGE_KHR) {
+-        LOGE("eglCreateImageKHR failed for the Vulkan frame buffer: 0x%x", eglGetError());
+-        AHardwareBuffer_release(buffer);
+-        return false;
+-    }
+-    externalFrame.adopt(buffer, display, context, image, destroyImage);
+-
+-    // Bound the old-error drain even if the context/driver is broken. Do not
+-    // discard errors from creating/binding the new texture itself.
+-    GLenum error = GL_NO_ERROR;
+-    for (unsigned i = 0; i < 16; ++i) {
+-        error = glGetError();
+-        if (error == GL_NO_ERROR) break;
+-    }
+-    if (error != GL_NO_ERROR) {
+-        releaseExternalFrame();
+-        return false;
+-    }
+-
+-    glGenTextures(1, &hwRenderTexture);
+-    glBindTexture(GL_TEXTURE_2D, hwRenderTexture);
+-    targetTexture(GL_TEXTURE_2D, static_cast<GLeglImageOES>(image));
+-    // A driver can accept FP16 in Vulkan but fail to import/sample it in GLES.
+-    const GLenum importError = glGetError();
+-    if (hwRenderTexture == 0 || importError != GL_NO_ERROR) {
+-        LOGW("EGLImage to GLES texture import failed: 0x%x", importError);
+-        glBindTexture(GL_TEXTURE_2D, 0);
+-        releaseExternalFrame();
+-        return false;
+-    }
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-    glBindTexture(GL_TEXTURE_2D, 0);
+-    const GLenum samplerError = glGetError();
+-    if (samplerError != GL_NO_ERROR) {
+-        LOGW("Imported Vulkan texture setup failed: 0x%x", samplerError);
+-        releaseExternalFrame();
+-        return false;
+-    }
+-
+-    hwFBOWidth = width;
+-    hwFBOHeight = height;
+-    if (renderer != nullptr) {
+-        renderer->updateRenderedResolution(width, height);
+-    }
+-    LOGI("Vulkan frame buffer imported into GLES: tex=%u %ux%u", hwRenderTexture, width, height);
++    // Vulkan still exposes only one slot. Do not rotate until its scheduler and
++    // publication/ownership contract can select the completed matching slot.
++    return prepareExternalFrameSlot(0, buffer, width, height) && selectExternalFrameSlot(0);
++}
++
++bool Video::prepareExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height) {
++    if (!externalFrames || !width || !height || !externalFrame.canImport(index, buffer)) return false;
++    auto& slot = *externalFrame.get(index);
++    const EGLDisplay display = eglGetCurrentDisplay();
++    const EGLContext context = eglGetCurrentContext();
++    if (display == EGL_NO_DISPLAY || context == EGL_NO_CONTEXT) return false;
++
++    // A buffer and its texture may be reused only within the same EGL context.
++    // The AHB reference prevents recycling its identity while this import lives.
++    if (slot.lease.matches(buffer, display, context, slot.texture))
++        return slot.width == width && slot.height == height;
++
++    auto getClientBuffer = reinterpret_cast<PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC>(
++        eglGetProcAddress("eglGetNativeClientBufferANDROID"));
++    auto createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
++    auto destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
++    auto targetTexture = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
++        eglGetProcAddress("glEGLImageTargetTexture2DOES"));
++    if (getClientBuffer == nullptr || createImage == nullptr || destroyImage == nullptr || targetTexture == nullptr) {
++        LOGE("EGL cannot import AHardwareBuffer frames on this device");
++        return false;
++    }
++    const auto clientBuffer = getClientBuffer(buffer);
++    if (clientBuffer == nullptr) return false;
++
++    ExternalFrameOps ops;
++    const auto releaseSlot = [&] { externalFrame.releaseSlot(index, hwRenderTexture, display, context, ops); };
++    releaseSlot();
++
++    AHardwareBuffer_acquire(buffer);
++    EGLint attributes[] = { EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE };
++    const EGLImageKHR image = createImage(
++        display, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID, clientBuffer, attributes);
++    if (image == EGL_NO_IMAGE_KHR) {
++        LOGE("eglCreateImageKHR failed for the Vulkan frame buffer: 0x%x", eglGetError());
++        AHardwareBuffer_release(buffer);
++        return false;
++    }
++    slot.lease.adopt(buffer, display, context, image, destroyImage);
++
++    // Bound the old-error drain even if the context/driver is broken. Do not
++    // discard errors from creating/binding the new texture itself.
++    GLenum error = GL_NO_ERROR;
++    for (unsigned i = 0; i < 16; ++i) {
++        error = glGetError();
++        if (error == GL_NO_ERROR) break;
++    }
++    if (error != GL_NO_ERROR) {
++        releaseSlot();
++        return false;
++    }
++
++    glGenTextures(1, &slot.texture);
++    glBindTexture(GL_TEXTURE_2D, slot.texture);
++    targetTexture(GL_TEXTURE_2D, static_cast<GLeglImageOES>(image));
++    // A driver can accept FP16 in Vulkan but fail to import/sample it in GLES.
++    const GLenum importError = glGetError();
++    if (slot.texture == 0 || importError != GL_NO_ERROR) {
++        LOGW("EGLImage to GLES texture import failed: 0x%x", importError);
++        glBindTexture(GL_TEXTURE_2D, 0);
++        releaseSlot();
++        return false;
++    }
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    const GLenum samplerError = glGetError();
++    if (samplerError != GL_NO_ERROR) {
++        LOGW("Imported Vulkan texture setup failed: 0x%x", samplerError);
++        releaseSlot();
++        return false;
++    }
++
++    slot.width = width;
++    slot.height = height;
++    LOGI("Vulkan frame buffer imported into GLES: tex=%u %ux%u", slot.texture, width, height);
++    return true;
++}
++
++bool Video::selectExternalFrameSlot(std::size_t index) {
++    if (!externalFrames) return false;
++    const auto previous = externalFrame.selected();
++    const auto previousTexture = hwRenderTexture;
++    if (!externalFrame.select(index, eglGetCurrentDisplay(), eglGetCurrentContext(), hwRenderTexture)) return false;
++    const auto& slot = *externalFrame.get(index);
++    if (previous == index && previousTexture == hwRenderTexture &&
++            hwFBOWidth == slot.width && hwFBOHeight == slot.height) return true;
++    hwFBOWidth = slot.width;
++    hwFBOHeight = slot.height;
++    if (renderer != nullptr) {
++        renderer->updateRenderedResolution(slot.width, slot.height);
++    }
+     return true;
+ }
+ 
+ void Video::resizeHWRenderTarget(unsigned int width, unsigned int height) {
+     if (!hwAccelerated || hwCtx == EGL_NO_CONTEXT) return;
+     if (width == 0 || height == 0) return;
+diff --git a/src/main/cpp/externalframeslots.h b/src/main/cpp/externalframeslots.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/externalframeslots.h
+@@ -0,0 +1,89 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include "externalframelease.h"
++#include <array>
++#include <cstddef>
++
++namespace libretrodroid {
++
++// Texture ownership belongs to the EGL slot; the renderer only borrows the
++// selected name. Preparing another slot must not publish it to the renderer.
++template<class Ops, std::size_t Count = 2>
++class ExternalFrameSlots {
++public:
++    using Buffer = typename Ops::Buffer;
++    using Display = typename Ops::Display;
++    using Context = typename Ops::Context;
++    using Texture = typename Ops::Texture;
++    struct Slot {
++        ExternalFrameLease<Ops> lease;
++        Texture texture{};
++        unsigned width = 0, height = 0;
++    };
++
++    static_assert(Count > 0, "At least one EGL slot is required");
++    Slot* get(std::size_t index) noexcept { return index < Count ? &slots[index] : nullptr; }
++    const Slot* get(std::size_t index) const noexcept { return index < Count ? &slots[index] : nullptr; }
++    std::size_t selected() const noexcept { return current; }
++
++    bool canImport(std::size_t index, Buffer buffer) const noexcept {
++        if (index >= Count || !buffer) return false;
++        // The same AHB cannot have two independent read/write ownership records.
++        for (std::size_t i = 0; i < Count; ++i)
++            if (i != index && slots[i].lease.references(buffer)) return false;
++        return true;
++    }
++
++    bool select(std::size_t index, Display display, Context context, Texture& borrowed) noexcept {
++        const auto* slot = get(index);
++        if (!slot || !slot->texture || !slot->width || !slot->height ||
++                !slot->lease.ownsContext(display, context)) return false;
++        current = index;
++        borrowed = slot->texture;
++        return true;
++    }
++
++    bool ownsContext(Display display, Context context) const noexcept {
++        const auto& slot = slots[current];
++        return slot.texture && slot.lease.ownsContext(display, context);
++    }
++
++    bool markUse(Texture borrowed, Display display, Context context) noexcept {
++        auto& slot = slots[current];
++        return borrowed == slot.texture && slot.lease.markUse(slot.texture, display, context);
++    }
++
++    bool finishSlotUse(std::size_t index, Display display, Context context, Ops& ops,
++                       bool allowEmpty = false) {
++        auto* slot = get(index);
++        return slot && slot->lease.finishUse(slot->texture, display, context, ops, allowEmpty);
++    }
++
++    bool finishUse(Texture borrowed, Display display, Context context, Ops& ops,
++                   bool allowEmpty = false) {
++        return borrowed == slots[current].texture && finishSlotUse(current, display, context, ops, allowEmpty);
++    }
++
++    void invalidateContext() noexcept {
++        for (auto& slot : slots) slot.lease.invalidateContext();
++    }
++
++    void releaseSlot(std::size_t index, Texture& borrowed, Display display, Context context, Ops& ops) {
++        auto* slot = get(index);
++        if (!slot) return;
++        if (index == current) borrowed = {};
++        slot->lease.release(slot->texture, display, context, ops);
++        slot->width = slot->height = 0;
++    }
++
++    void release(Texture& borrowed, Display display, Context context, Ops& ops) {
++        for (std::size_t i = 0; i < Count; ++i) releaseSlot(i, borrowed, display, context, ops);
++        current = 0;
++    }
++
++private:
++    std::array<Slot, Count> slots{};
++    std::size_t current = 0;
++};
++
++} // namespace libretrodroid
