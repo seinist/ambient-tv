@@ -337,8 +337,8 @@ internal class HdrSceneSession(
                 it.readLine() == "AMBIENTSVP_SCENE_CACHE_$version" && it.readLine() == key &&
                     !it.readLine().isNullOrBlank() && !it.readLine().isNullOrBlank() &&
                     (version == 1 || plan.ends.last() <= 1_000_000L &&
-                        cache.length() > plan.ends.last() * 19 &&
-                        it.readLine()?.matches(Regex("G [0-9a-f]{16}")) == true)
+                        cache.length() > plan.ends.last() * 20 &&
+                        it.readLine()?.matches(Regex("G2 [0-9a-f]{16}")) == true)
             }
             if (!header) false else java.io.RandomAccessFile(cache,"r").use { f ->
                 val size = minOf(f.length(),4096L).toInt()
