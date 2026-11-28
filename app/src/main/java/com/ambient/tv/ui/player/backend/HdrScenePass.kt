@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.player.backend
 
+import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
@@ -14,15 +15,77 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 
 /**
- * Conservative automatic plan for seekable local HEVC VOD only. A change in the
- * authored HDR10+ T.35 payload is a candidate scene boundary, not proof of an
- * editorial cut. Refuse ambiguous frame-varying/missing metadata rather than
- * advertise normative scene detection. No URL/credential-derived cache identity.
+ * Automatic plan for finite HEVC VOD. Remote media is frozen in a private
+ * snapshot for both passes; decoded luma changes complement stable metadata runs.
+ * Scene detection is an estimate, not proof of editorial cuts.
  */
 internal object HdrScenePlanner {
     private const val MAX_SAMPLE = 16 * 1024 * 1024
     private const val MAX_FRAMES = 1_000_000
     private const val MAX_SCENES = 100_000
+
+    private const val MAX_SNAPSHOT = 64L * 1024 * 1024 * 1024
+    private const val FREE_RESERVE = 512L * 1024 * 1024
+
+    fun supportedSource(url: String): Boolean = localFile(url) != null ||
+        Uri.parse(url).scheme?.lowercase() in setOf("http","https","content")
+
+    // Existing NAS transports publish seekable HTTP URLs through the file
+    // bridge; use the same authenticated resource rather than creating a
+    // second SMB/NFS client. Freeze bytes for both passes to prevent a
+    // changed network resource being replayed against stale scene metadata.
+    private suspend fun snapshot(context: Context, url: String, headers: Map<String,String>, run: File): File? {
+        val uri = Uri.parse(url)
+        val file = File(run,"source.media")
+        suspend fun copy(input: java.io.InputStream, length: Long): Boolean {
+            if (length <= 0 || length > MAX_SNAPSHOT || length > run.usableSpace-FREE_RESERVE) return false
+            input.use { stream ->
+                file.outputStream().buffered().use { out ->
+                    val buffer = ByteArray(1024*1024)
+                    var written = 0L
+                    while (written < length) {
+                        currentCoroutineContext().ensureActive()
+                        val n = stream.read(buffer,0,minOf(buffer.size.toLong(),length-written).toInt())
+                        if (n <= 0) return false
+                        out.write(buffer,0,n);written += n
+                        if (run.usableSpace < FREE_RESERVE) return false
+                    }
+                    if (stream.read() != -1) return false
+                }
+            }
+            return file.length() == length
+        }
+        if (uri.scheme == "content") {
+            val afd = context.contentResolver.openAssetFileDescriptor(uri,"r") ?: return null
+            afd.use {
+                val length = it.length
+                if (length <= 0) return null
+                if (!copy(it.createInputStream(),length)) return null
+            }
+        } else {
+            if (uri.scheme !in setOf("http","https") || !uri.userInfo.isNullOrEmpty()) return null
+            val conn = java.net.URL(url).openConnection() as? java.net.HttpURLConnection ?: return null
+            try {
+                conn.instanceFollowRedirects = false // never forward credentials to a different origin
+                conn.connectTimeout = 15_000;conn.readTimeout = 15_000
+                conn.requestMethod = "GET"
+                for ((name,value) in headers) {
+                    if (name.equals("Range",true) || name.equals("Accept-Encoding",true) ||
+                        name.equals("Host",true) || name.equals("Connection",true)) continue
+                    if (name.any { it == '\r' || it == '\n' } || value.any { it == '\r' || it == '\n' }) return null
+                    conn.setRequestProperty(name,value)
+                }
+                conn.setRequestProperty("Accept-Encoding","identity")
+                if (conn.responseCode != 200 || conn.contentEncoding?.equals("identity",true) == false) return null
+                val type = conn.contentType.orEmpty().lowercase()
+                if ("mpegurl" in type || "dash+xml" in type || "text/html" in type) return null
+                val length = conn.contentLengthLong
+                if (length <= 0 || length > MAX_SNAPSHOT || length > run.usableSpace-FREE_RESERVE) return null
+                if (!copy(conn.inputStream,length)) return null
+            } finally { conn.disconnect() }
+        }
+        return file
+    }
 
     internal data class Sample(val ptsUs: Long, val metadata: String)
     internal data class Plan(val ends: List<Long>, val source: Double, val target: Double)
@@ -124,12 +187,13 @@ internal object HdrScenePlanner {
 
     /** Same constant output grid as both adapters. Use the actual PTS of every
      * source sample, not the container duration or rounded movie FPS. */
-    internal fun plan(samples: List<Sample>, source: Double, target: Double, vlc: Boolean): Plan? {
+    internal fun plan(samples: List<Sample>, source: Double, target: Double, vlc: Boolean, contentCuts: Set<Long>? = null): Plan? {
         if (samples.size < 2 || samples.size > MAX_FRAMES || !source.isFinite() || !target.isFinite() ||
             source !in 5.0..120.0 || target <= source || target > 120 || target/source > 5) return null
         val sorted = samples.sortedBy { it.ptsUs }
         val origin = sorted.first().ptsUs
         if (origin < 0 || sorted.last().ptsUs-origin > 86_400_000_000L) return null
+        if (contentCuts != null && !sorted.map { it.ptsUs }.toHashSet().containsAll(contentCuts)) return null
         val expected = 1_000_000.0/source
         val ends = ArrayList<Long>()
         var tick = 0L
@@ -144,22 +208,25 @@ internal object HdrScenePlanner {
                 if (++tick-first > 8 || tick >= 1_000_000_000L) return null
             }
             if (tick == first) return null
-            if (i+1 == sorted.size || sorted[i].metadata != sorted[i+1].metadata) {
+            val metadataCut = i+1 < sorted.size && sorted[i].metadata != sorted[i+1].metadata &&
+                (contentCuts == null || i>0 && i+2<sorted.size &&
+                    sorted[i-1].metadata==sorted[i].metadata && sorted[i+1].metadata==sorted[i+2].metadata)
+            if (i+1 == sorted.size || metadataCut || contentCuts?.contains(sorted[i+1].ptsUs) == true) {
                 if (ends.size >= MAX_SCENES) return null
                 ends += tick
             }
         }
         // Per-frame dynamic metadata cannot identify a stable scene plan.
-        if (ends.size > maxOf(1, sorted.size/4)) return null
+        if (contentCuts == null && ends.size > maxOf(1, sorted.size/4)) return null
         return Plan(ends,source,target)
     }
 
-    suspend fun scan(url: String, source: Double, target: Double, vlc: Boolean, directory: File): HdrSceneSession? {
+    suspend fun scan(context: Context, url: String, headers: Map<String,String>, source: Double, target: Double, vlc: Boolean, directory: File): HdrSceneSession? {
         var created: File? = null
         var delivered = false
         try {
             val result = withContext(Dispatchers.IO) {
-                scanLocal(url,source,target,vlc,directory) { created = it }
+                scanLocal(context,url,headers,source,target,vlc,directory) { created = it }
             }
             delivered = result != null
             return result
@@ -170,10 +237,15 @@ internal object HdrScenePlanner {
         }
     }
 
-    private suspend fun scanLocal(url: String, source: Double, target: Double, vlc: Boolean,
+    private suspend fun scanLocal(context: Context, url: String, headers: Map<String,String>, source: Double, target: Double, vlc: Boolean,
         directory: File, created: (File) -> Unit): HdrSceneSession? {
         if (!source.isFinite() || !target.isFinite() || source !in 5.0..120.0 || target <= source || target > 120 || target/source > 5) return null
-        val file = localFile(url) ?: return null
+        if (!directory.exists() && !directory.mkdirs()) return null
+        val run = java.nio.file.Files.createTempDirectory(directory.toPath(),"hdr-").toFile()
+        created(run)
+        if (run.path.any { it in ":,{}%\"\\\n\r" }) return null
+        val local = localFile(url)
+        val file = local ?: snapshot(context,url,headers,run) ?: return null
         val length = file.length()
         val modified = file.lastModified()
         val digest = MessageDigest.getInstance("SHA-256")
@@ -188,7 +260,7 @@ internal object HdrScenePlanner {
         }
         val key = hex(digest.digest())
         val extractor = MediaExtractor()
-        val plan = try {
+        val samples = try {
             extractor.setDataSource(file.path)
             val video = (0 until extractor.trackCount).filter {
                 extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
@@ -198,7 +270,7 @@ internal object HdrScenePlanner {
             val width = format.getInteger(MediaFormat.KEY_WIDTH)
             val height = format.getInteger(MediaFormat.KEY_HEIGHT)
             if (format.getString(MediaFormat.KEY_MIME) != "video/hevc" ||
-                width !in 32..1920 || height !in 32..1080) return null
+                width !in 32..3840 || height !in 32..2160) return null
             extractor.selectTrack(video.single())
             val buffer = ByteBuffer.allocate(MAX_SAMPLE)
             val samples = ArrayList<Sample>()
@@ -216,21 +288,21 @@ internal object HdrScenePlanner {
                 samples += Sample(extractor.sampleTime,known.getOrPut(hdr) { hdr })
                 if (!extractor.advance()) break
             }
-            plan(samples,source,target,vlc) ?: return null
+            samples
         } finally { extractor.release() }
+        val pts = samples.map { it.ptsUs }.toHashSet()
+        if (pts.size != samples.size) return null
+        val cuts = HdrContentSceneDetector.analyze(file,pts) ?: return null
+        val plan = plan(samples,source,target,vlc,cuts) ?: return null
         currentCoroutineContext().ensureActive()
         if (file.length() != length || file.lastModified() != modified) return null
-        if (!directory.exists() && !directory.mkdirs()) return null
-        val run = java.nio.file.Files.createTempDirectory(directory.toPath(),"hdr-").toFile()
-        created(run)
-        if (run.path.any { it in ":,{}%\"\\\n\r" }) return null
         return try {
             val manifest = File(run,"plan")
             manifest.writeText(buildString {
                 appendLine("AMBIENTSVP_SCENE_PLAN_1");appendLine(key)
                 plan.ends.forEach { appendLine(it) }
             })
-            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"))
+            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null)
         } catch (e: Exception) { run.deleteRecursively();throw e }
     }
 }
@@ -243,9 +315,11 @@ internal class HdrSceneSession(
     val plan: HdrScenePlanner.Plan,
     private val manifest: File,
     private val cache: File,
+    private val staged: Boolean = false,
 ) {
     var mode: Int = 1
         private set
+    fun playbackPath(): String? = sourceFile.path.takeIf { staged && valid() }
     fun valid() = mode != 0 && sourceFile.length() == sourceLength && sourceFile.lastModified() == sourceModified
     fun advance(): Boolean {
         if (mode != 1 || !valid() || !cache.isFile || cache.length() !in 1L..32_000_000L) return false
