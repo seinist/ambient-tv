@@ -355,6 +355,51 @@ def file_digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+# Dolphin pins zlib-ng ce01b1e41da298334f8214389cc9369540a7560f.
+# Its CMakeLists.txt explicitly isolates runtime-dispatched ISA objects with
+# NOLTOFLAG. Do not remove that barrier or disable the optimized SIMD paths.
+_DOLPHIN_ZLIB_NATIVE_SIMD = {
+    "x86_64": {
+        "x86/slide_hash_avx2.c": ("-mavx2",),
+        "x86/chunkset_avx.c": ("-mavx2",),
+        "x86/compare256_avx2.c": ("-mavx2",),
+        "x86/adler32_avx2.c": ("-mavx2",),
+        "x86/adler32_avx512.c": ("-mavx512f", "-mavx512dq", "-mavx512bw", "-mavx512vl"),
+        "x86/adler32_avx512_vnni.c": ("-mavx512f", "-mavx512dq", "-mavx512bw", "-mavx512vl", "-mavx512vnni"),
+        "x86/chunkset_sse41.c": ("-msse4.1",),
+        "x86/adler32_sse42.c": ("-msse4.2",),
+        "x86/insert_string_sse42.c": ("-msse4.2",),
+        "x86/adler32_ssse3.c": ("-mssse3",),
+        "x86/crc32_fold_pclmulqdq.c": ("-mssse3", "-msse4.2", "-mpclmul"),
+        "x86/crc32_fold_vpclmulqdq.c": ("-mvpclmulqdq", "-mavx512f", "-mavx512dq", "-mavx512bw", "-mavx512vl"),
+    },
+    "arm64-v8a": {
+        "arm/crc32_acle.c": ("-march=armv8-a+crc",),
+        "arm/insert_string_acle.c": ("-march=armv8-a+crc",),
+        "arm/adler32_neon.c": ("-march=armv8-a+simd",),
+        "arm/chunkset_neon.c": ("-march=armv8-a+simd",),
+        "arm/compare256_neon.c": ("-march=armv8-a+simd",),
+        "arm/slide_hash_neon.c": ("-march=armv8-a+simd",),
+    },
+}
+
+
+def dolphin_native_simd_source(source, args, lto, core, abi, profile):
+    if (core != "dolphin" or "-flto=thin" not in PROFILES[profile][0]
+            or not lto or lto[-1] != "-fno-lto" or "-flto=thin" not in lto[:-1]):
+        return None
+    prefix = "/Externals/zlib-ng/zlib-ng/arch/"
+    for name, flags in _DOLPHIN_ZLIB_NATIVE_SIMD.get(abi, {}).items():
+        if not ("/" + source).endswith(prefix + name):
+            continue
+        effective = set(args)
+        if "-march=armv8-a+crc+simd" in effective:
+            effective.add("-march=armv8-a+crc")
+        if set(flags).issubset(effective):
+            return name
+    return None
+
+
 def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scoped_commands=None):
     """Check actual verbose driver invocations, not only requested CMake/Make settings.
 
@@ -366,6 +411,7 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
     opt_levels = {}
     thin_compiles = 0
     native_offset_helpers = 0
+    native_simd_sources = []
     thin_links = 0
     compile_lto_modes = {}
     link_lto_modes = {}
@@ -398,6 +444,9 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
                 if not lto or lto[-1] != "-fno-lto":
                     raise ValueError("Mupen64Plus offset helper must be compiled as native ELF")
                 native_offset_helpers += 1
+            native_simd = dolphin_native_simd_source(source, args, lto, core, abi, profile)
+            if native_simd is not None:
+                native_simd_sources.append(native_simd)
             thin_compiles += bool(lto and lto[-1] == "-flto=thin")
             mode = lto[-1] if lto else "(implicit)"
             compile_lto_modes[mode] = compile_lto_modes.get(mode, 0) + 1
@@ -419,8 +468,11 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
         raise ValueError(f"Core overrides requested -O3: {opt_levels}")
     if native_offset_helpers > 1:
         raise ValueError("More than one Mupen64Plus native offset helper in linked inputs")
-    if "-flto=thin" in PROFILES[profile][0] and (thin_compiles != compile_count - native_offset_helpers or thin_links != link_count):
-        raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{compile_count - native_offset_helpers}, link {thin_links}/{link_count}")
+    if len(native_simd_sources) != len(set(native_simd_sources)):
+        raise ValueError("Duplicate Dolphin native SIMD sources in linked inputs")
+    required_thin_compiles = compile_count - native_offset_helpers - len(native_simd_sources)
+    if "-flto=thin" in PROFILES[profile][0] and (thin_compiles != required_thin_compiles or thin_links != link_count):
+        raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{required_thin_compiles}, link {thin_links}/{link_count}")
     if profile in {"tune-a57", "optimized-a57"} and tuning_count != compile_count:
         raise ValueError(f"Cortex-A57 tuning not effective: {tuning_count}/{compile_count}")
     if profile in {"pgo-generate", "pgo-use"} and (pgo_compiles != compile_count or pgo_links != link_count):
@@ -428,7 +480,8 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
     acceleration = audit_acceleration(commands, core, abi, profile) if core else {}
     return {"compile_commands": compile_count, "shared_link_commands": link_count,
             "optimization_levels": opt_levels, "codegen_flag_occurrences": codegen_flags, "thinlto_compiles": thin_compiles,
-            "thinlto_links": thin_links, "native_offset_helpers": native_offset_helpers, "cortex_a57_compiles": tuning_count,
+            "thinlto_links": thin_links, "native_offset_helpers": native_offset_helpers,
+            "native_simd_sources": sorted(native_simd_sources), "cortex_a57_compiles": tuning_count,
             "pgo_compiles": pgo_compiles, "pgo_links": pgo_links,
             "compile_lto_modes": compile_lto_modes, "link_lto_modes": link_lto_modes,
             "shared_link_outputs": shared_outputs, "acceleration": acceleration}

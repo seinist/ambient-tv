@@ -437,6 +437,47 @@ class CoreBuildPolicyTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, cores)
 
+    def test_dolphin_zlib_native_simd_thinlto_barrier(self):
+        from core_build_policy import _DOLPHIN_ZLIB_NATIVE_SIMD
+        prefix = "src/Externals/zlib-ng/zlib-ng/arch/"
+        for abi, jit, profile in (("x86_64", "Jit64", "optimized"),
+                                  ("arm64-v8a", "JitArm64", "optimized-a57")):
+            flags = ["-O3", "-flto=thin"]
+            if abi == "arm64-v8a":
+                flags.append("-mtune=cortex-a57")
+            required = ["Source/Core/Core/PowerPC/" + jit + "/Jit.cpp",
+                        "Source/Core/DolphinLibretro/Input.cpp",
+                        "Source/Core/DolphinLibretro/Audio.cpp",
+                        "Source/Core/DolphinLibretro/Vulkan.cpp"]
+            normal = [["clang++", *flags, "-c", src] for src in required]
+            simd = [["clang", *flags, *isa, "-fno-lto", "-c", prefix + src]
+                    for src, isa in _DOLPHIN_ZLIB_NATIVE_SIMD[abi].items()]
+            link = ["clang++", "-shared", "-flto=thin", "a.o"]
+            def audit(commands, core="dolphin", selected_abi=abi):
+                return audit_commands("", profile, core=core, abi=selected_abi,
+                                      scoped_commands=commands)
+            result = audit(normal + simd + [link])
+            self.assertEqual(result["thinlto_compiles"], len(normal))
+            self.assertEqual(result["native_simd_sources"], sorted(_DOLPHIN_ZLIB_NATIVE_SIMD[abi]))
+            self.assertEqual(result["compile_lto_modes"]["-fno-lto"], len(simd))
+            invalid = [simd[0][:-1] + [prefix + "generic.c"],
+                       simd[0][:-1] + ["other/arch/" + simd[0][-1].split("/")[-1]],
+                       [arg for arg in simd[0] if arg not in _DOLPHIN_ZLIB_NATIVE_SIMD[abi][next(iter(_DOLPHIN_ZLIB_NATIVE_SIMD[abi]))]],
+                       [arg for arg in simd[0] if arg != "-flto=thin"]]
+            for bad in invalid:
+                with self.assertRaisesRegex(ValueError, "ThinLTO not effective"):
+                    audit(normal + [bad, link])
+            with self.assertRaisesRegex(ValueError, "ThinLTO not effective"):
+                audit(normal + simd + [link], core=None)
+            with self.assertRaisesRegex(ValueError, "ThinLTO not effective"):
+                audit(normal + simd + [link], selected_abi="x86")
+            with self.assertRaisesRegex(ValueError, "ThinLTO not effective"):
+                audit(normal + simd + [["clang++", "-shared", "a.o"]])
+            with self.assertRaisesRegex(ValueError, "overrides requested -O3"):
+                audit(normal + [[arg if arg != "-O3" else "-O2" for arg in simd[0]], link])
+            with self.assertRaisesRegex(ValueError, "Duplicate Dolphin"):
+                audit(normal + simd + [simd[0], link])
+
     def test_actual_flags(self):
         log = ("clang -O2 -O3 -flto=thin -c a.c -o a.o\n"
                "/ndk/bin/aarch64-linux-android29-clang++ -O3 -flto=thin -c b.cpp -o b.o\n"
