@@ -182,3 +182,50 @@ Sunshine, and the current-game check and remote quit are separate host requests.
 - The host Opus comparison builds a separate O2 baseline and O3/ThinLTO candidate, runs upstream API/decode tests and compares identical multichannel bitstreams and loss concealment, reporting median CPU time. These are host measurements, not Shield/Android device benchmarks or a substitute for official external conformance vectors.
 
 - Follow-up hardening: irreversible audio-sink failure is quarantined; native audio scratch is freed even if JNI attachment fails, and global references are collected after the stop worker joins. The depacketizer caps native frame assembly before allocating additional fragments. UDP receive-buffer resizing retries at most three times with monotonic backoff. Pinned artwork connections use a dedicated bounded HTTPS pool (not shared with launch, pairing or quit); cache reads no longer hold the global disk-writer lock. Input queue items are invoked directly without drain-time closure allocation. Opus comparisons time only in-memory decoding and cover the exact legacy 5.1 mapping plus representative negotiated 7.1 and independent-channel modes at 5/10/20 ms; device measurements and external normative vectors remain separate acceptance gates.
+
+## Additional device validation and distribution gate (2026-11-28)
+
+The player Info panel reports the decoder's actual MediaCodec output color
+standard, transfer, range and HDR metadata length, separate from the negotiated
+HDR signal. BT.2020/PQ reporting is evidence of decoder output signaling,
+not a measurement of panel luminance or HDMI InfoFrames. Use **Copy diagnostic
+snapshot** to retain the redacted decoder, FPS, loss, network, queue and latency
+observations before and after each test. Nothing is uploaded automatically.
+
+On each device (Shield, Philips TV and phone), test Windows and Linux Sunshine:
+- H.264/HEVC/AV1 SDR and HEVC/AV1 HDR10 where supported; explicitly record
+  unsupported profiles rather than treating fallback as HDR success.
+- For HDR, use a known PQ/BT.2020 test pattern, verify the TV/HDMI HDR mode,
+  compare grayscale/primary color patches with a meter where available,
+  and verify that SDR returns correctly after switching/disconnect.
+- Record diagnostics after warm-up and after at least 60 seconds at each
+  resolution/refresh/bitrate/pacing setting. Repeat after reconnect, packet
+  loss/jitter and network interruption. Keep raw samples and device/host versions.
+- Measure input-to-photon externally with a high-speed camera (or a calibrated
+  photodiode and input trigger). Measure at least 30 events for median and p95.
+  The decoder and input dispatch statistics are not input-to-photon measurements.
+- Verify physical controller motion on Android 13+ with a supported gamepad.
+  Host-requested rates are capped at 120 Hz, subscriptions end on focus/OSD
+  changes; Android 12 is conservatively excluded. Companion sensor units are
+  converted from g/rad/s to m/s²/deg/s. Confirm axis orientation on real hardware.
+- Text panel supports explicit paste into the editable field and explicit send.
+  This is text injection, not a bidirectional remote clipboard synchronization.
+
+The dedicated Moonlight full distribution validation workflow executes the
+normal four-ABI release path with Moonlight enabled and a disposable signing
+key, and omits Monogram as requested for this validation. It does not publish.
+It verifies APK signatures, alignment, Moonlight ABI and license assets,
+then generates per-component source archives, notices and SHA-256 manifest
+using the exact checked-out pins and reviewed Ambient patches. This is
+Moonlight corresponding-source packaging, not certification of every
+third-party library in the combined APK. A public signed release still
+requires device acceptance, complete combined-app license/source review
+and the distributor's actual signing key.
+
+Android MediaCodec Surface output already avoids CPU copies of decoded
+pictures. Its public compressed input API lends a codec-owned ByteBuffer;
+the GameStream UDP/FEC/reassembly buffers have different ownership. A
+portable end-to-end hardware zero-copy compressed path is not available
+through this API; claiming it by using a direct ByteBuffer would be incorrect.
+Keep the bounded one-copy compressed path and direct Surface output until
+a vendor-supported externally importable compressed input path is available.

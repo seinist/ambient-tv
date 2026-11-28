@@ -1,0 +1,103 @@
+name: Moonlight full distribution validation
+
+# Dedicated opt-in release-path audit. Never publishes a release or uses production signing secrets.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/moonlight-distribution.yml'
+      - 'scripts/package_moonlight_sources.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: moonlight-full-distribution-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-distribution:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.number == 494 && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      CI: 'true'
+      NDK_VERSION: '30.0.16248370'
+      MPV_SKIP_HOST_DEPS: '1'
+      NATIVE_JOBS: '2'
+      CARGO_BUILD_JOBS: '2'
+      MOONLIGHT_NATIVE: '1'
+      MONOGRAM_NATIVE: '0'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+            pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo install cargo-ndk --locked
+
+      - name: Install pinned Meson
+        # Ubuntu 24.04 ships Meson 1.3.2; fontconfig requires >= 1.11.0.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          "$RUNNER_TEMP/meson-venv/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0'
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/meson-venv/bin/meson" --version
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.1' 'platforms;android-37.0' 'build-tools;37.0.0' "ndk;$NDK_VERSION" 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test release packaging policy
+        run: python3 -m unittest discover -s scripts/tests -p 'test_moonlight_sources.py'
+
+      - name: Run full release path with disposable signing key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export AMBIENT_TV_KEYSTORE_FILE="$RUNNER_TEMP/moonlight-verification.jks"
+          export AMBIENT_TV_KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
+          export AMBIENT_TV_KEY_ALIAS=moonlight-verification
+          export AMBIENT_TV_KEY_PASSWORD="$AMBIENT_TV_KEYSTORE_PASSWORD"
+          echo "::add-mask::$AMBIENT_TV_KEYSTORE_PASSWORD"
+          trap 'rm -f "$AMBIENT_TV_KEYSTORE_FILE"' EXIT
+          keytool -genkeypair -keystore "$AMBIENT_TV_KEYSTORE_FILE" -storepass "$AMBIENT_TV_KEYSTORE_PASSWORD" \
+            -keypass "$AMBIENT_TV_KEY_PASSWORD" -alias "$AMBIENT_TV_KEY_ALIAS" -keyalg RSA -keysize 2048 \
+            -validity 30 -dname "CN=Ambient TV Moonlight Verification" -storetype PKCS12
+          bash build.sh release
+          test -s dist/update.json
+          for apk in dist/*.apk; do
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$apk"
+            "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c -P 16 -v 4 "$apk"
+          done
+
+      - name: Archive pinned Moonlight source and license packages
+        run: python3 scripts/package_moonlight_sources.py
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: moonlight-full-distribution-verification-${{ github.run_id }}
+          path: |
+            dist/*.apk
+            dist/update.json
+            dist/moonlight-sources/
+          if-no-files-found: error
+          compression-level: 0
