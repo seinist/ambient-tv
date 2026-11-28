@@ -554,7 +554,7 @@ def main():
     elif args.action == "prepare-cmake":
         prepare_cmake(args.root, args.core, args.profile)
     elif args.action == "prepare-hotpaths":
-        if args.profile in {"core-hotpaths", "citra-arm64-jit", "yabause-arm64-jit"} or (args.profile in PUBLIC_EXPERIMENTS | {"pgo-generate", "pgo-use"} and args.core in HOTPATH_CORES):
+        if args.profile in {"core-hotpaths", "citra-arm64-jit", "yabause-arm64-jit", "picodrive-sh2", "snes9x2010-threaded"} or (args.profile in PUBLIC_EXPERIMENTS | {"pgo-generate", "pgo-use"} and args.core in HOTPATH_CORES):
             prepare_hotpaths(args.root, args.core)
     elif args.action == "prepare-ndk":
         prepare_ndk(args.root, args.core, args.profile)

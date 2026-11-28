@@ -1223,6 +1223,20 @@ PATCHES = {
       "      for(i = 0; i < tia_size; i++)\n      {\n         int16_t sample_16 = (int16_t)(*(tia_samples_buf++) << 8);\n\n         *(audio_out_buf++) = sample_16;\n         *(audio_out_buf++) = sample_16;\n      }",
       "      i = 0;\n#if defined(__ARM_NEON) || defined(__aarch64__)\n      for (; i + 8 <= tia_size; i += 8) {\n         const int16x8_t samples = vreinterpretq_s16_u16(vshll_n_u8(vld1_u8(tia_samples_buf), 8));\n         int16x8x2_t stereo; stereo.val[0] = samples; stereo.val[1] = samples;\n         vst2q_s16(audio_out_buf, stereo);\n         tia_samples_buf += 8; audio_out_buf += 16;\n      }\n#endif\n      for(; i < tia_size; i++)\n      {\n         int16_t sample_16 = (int16_t)(*(tia_samples_buf++) << 8);\n         *(audio_out_buf++) = sample_16;\n         *(audio_out_buf++) = sample_16;\n      }"
     ]
+  ],
+  "picodrive": [
+    [
+      "cpu/sh2/compiler.c",
+      "#define HASH_FUNC(hash_tab, addr, mask) \\\n  (hash_tab)[((addr) >> 1) & (mask)]",
+      "/* Fold higher guest-PC bits into the index. The old low-bit-only hash\n * put mirrored RAM/ROM offsets and regularly spaced blocks in one bucket.\n * All insertion, removal and unresolved-link lookup sites use this macro. */\nstatic inline u32 ambient_sh2_hash(u32 addr, u32 mask)\n{\n  return ((addr >> 1) ^ (addr >> 10) ^ (addr >> 19) ^ (addr >> 28)) & mask;\n}\n#define HASH_FUNC(hash_tab, addr, mask) \\\n  (hash_tab)[ambient_sh2_hash((addr), (mask))]"
+    ]
+  ],
+  "snes9x2010": [
+    [
+      "libretro/libretro.c",
+      "\t\t\t\tfor (x = 0; x < 512; x++)\n\t\t\t\t{\n\t\t\t\t\tuint16_t a = row[2 * x];\n\t\t\t\t\tuint16_t b = row[2 * x + 1];\n\t\t\t\t\trow[x] = (uint16_t) (((a & 0xF7DE) >> 1) + ((b & 0xF7DE) >> 1) + (a & b & 0x0821));\n\t\t\t\t}",
+      "\t\t\t\tx = 0;\n#if defined(HIRES_BLEND_NEON)\n\t\t\t\t/* Load 16 source pixels before the eight in-place stores.\n\t\t\t\t   Deinterleave RGB565 pairs, retaining the exact scalar rounding. */\n\t\t\t\tconst uint16x8_t mask_no_low = vdupq_n_u16(0xF7DE);\n\t\t\t\tconst uint16x8_t mask_low = vdupq_n_u16(0x0821);\n\t\t\t\tfor (; x + 8 <= 512; x += 8)\n\t\t\t\t{\n\t\t\t\t\tconst uint16x8x2_t pairs = vld2q_u16(row + 2 * x);\n\t\t\t\t\tconst uint16x8_t a = vshrq_n_u16(vandq_u16(pairs.val[0], mask_no_low), 1);\n\t\t\t\t\tconst uint16x8_t b = vshrq_n_u16(vandq_u16(pairs.val[1], mask_no_low), 1);\n\t\t\t\t\tconst uint16x8_t carry = vandq_u16(vandq_u16(pairs.val[0], pairs.val[1]), mask_low);\n\t\t\t\t\tvst1q_u16(row + x, vaddq_u16(vaddq_u16(a, b), carry));\n\t\t\t\t}\n#endif\n\t\t\t\tfor (; x < 512; x++)\n\t\t\t\t{\n\t\t\t\t\tuint16_t a = row[2 * x];\n\t\t\t\t\tuint16_t b = row[2 * x + 1];\n\t\t\t\t\trow[x] = (uint16_t) (((a & 0xF7DE) >> 1) + ((b & 0xF7DE) >> 1) + (a & b & 0x0821));\n\t\t\t\t}"
+    ]
   ]
 }
 

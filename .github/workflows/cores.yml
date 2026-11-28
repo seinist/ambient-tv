@@ -312,7 +312,7 @@ jobs:
             LDFLAGS_EXTRA="${LDFLAGS_EXTRA//ambient.profdata/$pgo_data}"
             pgo_args=(--profile-data "$pgo_data")
           fi
-          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 || "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit || "$PROFILE" == pgo-generate || "$PROFILE" == pgo-use ]]; then
+          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 || "$PROFILE" == citra-arm64-jit || "$PROFILE" == yabause-arm64-jit || "$PROFILE" == pgo-generate || "$PROFILE" == pgo-use || "$PROFILE" == picodrive-sh2 || "$PROFILE" == snes9x2010-threaded ]]; then
             python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
           fi
           if [[ "$PROFILE" == citra-arm64-jit ]]; then

@@ -83,7 +83,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
         self.assertLessEqual(len(matrix), 256)
         self.assertEqual({item["core"] for item in matrix if item["profile"] == "core-hotpaths"},
-                         {core["core"] for core in self.catalog["cores"] if not core.get("extended")} - {"picodrive", "snes9x2010"})
+                         {core["core"] for core in self.catalog["cores"] if not core.get("extended")})
         for core in self.catalog["cores"]:
             if core.get("extended"):
                 actual = {(item["abi"], item["profile"]) for item in matrix if item["core"] == core["core"]}
@@ -538,15 +538,14 @@ class CoreBuildPolicyTest(unittest.TestCase):
         matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
                       profile="core-hotpaths")["include"]
         self.assertEqual({item["core"] for item in matrix},
-                         {core["core"] for core in self.catalog["cores"]} - {"picodrive", "snes9x2010"})
-        self.assertEqual(len(matrix), sum(len(c.get("abis", self.catalog["abis"])) for c in self.catalog["cores"]
-                                         if c["core"] not in {"picodrive", "snes9x2010"}))
+                         {core["core"] for core in self.catalog["cores"]})
+        self.assertEqual(len(matrix), sum(len(c.get("abis", self.catalog["abis"])) for c in self.catalog["cores"]))
         self.assertTrue(all(item["artifact"].startswith("candidate-core-hotpaths-") for item in matrix))
         with self.assertRaises(ValueError):
             plan(self.catalog, "workflow_dispatch", "refs/heads/main", True, profile="core-hotpaths")
         with self.assertRaises(ValueError):
             plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
-                 cores="picodrive", profile="core-hotpaths")
+                 cores="not-a-registered-core", profile="core-hotpaths")
 
     def test_select_by_exports_not_filename_order(self):
         with tempfile.TemporaryDirectory() as directory:

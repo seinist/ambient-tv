@@ -17,8 +17,83 @@ def replacement(core, needle):
 
 
 class RemainingCoreHotpathTests(unittest.TestCase):
+    def test_picodrive_hash_folds_mirrored_pc_bits(self):
+        compiler=shutil.which("cc")
+        self.assertIsNotNone(compiler)
+        _, code=replacement("picodrive", "#define HASH_FUNC")
+        source=r"""
+#include <stdint.h>
+#include <assert.h>
+typedef uint32_t u32;
+""" + code + r"""
+int main(void) {
+    unsigned seen[512]={0};
+    for(unsigned i=0;i<512;++i) {
+        const u32 pc=0x06000000u+i*1024u;
+        assert(((pc>>1)&511u)==0);
+        ++seen[ambient_sh2_hash(pc,511u)];
+    }
+    unsigned distinct=0;
+    for(unsigned i=0;i<512;++i)distinct+=seen[i]!=0;
+    assert(distinct>=256);
+    int buckets[512]={0};
+    HASH_FUNC(buckets,0x06000400u,511u)=9;
+    assert(HASH_FUNC(buckets,0x06000400u,511u)==9);
+}
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"hash.c"
+            path.write_text(source)
+            subprocess.run([compiler,"-std=c99","-O2","-Wall","-Wextra","-Werror",
+                            str(path),"-o",str(path.with_suffix(""))],check=True)
+            subprocess.run([str(path.with_suffix(""))],check=True)
+
+    def test_snes2010_ntsc_downsample_in_place(self):
+        compiler=shutil.which("cc")
+        clang=shutil.which("clang")
+        self.assertIsNotNone(compiler)
+        self.assertIsNotNone(clang)
+        _, code=replacement("snes9x2010", "x < 512")
+        source=r"""
+#include <stdint.h>
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
+#define HIRES_BLEND_NEON 1
+#endif
+void downsample(uint16_t* row) { int x;
+""" + code + "\n}\n"
+        test=r"""
+#include <assert.h>
+int main(void) {
+    uint16_t row[1024], original[1024];
+    uint32_t seed=1;
+    for(unsigned sample=0;sample<32;++sample) {
+        for(unsigned i=0;i<1024;++i) {
+            seed=seed*1664525u+1013904223u;
+            original[i]=row[i]=(uint16_t)(seed>>16);
+        }
+        downsample(row);
+        for(unsigned i=0;i<512;++i) {
+            uint16_t a=original[2*i],b=original[2*i+1];
+            assert(row[i]==(((a&0xf7de)>>1)+((b&0xf7de)>>1)+(a&b&0x0821)));
+        }
+        for(unsigned i=512;i<1024;++i)assert(row[i]==original[i]);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"scale.c"
+            path.write_text(source)
+            subprocess.run([clang,"--target=aarch64-none-elf","-ffreestanding","-O3","-std=c99",
+                            "-c",str(path),"-o",str(path.with_suffix(".o"))],check=True)
+            path.write_text(source+test)
+            binary=path.with_suffix("")
+            subprocess.run([compiler,"-std=c99","-O2","-fsanitize=undefined",
+                            str(path),"-o",str(binary)],check=True)
+            subprocess.run([str(binary)],check=True)
+
     def test_exact_anchor_application_and_atomic_rejection(self):
-        self.assertEqual(len(PATCHES), 39)
+        self.assertEqual(len(PATCHES), 41)
         # Exact anchors are exercised below; avoid a stale literal blocking the
         # entire CI when new independently verified patches are added.
         self.assertGreaterEqual(sum(map(len, PATCHES.values())), 228)
