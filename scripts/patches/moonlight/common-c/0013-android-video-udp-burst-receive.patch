@@ -1,0 +1,138 @@
+diff --git a/src/VideoStream.c b/src/VideoStream.c
+--- a/src/VideoStream.c
++++ b/src/VideoStream.c
+@@ -1,4 +1,13 @@
+-#include "Limelight-internal.h"
++#if defined(__ANDROID__) && !defined(_GNU_SOURCE)
++#define _GNU_SOURCE
++#endif
++#include "Limelight-internal.h"
++
++#if defined(__ANDROID__)
++#include <sys/uio.h>
++// A small burst amortizes syscalls without waiting for additional datagrams.
++#define VIDEO_UDP_BATCH 4
++#endif
+ 
+ #define FIRST_FRAME_MAX 1500
+ #define FIRST_FRAME_TIMEOUT_SEC 10
+@@ -121,9 +130,67 @@
+         encryptedBuffer = NULL;
+     }
+ 
+-    waitingForVideoMs = 0;
+-    while (!PltIsThreadInterrupted(&receiveThread)) {
+-        PRTP_PACKET packet;
++    waitingForVideoMs = 0;
++#if defined(__ANDROID__)
++    bool useBatch = !useSelect;
++    char* batchBuffers[VIDEO_UDP_BATCH] = {0};
++    struct mmsghdr messages[VIDEO_UDP_BATCH];
++    struct iovec vectors[VIDEO_UDP_BATCH];
++    unsigned int batchCount = 0, batchIndex = 0;
++#endif
++    while (!PltIsThreadInterrupted(&receiveThread)) {
++        PRTP_PACKET packet;
++        char* receivedEncryptedBuffer = encryptedBuffer;
++#if defined(__ANDROID__)
++        // A rejected plaintext datagram retains its original slot allocation.
++        if (useBatch && !encrypted && buffer != NULL && batchIndex != 0) {
++            batchBuffers[batchIndex - 1] = buffer;
++            buffer = NULL;
++        }
++        if (useBatch && batchIndex == batchCount) {
++            batchIndex = batchCount = 0;
++            memset(messages, 0, sizeof(messages));
++            unsigned int slots = 0;
++            for (; slots < VIDEO_UDP_BATCH; slots++) {
++                if (batchBuffers[slots] == NULL) {
++                    batchBuffers[slots] = encrypted ? malloc(receiveSize) : RtpvAcquirePacket(bufferSize);
++                    if (batchBuffers[slots] == NULL) break;
++                }
++                vectors[slots].iov_base = batchBuffers[slots];
++                vectors[slots].iov_len = receiveSize;
++                messages[slots].msg_hdr.msg_iov = &vectors[slots];
++                messages[slots].msg_hdr.msg_iovlen = 1;
++            }
++            if (slots == 0) {
++                useBatch = false; // Preserve the single-packet allocation/error path.
++            }
++            else {
++                int count = recvmmsg(rtpSocket, messages, slots, MSG_WAITFORONE, NULL);
++                if (count > 0) batchCount = (unsigned int)count;
++                else if (count == 0 || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == ETIMEDOUT) {
++                    err = 0;
++                    goto receivedDatagram;
++                }
++                else if (errno == ECONNREFUSED) continue;
++                else if (errno == ENOSYS || errno == EINVAL || errno == EPERM || errno == EOPNOTSUPP) useBatch = false;
++                else {
++                    err = -1;
++                    goto receivedDatagram;
++                }
++            }
++        }
++        if (useBatch) {
++            unsigned int slot = batchIndex++;
++            if (encrypted) receivedEncryptedBuffer = batchBuffers[slot];
++            else {
++                buffer = batchBuffers[slot];
++                batchBuffers[slot] = NULL; // RTP queue may take ownership.
++            }
++            err = (messages[slot].msg_hdr.msg_flags & MSG_TRUNC) ? 1 : (int)messages[slot].msg_len;
++            if (!encrypted || buffer != NULL) goto receivedDatagram;
++            // Encrypted packets still require independent pooled plaintext storage.
++        }
++#endif
+ 
+         if (buffer == NULL) {
+             buffer = RtpvAcquirePacket(bufferSize);
+@@ -134,10 +201,16 @@
+             }
+         }
+ 
+-        err = recvUdpSocket(rtpSocket,
+-                            encrypted ? encryptedBuffer : buffer,
+-                            receiveSize,
+-                            useSelect);
++        #if defined(__ANDROID__)
++        if (!useBatch)
++        #endif
++        err = recvUdpSocket(rtpSocket,
++                            encrypted ? encryptedBuffer : buffer,
++                            receiveSize,
++                            useSelect);
++#if defined(__ANDROID__)
++receivedDatagram:
++#endif
+         if (err < 0) {
+             Limelog("Video Receive: recvUdpSocket() failed: %d\n", (int)LastSocketError());
+             ListenerCallbacks.connectionTerminated(LastSocketFail());
+@@ -183,7 +256,7 @@
+ 
+         // Decrypt the packet into the buffer if encryption is enabled
+         if (encrypted) {
+-            PENC_VIDEO_HEADER encHeader = (PENC_VIDEO_HEADER)encryptedBuffer;
++            PENC_VIDEO_HEADER encHeader = (PENC_VIDEO_HEADER)receivedEncryptedBuffer;
+ 
+             // If this frame is below our current frame number, discard it before decryption
+             // to save CPU cycles decrypting FEC shards for a frame we already reassembled.
+@@ -239,9 +312,15 @@
+         RtpvReleasePacket(buffer);
+     }
+ 
+-    if (encryptedBuffer != NULL) {
+-        free(encryptedBuffer);
+-    }
++    if (encryptedBuffer != NULL) {
++        free(encryptedBuffer);
++    }
++#if defined(__ANDROID__)
++    for (unsigned int slot = 0; slot < VIDEO_UDP_BATCH; slot++) {
++        if (encrypted) free(batchBuffers[slot]);
++        else RtpvReleasePacket(batchBuffers[slot]);
++    }
++#endif
+ }
+ 
+ void notifyKeyFrameReceived(void) {
