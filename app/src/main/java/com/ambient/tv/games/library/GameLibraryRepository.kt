@@ -452,6 +452,12 @@ class GameLibraryRepository @Inject constructor(
                             WHERE system_id=?""",
                         arrayOf<Any>(previous + 1, systemId)
                     )
+                    if (!GameNameDatabases.usesChecksums(systemId)) {
+                        // Title-only catalogs still change lookup identity, so old negative
+                        // artwork cache entries must not hide newly available release names.
+                        writable.execSQL("UPDATE game_entries SET dat_version=? WHERE system_id=?",
+                            arrayOf<Any>(previous + 1, systemId))
+                    }
                     val affected = writable.rawQuery("SELECT file_id FROM game_entries WHERE system_id=?",
                         arrayOf(systemId)).use { rows -> buildSet { while (rows.moveToNext()) add(rows.getString(0)) } }
                     refreshQueryFiles(affected, configuration, updateVerifiedMetadata = true)
