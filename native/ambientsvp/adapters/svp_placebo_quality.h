@@ -86,7 +86,7 @@ static inline void svp_placebo_discard_stats(struct svp_placebo_quality *s,uint6
 static inline bool svp_placebo_collect_stats(pl_gpu gpu,struct svp_placebo_quality *s,uint64_t token,
     struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index)
 {
-    if(!token||!hdr||!s->collect_stats)return false;
+    if(!token||!hdr||!s->collect_stats||s->device_lost)return false;
     for(unsigned i=0;i<s->pending_count;i++){
         struct svp_placebo_pending *p=&s->pending[i];
         if(p->stats_token!=token)continue;

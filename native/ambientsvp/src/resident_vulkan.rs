@@ -2271,6 +2271,37 @@ mod gpu_tests{
                 d.end_command_buffer(cmd).unwrap();
                 d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
                 d.wait_for_fences(&[fence],true,u64::MAX).unwrap();
+                if algorithm==23{
+                    let core=&(*engine).0;
+                    let hits=core.adjacent_hits.load(Ordering::Relaxed);
+                    // A/B/P/N then B/N/A/P: two adjacent ordered pairs
+                    // retain exactly the same IDs and source image content.
+                    for (ids,handles) in [
+                        ([11u64,12,10,13],[images[0].image,images[1].image,images[5].image,images[6].image,images[2].image]),
+                        ([12,13,11,14],[images[1].image,images[6].image,images[0].image,images[5].image,images[2].image]),
+                    ]{
+                        let waits=&pipeline_holds[0];
+                        d.queue_submit(queue,&[vk::SubmitInfo::default().signal_semaphores(waits)],vk::Fence::null()).unwrap();
+                        value+=1;
+                        let mut job=ptr::null_mut();
+                        assert_eq!(ambient_svp_vk_set_held_source_ids(engine,&ids),0);
+                        assert_eq!(ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),5,waits.as_ptr(),done,value,0.5,&mut job),0);
+                        assert_eq!(ambient_svp_vk_retire_held(job,1),1);
+                    }
+                    assert_eq!(core.adjacent_hits.load(Ordering::Relaxed),hits+2,"adjacent source pairs must be reused");
+                    // Discard an unsubmitted recording. Its newly assigned
+                    // cache entries must not become visible to the next job.
+                    d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+                    d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()).unwrap();
+                    let rgb=|i:usize|VulkanPicture{y:images[i].view,u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0};
+                    let pair=ambient_svp_vk_begin_extended_cached(engine,cmd,&rgb(5),&rgb(0),&rgb(1),&rgb(6),queue,&[20,21,22,23]);
+                    assert!(!pair.is_null());
+                    d.end_command_buffer(cmd).unwrap();
+                    d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+                    assert_eq!(ambient_svp_vk_cancel(pair),0);
+                    let cache=core.adjacent.lock().unwrap();
+                    assert!(!cache.recording&&cache.entries.iter().all(|e|e.key.is_none()));
+                }
                 let before=(&(*engine).0).held_hits.load(Ordering::Relaxed);
                 for (i,generation) in [2u64,2,3,3].into_iter().enumerate(){
                     let waits=&pipeline_holds[0][..count];
@@ -2315,6 +2346,16 @@ mod gpu_tests{
                 let a=replay.lookup_v1(0,schema).unwrap();let b=replay.lookup_v1(1,schema).unwrap();
                 assert_eq!(a.maxscl,b.maxscl);assert_eq!(a.average,b.average);assert_eq!(a.percentiles,b.percentiles);
                 replay.finish().unwrap();
+                let canceled=directory.join("canceled");
+                let mut aborted=TwoPass::open(1,&plan,&canceled,&key,"held-test",w,h).unwrap();
+                d.queue_submit(queue,&[vk::SubmitInfo::default().signal_semaphores(&hold)],vk::Fence::null()).unwrap();
+                let handles=[images[0].image,images[1].image,images[2].image];
+                value+=1;
+                let mut job=ptr::null_mut();
+                assert_eq!(ambient_svp_vk_submit_held_capture(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,value,0.5,&window,ptr::null(),ptr::null(),1,&mut aborted,0,&mut job,3),0);
+                aborted.abort();drop(aborted);
+                assert_eq!(ambient_svp_vk_retire_held(job,1),1);
+                assert!(!canceled.exists());
                 for sem in second{d.destroy_semaphore(sem,None);}
                 std::fs::remove_dir_all(directory).unwrap();
                 // Live per-frame readback must consume its own ticket.

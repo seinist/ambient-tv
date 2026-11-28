@@ -226,7 +226,7 @@ static void process(struct mp_filter *f) {
             p->vk_disabled=true;
             MP_WARN(f,"HDR scene capture failed during deferred readback; no cache published\n");
         }
-        if (!p->api.enabled()) {
+        if (!p->api.enabled()&&!p->vk->output_count&&!p->vk->queued_count) {
             svp_vk_scene_abort(p->vk);
             struct mp_image *previous = svp_vk_take_previous(p->vk);
             if (previous) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, previous)); return; }

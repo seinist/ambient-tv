@@ -455,6 +455,7 @@ static inline struct ambient_svp_hdr_phase *ambient_svp_hdr_submit_phase(pl_gpu 
 {
     struct ambient_svp_hdr_phase *p=NULL;
     for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++)if(!s->phases[i].valid){p=&s->phases[i];break;}
+    while(s->quality.pending_count&&svp_placebo_retire_one(gpu,&s->quality,0,0)){}
     if(!p||s->quality.pending_count>=SVP_PLACEBO_PENDING)return NULL;
     p->metadata=a->hdrplus;p->token=0;
     bool same=phase==0.f||a==b;
