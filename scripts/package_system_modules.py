@@ -22,6 +22,7 @@ NATIVE_ROOTS = {
     "spotify": ("libspotify_receiver_core.so",),
     "vlc": ("libvlc.so", "libvlcjni.so"),
     "svp": ("libambientsvp.so",),
+    "libretrodroid": ("liblibretrodroid.so",),
     "shaders": ("liblibrashader_capi.so",),
 }
 HOST_LIBRARIES = {
@@ -29,6 +30,7 @@ HOST_LIBRARIES = {
     "spotify": {"libc++_shared.so"},
     "vlc": {"libc++_shared.so"},
     "svp": set(),
+    "libretrodroid": {"libc++_shared.so", "libadrenotools.so", "liboboe.so"},
     "shaders": set(),
     "mpv": {"libc++_shared.so", "libavcodec.so", "libavdevice.so", "libavfilter.so",
             "libavformat.so", "libavutil.so", "libswresample.so", "libswscale.so",
@@ -106,7 +108,7 @@ def native_dependencies(data, name):
 
 
 def native_module(out, module, version, apks, licenses, binding=None):
-    if module in {"vlc", "svp", "shaders"} and not re.fullmatch(r"[0-9a-f]{64}", binding or ""):
+    if module in {"vlc", "svp", "shaders", "libretrodroid"} and not re.fullmatch(r"[0-9a-f]{64}", binding or ""):
         raise ValueError(f"{module} requires exact host binding fingerprint")
     entries = []
     seen = set()
@@ -247,7 +249,7 @@ def monogram_dex(out, version, dex_dir, apks, licenses):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube", "vlc", "svp"), required=True)
+    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube", "vlc", "svp", "libretrodroid"), required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -282,6 +284,13 @@ def main():
         if args.module == "vlc" and not args.vlc_aar:
             parser.error("VLC requires the matching patched AAR")
         binding = vlc_binding(args.vlc_aar) if args.module == "vlc" else None
+        if args.module == "libretrodroid":
+            source = ROOT / "third_party/libretrodroid"
+            marker = (source / ".ambient-libretrodroid").read_bytes()
+            java = (source / "src/main/java/com/swordfish/libretrodroid/LibretroDroid.java").read_bytes()
+            if b"ambient.libretrodroid.native.directory" not in java:
+                raise ValueError("unpatched LibretroDroid bindings")
+            binding = digest(marker + b"\x00" + java)
         if args.module == "svp":
             binding = digest((ROOT / "native/ambientsvp/include/ambientsvp.h").read_bytes())
         if args.module == "shaders":
