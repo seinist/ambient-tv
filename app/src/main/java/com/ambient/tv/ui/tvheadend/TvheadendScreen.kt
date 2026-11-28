@@ -1200,6 +1200,7 @@ private fun EventDialog(
         waiting = false
     }
     val future = event.startEpochSeconds * 1000 > now
+    val watchAvailable = canWatch || (canWait && event.isLive(now / 1000))
     val playing = livePlaybackIndicator("channel", event.channelUuid)
     val openCurrent = com.ambient.tv.companion.LocalOpenActivePlayback.current
     val initialFocus = remember(event.eventId) { FocusRequester() }
@@ -1223,12 +1224,12 @@ private fun EventDialog(
         footer = {
             if (connectionRequired) TvActionButton(text = stringResource(R.string.home_retry), onClick = onRetry,
                 loading = retrying, enabled = !retrying, modifier = Modifier.focusRequester(initialFocus))
-            if (canWatch) TvActionButton(text = stringResource(if (playing != null) R.string.playback_open else R.string.tvh_watch), onClick = { if (playing != null) openCurrent(playing) else onWatch() }, selected = true, modifier = Modifier.focusRequester(initialFocus))
+            if (watchAvailable) TvActionButton(text = stringResource(if (playing != null) R.string.playback_open else R.string.tvh_watch), onClick = { if (playing != null) openCurrent(playing) else onWatch() }, selected = true, modifier = Modifier.focusRequester(initialFocus))
             if (timer == null && canRecord) {
-                TvActionButton(text = stringResource(R.string.tvh_record), onClick = { pending = R.string.tvh_record; onRecord() }, enabled = !busy, loading = busy && pending == R.string.tvh_record, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
+                TvActionButton(text = stringResource(R.string.tvh_record), onClick = { pending = R.string.tvh_record; onRecord() }, enabled = !busy, loading = busy && pending == R.string.tvh_record, modifier = if (!watchAvailable && !busy) Modifier.focusRequester(initialFocus) else Modifier)
                 if (canRecordSeries && !event.seriesLink.isNullOrBlank()) TvActionButton(text = stringResource(R.string.tvh_record_series), onClick = { pending = R.string.tvh_record_series; onRecordSeries() }, enabled = !busy, loading = busy && pending == R.string.tvh_record_series)
             } else if (timer != null && canRecord && timer.canDelete) {
-                TvActionButton(text = stringResource(if (timer.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
+                TvActionButton(text = stringResource(if (timer.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!watchAvailable && !busy) Modifier.focusRequester(initialFocus) else Modifier)
             }
             if (canRemind || reminded) TvActionButton(text = stringResource(if (reminded) R.string.reminder_remove else R.string.reminder_add), onClick = onToggleReminder,
                 selected = reminded)
@@ -1238,7 +1239,7 @@ private fun EventDialog(
             )
             // Back takes the first focus whenever no record/cancel button above can (also for a timer that cannot be deleted).
             val recordActionFocusable = !busy && canRecord && (timer == null || timer.canDelete)
-            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!connectionRequired && !canWatch && !recordActionFocusable) Modifier.focusRequester(initialFocus) else Modifier)
+            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!connectionRequired && !watchAvailable && !recordActionFocusable) Modifier.focusRequester(initialFocus) else Modifier)
         },
     ) {
         if (connectionRequired) Text(stringResource(R.string.offline_browse_saved_body), style = MaterialTheme.typography.bodyMedium)
