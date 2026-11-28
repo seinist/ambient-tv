@@ -301,7 +301,7 @@ internal fun rememberPlaybackScaleRelation(): VideoScaleRelation {
 private fun rendererOptions(): List<Pair<String, String>> = buildList {
     add("auto" to stringResource(R.string.player_automatic))
     add("media3" to "Media3")
-    add("vlc" to "VLC")
+    if (com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable) add("vlc" to "VLC")
     if (MpvBackendAvailability.isAvailable) add("mpv" to "MPV")
 }
 
