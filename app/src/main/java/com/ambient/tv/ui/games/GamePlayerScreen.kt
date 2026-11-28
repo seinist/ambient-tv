@@ -598,7 +598,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             coreFilePath = session.coreFile.absolutePath
             if (game.direct) {
                 // The fork owns FDs after its VFS initializes, and seeks the original SAF/NAS ROM.
-                gameVirtualFiles = requireNotNull(game.directContent).virtualFiles
+                gameVirtualFiles = requireNotNull(game.directContent).virtualFiles.map { it.toLibretroVirtualFile() }
             } else {
                 gameFilePath = game.file.absolutePath
             }

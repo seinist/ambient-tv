@@ -38,4 +38,9 @@ internal object BundledRetroCore : RetroCorePort {
     override fun setNativeVulkanShaderPreset(preset: String): Unit { LibretroDroid.setNativeVulkanShaderPreset(preset) }
     override fun computeRomHash(path: String, console: Int): String? = LibretroDroid.computeRomHash(path, console)
     override fun clearAchievements(): Unit { LibretroDroid.clearAchievements() }
+    override fun initAchievements(achievements: List<RetroAchievementDefinition>, console: Int) {
+        LibretroDroid.initAchievements(achievements.map {
+            com.swordfish.libretrodroid.AchievementDef(it.id, it.memory)
+        }.toTypedArray(), console)
+    }
 }

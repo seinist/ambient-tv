@@ -624,6 +624,13 @@ unshared native runtime. ProjectM PCM routing still needs integration testing.
 The default native-only VLC path stays unchanged. Device validation must
 cover JNI load, seek, audio, subtitles, Vulkan and release before promotion.
 
+ROM content preparation now uses host-owned GameVirtualFile descriptors;
+only the bundled frontend adapter constructs vendor VirtualFile instances.
+The original PFD, read-only proxy and native detach ownership are retained.
+Achievement definitions similarly cross the neutral RetroCorePort rather
+than leaking vendor data classes. The remaining GLRetroView/lifecycle and
+netplay view-specific operations are still directly coupled.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

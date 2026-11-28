@@ -40,7 +40,10 @@ internal interface RetroCorePort {
     fun setNativeVulkanShaderPreset(preset: String): Unit
     fun computeRomHash(path: String, console: Int): String?
     fun clearAchievements(): Unit
+    fun initAchievements(achievements: List<RetroAchievementDefinition>, console: Int)
 }
+
+internal data class RetroAchievementDefinition(val id: Int, val memory: String)
 
 internal object RetroCoreRuntime {
     val core: RetroCorePort = BundledRetroCore

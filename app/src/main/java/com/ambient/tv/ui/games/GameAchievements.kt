@@ -9,9 +9,7 @@ import com.ambient.tv.games.RaAchievement
 import com.ambient.tv.games.RaConsoles
 import com.ambient.tv.games.RaGame
 import com.ambient.tv.games.RetroAchievementsClient
-import com.swordfish.libretrodroid.AchievementDef
 import com.swordfish.libretrodroid.GLRetroView
-import com.swordfish.libretrodroid.LibretroDroid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,10 +80,10 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
                 val watchable = RetroAchievementsClient.watchable(raGame)
                 unlocked = done.intersect(watchable.map { it.id }.toSet())
                 val armed = watchable.filter { it.id !in done }
-                    .map { AchievementDef(it.id, it.memAddr) }.toTypedArray()
+                    .map { RetroAchievementDefinition(it.id, it.memAddr) }
                 view.achievementUnlockListener = { id -> scope.launch { onUnlocked(id) } }
                 val consoleId = raGame.consoleId.takeIf { it > 0 } ?: console
-                if (armed.isNotEmpty()) view.queueEvent { runCatching { LibretroDroid.initAchievements(armed, consoleId) } }
+                if (armed.isNotEmpty()) view.queueEvent { runCatching { RetroCoreRuntime.core.initAchievements(armed, consoleId) } }
                 state = GameAchievementState.Active(raGame.copy(achievements = watchable), hardcoreRequested)
                 while (isActive) {
                     delay(PING_MS)

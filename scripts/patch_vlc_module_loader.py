@@ -29,7 +29,7 @@ public final class AmbientNativeLibraryLoader {
 """
 
 HELPER = LEGACY_HELPER.replace("    private AmbientNativeLibraryLoader() {}",
-    "    private AmbientNativeLibraryLoader() {}\\n"
+    "    private AmbientNativeLibraryLoader() {}\n"
     "    public static native boolean vulkanModules();")
 
 PROBE_MARKER = "Java_org_videolan_libvlc_AmbientNativeLibraryLoader_vulkanModules"

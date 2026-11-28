@@ -32,8 +32,11 @@ object VlcBackendAvailability {
                 System.clearProperty("ambient.vlc.native.directory")
             }
             VlcEngineRuntime.bind(module)
-            val instance = VlcEngineRuntime.engine.createLibrary(context.applicationContext, arrayListOf("--verbose=0"))
-            instance.release()
+            // A DEX entrypoint already performs its cold-start linkage probe.
+            if (module?.entrypoint == null) {
+                val instance = VlcEngineRuntime.engine.createLibrary(context.applicationContext, arrayListOf("--verbose=0"))
+                instance.release()
+            }
             ready = true
             return true
         } catch (e: Exception) {
