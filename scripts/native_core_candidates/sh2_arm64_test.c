@@ -214,6 +214,18 @@ int main(void)
             assert(cost==expected_cost && sr==want_sr && !memcmp(&regs,&want,sizeof(regs)));
         }
     }
+    // A read/write-heavy trace must actually eliminate guest memory traffic,
+    // while leaving all native arithmetic and condition flags intact.
+    {
+        uint32_t input[128],output[160];
+        unsigned count=0;
+        for(unsigned i=0;i<16;++i)count+=ambient_sh2_emit(0x312c,input+count)-1;
+        const unsigned optimized=ambient_sh2_regcache(input,count,output);
+        unsigned before=0,after=0,guest,load;
+        for(unsigned i=0;i<count;++i)before+=ambient_sh2_gpr_access(input[i],&guest,&load);
+        for(unsigned i=0;i<optimized;++i)after+=ambient_sh2_gpr_access(output[i],&guest,&load);
+        assert(before==48 && after==3);
+    }
     // Test concatenated blocks, not just independent opcodes: flags and
     // register outputs must survive across each emitted operation.
     for (unsigned block=0; block<4096; ++block) {
@@ -230,8 +242,11 @@ int main(void)
             cursor+=n-1;
             ++i;
         }
-        words[cursor++]=0xd65f03c0u;
+        uint32_t optimized[AMBIENT_SH2_MAX_WORDS]={words[0],words[1]};
+        cursor=2+ambient_sh2_regcache(words+2,cursor-2,optimized+2);
+        optimized[cursor++]=0xd65f03c0u;
         assert(cursor<=AMBIENT_SH2_MAX_WORDS);
+        memcpy(words,optimized,cursor*sizeof(uint32_t));
         assert(mprotect(code,(size_t)page,PROT_READ|PROT_WRITE)==0);
         memcpy(code,words,cursor*sizeof(uint32_t));
         __builtin___clear_cache((char*)code,(char*)code+cursor*sizeof(uint32_t));

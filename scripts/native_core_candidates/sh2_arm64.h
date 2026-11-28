@@ -7,8 +7,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define AMBIENT_SH2_MAX_OPS 16
-#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 3)
+#include "sh2_regcache.h"
+#define AMBIENT_SH2_MAX_OPS 32
+#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 3 + AMBIENT_SH2_REGCACHE_EXTRA)
 
 /* Emit a single side-effect-free, one-cycle SH2 instruction into AArch64.
  * x0 points at R[16], x7 at SR; w1..w5 are caller-saved scratch.
@@ -455,7 +456,10 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         block->has_terminal = 0;
         return 0;
     }
-    code[words++] = 0xd65f03c0u;
+    uint32_t optimized[AMBIENT_SH2_MAX_WORDS];
+    optimized[0]=code[0];optimized[1]=code[1];
+    words=2+ambient_sh2_regcache(code+2,words-2,optimized+2);
+    optimized[words++]=0xd65f03c0u;
     const long page = sysconf(_SC_PAGESIZE);
     if (page <= 0 || (size_t)page < words*sizeof(uint32_t)) {
         ambient_sh2_disabled[cpu] = 1;
@@ -463,7 +467,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
     }
     void* mapped = mmap(NULL, (size_t)page, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
     if (mapped == MAP_FAILED) { ambient_sh2_disabled[cpu] = 1; return 0; }
-    memcpy(mapped, code, words*sizeof(uint32_t));
+    memcpy(mapped, optimized, words*sizeof(uint32_t));
     __builtin___clear_cache((char*)mapped, (char*)mapped + words*sizeof(uint32_t));
     if (mprotect(mapped, (size_t)page, PROT_READ|PROT_EXEC) != 0) {
         munmap(mapped, (size_t)page);
