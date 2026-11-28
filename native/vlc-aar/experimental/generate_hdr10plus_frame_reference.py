@@ -197,6 +197,7 @@ def source(x,y,kind,neutral):
     if neutral == 2:
         # In-gamut but non-neutral colors for an independent SDR/HLG
         # transfer reference, avoiding renderer-specific gamut compression.
+        v *= .4  # remain inside both the display range and BT.709 gamut
         rgb=(v,v*.94,v*.91)
     if neutral != 1:
         k=i%3

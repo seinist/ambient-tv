@@ -89,12 +89,12 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
  
      pl->gpu = sys->vulkan->gpu;
      pl->ops = &instance_opts;
-@@ -112,31 +151,48 @@
+@@ -112,31 +151,49 @@
  error:
 -    CloseInstance(pl);
 +#ifdef __ANDROID__
 +    if (var_InheritBool(pl,"vk-ambient-ahb") && sys->instance) {
-+        pl_log_update(pl->log,&(struct pl_log_params){0});
++        struct pl_log_params saved_log=pl_log_update(pl->log,&(struct pl_log_params){0});
 +        if (!ambient_init_retire(pl,CloseInitGpu,8000)) {
 +            vlc_ambient_output_quarantine();
 +            // Return module success only to prevent module-loader fallback;
@@ -102,6 +102,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 +            pl->ops=&instance_opts;
 +            return VLC_SUCCESS;
 +        }
++        pl_log_update(pl->log,&saved_log);
 +    }
 +#endif
 +    CloseInstance(pl);
@@ -162,7 +163,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
  
  #define PROVIDER_TEXT N_("Vulkan platform module")
  #define PROVIDER_LONGTEXT N_( \
-@@ -196,6 +252,27 @@
+@@ -196,6 +253,27 @@
              ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
  
      set_section("Performance tuning", NULL)

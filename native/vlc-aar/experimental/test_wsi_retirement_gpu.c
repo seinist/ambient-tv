@@ -13,6 +13,35 @@
 #include <stdatomic.h>
 
 static atomic_uint validation_errors;
+/* Faults are injected at the loaded device function boundary. A rejected
+ * acquire never signals a semaphore or acquires an image in the real driver.
+ * The next successful acquire must use a valid unused semaphore. */
+static VkResult next_acquire=VK_SUCCESS;
+static unsigned injected_acquires;
+static PFN_vkAcquireNextImageKHR real_acquire;
+static VKAPI_ATTR VkResult VKAPI_CALL acquire_fault(VkDevice device,VkSwapchainKHR swap,
+    uint64_t timeout,VkSemaphore semaphore,VkFence fence,uint32_t *index)
+{
+    if(next_acquire!=VK_SUCCESS){
+        VkResult res=next_acquire;next_acquire=VK_SUCCESS;injected_acquires++;
+        return res;
+    }
+    return real_acquire(device,swap,timeout,semaphore,fence,index);
+}
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL device_proc(VkDevice device,const char *name)
+{
+    PFN_vkVoidFunction fn=vkGetDeviceProcAddr(device,name);
+    if(fn && !strcmp(name,"vkAcquireNextImageKHR")){
+        real_acquire=(PFN_vkAcquireNextImageKHR)fn;
+        return (PFN_vkVoidFunction)acquire_fault;
+    }
+    return fn;
+}
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL instance_proc(VkInstance inst,const char *name)
+{
+    if(!strcmp(name,"vkGetDeviceProcAddr"))return (PFN_vkVoidFunction)device_proc;
+    return vkGetInstanceProcAddr(inst,name);
+}
 static void log_message(void *opaque, enum pl_log_level level, const char *msg)
 {
     (void)opaque;
@@ -63,7 +92,7 @@ static void run(Display *d,unsigned requested,bool experimental)
     VkSurfaceKHR surface;
     assert(vkCreateXlibSurfaceKHR(inst->instance,&ci,NULL,&surface)==VK_SUCCESS);
     pl_vulkan vk=pl_vulkan_create(log,&(struct pl_vulkan_params){
-        .instance=inst->instance,.surface=surface,.allow_software=true,
+        .instance=inst->instance,.surface=surface,.allow_software=true,.get_proc_addr=instance_proc,
         .async_compute=false,.async_transfer=false,.queue_count=requested});
     assert(vk && vk->num_queues==1);
     fprintf(stderr,"WSI requested queues=%u actual=%u experimental=%d\n",
@@ -84,6 +113,29 @@ static void run(Display *d,unsigned requested,bool experimental)
     }
     pl_gpu_flush(vk->gpu);
     if(experimental){
+        // Finish pending commands before injecting a single acquire result.
+        pl_gpu_finish(vk->gpu);
+        unsigned prior=injected_acquires;
+        struct pl_swapchain_frame f;
+        next_acquire=VK_TIMEOUT;
+        assert(!pl_swapchain_start_frame(sw,&f));
+        assert(injected_acquires==prior+1);
+        assert(present_frames(sw,12)==12);
+        pl_gpu_finish(vk->gpu);
+        prior=injected_acquires;
+        next_acquire=VK_NOT_READY;
+        assert(!pl_swapchain_start_frame(sw,&f));
+        assert(injected_acquires==prior+1);
+        assert(present_frames(sw,12)==12);
+        pl_gpu_finish(vk->gpu);
+        prior=injected_acquires;
+        // Test a terminal acquire failure with a live driver. This is not
+        // physical device loss: it verifies software state and no reuse.
+        next_acquire=requested==1?VK_ERROR_SURFACE_LOST_KHR:VK_ERROR_DEVICE_LOST;
+        assert(!pl_swapchain_start_frame(sw,&f));
+        assert(injected_acquires==prior+1);
+        assert(!pl_swapchain_start_frame(sw,&f));
+        assert(injected_acquires==prior+1 && next_acquire==VK_SUCCESS);
         queue_zero_idle(vk);
         assert(pl_vulkan_swapchain_ambient_mark_retired(sw));
     }
