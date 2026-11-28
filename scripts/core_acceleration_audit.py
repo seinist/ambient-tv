@@ -231,6 +231,9 @@ def requirements(core, abi, profile):
                   "frontend": ("libretro.c", ())}
         if arm64:
             result["arm64_emitter"] = ("mednafen/ss/a64emit.c", ())
+            if profile in {"core-hotpaths", "optimized", "optimized-a57"}:
+                for name in ("scsp_dsp_jit", "scu_dsp_jit"):
+                    result[name] = (result[name][0], (("WANT_JIT", "1"),))
         return result
     if core in {"yabause", "yabasanshiro"}:
         result = {"frontend": ("yabause/src/libretro/libretro.c", ()),

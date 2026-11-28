@@ -420,6 +420,17 @@ class CoreBuildPolicyTest(unittest.TestCase):
         self.assertIn("dynarmic", requirements("citra2018", "x86_64", "optimized"))
         self.assertIn("vif_neon", requirements("armsx2", "arm64-v8a", "optimized-a57"))
         self.assertIn("spu2_neon", requirements("armsx2", "arm64-v8a", "optimized-a57"))
+        for profile in ("core-hotpaths", "optimized", "optimized-a57"):
+            saturn = requirements("mednafen_saturn", "arm64-v8a", profile)
+            for dsp in ("scsp_dsp_jit", "scu_dsp_jit"):
+                self.assertIn(("WANT_JIT", "1"), saturn[dsp][1])
+            commands = [["-D" + key + "=" + value for key, value in macros] + ["-c", source]
+                        for source, macros in saturn.values()]
+            self.assertTrue(all(audit_acceleration(commands, "mednafen_saturn", "arm64-v8a", profile).values()))
+            with self.assertRaises(ValueError):
+                audit_acceleration([[flag for flag in cmd if flag != "-DWANT_JIT=1"] for cmd in commands],
+                                   "mednafen_saturn", "arm64-v8a", profile)
+        self.assertEqual(requirements("mednafen_saturn", "armeabi-v7a", "optimized")["scsp_dsp_jit"][1], ())
         rules = requirements("vice_x64sc", "arm64-v8a", "optimized")
         commands = [["-D" + key + "=" + value for key, value in macros] + ["-c", source]
                     for source, macros in rules.values()]

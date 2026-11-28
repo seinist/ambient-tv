@@ -275,6 +275,36 @@ PATCHES = {
       "src/libretro/savestate.cpp",
       "  core->loadState(file);\n\n  return true;",
       "  core->loadState(file);\n\n  return file.finishDirectRead();"
+    ],
+    [
+      "src/spu.h",
+      "    uint32_t *getSamples(int count);",
+      "    uint32_t *getSamples(int count);\n    void getSamples(int count, uint32_t *out);"
+    ],
+    [
+      "src/spu.cpp",
+      "uint32_t *Spu::getSamples(int count) {\n    // Initialize the buffers",
+      "uint32_t *Spu::getSamples(int count) {\n    uint32_t *out = new uint32_t[count];\n    getSamples(count, out);\n    return out;\n}\n\nvoid Spu::getSamples(int count, uint32_t *out) {\n    // Initialize the buffers"
+    ],
+    [
+      "src/spu.cpp",
+      "    uint32_t *out = new uint32_t[count];\n\n    if (wait) {",
+      "    if (wait) {"
+    ],
+    [
+      "src/spu.cpp",
+      "    return out;\n}\n\nvoid Spu::runGbaSample()",
+      "}\n\nvoid Spu::runGbaSample()"
+    ],
+    [
+      "src/libretro/libretro.cpp",
+      "  uint32_t *original = core->spu.getSamples(547);",
+      "  // Reuse caller-owned storage; do not allocate/free an audio block per frame.\n  static uint32_t original[547];\n  core->spu.getSamples(547, original);"
+    ],
+    [
+      "src/libretro/libretro.cpp",
+      "  delete[] original;\n\n  uint32_t size",
+      "  uint32_t size"
     ]
   ],
   "panda3ds": [
@@ -536,6 +566,11 @@ PATCHES = {
       "mednafen/ss/vdp2_render.c",
       "   const uint64_t mxor = masks[0] ^ masks[1];\n   for(; MDFN_LIKELY(x < WinPieces[piece]); x++)",
       "   const uint64_t mxor = masks[0] ^ masks[1];\n#if defined(__aarch64__)\n   const uint64x2_t vmor = vdupq_n_u64(mor);\n   const uint64x2_t vmxor = vdupq_n_u64(mxor);\n   for (; x + 2 <= WinPieces[piece]; x += 2)\n   {\n    const uint64x2_t spr = vld1q_u64(LB.spr + x);\n    const uint64x2_t sel = vreinterpretq_u64_s64(vshrq_n_s64(vreinterpretq_s64_u64(vshlq_n_u64(spr, 63 - PIX_SWBIT_SHIFT)), 63));\n    const uint64x2_t value = vld1q_u64(buf + x);\n    vst1q_u64(buf + x, vandq_u64(value, veorq_u64(vmor, vandq_u64(sel, vmxor))));\n   }\n#endif\n   for(; MDFN_LIKELY(x < WinPieces[piece]); x++)"
+    ],
+    [
+      "jni/Android.mk",
+      "FLAGS                    :=\n\ninclude $(CORE_DIR)/Makefile.common",
+      "FLAGS                    :=\n\n# Match the pinned GNU Makefile's DSP-JIT configuration on ARM64.\nifeq ($(TARGET_ARCH_ABI),arm64-v8a)\n  FLAGS += -DWANT_JIT=1\nendif\n\ninclude $(CORE_DIR)/Makefile.common"
     ]
   ],
   "melondsds": [
