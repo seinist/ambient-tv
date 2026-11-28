@@ -4,7 +4,7 @@ use super::{Core,Pipeline,Result,err,spirv};
 use ash::vk;
 use std::sync::Arc;
 const BINS:u64=100001;
-const STRIDE:usize=64;
+const STRIDE:usize=72;
 const SHADER:&str=include_str!("resident_hdr_stats.wgsl");
 const UNIFORM:&str="@group(0) @binding(3) var<uniform> params:vec4u;";
 #[repr(C)]
@@ -65,7 +65,7 @@ impl Drop for StatsJob{
 }
 impl StatsJob{
     pub(super) fn new(core:&Core,view:vk::ImageView,field:vk::Buffer,windows:&[HdrWindow],
-        tracking:Option<(&[HdrTrack],f32,bool)>)->Result<Self>{
+        tracking:Option<(&[HdrTrack],f32,bool)>, ellipses:Option<&[[u32;3]]>)->Result<Self>{
         if !core.stats_supported || !(1..=3).contains(&windows.len()) ||
             windows[0].rect!=[0,0,core.width,core.height] ||
             windows.iter().any(|w|w.rect[0]>=w.rect[2]||w.rect[1]>=w.rect[3]||
@@ -79,6 +79,12 @@ impl StatsJob{
             if tracks.len()!=windows.len()||!phase.is_finite()||!(0.0..=1.0).contains(&phase)||
                 tracks.iter().skip(1).any(|t|!valid_rect(t.a)||!valid_rect(t.b)||
                     t.ellipse[0]>=core.width||t.ellipse[1]>=core.height){return Err("invalid HDR tracking geometry".into());}
+        }
+        if let Some(e)=ellipses{
+            if !tracking.is_some_and(|t|t.2)||e.len()!=windows.len()||
+                e.iter().skip(1).any(|v|v[0]==0||v[0]>65535||v[1]==0||v[1]>v[0]||v[2]>180){
+                return Err("invalid HDR ellipse axes".into());
+            }
         }
         let pipelines={
             let mut slot=core.stats.lock().unwrap_or_else(|e|e.into_inner());
@@ -98,6 +104,7 @@ impl StatsJob{
             if let Some((tracks,phase))=tracking{if i>0{
                 let t=tracks[i];row[43]=phase.to_bits();row[44..48].copy_from_slice(&t.a);
                 row[48..52].copy_from_slice(&t.b);row[52..54].copy_from_slice(&t.ellipse);row[54]=1;row[55]=u32::from(s.affine);
+                if let Some(e)=ellipses{row[64..67].copy_from_slice(&e[i]);row[67]=1;}
             }}
         }
         unsafe{
@@ -163,7 +170,7 @@ impl StatsJob{
             r.copy_from_slice(&row[..4]);
             if r[0]>=r[2]||r[1]>=r[3]||r[2]>self.width||r[3]>self.height||
                 i==0&&*r!=[0,0,self.width,self.height]||
-                (r[2]-r[0])*(r[3]-r[1])!=row[39]{return Err("invalid affine rectangle".into());}
+                row[39]==0||row[39]>(r[2]-r[0])*(r[3]-r[1]){return Err("invalid affine rectangle".into());}
         }
         Ok(())
     }
@@ -207,8 +214,9 @@ impl StatsJob{
             }
             if let Some(s)=shifts.as_deref_mut(){s[i]=shift;}
             if row[0]>=row[2]||row[1]>=row[3]||row[2]>self.width||row[3]>self.height{return Err("invalid measured HDR rectangle".into());}
-            let pixels=(row[2]-row[0])*(row[3]-row[1]);
-            if row[39]!=pixels||row[40]>pixels||row[40]==0||row[20..39].iter().any(|&x|x>100000){
+            let area=(row[2]-row[0])*(row[3]-row[1]);
+            let pixels=row[39];
+            if pixels==0||pixels>area||(row[67]==0&&pixels!=area)||row[40]>pixels||row[40]==0||row[20..39].iter().any(|&x|x>100000){
                 return Err("invalid GPU HDR statistics".into());
             }
             result.maxscl.copy_from_slice(&row[20..23]);result.average=row[23];
