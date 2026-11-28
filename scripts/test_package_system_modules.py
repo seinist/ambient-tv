@@ -33,6 +33,8 @@ class SystemModulePackageTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             for files in (
                 {"assets/../bad": b"x"},
+                {"assets/libc++_shared.so": b"x"},
+                {"lib/libother+runtime.so": b"x"},
                 {"assets/foo ": b"x"},
                 {"assets/A": b"x", "assets/a": b"x"},
                 {"assets/foo\\bar": b"x"},
@@ -146,6 +148,29 @@ class SystemModulePackageTest(unittest.TestCase):
                 with zipfile.ZipFile(root / entry["asset"]) as archive:
                     self.assertEqual(set(archive.namelist()), {
                         "code/classes.dex", "lib/libvlc.so", "lib/libvlcjni.so", "lib/libc++_shared.so",
+                    })
+
+    def test_libretro_dex_packages_only_transitive_private_native_dependencies(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dex = root / "dex"
+            dex.mkdir()
+            (dex / "host-binding.sha256").write_text("a" * 64)
+            (dex / "classes.dex").write_bytes(b"dex\n039\0" + bytes(104))
+            apk = root / "full.apk"
+            with zipfile.ZipFile(apk, "w") as archive:
+                for abi in packages.ABIS:
+                    for name in ("liblibretrodroid.so", "liboboe.so", "libc++_shared.so", "libadrenotools.so"):
+                        archive.writestr(f"lib/{abi}/{name}", name.encode())
+            def dependencies(data, name):
+                return {"liboboe.so"} if name == "liblibretrodroid.so" else {"libc++_shared.so"} if name == "liboboe.so" else {"libc.so"}
+            with mock.patch.object(packages, "native_dependencies", side_effect=dependencies):
+                entries = packages.adapter_dex(root, "libretrodroid", 1, dex, [apk], [])
+            self.assertEqual(len(entries), 4)
+            for entry in entries:
+                with zipfile.ZipFile(root / entry["asset"]) as archive:
+                    self.assertEqual(set(archive.namelist()), {
+                        "code/classes.dex", "lib/liblibretrodroid.so", "lib/liboboe.so", "lib/libc++_shared.so",
                     })
 
     def test_vlc_pins_patched_bindings_and_shared_runtime(self):

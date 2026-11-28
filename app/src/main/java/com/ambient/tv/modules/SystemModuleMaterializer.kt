@@ -53,7 +53,7 @@ internal object SystemModuleMaterializer {
                     val entry = entries.nextElement()
                     val parts = entry.name.split('/')
                     if (entry.isDirectory || parts.size !in 2..12 ||
-                        parts.any { !segment.matches(it) || (it.endsWith('.') || it.endsWith(' ')) } ||
+                        (entry.name != "lib/libc++_shared.so" && parts.any { !segment.matches(it) || it.endsWith('.') || it.endsWith(' ') }) ||
                         hashes.size >= MAX_ENTRIES || entry.name in hashes ||
                         entry.size < 0 || entry.size > MAX_EXPANDED - expanded)
                         throw SystemModuleTrustException("Invalid materialization entry")

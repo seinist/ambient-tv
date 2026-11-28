@@ -58,7 +58,7 @@ def write_package(out, module, abi, version, files, shared=None, binding=None):
     for name in files:
         parts = name.split("/")
         if (len(name) > 512 or not 2 <= len(parts) <= 12 or
-                any(not SEGMENT.fullmatch(p) or p.endswith((".", " ")) for p in parts) or
+                (name != "lib/libc++_shared.so" and any(not SEGMENT.fullmatch(p) or p.endswith((".", " ")) for p in parts)) or
                 name.lower() in folded):
             raise ValueError(f"unsafe package path: {name}")
         folded.add(name.lower())

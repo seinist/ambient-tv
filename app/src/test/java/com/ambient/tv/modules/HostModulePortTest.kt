@@ -1,6 +1,8 @@
 package com.ambient.tv.modules
 
 import com.ambient.tv.ui.games.RetroCorePort
+import com.ambient.tv.ui.games.RetroFrontendPort
+import com.ambient.tv.ui.games.RetroViewPort
 import com.ambient.tv.ui.player.backend.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -9,7 +11,8 @@ class HostModulePortTest {
     @Test fun noVendorTypesCrossHostPorts() {
         val ports = listOf(VlcEnginePort::class.java, VlcLibraryPort::class.java,
             VlcPlayerPort::class.java, VlcMediaPort::class.java, VlcOutputPort::class.java,
-            VlcOutputPort.Callback::class.java, VlcTracksPort::class.java, RetroCorePort::class.java)
+            VlcOutputPort.Callback::class.java, VlcTracksPort::class.java, RetroCorePort::class.java,
+            RetroFrontendPort::class.java, RetroViewPort::class.java)
         ports.flatMap { it.methods.toList() }.forEach { method ->
             val signature = method.toGenericString()
             assertFalse(signature, signature.contains("org.videolan.libvlc"))

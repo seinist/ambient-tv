@@ -184,7 +184,7 @@ internal class SystemModuleRuntime(
                     !((contract.dexNativeRoots + contract.dexOptionalNativeRoots).containsAll(files.native.keys)) ||
                     files.build.hostNativeSha256.isNotEmpty())
                     throw SystemModuleTrustException("Module adapter DEX or native payload mismatch")
-                val visited = nativeOrder(files.native, contract.dexNativeRoots).toSet()
+                val visited = nativeClosure(files.native, contract.dexNativeRoots)
                 if (visited != files.native.keys) throw SystemModuleTrustException("Unused private native dependency")
                 val ownership = contract.dexOwnership
                     ?: throw SystemModuleTrustException("Module adapter ownership missing")
@@ -277,6 +277,17 @@ internal class SystemModuleRuntime(
     companion object {
         internal fun dependenciesAllowed(contract: Contract, build: SystemModuleBuild): Boolean =
             build.dependencies.all { SystemModule.fromId(it.module) in contract.allowedModuleDependencies }
+
+        internal fun nativeClosure(libraries: Map<String, SystemModuleBinary.Native>, roots: Set<String>): Set<String> {
+            val visited = mutableSetOf<String>()
+            fun visit(name: String) {
+                if (!visited.add(name)) return
+                val binary = libraries[name] ?: throw SystemModuleTrustException("Missing native library")
+                binary.needed.filter { it in libraries }.forEach(::visit)
+            }
+            roots.forEach(::visit)
+            return visited
+        }
 
         internal fun nativeOrder(
             libraries: Map<String, SystemModuleBinary.Native>,

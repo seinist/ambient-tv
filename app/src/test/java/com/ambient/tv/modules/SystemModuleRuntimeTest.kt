@@ -87,6 +87,17 @@ class SystemModuleRuntimeTest {
         ))
     }
 
+    @Test fun dexPrivateClosureAllowsLinkerCyclesButNotUnreachableLibraries() {
+        val graph = mapOf(
+            "libfrontend.so" to SystemModuleBinary.Native("libfrontend.so", setOf("libc++_shared.so")),
+            "libc++_shared.so" to SystemModuleBinary.Native("libc++_shared.so", setOf("libfrontend.so")),
+            "libunused.so" to SystemModuleBinary.Native("libunused.so", emptySet()),
+        )
+        assertEquals(setOf("libfrontend.so", "libc++_shared.so"),
+            SystemModuleRuntime.nativeClosure(graph, setOf("libfrontend.so")))
+        reject { SystemModuleRuntime.nativeClosure(graph, setOf("libmissing.so")) }
+    }
+
     @Test fun elfChecksMachinePageAlignmentAndDependencies() {
         val f = folder.newFile().apply { writeBytes(elf()) }
         val native = SystemModuleBinary.elf(f, "arm64-v8a", 4096)

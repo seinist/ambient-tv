@@ -61,6 +61,27 @@ class MonogramDexExportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "host class references private VLC"):
                 exporter.split([source], program, host, "vlc")
 
+    def test_libretro_frontend_only_owns_adapter_and_vendor_classes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "retro.jar"
+            with zipfile.ZipFile(source, "w") as archive:
+                for name in exporter.LIBRETRO_REQUIRED:
+                    archive.writestr(name, b"engine")
+                archive.writestr("com/swordfish/libretrodroid/R$id.class", b"resource")
+                archive.writestr("com/ambient/tv/ui/games/RetroViewPort.class", b"host")
+            program, host = root / "program.jar", root / "host.jar"
+            exporter.split([source], program, host, "libretrodroid")
+            with zipfile.ZipFile(program) as archive:
+                self.assertEqual(set(archive.namelist()), set(exporter.LIBRETRO_REQUIRED))
+            with zipfile.ZipFile(host) as archive:
+                self.assertIn("com/ambient/tv/ui/games/RetroViewPort.class", archive.namelist())
+                self.assertIn("com/swordfish/libretrodroid/R$id.class", archive.namelist())
+            with zipfile.ZipFile(source, "a") as archive:
+                archive.writestr("host/Bad.class", b"\xca\xfe\xba\xbeLcom/swordfish/libretrodroid/GLRetroView;")
+            with self.assertRaisesRegex(ValueError, "host class references private LibretroDroid"):
+                exporter.split([source], program, host, "libretrodroid")
+
     def test_conflicting_duplicate_class_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

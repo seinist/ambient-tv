@@ -121,6 +121,14 @@ class SystemModuleStoreTest {
         assertNotNull(install(manager, 1, zip("code/classes.dex", "lib/libgood.so", "licenses/NOTICE")))
     }
 
+    @Test fun onlyExactCppRuntimePathAllowsPlusCharacters() {
+        val manager = store()
+        for (name in listOf("lib/libfoo+bar.so", "assets/libc++_shared.so", "lib/libc++_shared.so/child")) {
+            reject { install(manager, 1, zip(name)) }
+        }
+        assertNotNull(install(manager, 1, zip("lib/libc++_shared.so")))
+    }
+
     @Test fun tamperedStoredArchiveIsRejectedOnReopen() {
         val archive = install(store(), 1, zip("lib/libgood.so"))!!.archive
         archive.writeBytes(byteArrayOf(1))
