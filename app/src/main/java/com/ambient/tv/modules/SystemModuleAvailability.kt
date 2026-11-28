@@ -32,6 +32,7 @@ internal object SystemModuleAvailability {
         SystemModule.SPOTIFY -> BuildConfig.SPOTIFY_ENABLED && BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.PROJECTM, SystemModule.MPV, SystemModule.SVP -> BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SHADERS -> BuildConfig.SHADER_RUNTIME_BUNDLED
+        SystemModule.MOONLIGHT -> BuildConfig.MOONLIGHT_MODULE_BUNDLED
         // These engines are not yet removed from the base build.
         else -> true
     }
@@ -44,13 +45,13 @@ internal object SystemModuleAvailability {
     fun reportProbe(module: SystemModule, external: Boolean, success: Boolean) {
         val offered = state(module).usable
         registry.reportProbe(module, external, success)
-        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE, SystemModule.LIBRETRODROID) && offered != state(module).usable)
+        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE, SystemModule.LIBRETRODROID, SystemModule.MOONLIGHT) && offered != state(module).usable)
             com.ambient.tv.data.local.LoginStateSignal.changed()
     }
     fun reportFailure(module: SystemModule) {
         val offered = state(module).usable
         registry.reportFailure(module)
-        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE, SystemModule.LIBRETRODROID) && offered != state(module).usable)
+        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE, SystemModule.LIBRETRODROID, SystemModule.MOONLIGHT) && offered != state(module).usable)
             com.ambient.tv.data.local.LoginStateSignal.changed()
     }
 

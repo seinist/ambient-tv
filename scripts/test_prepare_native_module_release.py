@@ -7,7 +7,7 @@ import prepare_native_module_release as release
 class NativeModuleReleaseTest(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(release.identity("svp", "123", "a" * 40), ("modules-svp-v123", 123))
-        for module, run, sha in (("moonlight", "123", "a" * 40), ("svp", "../1", "a" * 40), ("svp", "123", "main")):
+        for module, run, sha in (("unsupported", "123", "a" * 40), ("svp", "../1", "a" * 40), ("svp", "123", "main")):
             with self.assertRaises(ValueError):
                 release.identity(module, run, sha)
 

@@ -15,7 +15,7 @@ import zipfile
 import generate_update_manifest as updates
 import package_system_modules as packages
 
-MODULES = ("monogram", "smarttube", "spotify", "mpv", "vlc", "libretrodroid", "projectm", "svp", "shaders")
+MODULES = ("monogram", "smarttube", "spotify", "mpv", "vlc", "libretrodroid", "projectm", "svp", "shaders", "moonlight")
 ROOT = packages.ROOT
 
 

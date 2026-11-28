@@ -169,6 +169,23 @@ val stableModular = modulePackaging == "modular"
 require(!stableModular || providers.environmentVariable("REVIEWED_MODULAR_RELEASE").orNull == "1") {
     "Stable Modular packaging requires REVIEWED_MODULAR_RELEASE=1"
 }
+// The protocol wrapper comes from the independent Moonlight optimization PR.
+val moonlightModuleRequested = providers.gradleProperty("MOONLIGHT_NATIVE")
+    .orElse(providers.environmentVariable("MOONLIGHT_NATIVE")).orElse("0").get()
+    .let { it == "1" || it.equals("true", true) }
+val moonlightModuleBinding = if (moonlightModuleRequested) {
+    check(rootProject.findProject(":moonlight_native") != null) { "Moonlight sources are not integrated" }
+    val gate = rootProject.file("app/src/main/java/com/ambient/tv/moonlight/MoonlightFeature.kt")
+    check(gate.isFile && gate.readText().contains("MoonlightModuleAvailability.isAvailable")) {
+        "Run scripts/reconcile_moonlight_module_host.py after integrating Moonlight"
+    }
+    providers.exec {
+        commandLine("python3", rootProject.file("scripts/patch_moonlight_module_loader.py").absolutePath,
+            rootProject.file("third_party/moonlight-android").absolutePath, "--fingerprint")
+    }.standardOutput.asText.get().trim().also {
+        check(it.matches(Regex("[0-9a-f]{64}"))) { "Invalid Moonlight binding fingerprint" }
+    }
+} else ""
 val libretroModuleMarker = rootProject.file("third_party/libretrodroid/.ambient-libretrodroid")
 val libretroModuleJava = rootProject.file("third_party/libretrodroid/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java")
 val libretroModuleBinding = if (libretroModuleMarker.isFile && libretroModuleJava.isFile &&
@@ -367,6 +384,8 @@ android {
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "MODULE_PACKAGING", quotedBuildConfigString(modulePackaging))
         manifestPlaceholders["modulePackaging"] = modulePackaging
+        buildConfigField("String", "MOONLIGHT_MODULE_BINDING_SHA256", quotedBuildConfigString(moonlightModuleBinding))
+        buildConfigField("boolean", "MOONLIGHT_MODULE_BUNDLED", (!modularPreview && moonlightModuleBinding.isNotEmpty()).toString())
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
         // Pin the exact UniFFI/Kotlin bridge artifact, independent of CPU tuning.
         val monogramBindingSha = if (monogramEnabled) ZipFile(monogramAar).use { aar ->
@@ -567,6 +586,7 @@ android {
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
             if (!libretroBundled) excludes += "**/liblibretrodroid.so"
             if (modularPreview && vlcModuleSupported) excludes += setOf("**/libvlc.so", "**/libvlcjni.so")
+            if (modularPreview && moonlightModuleBinding.isNotEmpty()) excludes += "**/libmoonlight-core.so"
             if (!spotifyEnabled || modularPreview) excludes += "**/libspotify_receiver_core.so"
             if (modularPreview) excludes += "**/libmonogram_mtproto.so"
             // An earlier full Vulkan build may leave a 6+ MB native library in

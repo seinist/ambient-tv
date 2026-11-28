@@ -538,6 +538,21 @@ signed identity per ABI/profile, preventing a conflicting same-version
 replacement even after removal. FFmpeg dependencies needed for local audio
 remain in the base until a separate local decoder migration is validated.
 
+### Moonlight final integration seam
+
+The host contract, exact binding fingerprint, native exclusion, settings
+registration, first-load probe and native release candidate are prepared in
+this branch. The current Moonlight sources still live in PR #494. Once that
+PR is integrated into the module branch, run
+python3 scripts/reconcile_moonlight_module_host.py and review its changes.
+It updates only the known source staging, startup/preloader, availability,
+settings, pairing and direct playback gates; it never copies or changes
+native optimization code. All anchors must match before any file is edited.
+The check mode is enforced for the Moonlight candidate and stable paired
+release; those builds fail closed until the final integration is applied.
+An actual Android load, pairing, decoder/audio and playback test remains
+necessary. The native source in #494 has not been merged or modified here.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

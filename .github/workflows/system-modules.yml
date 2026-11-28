@@ -28,6 +28,8 @@ on:
       - 'scripts/patch_libretrodroid_module_loader.py'
       - 'scripts/test_patch_libretrodroid_module_loader.py'
       - 'scripts/patch_moonlight_module_loader.py'
+      - 'scripts/reconcile_moonlight_module_host.py'
+      - 'scripts/test_reconcile_moonlight_module_host.py'
       - 'scripts/test_patch_moonlight_module_loader.py'
       - 'scripts/check_modular_preview_apk.py'
       - 'scripts/test_*system_modules.py'
@@ -43,7 +45,7 @@ on:
         description: Native module to publish, or none for legacy shader assets
         type: choice
         default: none
-        options: [none, monogram, smarttube, spotify, mpv, vlc, libretrodroid, projectm, svp, shaders]
+        options: [none, monogram, smarttube, spotify, mpv, vlc, libretrodroid, projectm, svp, shaders, moonlight]
       candidate_run_id:
         description: Successful Build release run ID for the reviewed native candidate
         type: string
@@ -88,6 +90,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_patch_vlc_module_loader.py
           python3 -m unittest discover -s scripts -p test_patch_libretrodroid_module_loader.py
           python3 -m unittest discover -s scripts -p test_patch_moonlight_module_loader.py
+          python3 -m unittest discover -s scripts -p test_reconcile_moonlight_module_host.py
       - name: Build reproducible module package
         run: |
           set -euo pipefail

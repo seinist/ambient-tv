@@ -20,7 +20,7 @@ on:
         description: 'Build one unsigned native module candidate from the signed Full APKs (main only)'
         type: choice
         default: none
-        options: [none, monogram, smarttube, spotify, mpv, vlc, libretrodroid, projectm, svp, shaders]
+        options: [none, monogram, smarttube, spotify, mpv, vlc, libretrodroid, projectm, svp, shaders, moonlight]
 
 permissions:
   contents: read
@@ -56,6 +56,10 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           echo 'MONOGRAM_NATIVE=1' >> "$GITHUB_ENV"
           if [[ "$MODULE" == spotify ]]; then echo 'SPOTIFY_NATIVE=1' >> "$GITHUB_ENV"; fi
+          if [[ "$MODULE" == moonlight ]]; then
+            python3 scripts/reconcile_moonlight_module_host.py --check
+            echo 'MOONLIGHT_NATIVE=1' >> "$GITHUB_ENV"
+          fi
 
       - name: Check paired release request
         if: inputs.paired_release
@@ -66,6 +70,8 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           [[ -z "$MODULE" || "$MODULE" == none ]]
           test -s cores/signing-public.pem
+          python3 scripts/reconcile_moonlight_module_host.py --check
+          echo 'MOONLIGHT_NATIVE=1' >> "$GITHUB_ENV"
 
       - name: Resolve version
         env:
