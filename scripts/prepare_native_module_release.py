@@ -62,6 +62,49 @@ def validate_elf(data, abi):
         raise ValueError("ELF lacks executable segment")
 
 
+def verify_payload(archive, module, entry):
+    names = archive.namelist()
+    dex = {n.removeprefix("code/"): archive.read(n) for n in names if n.startswith("code/")}
+    native = {n.removeprefix("lib/") for n in names if n.startswith("lib/")}
+    if any(not re.fullmatch(r"lib[A-Za-z0-9_+.-]+[.]so", n) or ("+" in n and n != "libc++_shared.so") for n in native):
+        raise ValueError("Unexpected native library name")
+    roots = set(packages.NATIVE_ROOTS.get(module, ("libmonogram_mtproto.so", "libjnidispatch.so") if module == "monogram" else ("libj2v8.so",)))
+    host = entry.get("hostNativeSha256", {})
+    if not isinstance(host, dict) or set(host) & native or set(host) - packages.HOST_LIBRARIES.get(module, set()) or any(
+            not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value) for value in host.values()):
+        raise ValueError("Invalid host native fingerprints")
+    if dex:
+        if module not in {"monogram", "smarttube", "vlc", "libretrodroid"} or host:
+            raise ValueError("Unexpected adapter DEX or host dependency")
+        from verify_module_dex import verify_adapter
+        verify_adapter(module, dex)
+        if module == "vlc":
+            roots.add("libc++_shared.so")
+        optional = packages.HOST_LIBRARIES[module] if module == "libretrodroid" else set()
+        if not roots <= native or native - roots - optional:
+            raise ValueError("Unexpected adapter native payload")
+    elif module in {"monogram", "smarttube"} or native != roots:
+        raise ValueError("Unexpected native payload or missing adapter DEX")
+
+    if (dex or module in {"vlc", "svp", "shaders", "libretrodroid", "moonlight"}) and not re.fullmatch(
+            r"[a-f0-9]{64}", entry.get("hostBindingSha256") or ""):
+        raise ValueError("Missing exact host ABI fingerprint")
+    visited = set()
+    def visit(name):
+        if name in packages.PLATFORM or name in host or name in visited:
+            return
+        if name not in native:
+            raise ValueError(f"Missing native dependency: {name}")
+        visited.add(name)
+        for needed in packages.native_dependencies(archive.read("lib/" + name), name):
+            visit(needed)
+    for name in roots:
+        visit(name)
+    if visited != native:
+        raise ValueError("Unused private native library")
+    return native
+
+
 def verify(root, module, run_id, sha):
     tag, version = identity(module, run_id, sha)
     manifest_path = root / "manifest.json"
@@ -105,17 +148,7 @@ def verify(root, module, run_id, sha):
             with zipfile.ZipFile(io.BytesIO(archive.read("licenses/notices.zip"))) as notices:
                 if json.loads(notices.read("corresponding-source.json")) != source:
                     raise ValueError("Source descriptor is not bound to the signed module payload")
-            roots = set(packages.NATIVE_ROOTS.get(module, ("libmonogram_mtproto.so", "libjnidispatch.so") if module == "monogram" else ("libj2v8.so",)))
-            if module == "vlc" and any(n.startswith("code/") for n in names):
-                roots.add("libc++_shared.so")
-                if "code/classes.dex" not in names:
-                    raise ValueError("Incomplete VLC adapter DEX")
-            native = {n.removeprefix("lib/") for n in names if n.startswith("lib/")}
-            if module == "libretrodroid" and any(n.startswith("code/") for n in names):
-                if "code/classes.dex" not in names or not roots <= native or native - roots - packages.HOST_LIBRARIES[module]:
-                    raise ValueError("Unexpected LibretroDroid DEX native payload")
-            elif native != roots:
-                raise ValueError("Unexpected native payload")
+            native = verify_payload(archive, module, entry)
             dex_mode = any(n.startswith("code/") for n in names)
             if dex_mode and module in {"vlc", "libretrodroid"}:
                 from check_vlc_shared_native import CORE, JNI, LIBRETRO, require_exports

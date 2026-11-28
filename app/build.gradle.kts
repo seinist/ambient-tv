@@ -684,6 +684,7 @@ abstract class ExportMonogramDex @Inject constructor(
     @get:InputFiles abstract val allDirectories: ListProperty<Directory>
     @get:InputFiles abstract val androidLibraries: ListProperty<RegularFile>
     @get:InputFile abstract val exporter: org.gradle.api.file.RegularFileProperty
+    @get:InputFile abstract val dexVerifier: org.gradle.api.file.RegularFileProperty
     @get:InputFile abstract val d8: org.gradle.api.file.RegularFileProperty
     @get:Input abstract val binding: Property<String>
     @get:Input abstract val module: Property<String>
@@ -707,6 +708,7 @@ if (monogramEnabled) {
     androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
         val task = tasks.register<ExportMonogramDex>("exportMonogramAdapterDex") {
             exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            dexVerifier.set(rootProject.layout.projectDirectory.file("scripts/verify_module_dex.py"))
             binding.set(monogramAdapterSha)
             module.set("monogram")
             androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
@@ -723,6 +725,7 @@ if (smartTubeBundled) {
     androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
         val task = tasks.register<ExportMonogramDex>("exportSmartTubeAdapterDex") {
             exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            dexVerifier.set(rootProject.layout.projectDirectory.file("scripts/verify_module_dex.py"))
             binding.set(smartTubeAdapterSha)
             module.set("smarttube")
             androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
@@ -739,6 +742,7 @@ if (vlcDexEnabled && !modularPreview) {
     androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
         val task = tasks.register<ExportMonogramDex>("exportVlcAdapterDex") {
             exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            dexVerifier.set(rootProject.layout.projectDirectory.file("scripts/verify_module_dex.py"))
             binding.set(vlcDexBinding)
             module.set("vlc")
             androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
@@ -755,6 +759,7 @@ if (libretroDexEnabled && !modularPreview) {
     androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
         val task = tasks.register<ExportMonogramDex>("exportLibretroAdapterDex") {
             exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            dexVerifier.set(rootProject.layout.projectDirectory.file("scripts/verify_module_dex.py"))
             binding.set(libretroDexBinding)
             module.set("libretrodroid")
             androidLibraries.set(androidComponents.sdkComponents.bootClasspath)

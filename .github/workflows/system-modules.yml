@@ -20,6 +20,8 @@ on:
       - 'scripts/test_prepare_native_module_release.py'
       - '.github/workflows/release.yml'
       - 'scripts/export_monogram_adapter.py'
+      - 'scripts/verify_module_dex.py'
+      - 'scripts/test_verify_module_dex.py'
       - 'scripts/test_export_monogram_adapter.py'
       - 'scripts/strip_smarttube_classes.py'
       - 'scripts/test_strip_smarttube_classes.py'
@@ -89,6 +91,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_incremental_system_modules.py
           python3 -m unittest discover -s scripts -p test_check_modular_preview_apk.py
           python3 -m unittest discover -s scripts -p test_export_monogram_adapter.py
+          python3 -m unittest discover -s scripts -p test_verify_module_dex.py
           python3 -m unittest discover -s scripts -p test_strip_smarttube_classes.py
           python3 -m unittest discover -s scripts -p test_patch_vlc_module_loader.py
           python3 -m unittest discover -s scripts -p test_check_vlc_shared_native.py

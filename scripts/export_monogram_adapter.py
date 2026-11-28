@@ -207,8 +207,8 @@ def main():
         for lib in args.android_lib:
             cmd += ["--lib", str(lib)]
         subprocess.run(cmd + [str(program)], check=True)
-    if not (args.output / "classes.dex").is_file():
-        raise ValueError("D8 did not generate adapter DEX")
+    from verify_module_dex import verify_adapter
+    verify_adapter(args.module, {path.name: path.read_bytes() for path in args.output.glob("*.dex")})
     (args.output / "host-binding.sha256").write_text(args.binding + "\n", encoding="ascii")
 
 
