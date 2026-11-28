@@ -30,6 +30,9 @@ int main() {
     assert(ambient_compute_width(4, 2)==1);
     assert(ambient_compute_width(4, 1)==1);
     assert(ambient_compute_width(4, 32)==4);
+    // Capacity is stable across affinity changes; width must recover.
+    assert(ambient_compute_width(8, 2)==1);
+    assert(ambient_compute_width(8, 8)==6);
     for (int cap=1;cap<=32;++cap)
         for (int cpus=0;cpus<=64;++cpus) {
             const int n=ambient_compute_width(cap,cpus);
@@ -167,6 +170,7 @@ int main(void) {
 #include <cassert>
 #include <vector>
 #include <thread>
+#include <mutex>
 using s16 = int16_t;
 static float audio_samples_per_frame_avg;
 static unsigned vsync_swap_interval_last, vsync_swap_interval_conter;

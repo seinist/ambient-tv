@@ -127,7 +127,8 @@ def preflight_jit_core(core: dict, revision: str) -> None:
             prepare_cmake(root, "citra2018", "citra-arm64-jit")
 
 
-def cores_latest(cores: list[dict], withheld: dict[str, str] | None = None) -> dict[str, str]:
+def cores_latest(cores: list[dict], withheld: dict[str, str] | None = None,
+                 errors: dict[str, str] | None = None) -> dict[str, str]:
     # Resolve each explicit branch separately; shared same-branch variants
     # (VICE) keep one snapshot. Never collapse independently pinned variants.
     def source(c):
@@ -135,25 +136,38 @@ def cores_latest(cores: list[dict], withheld: dict[str, str] | None = None) -> d
     sources = list(dict.fromkeys(source(c) for c in cores))
     def resolve(item):
         repo, ref = item
-        return remote_head(repo) if ref == "HEAD" else remote_head(repo, ref)
+        try:
+            return remote_head(repo) if ref == "HEAD" else remote_head(repo, ref)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            print(f"  ERROR: {repo} {ref}: {error}; retaining existing pins.")
+            return None
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         heads = dict(zip(sources, pool.map(resolve, sources)))
+    failed = {item for item, head in heads.items() if head is None}
+    if errors is not None:
+        errors.update({c["core"]: "remote ref unavailable" for c in cores if source(c) in failed})
     pins = {}
     for c in cores:
         pins.setdefault(source(c), set()).add(c["commit"])
     for item, revisions in pins.items():
         if len(revisions) > 1:
             print(f"  MANUAL: {item[0]} {item[1]} has different pins; specify separate update_ref values.")
-    candidates = [c for c in cores if len(pins[source(c)]) == 1
+    candidates = [c for c in cores if source(c) not in failed and len(pins[source(c)]) == 1
                   and c["commit"] != heads[source(c)]]
+    def preflight(c):
+        try:
+            return core_candidate_compatible(c, heads[source(c)])
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            print(f"  MANUAL: {c['core']}: preflight unavailable ({error}); retaining existing pin.")
+            return False
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        compatible = list(pool.map(lambda c: core_candidate_compatible(c, heads[source(c)]), candidates))
+        compatible = list(pool.map(preflight, candidates))
     blocked = {source(c) for c, ok in zip(candidates, compatible) if not ok}
     if withheld is not None:
         for c in cores:
-            if c["commit"] != heads[source(c)] and (len(pins[source(c)]) > 1 or source(c) in blocked):
+            if source(c) not in failed and c["commit"] != heads[source(c)] and (len(pins[source(c)]) > 1 or source(c) in blocked):
                 withheld[c["core"]] = heads[source(c)]
-    return {c["core"]: c["commit"] if len(pins[source(c)]) > 1 or source(c) in blocked
+    return {c["core"]: c["commit"] if source(c) in failed or len(pins[source(c)]) > 1 or source(c) in blocked
             else heads[source(c)] for c in cores}
 
 
@@ -184,16 +198,17 @@ def main() -> int:
     sources = {(c["repo"], c.get("update_ref", "HEAD")) for c in entries if c["core"] in requested}
     selected = [c for c in entries if (c["repo"], c.get("update_ref", "HEAD")) in sources]
     withheld = {}
-    latest = cores_latest(selected, withheld)
+    errors = {}
+    latest = cores_latest(selected, withheld, errors)
     changed = [c["core"] for c in selected if c["commit"] != latest[c["core"]]]
     print("Managed Libretro cores:")
     for c in selected:
         name, old = c["core"], c["commit"]
         new = latest[name]
-        status = "UPDATE" if old != new else "BLOCKED" if name in withheld else "CURRENT"
+        status = "ERROR" if name in errors else "UPDATE" if old != new else "BLOCKED" if name in withheld else "CURRENT"
         print(f"  {name:24} {old} -> {withheld.get(name, new)} [{status}]")
     print(f"Summary: {len(changed)} compatible updates, {len(withheld)} blocked, "
-          f"{len(selected)-len(changed)-len(withheld)} current.")
+          f"{len(errors)} unavailable, {len(selected)-len(changed)-len(withheld)-len(errors)} current.")
     if withheld:
         print("Manual review required (pins retained): " + ", ".join(sorted(withheld)))
     if changed and args.apply:
@@ -204,7 +219,7 @@ def main() -> int:
         print("Updates available. Apply with: ./build.sh cores-update" + (f" {args.cores}" if args.cores else ""))
     else:
         print("No compatible core pin updates to apply.")
-    return 0
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":

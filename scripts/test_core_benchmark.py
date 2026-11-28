@@ -89,6 +89,12 @@ class BenchmarkTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 compare(manifest, path)
             thermal.write_text("ts,status\n0,0\n")
+            trace = path/"optimized-2.csv"
+            trace.write_text("name,ts,dur\n"+"".join(
+                f"AmbientGame core run,{i*16000000},{8000000 if i < 64 else 6000000000}\n"
+                for i in range(65)))
+            with self.assertRaisesRegex(ValueError, "thermal evidence"):
+                compare(manifest, path)
             runs[-1]["renderer"]="vulkan"
             with self.assertRaises(ValueError):
                 compare(manifest, path)

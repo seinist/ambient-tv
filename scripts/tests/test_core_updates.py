@@ -212,17 +212,18 @@ class CoreUpdateTest(unittest.TestCase):
         with mock.patch.object(updater, "get_bytes", return_value=b"incompatible"):
             self.assertFalse(updater.core_candidate_compatible(core, NEW))
 
-    def test_unresolvable_core_aborts_without_changes(self):
-        before = self.cores.read_bytes()
+    def test_unresolvable_core_retains_pin_and_updates_independent_sources(self):
+        before = json.loads(self.cores.read_text())
 
         def head(repo, ref="HEAD"):
             if repo.endswith("/snes9x"):
                 raise RuntimeError("Could not resolve HEAD")
             return NEW
 
-        with self.assertRaisesRegex(RuntimeError, "Could not resolve"):
-            self.run_updater("--apply", head)
-        self.assertEqual(before, self.cores.read_bytes())
+        self.assertEqual(self.run_updater("--apply", head), 1)
+        after = json.loads(self.cores.read_text())
+        for old, new in zip(before["cores"], after["cores"]):
+            self.assertEqual(new["commit"], old["commit"] if old["repo"].endswith("/snes9x") else NEW)
 
     def test_github_repo_parsing(self):
         self.assertEqual(updater.github_repo("https://github.com/rommapp/argosy-launcher"), "rommapp/argosy-launcher")

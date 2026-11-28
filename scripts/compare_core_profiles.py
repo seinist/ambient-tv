@@ -89,10 +89,16 @@ def compare(manifest, directory):
         for start, duration in measured:
             while cursor+1 < len(thermals) and thermals[cursor+1][0] <= start:
                 cursor += 1
-            if (cursor < 0 or start - thermals[cursor][0] > 5_000_000_000 or
-                    thermals[cursor][1] not in (0, 1) or
-                    any(status not in (0, 1) for ts, status in thermals[cursor+1:]
-                        if ts <= start + duration)):
+            if cursor < 0 or thermals[cursor][1] not in (0, 1):
+                raise ValueError("Missing/stale or throttled thermal evidence")
+            previous = thermals[cursor][0]
+            for ts, status in thermals[cursor+1:]:
+                if ts > start + duration:
+                    break
+                if status not in (0, 1) or ts - previous > 5_000_000_000:
+                    raise ValueError("Missing/stale or throttled thermal evidence")
+                previous = ts
+            if start + duration - previous > 5_000_000_000:
                 raise ValueError("Missing/stale or throttled thermal evidence")
         durations = sorted(d for _, d in measured)
         key = (int(run["round"]), profile)
