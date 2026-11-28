@@ -39,25 +39,39 @@ internal object HdrContentSceneDetector {
         return spatial >= .36 || spatial >= .20 && hist >= .38
     }
 
+    private class CutTracker {
+        private var previous: Signature? = null
+        private var pending: Signature? = null
+        private val result = HashSet<Long>()
+        fun push(frame: Signature): Boolean {
+            val p = previous
+            val candidate = pending
+            if ((candidate ?: p)?.let { frame.pts <= it.pts } == true) return false
+            if (p == null) { previous = frame;return true }
+            if (candidate != null) {
+                val (d,h) = distance(p.luma,frame.luma)
+                if (isCut(candidate.luma,frame.luma) && d < .08 && h < .12) {
+                    pending = null;previous = frame;return true
+                }
+                result += candidate.pts
+                if (result.size > 100_000) return false
+                previous = candidate
+                pending = null
+            }
+            if (isCut(previous!!.luma,frame.luma)) pending = frame else previous = frame
+            return true
+        }
+        fun finish(): Set<Long>? {
+            pending?.let { result += it.pts }
+            return result.takeIf { it.size <= 100_000 }
+        }
+    }
+
     internal fun cuts(frames: List<Signature>): Set<Long>? {
         if (frames.size < 2) return null
-        val sorted = frames.sortedBy { it.pts }
-        if (sorted.zipWithNext().any { (a,b) -> a.pts >= b.pts }) return null
-        val result = HashSet<Long>()
-        var i = 1
-        while (i < sorted.size) {
-            if (isCut(sorted[i-1].luma,sorted[i].luma)) {
-                // A one-frame flash with a return to the same image is not
-                // two scene cuts. Do not remove a genuine consecutive cut.
-                if (i+1 < sorted.size && isCut(sorted[i].luma,sorted[i+1].luma)) {
-                    val (d,h) = distance(sorted[i-1].luma,sorted[i+1].luma)
-                    if (d < .08 && h < .12) { i += 2; continue }
-                }
-                result += sorted[i].pts
-            }
-            i++
-        }
-        return result
+        val tracker = CutTracker()
+        for (frame in frames.sortedBy { it.pts }) if (!tracker.push(frame)) return null
+        return tracker.finish()
     }
 
     private fun signature(image: Image): ByteArray? {
@@ -105,8 +119,8 @@ internal object HdrContentSceneDetector {
             decoder.start()
             started = true
             val info = MediaCodec.BufferInfo()
-            val frames = ArrayList<Signature>()
-            val seen = HashSet<Long>()
+            val tracker = CutTracker()
+            var decoded = 0
             var inputEnded = false
             var outputEnded = false
             var lastProgress = android.os.SystemClock.elapsedRealtime()
@@ -134,10 +148,11 @@ internal object HdrContentSceneDetector {
                 if (id >= 0) {
                     try {
                         if (info.size > 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                            if (info.presentationTimeUs !in expectedPts || !seen.add(info.presentationTimeUs)) return null
+                            if (info.presentationTimeUs !in expectedPts || decoded>=expectedPts.size) return null
                             val image = decoder.getOutputImage(id) ?: return null
                             val sig = image.use { signature(it) } ?: return null
-                            frames += Signature(info.presentationTimeUs,sig)
+                            if (!tracker.push(Signature(info.presentationTimeUs,sig))) return null
+                            decoded++
                         }
                         outputEnded = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                     } finally { decoder.releaseOutputBuffer(id,false) }
@@ -148,8 +163,8 @@ internal object HdrContentSceneDetector {
                 if (progress) lastProgress = android.os.SystemClock.elapsedRealtime()
                 else if (android.os.SystemClock.elapsedRealtime()-lastProgress > 15_000) return null
             }
-            if (seen != expectedPts) return null
-            return cuts(frames)
+            if (decoded != expectedPts.size) return null
+            return tracker.finish()
         } finally {
             if (started) runCatching { codec?.stop() }
             runCatching { codec?.release() }
