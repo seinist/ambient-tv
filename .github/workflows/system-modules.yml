@@ -12,6 +12,8 @@ on:
       - 'scripts/test_strip_smarttube_classes.py'
       - 'scripts/patch_vlc_module_loader.py'
       - 'scripts/test_patch_vlc_module_loader.py'
+      - 'scripts/patch_libretrodroid_module_loader.py'
+      - 'scripts/test_patch_libretrodroid_module_loader.py'
       - 'scripts/check_modular_preview_apk.py'
       - 'scripts/test_*system_modules.py'
       - 'scripts/test_check_modular_preview_apk.py'
@@ -46,6 +48,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_export_monogram_adapter.py
           python3 -m unittest discover -s scripts -p test_strip_smarttube_classes.py
           python3 -m unittest discover -s scripts -p test_patch_vlc_module_loader.py
+          python3 -m unittest discover -s scripts -p test_patch_libretrodroid_module_loader.py
       - name: Build reproducible module package
         run: |
           set -euo pipefail
