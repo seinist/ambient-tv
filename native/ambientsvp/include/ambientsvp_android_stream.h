@@ -5,6 +5,7 @@
 #ifndef AMBIENTSVP_ANDROID_STREAM_H
 #define AMBIENTSVP_ANDROID_STREAM_H
 #include <stdint.h>
+#include "ambientsvp_quality.h"
 #include <android/hardware_buffer.h>
 typedef struct Stream AmbientSvpAndroidStream;
 typedef struct { AHardwareBuffer *buffer; int fence_fd; } AmbientSvpDisplayOutput;
@@ -17,6 +18,8 @@ AmbientSvpAndroidStream *ambient_svp_android_stream_create(uint32_t,uint32_t);
  * Fixed stream format; output structs and fence/lease ABI unchanged.
  * Caller sets full-range BT2020 PQ/HLG and static metadata on ASC. */
 AmbientSvpAndroidStream *ambient_svp_android_stream_create_format(uint32_t,uint32_t,uint32_t);
+/* Configured stream uses the same weighted motion/synthesis kernel as MPV. */
+AmbientSvpAndroidStream *ambient_svp_android_stream_create_quality(uint32_t,uint32_t,uint32_t,const AmbientSvpQuality *);
 /* Borrow the existing decoder buffer; acquire_fd remains caller-owned.
  * Transfer an ADDITIONAL source-picture token to the callback, even on
  * ordinary failure. Callback takes ownership of any returned sync_file.
