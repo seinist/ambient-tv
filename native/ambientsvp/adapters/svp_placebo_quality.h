@@ -29,6 +29,10 @@ struct svp_placebo_quality {
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,
         const AmbientSvpHdrTrack *,const uint32_t (*)[3],AmbientSvpHdrResult *,
         uint32_t (*)[4],uint32_t (*)[3],int32_t (*)[2],uint32_t);
+    int (*render_pass)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+        const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,
+        const AmbientSvpHdrTrack *,const uint32_t (*)[3],AmbientSvpHdrResult *,
+        uint32_t (*)[4],uint32_t (*)[3],int32_t (*)[2],uint32_t,AmbientSvpHdrPass *,uint64_t);
     VkSemaphore done;
     uint64_t value;
     int w,h;
@@ -50,10 +54,10 @@ static inline bool svp_placebo_quality_target(pl_gpu gpu,pl_tex *tex,int w,int h
     return w>0&&h>0&&fmt&&pl_tex_recreate(gpu,tex,pl_tex_params(
         .w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true,.storable=storage));
 }
-static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_quality *s,
-    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr)
+static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo_quality *s,
+    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index)
 {
-    if(!a||!b||!options||!out||a==b||!isfinite(phase)||phase<=0||phase>=1||
+    if(!a||!b||!options||!out||(!pass&&a==b)||!isfinite(phase)||phase<0||phase>=1||(!pass&&phase==0)|| (a==b&&phase!=0)||
         a->params.w!=b->params.w||a->params.h!=b->params.h)return false;
     pl_vulkan vk=pl_vulkan_get(gpu);
     // hold_ex submits on GRAPHICS. Restrict to a common compute-capable
@@ -68,9 +72,11 @@ static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_
         s->destroy=dlsym(s->lib,"ambient_svp_vk_destroy");
         s->render=dlsym(s->lib,"ambient_svp_vk_render_held");
         s->render_hdr=dlsym(s->lib,"ambient_svp_vk_render_held_hdr");
+        s->render_pass=dlsym(s->lib,"ambient_svp_vk_render_held_pass");
         if(!s->create||!s->destroy||!s->render){dlclose(s->lib);s->lib=NULL;return false;}
     }
     if(hdr&&(!s->render_hdr||!hdr->count||hdr->count>3))return false;
+    if(pass&&(!s->render_pass||!hdr||hdr->count!=1))return false;
     const int w=a->params.w,h=a->params.h;
     if(!s->engine||w!=s->w||h!=s->h||memcmp(&s->options,options,sizeof(*options))){
         if(s->engine)s->destroy(s->engine);
@@ -82,7 +88,8 @@ static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_
     if(!s->done||s->value==UINT64_MAX||!svp_placebo_quality_target(gpu,out,w,h,true))return false;
     pl_tex tex[5]={a,b,*out,NULL,NULL};
     unsigned count=3;
-    if(previous&&next&&previous!=a&&previous!=b&&next!=a&&next!=b&&previous!=next&&
+    if(a==b){tex[1]=*out;count=2;}
+    if(count==3&&previous&&next&&previous!=a&&previous!=b&&next!=a&&next!=b&&previous!=next&&
         previous->params.w==w&&previous->params.h==h&&next->params.w==w&&next->params.h==h){
         tex[2]=previous;tex[3]=next;tex[4]=*out;count=5;
     }
@@ -109,7 +116,9 @@ static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_
     get_queue(vk->device,family,0,&queue);
     if(!queue)goto cleanup;
     vk->lock_queue(vk,family,0);
-    int rc=hdr?s->render_hdr(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
+    int rc=pass?s->render_pass(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
+        hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index):
+        hdr?s->render_hdr(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count):
         s->render(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase);
     // Defensive panic recovery: if the native boundary could not
@@ -127,6 +136,11 @@ cleanup:
             .qf=VK_QUEUE_FAMILY_IGNORED,.semaphore={retired?s->done:VK_NULL_HANDLE,retired?s->value:0}));
     for(unsigned i=0;i<count;i++)if(holds[i])pl_vulkan_sem_destroy(gpu,&holds[i]);
     return ok;
+}
+static inline bool svp_placebo_quality_render_hdr(pl_gpu gpu,struct svp_placebo_quality *s,
+    pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr)
+{
+    return svp_placebo_quality_render_pass(gpu,s,a,b,previous,next,out,phase,options,hdr,NULL,0);
 }
 static inline bool svp_placebo_quality_render(pl_gpu gpu,struct svp_placebo_quality *s,
     pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options)
