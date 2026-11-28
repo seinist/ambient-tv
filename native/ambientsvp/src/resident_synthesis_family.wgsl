@@ -8,7 +8,7 @@ const FAMILY_PEL:f32=SVP_PEL.0;
 const FAMILY_SDR8:bool=SVP_SDR8;
 struct FamilyMotion {
     a:vec2f, b:vec2f, ext_a:vec2f, ext_b:vec2f,
-    mask:vec4f, time:f32, cut:bool,
+    mask:vec4f, time:f32, cut:bool, extended_ok:bool,
 }
 fn family_field(p:vec2f,grid:vec2u,base:u32,is_mask:bool)->vec4f{
     let q=(p-vec2f(FAMILY_ORIGIN))/FAMILY_STEP-vec2f(0.5);
@@ -43,14 +43,15 @@ fn family_motion(p:vec2f,grid:vec2u,phase:f32)->FamilyMotion{
     let mask=clamp(family_field(p,grid,7u*n+3u,true),vec4f(0),vec4f(1));
     // Extended fields occupy a separate optional region. No substitute
     // motion vectors are interpreted as neighbouring pair observations.
-    var ff=f;var bb=r;
+    var ff=f;var bb=r;var extended_ok=false;
     if ((params.y>>8u)&31u)==23u{
+        extended_ok=fields[10u*n+3u].x==0&&fields[10u*n+4u].x==0;
         let ea=family_field(p,grid,8u*n+3u,false);
         let eb=family_field(p,grid,9u*n+3u,false);
         ff=ea.xy*time;
         bb=eb.xy*(1.0-time);
     }
-    return FamilyMotion(f,r,ff,bb,mask,time,fields[2u*n].x!=0);
+    return FamilyMotion(f,r,ff,bb,mask,time,fields[2u*n].x!=0,extended_ok);
 }
 fn family_median(a:vec4f,b:vec4f,c:vec4f)->vec4f{
     return max(min(a,b),min(max(a,b),c));
@@ -67,8 +68,11 @@ fn family_blend(f:vec4f,b:vec4f,f0:vec4f,b0:vec4f,ff:vec4f,bb:vec4f,
         case 13u:{result=family_median(f,b,mix(f0,b0,sad_blend));}
         case 21u:{result=mix(mix(f,b,m.mask.y),mix(b,f,m.mask.z),m.time);}
         case 22u:{result=family_median(mix(f,b,m.mask.y),mix(b,f,m.mask.z),mix(f0,b0,m.time));}
-        case 23u:{result=mix(mix(f,family_median(b,bb,f),m.mask.y),
-            mix(b,family_median(b,ff,f),m.mask.z),m.time);}
+        case 23u:{
+            if m.extended_ok{result=mix(mix(f,family_median(b,bb,f),m.mask.y),
+                mix(b,family_median(b,ff,f),m.mask.z),m.time);}
+            else{result=mix(mix(f,b,m.mask.y),mix(b,f,m.mask.z),m.time);}
+        }
         default:{}
     }
     if algo==1u{return mix(result,b0,m.mask.x);}
