@@ -54,7 +54,7 @@ class GameSession(
     val autoState: ByteArray?,
     /** Initial signed shader is verified during the existing IO preparation, not Compose. */
     val initialPackSelection: String? = null,
-    val initialPackConfig: com.swordfish.libretrodroid.ShaderConfig.Custom? = null,
+    val initialPackConfig: com.ambient.tv.games.RetroShaderConfig.Custom? = null,
     val coreSource: GameCoreSource = GameCoreSource.AUTO,
 )
 

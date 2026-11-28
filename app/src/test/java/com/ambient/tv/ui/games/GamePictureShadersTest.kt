@@ -1,7 +1,7 @@
 package com.ambient.tv.ui.games
 
 import com.ambient.tv.games.GameShader
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

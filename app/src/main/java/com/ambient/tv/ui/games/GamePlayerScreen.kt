@@ -613,7 +613,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 selectedPackConfig ?: shader.config(shaderIntensity),
                 toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
                 effect = effect.takeIf { selectedPackConfig == null },
-            )
+            ).toLibretroShader()
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             // A requested cadence must never change the core's native game speed.
@@ -672,7 +672,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 selectedPackConfig ?: shader.config(shaderIntensity),
                 toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
                 effect = effect.takeIf { selectedPackConfig == null },
-            )
+            ).toLibretroShader()
         }
     }
 

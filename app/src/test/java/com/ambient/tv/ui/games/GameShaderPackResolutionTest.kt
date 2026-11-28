@@ -3,7 +3,7 @@ package com.ambient.tv.ui.games
 import com.ambient.tv.games.GameSettingsState
 import com.ambient.tv.games.GameShader
 import com.ambient.tv.games.GameSystems
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 import org.junit.Assert.*
 import org.junit.Test
 

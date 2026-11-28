@@ -2,7 +2,7 @@ package com.ambient.tv.ui.games
 
 import com.ambient.tv.games.GameSettingsState
 import com.ambient.tv.games.GameSystem
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 
 /** A verified source (or a known missing source) is valid only for its exact selection. */
 internal data class GameShaderPackResolution(

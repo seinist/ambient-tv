@@ -1,7 +1,7 @@
 package com.ambient.tv.ui.games
 
 import com.ambient.tv.games.GameShader
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 
 /**
  * Original, compact GLES2-compatible shader presets. Only the chosen GLSL is compiled;

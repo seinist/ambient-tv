@@ -3,7 +3,7 @@ package com.ambient.tv.ui.games
 import com.ambient.tv.games.GameHdrToneMap
 import com.ambient.tv.games.GamePictureDefaults
 import com.ambient.tv.games.GameShader
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -23,7 +23,7 @@ class GamePictureEffectTest {
         assertTrue(chained.pass.linear)
         val pixel = GamePictureEffect.apply(ShaderConfig.Pixel, GameShader.COLOR_BOOST, pixel = true) as ShaderConfig.PrependPass
         assertFalse(pixel.pass.linear)
-        val cut = GamePictureEffect.apply(ShaderConfig.CUT3(), GameShader.VHS_SOFT) as ShaderConfig.PrependPass
+        val cut = GamePictureEffect.apply(ShaderConfig.CUT3, GameShader.VHS_SOFT) as ShaderConfig.PrependPass
         assertFalse(cut.pass.linear)
     }
 

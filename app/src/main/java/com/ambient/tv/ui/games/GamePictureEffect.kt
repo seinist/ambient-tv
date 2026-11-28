@@ -2,7 +2,7 @@ package com.ambient.tv.ui.games
 
 import com.ambient.tv.games.GamePictureDefaults
 import com.ambient.tv.games.GameShader
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 
 /**
  * A second picture stage: one of the [GamePictureDefaults.effects] runs on the original frame,
@@ -28,7 +28,7 @@ internal object GamePictureEffect {
     internal fun sourceLinear(filter: ShaderConfig, pixel: Boolean): Boolean = when {
         pixel -> false
         filter is ShaderConfig.Custom || filter is ShaderConfig.Pixel -> false
-        filter is ShaderConfig.CUT || filter is ShaderConfig.CUT2 || filter is ShaderConfig.CUT3 -> false
+        filter is ShaderConfig.CUT2 || filter is ShaderConfig.CUT3 -> false
         else -> true
     }
 }

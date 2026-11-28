@@ -2,7 +2,7 @@ package com.ambient.tv.games
 
 import android.content.Context
 import com.ambient.tv.BuildConfig
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json

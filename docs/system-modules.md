@@ -596,6 +596,16 @@ shader configurations and virtual files still need their own host contracts
 before the entire LibretroDroid Java implementation can be externalized.
 Tests inspect the host port signatures for leaked vendor types.
 
+### Host-owned game shader model
+
+Shader choices, authenticated shader packs, GLES upscaling passes,
+HDR conversion and picture effects now use a neutral RetroShaderConfig.
+The bundled frontend maps the six used built-in presets to their existing
+defaults and copies all custom pass fields at the view boundary. Shader
+source text, pass order, scaling, sampling, framebuffer precision and
+intensity are unchanged. Existing shader policy tests use the host model;
+a separate conversion test verifies the vendor mapping.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

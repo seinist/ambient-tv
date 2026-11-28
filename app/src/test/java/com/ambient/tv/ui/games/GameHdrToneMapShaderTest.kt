@@ -2,7 +2,7 @@ package com.ambient.tv.ui.games
 
 import com.ambient.tv.games.GameHdrToneMap
 import com.ambient.tv.games.GameShader
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -39,7 +39,7 @@ class GameHdrToneMapShaderTest {
             assertTrue(shader.pass.fragment.contains("BT.2020 -> BT.709"))
             assertFalse(shader.pass.fragment.contains("PICTURE_MODE"))
         }
-        assertEquals(ShaderConfig.CUT3(), (GameHdrToneMapShader.forGame(
+        assertEquals(ShaderConfig.CUT3, (GameHdrToneMapShader.forGame(
             GameShader.SMOOTH, GameHdrToneMap.HLG, true) as ShaderConfig.PrependPass).filter)
         assertEquals(ShaderConfig.CRT, (GameHdrToneMapShader.forGame(
             GameShader.CRT, GameHdrToneMap.PQ, true) as ShaderConfig.PrependPass).filter)
