@@ -50,6 +50,7 @@ object MpvBackendAvailability {
 object PlaybackBackendResolver {
     fun resolve(requested: String?): PlaybackBackend = when (val backend = PlaybackBackend.fromKey(requested)) {
         PlaybackBackend.AUTO -> PlaybackBackend.MEDIA3
+        PlaybackBackend.VLC -> if (VlcBackendAvailability.isAvailable) PlaybackBackend.VLC else PlaybackBackend.MEDIA3
         PlaybackBackend.MPV -> if (MpvBackendAvailability.isAvailable) PlaybackBackend.MPV else PlaybackBackend.MEDIA3
         else -> backend
     }
