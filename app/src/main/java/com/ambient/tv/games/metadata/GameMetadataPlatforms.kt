@@ -23,6 +23,9 @@ internal object GameMetadataPlatforms {
     private val ngpc = platform("SNK - Neo Geo Pocket Color", 82, "Neo Geo Pocket Color")
     private val wonderSwan = platform("Bandai - WonderSwan", 45, "WonderSwan", "Wonder Swan")
     private val wonderSwanColor = platform("Bandai - WonderSwan Color", 46, "WonderSwan Color", "Wonder Swan Color")
+    private val nds = platform("Nintendo - Nintendo DS", 15, "Nintendo DS")
+    // DSiWare has a separate Libretro thumbnail namespace, not a separate confirmed API ID.
+    private val dsi = platform("Nintendo - Nintendo DSi", null, "Nintendo DSi")
     private val systems = mapOf(
         "snes" to platform("Nintendo - Super Nintendo Entertainment System", 4, "Super Nintendo (SNES)", "Super Nintendo Entertainment System", "Super Nintendo"),
         "gba" to platform("Nintendo - Game Boy Advance", 12, "Nintendo Game Boy Advance", "Game Boy Advance"),
@@ -34,7 +37,7 @@ internal object GameMetadataPlatforms {
         "n64" to platform("Nintendo - Nintendo 64", 14, "Nintendo 64"),
         "psx" to platform("Sony - PlayStation", 57, "Sony Playstation", "PlayStation"),
         "ps2" to platform("Sony - PlayStation 2", 58, "Sony Playstation 2", "PlayStation 2"),
-        "nds" to platform("Nintendo - Nintendo DS", 15, "Nintendo DS"),
+        "nds" to nds,
         "n3ds" to platform("Nintendo - Nintendo 3DS", 17, "Nintendo 3DS"),
         "gamecube" to platform("Nintendo - GameCube", 13, "Nintendo GameCube"),
         "wii" to platform("Nintendo - Wii", 16, "Nintendo Wii", "Wii"),
@@ -53,12 +56,13 @@ internal object GameMetadataPlatforms {
 
     /** The official thumbnail repos use the same namespaces with spaces replaced by underscores. */
     val libretroThumbnailRepositories: Map<String, String> = (systems.values + listOf(
-        gb, gbc, genesis, master, gear, sg1000, nes, fds, pcEngine, superGrafx, ngp, ngpc, wonderSwan, wonderSwanColor,
+        gb, gbc, genesis, master, gear, sg1000, nes, fds, pcEngine, superGrafx, ngp, ngpc, wonderSwan, wonderSwanColor, dsi,
     )).mapNotNull { it.libretro }.distinct().associateWith { it.replace(' ', '_') }
 
     fun forQuery(query: GameMetadataQuery): List<GameMetadataPlatform> {
         val extension = query.filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return when (query.systemId) {
+            "nds" -> if (extension == "dsi") listOf(dsi, nds) else listOf(nds, dsi)
             "nes" -> when (extension) {
                 "fds" -> listOf(fds)
                 "nes", "unf", "unif" -> listOf(nes)
@@ -87,7 +91,8 @@ internal object GameMetadataPlatforms {
         val names = if (pinned != null) listOf(pinned[1]) else (catalog + listOfNotNull(
             query.canonicalTitle?.takeIf(String::isNotBlank), query.title.takeIf(String::isNotBlank),
             query.filename.substringAfterLast('/').substringBeforeLast('.').takeIf(String::isNotBlank),
-        )).map { it.trim().take(256) }.distinct().take(if (catalog.isEmpty()) 3 else 30)
+            dsCatalogFilename(query).takeIf(String::isNotBlank),
+        )).map { it.trim().take(256) }.distinct().take(if (catalog.isEmpty()) 4 else 30)
         return names.flatMap { name -> (pinned?.let { listOf(it[0]) } ?: systems).map { system ->
             val imageName = name.map { if (it in "&*/:`<>?\\|\"" || it.isISOControl()) '_' else it }.joinToString("") + ".png"
             fun image(type: String) = HttpUrl.Builder().scheme("https").host("thumbnails.libretro.com")
@@ -102,5 +107,9 @@ internal object GameMetadataPlatforms {
         } }.take(if (catalog.isEmpty()) 12 else 30)
     }
 }
+
+internal fun dsCatalogFilename(query: GameMetadataQuery): String =
+    if (query.systemId != "nds") "" else query.filename.substringAfterLast('/').substringBeforeLast('.')
+        .replace(Regex("""^\d{4,5}\s*[-_.]\s*"""), "").trim()
 
 internal fun normalizedPlatformName(value: String): String = value.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
