@@ -15,20 +15,36 @@ internal object SvpNative {
     private var loaded = false
     private var attempted = false
 
+    /** Probe the selected engine without enabling frame interpolation. */
     @Synchronized
-    fun updateGate(allowed: Boolean): Boolean {
-        // Ordinary playback never loads this optional native library.
-        if (allowed && !attempted) {
+    fun probe(): Boolean {
+        if (!attempted) {
+            var external = false
             attempted = true
             loaded = runCatching {
-                System.loadLibrary("ambientsvp")
+                val selected = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.SVP)
+                external = selected != null
+                if (selected == null) {
+                    if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.SVP))
+                        return@runCatching false
+                    System.loadLibrary("ambientsvp")
+                }
                 val native = abi()
                 if (native != SVP_NATIVE_ABI) {
                     timber.log.Timber.w("SVP disabled: libambientsvp ABI %d, app expects %d (rebuild native libs together)", native, SVP_NATIVE_ABI)
                 }
                 native == SVP_NATIVE_ABI
-            }.getOrDefault(false)
+            }.onFailure { timber.log.Timber.w(it, "SVP runtime unavailable") }.getOrDefault(false)
+            com.ambient.tv.modules.SystemModuleAvailability.reportProbe(
+                com.ambient.tv.modules.SystemModule.SVP, external, loaded,
+            )
         }
+        return loaded
+    }
+
+    @Synchronized
+    fun updateGate(allowed: Boolean): Boolean {
+        if (allowed && !attempted) probe()
         if (loaded) setEnabled(allowed)
         return allowed && loaded
     }
