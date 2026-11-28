@@ -1,0 +1,54 @@
+diff --git a/packet.c b/packet.c
+--- a/packet.c
++++ b/packet.c
+@@ -19,7 +19,11 @@
+ ENetPacket *
+ enet_packet_create (const void * data, size_t dataLength, enet_uint32 flags)
+ {
+-    ENetPacket * packet = (ENetPacket *) enet_malloc (sizeof (ENetPacket));
++    /* Own small and large payloads in the same allocation as the packet. */
++    const size_t ownedLength = (flags & ENET_PACKET_FLAG_NO_ALLOCATE) ? 0 : dataLength;
++    if (ownedLength > (size_t)-1 - sizeof (ENetPacket))
++      return NULL;
++    ENetPacket * packet = (ENetPacket *) enet_malloc (sizeof (ENetPacket) + ownedLength);
+     if (packet == NULL)
+       return NULL;
+ 
+@@ -30,12 +34,7 @@
+       packet -> data = NULL;
+     else
+     {
+-       packet -> data = (enet_uint8 *) enet_malloc (dataLength);
+-       if (packet -> data == NULL)
+-       {
+-          enet_free (packet);
+-          return NULL;
+-       }
++       packet -> data = (enet_uint8 *) (packet + 1);
+ 
+        if (data != NULL)
+          memcpy (packet -> data, data, dataLength);
+@@ -62,8 +61,8 @@
+     if (packet -> freeCallback != NULL)
+       (* packet -> freeCallback) (packet);
+     if (! (packet -> flags & ENET_PACKET_FLAG_NO_ALLOCATE) &&
+-        packet -> data != NULL)
+-      enet_free (packet -> data);
++        packet -> data != NULL && packet -> data != (enet_uint8 *) (packet + 1))
++      enet_free (packet -> data);
+     enet_free (packet);
+ }
+ 
+@@ -89,8 +88,10 @@
+     if (newData == NULL)
+       return -1;
+ 
+-    memcpy (newData, packet -> data, packet -> dataLength);
+-    enet_free (packet -> data);
++    if (packet -> dataLength != 0)
++      memcpy (newData, packet -> data, packet -> dataLength);
++    if (packet -> data != NULL && packet -> data != (enet_uint8 *) (packet + 1))
++      enet_free (packet -> data);
+     
+     packet -> data = newData;
+     packet -> dataLength = dataLength;
