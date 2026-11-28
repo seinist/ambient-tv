@@ -473,6 +473,7 @@ pub(super) struct TwoPass{
 }
 fn read_bounded(path:&std::path::Path,max:u64)->Result<String>{
     use std::io::Read;
+    if !std::fs::symlink_metadata(path).map_err(|e|e.to_string())?.file_type().is_file(){return Err("not a regular scene file".into());}
     let f=std::fs::File::open(path).map_err(|e|e.to_string())?;
     if !f.metadata().map_err(|e|e.to_string())?.is_file(){return Err("not a regular scene file".into());}
     let mut s=String::new();
@@ -587,7 +588,9 @@ impl TwoPass{
         let mut tmp=self.path.as_os_str().to_os_string();
         tmp.push(format!(".tmp-{}-{}",std::process::id(),SERIAL.fetch_add(1,std::sync::atomic::Ordering::Relaxed)));
         let tmp=std::path::PathBuf::from(tmp);
-        let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e|e.to_string())?;
+        let mut opts=std::fs::OpenOptions::new();opts.write(true).create_new(true);
+        #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt;opts.mode(0o600);}
+        let mut f=opts.open(&tmp).map_err(|e|e.to_string())?;
         let result=(||->Result<()>{
             f.write_all(data.as_bytes()).map_err(|e|e.to_string())?;
             f.sync_all().map_err(|e|e.to_string())?;
