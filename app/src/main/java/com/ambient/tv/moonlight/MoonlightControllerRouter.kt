@@ -250,7 +250,11 @@ internal class MoonlightControllerRouter(
             else (0..3).firstOrNull { it !in blocked && it !in fixed }
         return port?.let {
             val inputDevice = InputDevice.getDevice(id)
-            val caps = MoonlightPadCapabilities(rumble = runCatching { inputDevice?.vibrator?.hasVibrator() == true }.getOrDefault(false))
+            val sensorMask = MoonlightPhysicalMotion.availableMask(inputDevice)
+            val caps = MoonlightPadCapabilities(
+                rumble = runCatching { inputDevice?.vibrator?.hasVibrator() == true }.getOrDefault(false),
+                accelerometer = sensorMask and 1 != 0, gyroscope = sensorMask and 2 != 0,
+            )
             val layout = GamepadAxisLayout.of(inputDevice)
             val deadZones = intArrayOf(MotionEvent.AXIS_X, MotionEvent.AXIS_Y, layout.rightX, layout.rightY)
                 .map { axis ->

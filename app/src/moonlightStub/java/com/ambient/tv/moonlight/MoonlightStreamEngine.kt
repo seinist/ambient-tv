@@ -33,6 +33,9 @@ class MoonlightStreamEngine @Inject constructor() {
     fun sendTouchEvent(owner: Any, type: Byte, pointerId: Int, x: Float, y: Float,
         pressure: Float = 1f, source: Int = 0): Int = -5501
     fun sendMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) = Unit
+    fun setLocalMotionEnabled(owner: Any, enabled: Boolean) = Unit
+    fun localMotionRate(owner: Any, port: Int, type: Byte): Int = 0
+    fun sendLocalMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) = Unit
     fun sendMouseMove(owner: Any, dx: Int, dy: Int) = Unit
     fun sendText(owner: Any, text: String) = Unit
     fun sendGamepad(owner: Any,

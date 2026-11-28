@@ -83,7 +83,10 @@ class MoonlightStreamEngine @Inject constructor(
         }, "moonlight-input").apply { isDaemon = true } })
     private val inputOwnership = MoonlightInputOwnership()
     private val heldKeyboard = mutableMapOf<Short, Byte>()
+    // Protected by lock, including the foreground device sensor subscription reader.
     private val motionRequests = mutableMapOf<Pair<Int, Byte>, Pair<Int, Long>>()
+    private var localMotionEnabled = false
+    private var localMotionEpoch = 0L
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val revision = AtomicLong(0)
     private val mutable = MutableStateFlow(MoonlightStreamStatus())
@@ -290,7 +293,8 @@ class MoonlightStreamEngine @Inject constructor(
                     }
                 }
                 heldKeyboard.clear()
-                inputOwnership.clear(); motionRequests.clear()
+                inputOwnership.clear()
+                synchronized(lock) { motionRequests.clear(); localMotionEnabled = false; localMotionEpoch++ }
             }
             var stopped = false
             repeat(3) {
@@ -430,7 +434,10 @@ class MoonlightStreamEngine @Inject constructor(
                 if (localControllerMask and (1 shl port.toInt()) != 0) {
                     if (localCaps.put(port.toInt(), capabilities) != capabilities)
                         active?.let { it.advertisedControllerMask = it.advertisedControllerMask and (1 shl port.toInt()).inv() }
-                } else localCaps.remove(port.toInt())
+                } else {
+                    localCaps.remove(port.toInt())
+                    motionRequests.keys.removeAll { it.first == port.toInt() && port.toInt() !in remoteControllerPorts }
+                }
             }
             sendArrivals(frame)
             runCatching {
@@ -582,17 +589,57 @@ class MoonlightStreamEngine @Inject constructor(
         return 0
     }
 
-    /** Controller gyroscope and acceleration, from the authenticated Companion stream. */
-    fun sendMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) {
+    /** Enable physical sensor delivery only while the owning Activity accepts gameplay. */
+    fun setLocalMotionEnabled(owner: Any, enabled: Boolean) = synchronized(lock) {
+        if (active?.owner === owner && localMotionEnabled != enabled) {
+            localMotionEnabled = enabled
+            localMotionEpoch++
+        }
+    }
+
+    fun localMotionRate(owner: Any, port: Int, type: Byte): Int = synchronized(lock) {
+        val caps = localCaps[port]
+        if (active?.let { it.owner === owner && it.started && !it.cancelled } != true ||
+            !localMotionEnabled || port !in 0..3 || port in remoteControllerPorts ||
+            localControllerMask and (1 shl port) == 0 ||
+            (type == MoonBridge.LI_MOTION_TYPE_ACCEL && caps?.accelerometer != true) ||
+            (type == MoonBridge.LI_MOTION_TYPE_GYRO && caps?.gyroscope != true)) 0
+        else motionRequests[port to type]?.first ?: 0
+    }
+
+    fun sendLocalMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) {
+        val epoch = synchronized(lock) { localMotionEpoch }
+        if (localMotionRate(owner, port, type) == 0) return
+        sendMotionReport(owner, port, type, x, y, z, epoch)
+    }
+
+    /** Motion from the authenticated Companion stream, in GameStream wire units. */
+    fun sendMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) =
+        sendMotionReport(owner, port, type, x, y, z, null)
+
+    private fun sendMotionReport(owner: Any, port: Int, type: Byte,
+                                 x: Float, y: Float, z: Float, localEpoch: Long?) {
+        if (port !in 0..3 || !x.isFinite() || !y.isFinite() || !z.isFinite() ||
+            type !in setOf(MoonBridge.LI_MOTION_TYPE_ACCEL, MoonBridge.LI_MOTION_TYPE_GYRO)) return
         enqueueInput(owner, Triple("motion", port, type)) {
-            if (port !in remoteReservedPorts(owner) || !x.isFinite() || !y.isFinite() || !z.isFinite()) return@enqueueInput
-            val now = System.nanoTime()
-            val request = motionRequests[port to type] ?: return@enqueueInput
-            if (request.first <= 0 || now - request.second < 1_000_000_000L / request.first) return@enqueueInput
-            motionRequests[port to type] = request.first to now
-            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            val conn = synchronized(lock) {
+                val session = active?.takeIf { it.owner === owner && it.started && !it.cancelled }
+                    ?: return@synchronized null
+                if (localEpoch == null) {
+                    if (port !in remoteControllerPorts) return@synchronized null
+                } else if (localMotionEpoch != localEpoch || localMotionRate(owner, port, type) == 0)
+                    return@synchronized null
+                val request = motionRequests[port to type] ?: return@synchronized null
+                val now = System.nanoTime()
+                if (request.first <= 0 || request.second != 0L &&
+                    now - request.second < 1_000_000_000L / request.first) return@synchronized null
+                motionRequests[port to type] = request.first to now
+                session.connection
+            }
+            // GameStream uses m/s² and degrees/s, not libretro's g and radians/s.
+            val limit = if (type == MoonBridge.LI_MOTION_TYPE_ACCEL) 200f else 8000f
             runCatching { conn?.sendControllerMotionEvent(port.toByte(), type,
-                x.coerceIn(-100f, 100f), y.coerceIn(-100f, 100f), z.coerceIn(-100f, 100f)) }
+                x.coerceIn(-limit, limit), y.coerceIn(-limit, limit), z.coerceIn(-limit, limit)) }
         }
     }
 
@@ -667,8 +714,10 @@ class MoonlightStreamEngine @Inject constructor(
             val port = controllerNumber.toInt()
             if (port !in 0..3 || motionType !in setOf(MoonBridge.LI_MOTION_TYPE_ACCEL, MoonBridge.LI_MOTION_TYPE_GYRO)) return
             enqueueInput(session.owner) {
-                if (isOwned(session)) motionRequests[port to motionType] =
-                    (reportRateHz.toInt() and 0xffff).coerceIn(0, 120) to 0L
+                synchronized(lock) {
+                    if (isOwned(session)) motionRequests[port to motionType] =
+                        (reportRateHz.toInt() and 0xffff).coerceIn(0, 120) to 0L
+                }
             }
         }
         override fun setControllerLED(controllerNumber: Short, r: Byte, g: Byte, b: Byte) = Unit

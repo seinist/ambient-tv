@@ -171,8 +171,10 @@ class MoonlightCompanionLink @Inject constructor(
             engine.setRemoteMotionCapabilities(currentOwner, port, data.mask)
         }
         if (data.mask and 1 != 0)
-            engine.sendMotion(owner ?: return, port, MoonBridge.LI_MOTION_TYPE_ACCEL, data.ax, data.ay, data.az)
+            engine.sendMotion(currentOwner, port, MoonBridge.LI_MOTION_TYPE_ACCEL,
+                moonlightAccelerationFromG(data.ax), moonlightAccelerationFromG(data.ay), moonlightAccelerationFromG(data.az))
         if (data.mask and 2 != 0)
-            engine.sendMotion(owner ?: return, port, MoonBridge.LI_MOTION_TYPE_GYRO, data.gx, data.gy, data.gz)
+            engine.sendMotion(currentOwner, port, MoonBridge.LI_MOTION_TYPE_GYRO,
+                moonlightGyroDegrees(data.gx), moonlightGyroDegrees(data.gy), moonlightGyroDegrees(data.gz))
     }
 }

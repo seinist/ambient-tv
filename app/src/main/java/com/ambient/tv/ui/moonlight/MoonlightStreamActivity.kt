@@ -133,10 +133,17 @@ class MoonlightStreamActivity : ComponentActivity() {
         getSystemService(Context.INPUT_SERVICE) as InputManager
     }
     private val feedback by lazy { MoonlightDeviceFeedback(input) }
+    private val physicalMotion by lazy {
+        com.ambient.tv.moonlight.MoonlightPhysicalMotion(
+            deviceForPort = input::deviceIdForPort,
+            requestedRate = { port, type -> engine.localMotionRate(streamOwner, port, type) },
+            send = { port, type, x, y, z -> engine.sendLocalMotion(streamOwner, port, type, x, y, z) },
+        )
+    }
     private val deviceListener = object : InputManager.InputDeviceListener {
         override fun onInputDeviceAdded(deviceId: Int) { input.registerAttachedDevices(); input.republish() }
-        override fun onInputDeviceChanged(deviceId: Int) { input.removeDevice(deviceId); input.registerAttachedDevices(); input.republish() }
-        override fun onInputDeviceRemoved(deviceId: Int) { keyboard.removeDevice(deviceId); input.removeDevice(deviceId) }
+        override fun onInputDeviceChanged(deviceId: Int) { physicalMotion.stop(); input.removeDevice(deviceId); input.registerAttachedDevices(); input.republish() }
+        override fun onInputDeviceRemoved(deviceId: Int) { physicalMotion.stop(); keyboard.removeDevice(deviceId); input.removeDevice(deviceId) }
     }
     private val keyboard by lazy {
         MoonlightKeyboardRouter { virtualKey, pressed, modifiers ->
@@ -185,6 +192,18 @@ class MoonlightStreamActivity : ComponentActivity() {
                 }
             }
         }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                try {
+                    while (true) {
+                        if (gameplayAllowed && hasWindowFocus() && engine.owns(streamOwner))
+                            physicalMotion.refresh()
+                        else physicalMotion.stop()
+                        delay(250)
+                    }
+                } finally { physicalMotion.stop() }
+            }
+        }
         setContent {
             MoonlightStreamContent(
                 engine = engine,
@@ -226,7 +245,9 @@ class MoonlightStreamActivity : ComponentActivity() {
                         hasWindowFocus() && engine.owns(streamOwner)
                     if (!allowed && gameplayAllowed) { releaseRemoteInputs(); feedback.cancelAll() }
                     gameplayAllowed = allowed
-                    if (allowed) { input.refreshAssignments(); input.republish() }
+                    engine.setLocalMotionEnabled(streamOwner, allowed)
+                    if (allowed) { input.refreshAssignments(); input.republish(); physicalMotion.refresh() }
+                    else physicalMotion.stop()
                     companion.interaction(playing = allowed, menu = menu && hasWindowFocus())
                 },
             )
@@ -329,6 +350,8 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
 
     private fun releaseRemoteInputs() {
+        engine.setLocalMotionEnabled(streamOwner, false)
+        physicalMotion.stop()
         input.releaseAll()
         keyboard.releaseAll()
         pointer.release()

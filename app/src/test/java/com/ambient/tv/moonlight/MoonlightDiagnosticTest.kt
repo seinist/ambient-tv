@@ -11,6 +11,12 @@ class MoonlightDiagnosticTest {
         assertEquals("x", moonlightBoundedText("\uD800x\uDC00"))
     }
 
+    @Test fun motionUsesGameStreamUnits() {
+        assertEquals(9.80665f, moonlightAccelerationFromG(1f), .0001f)
+        assertEquals(180f, moonlightGyroDegrees(kotlin.math.PI.toFloat()), .001f)
+        assertEquals(-90f, moonlightGyroDegrees((-kotlin.math.PI / 2).toFloat()), .001f)
+    }
+
     @Test fun colorEvidenceRequiresBothReportedFields() {
         val hdr = MoonlightVideoMetrics(hdr = true)
         assertEquals("unknown", hdr.copy(outputColorStandard = 6).hdrOutputEvidence)
