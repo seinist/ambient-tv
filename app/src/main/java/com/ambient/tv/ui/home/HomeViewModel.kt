@@ -1575,6 +1575,7 @@ class HomeViewModel @Inject constructor(
         tvPreviewJob = viewModelScope.launch {
             try {
                 val preview = loadLiveTvPreview()
+                awaitBackgroundHomePublishWindow()
                 if (generation == tvPreviewGeneration) tvPreview = preview
             } finally {
                 if (generation == tvPreviewGeneration) {
@@ -1616,7 +1617,10 @@ class HomeViewModel @Inject constructor(
                 fun preview(channels: List<TvhChannel>) = HomeTvPreview(
                     if (showLive) channels.take(HOME_LIVE_TV_LIMIT).map(::item) else emptyList(),
                     if (showRecent) recent.mapNotNull { id -> channels.firstOrNull { it.uuid == id }?.let(::item) } else emptyList())
-                fun publish(preview: HomeTvPreview) {
+                suspend fun publish(preview: HomeTvPreview) {
+                    // Like media-provider rows, avoid changing the cyclic row order while
+                    // the user is actively moving through the Home viewport.
+                    awaitBackgroundHomePublishWindow()
                     if (liveTvRegistry.displayCacheIdentity(repo) == null) return
                     tvPreview = HomeTvPreview(
                         tvPreview.live.filterNot { it.channel.sourceId == repo.source.id } + preview.live,
