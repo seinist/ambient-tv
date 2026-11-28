@@ -25,8 +25,8 @@ internal fun ProgrammeReminderSettings(youtube: Boolean) {
     var manage by remember { mutableStateOf(false) }
     SettingsGroup(title = stringResource(if (youtube) R.string.programme_reminder_smarttube else R.string.settings_live_reminders)) {
         TvSettingRow(
-            title = stringResource(R.string.reminder_auto_switch),
-            body = stringResource(R.string.reminder_auto_switch_hint),
+            title = stringResource(if (youtube) R.string.programme_reminder_auto_play else R.string.reminder_auto_switch),
+            body = stringResource(if (youtube) R.string.programme_reminder_auto_play_hint else R.string.reminder_auto_switch_hint),
             checked = auto,
             onCheckedChange = { auto = it; LiveTvReminderScheduler.setAutoSwitch(context, it, youtube) },
         )
