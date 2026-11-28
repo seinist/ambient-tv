@@ -298,9 +298,11 @@ subprojects {
         // Cronet 500 replaces the old API artifact. Redirect legacy transitive
         // requests from Media3 / Play Services without shipping duplicate classes.
         resolutionStrategy.dependencySubstitution {
-            substitute(module("org.chromium.net:cronet-api"))
-                .using(module("org.chromium.net:cronet:$ambientChromiumCronetVersion"))
-                .because("Cronet 500+ replaces the deprecated API artifact")
+            for (legacy in listOf("cronet-api", "cronet-common", "cronet-fallback", "cronet-shared", "httpengine-native-provider")) {
+                substitute(module("org.chromium.net:$legacy"))
+                    .using(module("org.chromium.net:cronet:$ambientChromiumCronetVersion"))
+                    .because("Cronet 500+ replaces the deprecated transitional artifact")
+            }
         }
     }
 }

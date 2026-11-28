@@ -961,7 +961,8 @@ configurations.configureEach {
         incoming.afterResolve {
             val forbidden = resolutionResult.allComponents.mapNotNull { it.moduleVersion }
                 .filter {
-                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-common", "cronet-bundled", "cronet-shared", "cronet-api")) ||
+                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-bundled", "cronet-common", "cronet-shared",
+                        "cronet-api", "cronet-fallback", "httpengine-native-provider")) ||
                         (it.group == "com.google.net.cronet" && it.name == "cronet-okhttp")
                 }
             check(forbidden.isEmpty()) {

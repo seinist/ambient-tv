@@ -223,6 +223,16 @@ class MavenUpdatesTest(unittest.TestCase):
         self.assertIn("hilt", maven.MANUAL)
         self.assertIn("jna", maven.MANUAL)
 
+    def test_root_compat_template_and_recovery_share_cronet_substitution(self):
+        root = cli.CATALOG.parents[1]
+        canonical = (root / "build.gradle.kts").read_text(encoding="utf-8")
+        template = (root / "gradle/root.build.compat.gradle.kts").read_text(encoding="utf-8")
+        recovery = (root / "build.sh").read_text(encoding="utf-8").split("<<'EOF_ROOT_BUILD'\n", 1)[1].split("\nEOF_ROOT_BUILD", 1)[0] + "\n"
+        self.assertEqual(canonical, template)
+        self.assertEqual(canonical, recovery)
+        self.assertIn('module("org.chromium.net:cronet:$ambientChromiumCronetVersion")', canonical)
+        self.assertNotIn('libs.smarttube.core.ktx', (root / "smarttube_wrappers/sharedutils/build.gradle.kts").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
