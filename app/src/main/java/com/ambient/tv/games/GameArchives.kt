@@ -4,7 +4,8 @@ import com.ambient.tv.data.files.SeekableMedia
 import com.ambient.tv.games.library.GameRomTitles
 import com.ambient.tv.games.library.GameRomChecksums
 import com.github.junrar.Archive
-import com.github.junrar.exception.UnsupportedRarV5Exception
+import com.github.junrar.RarFormat
+import com.github.junrar.exception.UnsupportedRarVersionException
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipFile
@@ -291,7 +292,24 @@ object GameArchives {
                 }
             }
             "rar" -> try {
+                // Dependency migration only: preserve the previous RAR5 rejection.
+                val rar5Signature = byteArrayOf(0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00)
+                val signature = ByteArray(rar5Signature.size)
+                val hasRar5Signature = archive.inputStream().use { input ->
+                    try {
+                        java.io.DataInputStream(input).readFully(signature)
+                        signature.contentEquals(rar5Signature)
+                    } catch (_: java.io.EOFException) {
+                        false
+                    }
+                }
+                if (hasRar5Signature) {
+                    throw GameArchiveException("${archive.name}: RAR5 is not supported")
+                }
                 Archive(archive).use { rar ->
+                    if (rar.format == RarFormat.RAR50) {
+                        throw GameArchiveException("${archive.name}: RAR5 is not supported")
+                    }
                     rar.fileHeaders.filter { !it.isDirectory }.forEach { header ->
                         val out = target(header.fileName.replace('\\', '/'), header.fullUnpackSize) ?: return@forEach
                         out.outputStream().buffered(256 * 1024).use { stream ->
@@ -307,8 +325,8 @@ object GameArchives {
                         }
                     }
                 }
-            } catch (error: UnsupportedRarV5Exception) {
-                throw GameArchiveException("${archive.name}: RAR5 is not supported")
+            } catch (error: UnsupportedRarVersionException) {
+                throw GameArchiveException("${archive.name}: unsupported RAR version")
             }
             "gz" -> {
                 val out = target(archive.name.removeSuffix(".gz").removeSuffix(".GZ"), 0) ?: throw GameArchiveException(archive.name)

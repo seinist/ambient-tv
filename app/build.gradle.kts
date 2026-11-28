@@ -590,9 +590,10 @@ dependencies {
     implementation(libs.zxing.core)
     // WireGuard X25519 (the platform JCA has it only from API 33); also required by smbj/jcifs-ng.
     implementation(libs.bouncycastle.prov)
-    // SFTP file sources. bcpkix uses the published 1.85 release; bcprov retains its 1.85.2 patch.
+    // SFTP file sources. Bouncy Castle provider, PKIX and utility modules share one release.
     implementation(libs.sshj)
     implementation(libs.bouncycastle.pkix)
+    implementation(libs.bouncycastle.util)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -961,7 +962,8 @@ configurations.configureEach {
         incoming.afterResolve {
             val forbidden = resolutionResult.allComponents.mapNotNull { it.moduleVersion }
                 .filter {
-                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-common")) ||
+                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-bundled", "cronet-common", "cronet-shared",
+                        "cronet-api", "cronet-fallback", "httpengine-native-provider")) ||
                         (it.group == "com.google.net.cronet" && it.name == "cronet-okhttp")
                 }
             check(forbidden.isEmpty()) {

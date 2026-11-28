@@ -53,7 +53,7 @@ dependencies {
 
     implementation(libs.smarttube.appcompat)
     implementation(libs.smarttube.preference)
-    implementation(libs.smarttube.core.ktx)
+    implementation(libs.androidx.core.ktx)
 
     implementation(libs.okhttp.core)
     implementation(libs.okhttp.dns.over.https)
@@ -69,7 +69,8 @@ dependencies {
     implementation(libs.disklrucache)
     implementation(libs.netcipher)
     implementation(libs.smarttube.dnsjava)
-    // Android-safe SLF4J 1.x binding required by dnsjava during R8.
+    // Keep SLF4J API and the no-op provider on the same catalog release.
+    implementation(libs.smarttube.slf4jApi)
     implementation(libs.smarttube.slf4j)
 }
 

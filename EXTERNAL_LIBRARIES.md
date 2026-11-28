@@ -5,10 +5,10 @@ Ambient TV keeps external media engines pinned so normal builds are reproducible
 ## Maven / Gradle dependencies (independent of external engines)
 
 ```bash
-./build.sh check-deps          # read-only: all catalog pins
-./build.sh update-deps         # update eligible Maven pins, without building
-./build.sh check-deps media3   # check one shared version key
-./build.sh update-deps media3  # update Media3 alone
+./build.sh deps-check          # read-only: all catalog pins
+./build.sh deps-update         # update eligible Maven pins, compile/test, rollback on failure
+./build.sh deps-check media3   # check one shared version key
+./build.sh deps-update media3  # update Media3 alone
 ```
 
 Requires Python 3.11+. The updater reads `gradle/libs.versions.toml` (including
@@ -18,24 +18,22 @@ discovered automatically. Modules with a shared version must all advertise the
 candidate and publish its Maven POM before the pin advances; BOM-managed
 dependencies follow their BOM. A POM check is not a full Gradle resolution or ABI test. Ordinary APK builds never
 change these pins. No native engine downloads, source pins, assets or Cargo
-lockfiles are changed by these commands.
+lockfiles are changed by these commands. Validation may fetch pinned upstream sources and build test outputs; it never publishes an APK.
 
 Stable numeric releases (including Final, GA and RELEASE qualifiers) are the
 default; snapshots and unknown qualifiers are ignored. Versions are sorted numerically, including alpha, beta, milestone and
 RC stages when explicitly enabled. No downgrades are performed.
 
 ```bash
-MAVEN_CHANNEL=prerelease ./build.sh check-deps
-MEDIA3_CHANNEL=prerelease ./build.sh check-deps media3
-MAVEN_ALLOW_MAJOR=1 ./build.sh update-deps okhttp
+MAVEN_CHANNEL=prerelease ./build.sh deps-check
+MEDIA3_CHANNEL=prerelease ./build.sh deps-check media3
+MAVEN_ALLOW_MAJOR=1 ./build.sh deps-update okhttp
 ```
 
-The same options are available with `update-deps`. Media3 stays on the stable
+The same options are available with `deps-update` and `build-deps` (`update-deps` is a legacy alias). Media3 stays on the stable
 channel unless an explicit prerelease channel is selected. Major-version
 upgrades are reported for manual review by default (the date-based Compose BOM
-is exempt); libVLC stays on its current major even with the major opt-in. The
-AGP/Kotlin/KSP/Hilt matrix, Chromium Cronet alignment, Bouncy Castle, Monogram's
-JNA ABI and explicitly coupled SmartTube compatibility pins remain check-only.
+and Chromium release numbering are exempt); libVLC stays on its current major even with the major opt-in. The toolchain, Bouncy Castle, Cronet, JNA and SmartTube pins participate in validated updates.
 Missing metadata is reported as UNAVAILABLE rather than guessing a version.
 Network/parse errors abort before writing the catalog. Review the diff and run
 the build and playback tests after any update.
@@ -105,6 +103,10 @@ Monogram participates in both commands as well. To update only that pin:
 The next build checks pin/shader/lockfile consistency, runs portable SVP regression tests and rebuilds changed native inputs. Per-ABI `.svp-engine` fingerprints include the engine sources, build scripts, Rust/NDK toolchain and flags; unchanged runtimes are reused. `REBUILD_SVP=1 ./build.sh svp` reruns preparation; `SVP_ABIS=arm64-v8a ./build.sh svp` restricts a standalone build. `SKIP_SVP_NATIVE=1` deliberately bypasses preparation and requires existing packaged libraries. Updating does not alter the Maximum-performance-only runtime gate.
 
 Always review the diff and run playback/login regression tests after an update. Upstream API changes can require a compatibility patch even when the upstream release itself is stable.
+
+## Emulator core updates
+
+Use `./build.sh cores-check [id[,id...]]` or `./build.sh cores-update [id[,id...]]` to manage only `cores/cores.json`. Native libraries (including LibretroDroid) remain under `libs-check` / `libs-update`; Maven dependencies are managed by `deps-check` / `deps-update` / `build-deps`. Legacy `libs-check cores` and `libs-update cores` route to the dedicated core updater.
 
 ## Manual overrides
 

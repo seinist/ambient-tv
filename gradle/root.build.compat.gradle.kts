@@ -1,6 +1,11 @@
 // AMBIENT_TV_ROOT_BUILD_V038
 buildscript {
-    dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
+    // The catalog is the single source of truth, including this early classpath.
+    val kotlinPin = file("gradle/libs.versions.toml").readLines()
+        .single { it.substringBefore('=').trim() == "kotlin" }
+        .substringAfter('=').substringBefore('#').trim().removeSurrounding("\"")
+    require(kotlinPin.isNotBlank())
+    dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinPin") }
 }
 
 plugins {
@@ -15,9 +20,16 @@ plugins {
 val ambientChromiumCronetVersion = libs.versions.chromiumCronet.get()
 subprojects {
     configurations.configureEach {
-        resolutionStrategy.force(
-            "org.chromium.net:cronet-api:$ambientChromiumCronetVersion",
-        )
+        resolutionStrategy.force("org.chromium.net:cronet:$ambientChromiumCronetVersion")
+        // Cronet 500 replaces the old API artifact. Redirect legacy transitive
+        // requests from Media3 / Play Services without shipping duplicate classes.
+        resolutionStrategy.dependencySubstitution {
+            for (legacy in listOf("cronet-api", "cronet-common", "cronet-fallback", "cronet-shared", "httpengine-native-provider")) {
+                substitute(module("org.chromium.net:$legacy"))
+                    .using(module("org.chromium.net:cronet:$ambientChromiumCronetVersion"))
+                    .because("Cronet 500+ replaces the deprecated transitional artifact")
+            }
+        }
     }
 }
 

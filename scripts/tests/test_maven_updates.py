@@ -120,11 +120,11 @@ class MavenUpdatesTest(unittest.TestCase):
         with mock.patch.object(external, "get_bytes", return_value=metadata("3.8.0", "4.0.0")):
             self.assertEqual(external.libvlc_latest_stable("3.8.0-rc01"), "3.8.0")
 
-    def test_no_downgrade_and_manual_toolchain(self):
+    def test_no_downgrade_and_major_review(self):
         pins = maven.catalog_pins(FIXTURE)
         preview = maven.Pin("media3", "1.12.0-rc01", pins["media3"].artifacts)
         self.assertEqual(maven.find_update(preview, {"1.11.1"}, "stable").candidate, "1.12.0-rc01")
-        self.assertEqual(maven.find_update(pins["agp"], {"9.5.0"}, "stable", True).status, "MANUAL")
+        self.assertEqual(maven.find_update(pins["agp"], {"9.5.0"}, "stable").status, "UPDATE")
         self.assertEqual(maven.find_update(pins["libvlc"], {"4.0.0"}, "stable", True).status, "MANUAL")
         self.assertEqual(maven.find_update(pins["okhttp"], {"6.0.0"}, "stable").status, "MANUAL")
         self.assertEqual(maven.find_update(pins["okhttp"], {"6.0.0", "5.6.0"}, "stable").candidate, "5.6.0")
@@ -136,13 +136,14 @@ class MavenUpdatesTest(unittest.TestCase):
         updates = [
             maven.Finding(pins["media3"], "1.12.0", "UPDATE"),
             maven.Finding(pins["okhttp"], "5.6.0", "UPDATE"),
-            maven.Finding(pins["agp"], "9.5.0", "MANUAL"),
+            maven.Finding(pins["agp"], "9.5.0", "UPDATE"),
             maven.Finding(pins["libraries.inline"], "1.4", "UPDATE"),
             maven.Finding(pins["libraries.shorthand"], "1.5", "UPDATE"),
         ]
         actual = maven.render_catalog(FIXTURE, updates)
         expected = (FIXTURE.replace('media3 = "1.11.1"', 'media3 = "1.12.0"')
                     .replace('okhttp = "5.5.0"', 'okhttp = "5.6.0"')
+                    .replace('agp = "9.4.1"', 'agp = "9.5.0"')
                     .replace('version = "1.2"', 'version = "1.4"')
                     .replace('example:shorthand:1.3', 'example:shorthand:1.5'))
         self.assertEqual(actual, expected)
@@ -195,14 +196,57 @@ class MavenUpdatesTest(unittest.TestCase):
             "media3-datasource-okhttp", "media3-datasource-cronet",
         })
         self.assertEqual({a.name for a in pins["chromiumCronet"].artifacts}, {
-            "cronet-api", "cronet-common", "cronet-embedded",
+            "cronet",
         })
         self.assertEqual({a.name for a in pins["okhttp"].artifacts}, {
             "okhttp", "logging-interceptor", "okhttp-dnsoverhttps", "okhttp-brotli",
         })
-        self.assertIn("chromiumCronet", maven.MANUAL)
-        self.assertIn("hilt", maven.MANUAL)
-        self.assertIn("jna", maven.MANUAL)
+        self.assertEqual({a.name for a in pins["bouncycastle"].artifacts}, {
+            "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on",
+        })
+        self.assertEqual({a.name for a in pins["smarttubeSlf4j"].artifacts}, {
+            "slf4j-api", "slf4j-nop",
+        })
+        self.assertNotIn("smarttubeCronetAdapter", pins)
+        self.assertNotIn("smarttubeCoreKtx", pins)
+        self.assertNotIn("smarttubeCoroutines", pins)
+        catalog = maven.tomllib.loads(cli.CATALOG.read_text(encoding="utf-8"))
+        coordinates = []
+        for entry in catalog["libraries"].values():
+            coordinates.append(entry.get("module") or (entry["group"] + ":" + entry["name"]))
+        self.assertEqual(len(coordinates), len(set(coordinates)), "duplicate Maven coordinates")
+        for key in ("agp", "ksp", "bouncycastle", "chromiumCronet", "junrar",
+                    "smarttubeDnsjava", "smarttubeJsonPath", "smarttubeSlf4j"):
+            self.assertNotIn(key, maven.MANUAL)
+        cronet = maven.Pin("chromiumCronet", "143.7445.0", pins["chromiumCronet"].artifacts)
+        self.assertEqual(maven.find_update(cronet, {"500.1.0"}, "stable").status, "UPDATE")
+        for key in ("kotlin", "hilt", "jna"):
+            self.assertNotIn(key, maven.MANUAL)
+
+    def test_validated_update_rolls_back_on_failed_build(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            catalog = root / "gradle" / "libs.versions.toml"
+            catalog.parent.mkdir()
+            catalog.write_text(FIXTURE, encoding="utf-8")
+            with mock.patch.object(cli, "CATALOG", catalog), \
+                 mock.patch.object(cli, "get_bytes", side_effect=repository("1.11.1", "1.12.0")), \
+                 mock.patch.dict(os.environ, {"MAVEN_CHANNEL": "stable", "MAVEN_ALLOW_MAJOR": "0"}, clear=True), \
+                 mock.patch.object(sys, "argv", ["updater", "--apply", "--validate", "media3"]), \
+                 mock.patch.object(cli.subprocess, "run", side_effect=cli.subprocess.CalledProcessError(1, "gradle")):
+                with self.assertRaises(cli.subprocess.CalledProcessError):
+                    cli.main()
+            self.assertEqual(catalog.read_text(), FIXTURE)
+
+    def test_root_compat_template_and_recovery_share_cronet_substitution(self):
+        root = cli.CATALOG.parents[1]
+        canonical = (root / "build.gradle.kts").read_text(encoding="utf-8")
+        template = (root / "gradle/root.build.compat.gradle.kts").read_text(encoding="utf-8")
+        recovery = (root / "build.sh").read_text(encoding="utf-8").split("<<'EOF_ROOT_BUILD'\n", 1)[1].split("\nEOF_ROOT_BUILD", 1)[0] + "\n"
+        self.assertEqual(canonical, template)
+        self.assertEqual(canonical, recovery)
+        self.assertIn('module("org.chromium.net:cronet:$ambientChromiumCronetVersion")', canonical)
+        self.assertNotIn('libs.smarttube.core.ktx', (root / "smarttube_wrappers/sharedutils/build.gradle.kts").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
