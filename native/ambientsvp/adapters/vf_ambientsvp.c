@@ -223,11 +223,12 @@ static void process(struct mp_filter *f) {
         svp_vk_reap(p->vk, false);
         if (!p->api.enabled()) {
             struct mp_image *previous = svp_vk_take_previous(p->vk);
-            svp_vk_reset_history(p->vk);
             if (previous) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, previous)); return; }
+            svp_vk_reset_history(p->vk);
         }
         struct mp_image *out = svp_vk_take_output(p->vk);
         if (out) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out)); return; }
+        if(p->eof&&p->vk->previous){svp_vk_eof(p->vk);mp_filter_internal_mark_progress(f);return;}
     }
 #endif
     if (receive(f)) return;
@@ -284,7 +285,8 @@ static void process(struct mp_filter *f) {
             AmbientSvpVkTuning tune={.block=block,.overlap=pixels,.pel=pel,.radius=radius>4?4:radius,
                 .satd=1,.chroma=1,.lambda=block*block*4/(pel*pel),.pnew=50,
                 .scene=p->opts->scene==1?30:p->opts->scene==3?70:50,.artifacts=p->opts->artifacts};
-            p->vk = svp_vk_new(p->api.lib, img, p->opts->source, p->opts->fps,&tune);
+            unsigned algo=p->opts->algo?p->opts->algo:preset==3?23:13;
+            p->vk = svp_vk_new(p->api.lib, img, p->opts->source, p->opts->fps,&tune,algo);
             if (p->vk) MP_INFO(f, "SVP native Vulkan resident path %dx%d %.6f -> %.6f\n",
                                img->w, img->h, p->opts->source, p->opts->fps);
         }
