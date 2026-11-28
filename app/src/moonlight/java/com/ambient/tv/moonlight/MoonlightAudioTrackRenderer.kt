@@ -38,6 +38,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
     private var lastQueueSample = 0L
     private var lastSnapshotNanos = 0L
     private var localQueuedMs = 0.0
+    private var lastQueueEstimateNanos = 0L
     private var nativeQueuedMs = 0
     @Volatile private var snapshot = MoonlightAudioMetrics()
     private val audioTimestamp = android.media.AudioTimestamp()
@@ -161,6 +162,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     localQueuedMs = ((writtenFrames - playbackHead).coerceAtLeast(0L) * 1000.0 / rate)
                         .coerceAtMost(1000.0)
                     lastQueueSample = now
+                    lastQueueEstimateNanos = now
                     if (now - lastSnapshotNanos >= 250_000_000L) {
                         val projected = runCatching {
                             if (t.getTimestamp(audioTimestamp)) moonlightProjectAudioHead(
@@ -174,6 +176,12 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                         publishSnapshot(t, now)
                         lastSnapshotNanos = now
                     }
+                } else if (lastQueueEstimateNanos != 0L) {
+                    // Project normal playback between hardware queries, then account for
+                    // every successful write below. The next hardware sample corrects drift.
+                    localQueuedMs = (localQueuedMs - (now - lastQueueEstimateNanos).coerceAtLeast(0L) / 1_000_000.0)
+                        .coerceAtLeast(0.0)
+                    lastQueueEstimateNanos = now
                 }
                 // The device may impose a larger hardware floor. Account for both queues
                 // rather than letting a second PCM queue accumulate behind common-c.
@@ -187,6 +195,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     val n = t.write(pending, pendingOffset, pendingLength, AudioTrack.WRITE_NON_BLOCKING)
                     if (n < 0) { handleWriteError(n); lostSamples.addAndGet(length.toLong()); return }
                     writtenFrames += n / outputChannels
+                    localQueuedMs = (localQueuedMs + n * 1000.0 / outputChannels / rate).coerceAtMost(1000.0)
                     pendingOffset += n
                     pendingLength -= n
                     // If the older tail could not drain, bound latency by dropping it.
@@ -200,6 +209,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                 }
                 failures = 0
                 writtenFrames += written / outputChannels
+                localQueuedMs = (localQueuedMs + written * 1000.0 / outputChannels / rate).coerceAtMost(1000.0)
                 val remaining = length - written
                 if (remaining > 0) {
                     if (remaining <= pending.size) {
@@ -300,6 +310,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         lastQueueSample = 0L
         lastSnapshotNanos = 0L
         localQueuedMs = 0.0
+        lastQueueEstimateNanos = 0L
         nativeQueuedMs = 0
         timestampBacked = false
         queueReductionMs = 0
