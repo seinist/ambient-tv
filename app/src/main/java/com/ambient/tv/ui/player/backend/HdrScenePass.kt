@@ -151,8 +151,8 @@ internal object HdrScenePlanner {
                 if (kind == 4 && size >= 7 &&
                     (rbsp[p].toInt() and 255) == 0xb5 && rbsp[p+1] == 0.toByte() &&
                     rbsp[p+2] == 0x3c.toByte() && rbsp[p+3] == 0.toByte() &&
-                    rbsp[p+4] == 1.toByte() && rbsp[p+5] == 4.toByte() && rbsp[p+6] == 1.toByte()) {
-                    val hash = hex(MessageDigest.getInstance("SHA-256").digest(rbsp.copyOfRange(p,p+size)))
+                    rbsp[p+4] == 1.toByte() && rbsp[p+5] == 4.toByte() && (rbsp[p+6] == 0.toByte() || rbsp[p+6] == 1.toByte())) {
+                    val hash = "${rbsp[p+6]}:" + hex(MessageDigest.getInstance("SHA-256").digest(rbsp.copyOfRange(p,p+size)))
                     if (result != null && result != hash) return false
                     result = hash
                 }
@@ -290,6 +290,8 @@ internal object HdrScenePlanner {
             }
             samples
         } finally { extractor.release() }
+        val version = samples.firstOrNull()?.metadata?.substringBefore(':') ?: return null
+        if (samples.any { it.metadata.substringBefore(':') != version }) return null
         val pts = samples.map { it.ptsUs }.toHashSet()
         if (pts.size != samples.size) return null
         val cuts = HdrContentSceneDetector.analyze(file,pts) ?: return null
@@ -302,7 +304,7 @@ internal object HdrScenePlanner {
                 appendLine("AMBIENTSVP_SCENE_PLAN_1");appendLine(key)
                 plan.ends.forEach { appendLine(it) }
             })
-            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null)
+            HdrSceneSession(file,length,modified,key,plan,manifest,File(run,"cache"),local==null,version.toInt())
         } catch (e: Exception) { run.deleteRecursively();throw e }
     }
 }
@@ -316,6 +318,7 @@ internal class HdrSceneSession(
     private val manifest: File,
     private val cache: File,
     private val staged: Boolean = false,
+    private val version: Int = 1,
 ) {
     var mode: Int = 1
         private set
@@ -330,7 +333,7 @@ internal class HdrSceneSession(
             // empty/truncated/wrong-source cache before requesting replay;
             // the native second pass validates every interval and profile.
             val header = cache.inputStream().bufferedReader().use {
-                it.readLine() == "AMBIENTSVP_SCENE_CACHE_1" && it.readLine() == key &&
+                it.readLine() == "AMBIENTSVP_SCENE_CACHE_$version" && it.readLine() == key &&
                     !it.readLine().isNullOrBlank() && !it.readLine().isNullOrBlank()
             }
             if (!header) false else java.io.RandomAccessFile(cache,"r").use { f ->
@@ -340,9 +343,21 @@ internal class HdrSceneSession(
                 val line = tail.toString(Charsets.UTF_8).trimEnd().substringAfterLast('\n')
                 val fields = line.trim().split(Regex("\\s+"))
                 val first = if (plan.ends.size == 1) 0L else plan.ends[plan.ends.lastIndex-1]
-                fields.size == 17 && fields[0].toLongOrNull() == first &&
-                    fields[1].toLongOrNull() == plan.ends.last() &&
-                    fields.last().toIntOrNull()?.let { it in 1..1000 } == true
+                if (fields.size < 3 || fields[0].toLongOrNull() != first ||
+                    fields[1].toLongOrNull() != plan.ends.last()) false
+                else if (version == 1) fields.size == 17 && fields.last().toIntOrNull()?.let { it in 1..1000 } == true
+                else {
+                    val count = fields[2].toIntOrNull() ?: return@use false
+                    if (count !in 1..3) return@use false
+                    var cursor = 3
+                    repeat(count) {
+                        val n = fields.getOrNull(cursor)?.toIntOrNull() ?: return@use false
+                        if (n !in 0..15 || cursor+6+2*n>fields.size ||
+                            fields[cursor+5].toIntOrNull()!=0) return@use false
+                        cursor+=6+2*n
+                    }
+                    cursor==fields.size
+                }
             }
         }.getOrDefault(false)
         if (!matching) return false
