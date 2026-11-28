@@ -42,7 +42,10 @@ compiler build is not proof of correct gameplay or a performance improvement.
   stay disabled there. Illegal opcodes, debugging and executable mapping
   failure retain upstream fallbacks.
   Pure ALU traces now span up to 32 guest instructions and retain up to ten
-  frequently accessed GPRs in caller-saved AArch64 registers. Dirty values
+  frequently accessed GPRs, SR and system registers in caller-saved AArch64
+  registers. Flag-heavy traces load and store SR at most once per trace when
+  allocated, including full SR writes and multiply accumulator transfers.
+  Dirty values
   are written back before any helper or trace exit. Memory/control-only hot
   blocks are cached without executable allocation;
   short ALU prefixes can now end in a native terminal. The pinned upstream

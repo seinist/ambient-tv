@@ -226,6 +226,50 @@ int main(void)
         for(unsigned i=0;i<optimized;++i)after+=ambient_sh2_gpr_access(output[i],&guest,&load);
         assert(before==48 && after==3);
     }
+    // Flag-heavy traces must keep SR resident, even across mixed T readers,
+    // arithmetic, and full SR writes. Compare the optimized and raw machine
+    // code for all registers, including the multiply accumulator and PR.
+    {
+        const uint16_t sequence[]={0x312e,0x312a,0x400e,0x0018,0x4024,0x300d,
+                                  0x401a,0x011a,0x402a,0x032a,0x0019,0x200f};
+        for(unsigned block=0;block<256;++block) {
+            uint32_t raw[AMBIENT_SH2_MAX_WORDS]={0xd503245fu,0xaa0103e7u};
+            uint32_t opt[AMBIENT_SH2_MAX_WORDS]={raw[0],raw[1]};
+            unsigned words=2;
+            for(unsigned i=0;i<32;++i) {
+                unsigned cost;
+                const uint16_t op=sequence[(i+block)% (sizeof(sequence)/sizeof(sequence[0]))];
+                const unsigned n=ambient_sh2_emit_extended(op,raw+words,layout,&cost);
+                assert(n);words+=n-1;
+            }
+            unsigned optimized=2+ambient_sh2_regcache(raw+2,words-2,opt+2);
+            unsigned before=0,after=0,key,load;
+            for(unsigned i=2;i<words;++i)
+                if(ambient_sh2_state_access(raw[i],&key,&load)&&key==32)++before;
+            for(unsigned i=2;i<optimized;++i)
+                if(ambient_sh2_state_access(opt[i],&key,&load)&&key==32)++after;
+            assert(before>2 && after<=2);
+            raw[words++]=0xd65f03c0u;opt[optimized++]=0xd65f03c0u;
+            memset(&regs,0,sizeof(regs));
+            for(unsigned i=0;i<16;++i)regs.r[i]=next(&seed);
+            regs.mach=next(&seed);regs.macl=next(&seed);regs.gbr=next(&seed);
+            regs.vbr=next(&seed);regs.pr=next(&seed);
+            __typeof__(regs) want=regs;
+            uint32_t got_sr=next(&seed),want_sr=got_sr;
+            assert(mprotect(code,(size_t)page,PROT_READ|PROT_WRITE)==0);
+            memcpy(code,raw,words*sizeof(uint32_t));
+            __builtin___clear_cache((char*)code,(char*)code+words*sizeof(uint32_t));
+            assert(mprotect(code,(size_t)page,PROT_READ|PROT_EXEC)==0);
+            ((void(*)(uint32_t*,uint32_t*))code)(want.r,&want_sr);
+            assert(mprotect(code,(size_t)page,PROT_READ|PROT_WRITE)==0);
+            memcpy(code,opt,optimized*sizeof(uint32_t));
+            __builtin___clear_cache((char*)code,(char*)code+optimized*sizeof(uint32_t));
+            assert(mprotect(code,(size_t)page,PROT_READ|PROT_EXEC)==0);
+            ((void(*)(uint32_t*,uint32_t*))code)(regs.r,&got_sr);
+            assert(want_sr==got_sr && !memcmp(&regs,&want,sizeof(regs)));
+        }
+        puts("AArch64 SH2: 256 mixed system/flag register-cache traces passed");
+    }
     // Every legal guest instruction is covered by either the native emitter
     // or a specialized terminal. The pinned decoder parity is checked separately.
     // Test concatenated blocks, not just independent opcodes: flags and
