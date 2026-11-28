@@ -98,6 +98,7 @@ enum class MediaSystem(
             PLEX, JELLYFIN, EMBY, DLNA, ROMM, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
         ).filter { it != TELEGRAM || com.ambient.tv.modules.SystemModuleAvailability.monogramOffered }
             .filter { it != SPOTIFY || com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered }
+            .filter { it != YOUTUBE || com.ambient.tv.modules.SystemModuleAvailability.smartTubeOffered }
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND
