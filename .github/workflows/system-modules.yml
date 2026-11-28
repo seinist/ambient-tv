@@ -8,6 +8,8 @@ on:
       - 'scripts/package_system_modules.py'
       - 'scripts/export_monogram_adapter.py'
       - 'scripts/test_export_monogram_adapter.py'
+      - 'scripts/strip_smarttube_classes.py'
+      - 'scripts/test_strip_smarttube_classes.py'
       - 'scripts/check_modular_preview_apk.py'
       - 'scripts/test_*system_modules.py'
       - 'scripts/test_check_modular_preview_apk.py'
@@ -40,6 +42,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_package_system_modules.py
           python3 -m unittest discover -s scripts -p test_check_modular_preview_apk.py
           python3 -m unittest discover -s scripts -p test_export_monogram_adapter.py
+          python3 -m unittest discover -s scripts -p test_strip_smarttube_classes.py
       - name: Build reproducible module package
         run: |
           set -euo pipefail
