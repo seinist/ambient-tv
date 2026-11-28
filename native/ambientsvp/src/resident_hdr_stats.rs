@@ -25,10 +25,25 @@ pub struct HdrTrack{pub a:[u32;4],pub b:[u32;4],pub ellipse:[u32;2]}
 // once per process. Quantization is performed from the high precision
 // linear value rather than from device-specific shader pow() results.
 const PQ_CODES:usize=0x3c01;
+// Q30 clockwise rotation coefficients, identical for CPU and GPU.
+const ANGLE_SCALE:i128=1i128<<30;
+fn ellipse_rotation(angle:u32)->(i32,i32){
+    let (sin,cos)=match angle{0=>(0.0,1.0),90=>(1.0,0.0),180=>(0.0,-1.0),
+        _=>f64::from(angle).to_radians().sin_cos()};
+    ((cos*ANGLE_SCALE as f64).round() as i32,(sin*ANGLE_SCALE as f64).round() as i32)
+}
+fn ellipse_contains_fixed(dx:i64,dy:i64,axes:[u32;3])->bool{
+    let (c,s)=ellipse_rotation(axes[2]);
+    let (x,y)=(i128::from(dx),i128::from(dy));
+    let u=x*i128::from(c)+y*i128::from(s);
+    let v=-x*i128::from(s)+y*i128::from(c);
+    let (a2,b2)=(i128::from(axes[0]).pow(2),i128::from(axes[1]).pow(2));
+    u*u*b2+v*v*a2<=a2*b2*ANGLE_SCALE*ANGLE_SCALE
+}
 fn pq_table()->&'static Vec<u32>{
     static TABLE:std::sync::OnceLock<Vec<u32>>=std::sync::OnceLock::new();
     TABLE.get_or_init(||{
-        let mut table=Vec::with_capacity(PQ_CODES*8);
+        let mut table=Vec::with_capacity(PQ_CODES*8+181*4);
         for bits in 0..PQ_CODES{
             let exp=(bits>>10)&31;let mant=(bits&1023) as f64;
             let x=if exp==0{mant*2f64.powi(-24)}else{(1.0+mant/1024.0)*2f64.powi(exp as i32-15)};
@@ -38,6 +53,10 @@ fn pq_table()->&'static Vec<u32>{
                 (linear as f32).to_bits(),0,
                 (linear*262_700_000.0).round() as u32,(linear*678_000_000.0).round() as u32,
                 (linear*59_300_000.0).round() as u32,0]);
+        }
+        for angle in 0..=180{
+            let (c,s)=ellipse_rotation(angle);
+            table.extend_from_slice(&[c as u32,s as u32,0,0]);
         }
         table
     })
@@ -88,25 +107,16 @@ impl Buffer{
 // Coordinates follow section 6.1 (pixel centers, clockwise angle).
 fn ellipse_spans(rect:[u32;4],center:[u32;2],axes:[u32;3],height:u32)->Vec<u32>{
     let [a,b,angle]=axes;
-    let (sin,cos)=match angle{0|180=>(0.0,1.0),90=>(1.0,0.0),_=>f64::from(angle).to_radians().sin_cos()};
+    let (c,s)=ellipse_rotation(angle);
+    let (sin,cos)=(f64::from(s)/ANGLE_SCALE as f64,f64::from(c)/ANGLE_SCALE as f64);
     let (a,b)=(f64::from(a),f64::from(b));
     let inv_a=1.0/(a*a);let inv_b=1.0/(b*b);
     let aa=cos*cos*inv_a+sin*sin*inv_b;
     let ab=sin*cos*(inv_a-inv_b);
     // det = 1/(a²b²), computed directly to avoid cancellation.
-    let det=inv_a*inv_b;
+    let det=inv_a*inv_b*(sin*sin+cos*cos).powi(2);
     let mut spans=vec![0;2*height as usize];
-    let inside=|x:i64,y:i64|{
-        let dx=x-i64::from(center[0]);let dy=y-i64::from(center[1]);
-        if angle==0||angle==180||angle==90{
-            let (dx,dy)=if angle==90{(dy,dx)}else{(dx,dy)};
-            let (aa,bb)=((a as i128).pow(2),(b as i128).pow(2));
-            return i128::from(dx).pow(2)*bb+i128::from(dy).pow(2)*aa<=aa*bb;
-        }
-        let (x,y)=(dx as f64,dy as f64);
-        let u=(cos*x+sin*y)/a;let v=(-sin*x+cos*y)/b;
-        u*u+v*v<=1.0+8.0*f64::EPSILON
-    };
+    let inside=|x:i64,y:i64|ellipse_contains_fixed(x-i64::from(center[0]),y-i64::from(center[1]),axes);
     for y in rect[1]..rect[3].min(height){
         let dy=f64::from(y)-f64::from(center[1]);
         let rad=aa-det*dy*dy;
@@ -1081,5 +1091,20 @@ fn pq_table_matches_independent_decimal_vectors(){
     let t=pq_table();
     assert_eq!(t[0],0);assert_eq!(t[(PQ_CODES-1)*8],100000);
     assert_eq!((0x37ff..=0x3803).map(|i|t[i*8]).collect::<Vec<_>>(),[920,922,927,932,936]);
-    assert!(t.chunks_exact(8).map(|v|v[0]).collect::<Vec<_>>().windows(2).all(|p|p[0]<=p[1]));
+    assert!(t[..PQ_CODES*8].chunks_exact(8).map(|v|v[0]).collect::<Vec<_>>().windows(2).all(|p|p[0]<=p[1]));
+}
+
+#[cfg(test)]
+#[test]
+fn angled_ellipse_scanlines_match_fixed_selector(){
+    for angle in [1,17,45,73,89,91,137,179]{
+        let axes=[40,7,angle];
+        let spans=ellipse_spans([0,0,89,83],[43,41],axes,83);
+        for y in 0..83{
+            for x in 0..89{
+                assert_eq!(x as u32>=spans[y*2]&&(x as u32)<spans[y*2+1],
+                    ellipse_contains_fixed(x as i64-43,y as i64-41,axes),"angle {angle} pixel {x},{y}");
+            }
+        }
+    }
 }
