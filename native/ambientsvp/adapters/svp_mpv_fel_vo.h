@@ -48,11 +48,9 @@ static inline void svp_fel_vo_retire_output(struct priv *p,pl_tex output)
 #endif
 }
 #if PL_API_VER >= 367 && defined(PL_HAVE_DOVI) && defined(PL_HAVE_VULKAN)
-static inline bool svp_fel_target(pl_gpu gpu,pl_tex *tex,int w,int h)
+static inline bool svp_fel_target(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex *tex,int w,int h)
 {
-    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
-    return w>0&&h>0&&fmt&&pl_tex_recreate(gpu,tex,pl_tex_params(
-        .w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true));
+    return svp_placebo_quality_target(gpu,s,tex,w,h,false);
 }
 static inline struct pl_frame svp_fel_rgb(pl_tex tex)
 {
@@ -74,7 +72,7 @@ static inline bool svp_fel_vo_source(struct priv *p,struct vo *vo,struct svp_fel
     if(s->ids[slot]==id&&s->sources[slot])return true;
     s->ids[slot]=0;
     svp_placebo_quality_source_changed(p->gpu,&s->quality,s->sources[slot]);
-    if(!svp_fel_eligible(source)||!svp_fel_target(p->gpu,&s->sources[slot],source->w,source->h))return false;
+    if(!svp_fel_eligible(source)||!svp_fel_target(p->gpu,&s->quality,&s->sources[slot],source->w,source->h))return false;
     struct mp_image *mpi=mp_image_new_ref(source);
     if(!mpi)return false;
     struct frame_priv *fp=talloc_zero(mpi,struct frame_priv);

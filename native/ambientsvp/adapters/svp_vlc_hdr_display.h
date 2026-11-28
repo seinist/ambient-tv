@@ -111,18 +111,16 @@ static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp
     pl_tex_destroy(gpu,&s->output);svp_placebo_quality_destroy(gpu,&s->quality);pl_dispatch_destroy(&s->dp);
     *s=(struct ambient_svp_hdr_display){0};
 }
-static inline bool ambient_svp_hdr_target(pl_gpu gpu,pl_tex *tex,int w,int h)
+static inline bool ambient_svp_hdr_target(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex *tex,int w,int h)
 {
-    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
-    return w>0&&h>0&&fmt&&pl_tex_recreate(gpu,tex,pl_tex_params(
-        .w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true));
+    return svp_placebo_quality_target(gpu,s,tex,w,h,false);
 }
-static inline bool ambient_svp_hdr_copy(pl_gpu gpu,pl_dispatch dp,const struct pl_frame *img,
+static inline bool ambient_svp_hdr_copy(pl_gpu gpu,struct svp_placebo_quality *s,pl_dispatch dp,const struct pl_frame *img,
     pl_tex *out,bool raw)
 {
     pl_tex input=img->planes[0].texture;
     if(img->num_planes!=1||!input||input==*out||
-        !ambient_svp_hdr_target(gpu,out,input->params.w,input->params.h))return false;
+        !ambient_svp_hdr_target(gpu,s,out,input->params.w,input->params.h))return false;
     const struct pl_shader_desc d={.desc={.name="svp_input",.type=PL_DESC_SAMPLED_TEX},.binding={.object=input}};
     pl_shader sh=pl_dispatch_begin(dp);
     if(!sh)return false;
@@ -171,7 +169,7 @@ static inline bool ambient_svp_hdr_source_load(pl_gpu gpu,pl_log log,
             ok=img.repr.sys==PL_COLOR_SYSTEM_DOLBYVISION&&img.repr.dovi;
         }
     }
-    if(ok)ok=ambient_svp_hdr_copy(gpu,s->dp,&img,&dst->texture,raw_copy);
+    if(ok)ok=ambient_svp_hdr_copy(gpu,&s->quality,s->dp,&img,&dst->texture,raw_copy);
     // Even on a failed shader, retire the source via #510's proven GPU
     // consumer fence. The cache owns only its copied texture, not AImage.
     if(!ambient_ahb_finish(owner,lease))ok=false;

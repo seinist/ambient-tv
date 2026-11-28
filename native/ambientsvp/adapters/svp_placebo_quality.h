@@ -95,7 +95,9 @@ static inline void svp_placebo_quality_retire_texture(pl_gpu gpu,struct svp_plac
 }
 static inline void svp_placebo_quality_source_changed(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
 {
-    if(texture)svp_placebo_quality_retire_texture(gpu,s,texture);
+    (void)gpu;(void)texture;
+    // Content writes are ordered by the libplacebo timeline; only actual
+    // allocation replacement must retire native image views.
     // Zero disables cache after theoretical generation wrap.
     if(s->generation_exhausted)return;
     if(s->generation!=UINT64_MAX)++s->generation;
@@ -110,12 +112,15 @@ static inline void svp_placebo_quality_destroy(pl_gpu gpu,struct svp_placebo_qua
     if(s->lib)dlclose(s->lib);
     *s=(struct svp_placebo_quality){0};
 }
-static inline bool svp_placebo_quality_target(pl_gpu gpu,pl_tex *tex,int w,int h,bool storage)
+static inline bool svp_placebo_quality_target(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex *tex,int w,int h,bool storage)
 {
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|
         (storage?PL_FMT_CAP_STORABLE:0));
-    return w>0&&h>0&&fmt&&pl_tex_recreate(gpu,tex,pl_tex_params(
-        .w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true,.storable=storage));
+    if(w<=0||h<=0||!fmt)return false;
+    if(*tex&&(*tex)->params.w==w&&(*tex)->params.h==h&&(*tex)->params.format==fmt&&
+        (*tex)->params.sampleable&&(*tex)->params.renderable&&(!storage||(*tex)->params.storable))return true;
+    if(*tex)svp_placebo_quality_retire_texture(gpu,s,*tex);
+    return pl_tex_recreate(gpu,tex,pl_tex_params(.w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true,.storable=storage));
 }
 static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo_quality *s,
     pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index,bool capture)
@@ -165,12 +170,10 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     if(s->device_lost||(capture&&s->capture_failed))return false;
     if(s->pending_count==SVP_PLACEBO_PENDING&&!svp_placebo_retire_one(gpu,s,0,2))return false;
     if(s->device_lost||(capture&&s->capture_failed))return false;
-    if(*out&&((*out)->params.w!=w||(*out)->params.h!=h))
-        svp_placebo_quality_retire_texture(gpu,s,*out);
     if(!s->done)s->done=pl_vulkan_sem_create(gpu,pl_vulkan_sem_params(.type=VK_SEMAPHORE_TYPE_TIMELINE));
     if(!s->done||s->value==UINT64_MAX||*out==a||*out==b||
         (previous&&*out==previous)||(next&&*out==next)||
-        !svp_placebo_quality_target(gpu,out,w,h,true))return false;
+        !svp_placebo_quality_target(gpu,s,out,w,h,true))return false;
     pl_tex tex[5]={a,b,*out,NULL,NULL};
     unsigned count=3;
     if(a==b){tex[1]=*out;count=2;}
