@@ -164,6 +164,23 @@ val modulePackaging = providers.gradleProperty("MODULE_PACKAGING")
     .orElse(providers.environmentVariable("MODULE_PACKAGING")).orElse("full").get()
 require(modulePackaging in setOf("full", "modular-preview")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
 val modularPreview = modulePackaging == "modular-preview"
+val smartTubeBundled = rootProject.findProject(":youtubeapi") != null
+val smartTubeAdapterInputs = fileTree("src/main/java/com/ambient/tv/youtube") { include("**/*.kt") }.files +
+    fileTree(rootProject.file("smarttube_wrappers")) { include("**/*.gradle.kts", "**/*.pro") }.files + setOf(
+        rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/external-versions.properties"),
+        rootProject.file("scripts/patch_smarttube_compat.py"),
+        file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
+        file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
+    )
+val smartTubeAdapterSha = MessageDigest.getInstance("SHA-256").let { digest ->
+    smartTubeAdapterInputs.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(it.readBytes())
+        digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+}
 val monogramEnabled = !modularPreview && (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }
@@ -333,6 +350,8 @@ android {
         } else ""
         buildConfigField("String", "MONOGRAM_BINDING_SHA256", quotedBuildConfigString(monogramBindingSha))
         buildConfigField("String", "MONOGRAM_ADAPTER_SHA256", quotedBuildConfigString(monogramAdapterSha))
+        buildConfigField("String", "SMARTTUBE_ADAPTER_SHA256", quotedBuildConfigString(smartTubeAdapterSha))
+        buildConfigField("boolean", "SMARTTUBE_BUNDLED", smartTubeBundled.toString())
         buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
         val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
         buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", monogramPgoGenerate.toString())
@@ -540,13 +559,14 @@ abstract class ExportMonogramDex @Inject constructor(
     @get:InputFile abstract val exporter: org.gradle.api.file.RegularFileProperty
     @get:InputFile abstract val d8: org.gradle.api.file.RegularFileProperty
     @get:Input abstract val binding: Property<String>
+    @get:Input abstract val module: Property<String>
     @get:OutputDirectory abstract val destination: org.gradle.api.file.DirectoryProperty
 
     @TaskAction fun export() {
         val output = destination.get().asFile
         check(!output.exists() || output.deleteRecursively()) { "Cannot clean Monogram adapter output" }
         val command = mutableListOf("python3", exporter.get().asFile.absolutePath,
-            "--d8", d8.get().asFile.absolutePath, "--binding", binding.get(),
+            "--d8", d8.get().asFile.absolutePath, "--binding", binding.get(), "--module", module.get(),
             "--output", output.absolutePath)
         for (input in allJars.get().map { it.asFile } + allDirectories.get().map { it.asFile }) {
             command.addAll(listOf("--input", input.absolutePath))
@@ -561,9 +581,26 @@ if (monogramEnabled) {
         val task = tasks.register<ExportMonogramDex>("exportMonogramAdapterDex") {
             exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
             binding.set(monogramAdapterSha)
+            module.set("monogram")
             androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
             d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
             destination.set(layout.buildDirectory.dir("outputs/system-modules/monogram-dex"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
+            ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
+    }
+}
+
+if (smartTubeBundled) {
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+        val task = tasks.register<ExportMonogramDex>("exportSmartTubeAdapterDex") {
+            exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            binding.set(smartTubeAdapterSha)
+            module.set("smarttube")
+            androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
+            d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
+            destination.set(layout.buildDirectory.dir("outputs/system-modules/smarttube-dex"))
         }
         variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
             ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
