@@ -558,6 +558,14 @@ mod tests{
         assert!(s.preflight.is_some());
         assert_eq!(unsafe{ambient_svp_android_stream_destroy(stream)},1);
         assert!(unsafe{ambient_svp_android_stream_create_format(64,64,99)}.is_null());
+        let q=ResidentOptions{preset:3,algorithm:23,..Default::default()};
+        let configured=unsafe{ambient_svp_android_stream_create_quality(64,64,4,&q)};
+        assert!(!configured.is_null());
+        let s=unsafe{&*configured};
+        assert!(s.extended&&s.previous.is_null()&&s.lookahead.is_null()&&s.older.is_null());
+        assert_eq!(unsafe{ambient_svp_android_stream_destroy(configured)},1);
+        let invalid=ResidentOptions{algorithm:12,..q};
+        assert!(unsafe{ambient_svp_android_stream_create_quality(64,64,4,&invalid)}.is_null());
     }
     #[test]
     #[ignore="requires a physical Android Vulkan device with compositor AHB extensions"]
