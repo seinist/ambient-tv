@@ -70,13 +70,13 @@ class GameMetadataRefreshPolicyTest {
         assertTrue(gameMetadataMatchesQueryIdentity(previous.copy(canonicalTitle = verified), query))
     }
 
-    @Test fun officialThumbnailMirrorVersionsOnlyTheLibretroLookupCaches() {
+    @Test fun changedSearchPolicyVersionsAllProviderLookupCaches() {
         val query = gameMetadataQuery(game(), null, "en", "eu", null,
             provider = GameMetadataProviderIds.LIBRETRO)
         val legacy = gameMetadataFingerprint(game(), query)
         assertNotEquals(legacy, gameMetadataLookupFingerprint(GameMetadataProviderIds.LIBRETRO, legacy))
         for (provider in listOf(GameMetadataProviderIds.THEGAMESDB, GameMetadataProviderIds.SCREENSCRAPER)) {
-            assertEquals(legacy, gameMetadataLookupFingerprint(provider, legacy))
+            assertNotEquals(legacy, gameMetadataLookupFingerprint(provider, legacy))
         }
         assertNotEquals(gameMetadataLookupFingerprint(GameMetadataProviderIds.LIBRETRO, legacy),
             gameMetadataLookupFingerprint(GameMetadataProviderIds.LIBRETRO,

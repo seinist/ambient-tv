@@ -31,6 +31,9 @@ class GameMetadataPolicyTest {
         }
         assertEquals("Game (Part II) - Adventure", gameMetadataSearchName("Game (Part II) - Adventure (USA)"))
         assertEquals("[!]", gameMetadataSearchName("[!]"))
+        assertEquals("Game (The Lost Levels)", gameMetadataCatalogBase("Game (The Lost Levels) (Europe) (Rev 1)"))
+        assertEquals(listOf("Ridge Racer (Europe) (Rev 1)"), matchingGameCatalogTitles(
+            "[Release] (Europe) Ridge Racer [!]", listOf("Ridge Racer (Europe) (Rev 1)", "Ridge Racer (USA)")))
         assertEquals(listOf("Game (Part II)"), matchingGameCatalogTitles("Game (Part II)",
             listOf("Game (Part I)", "Game (Part II)")))
     }

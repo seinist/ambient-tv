@@ -1364,83 +1364,83 @@ class GameLibraryRepository @Inject constructor(
                                 // Blocking ROM reads and checksum loops must receive thread interruption
                                 // when the user cancels this scan, not only between ROM files.
                                 kotlinx.coroutines.runInterruptible {
-                                // Cached ROMs need no file open and no extra login; create
-                                // the worker's session only on the first actual metadata read.
-                                val ext = GameSystems.extension(entry.name)
-                                if (ext in setOf("cue", "gdi", "m3u")) {
-                                    val refs = runCatching {
-                                        val text = reader().readText(entry.path, 256 * 1024)
-                                        GameDiscGrouping.referenced(entry.path, text)
-                                    }.getOrElse { error ->
-                                        if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error
-                                        emptySet()
+                                    // Cached ROMs need no file open and no extra login; create
+                                    // the worker's session only on the first actual metadata read.
+                                    val ext = GameSystems.extension(entry.name)
+                                    if (ext in setOf("cue", "gdi", "m3u")) {
+                                        val refs = runCatching {
+                                            val text = reader().readText(entry.path, 256 * 1024)
+                                            GameDiscGrouping.referenced(entry.path, text)
+                                        }.getOrElse { error ->
+                                            if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error
+                                            emptySet()
+                                        }
+                                        if (refs.isNotEmpty()) descriptors[entry.path] = refs
                                     }
-                                    if (refs.isNotEmpty()) descriptors[entry.path] = refs
-                                }
-                                val last = previous[entry.id]
-                                val unchanged = last != null && last.size == entry.size &&
-                                    last.modified == entry.modified && entry.modified != 0L
-                                val needsArchiveChecksum = needsArchiveDatChecksum(entry.name, last,
-                                    last?.let { datVersions[it.systemId] } ?: 0L)
-                                val cachedProbe = unchanged && last.probeVersion == probeVersion(last.systemId) &&
-                                    (folder.systemId == "auto" || folder.systemId == last.systemId) && !needsArchiveChecksum
-                                val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
-                                    if (ext == "rar") {
-                                        // RAR title inference is filename-only. Don't open 1,000
-                                        // remote archives for metadata we cannot read in-place.
-                                        val nested = entry.name.substringBeforeLast('.')
-                                        GameArchives.Metadata(nested, GameSystems.forFile(nested))
-                                    } else {
-                                        val probed = runCatching {
-                                            reader().open(entry.path).use {
-                                                GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = datVersions.keys.filter(GameNameDatabases::usesChecksums).toSet())
+                                    val last = previous[entry.id]
+                                    val unchanged = last != null && last.size == entry.size &&
+                                        last.modified == entry.modified && entry.modified != 0L
+                                    val needsArchiveChecksum = needsArchiveDatChecksum(entry.name, last,
+                                        last?.let { datVersions[it.systemId] } ?: 0L)
+                                    val cachedProbe = unchanged && last.probeVersion == probeVersion(last.systemId) &&
+                                        (folder.systemId == "auto" || folder.systemId == last.systemId) && !needsArchiveChecksum
+                                    val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
+                                        if (ext == "rar") {
+                                            // RAR title inference is filename-only. Don't open 1,000
+                                            // remote archives for metadata we cannot read in-place.
+                                            val nested = entry.name.substringBeforeLast('.')
+                                            GameArchives.Metadata(nested, GameSystems.forFile(nested))
+                                        } else {
+                                            val probed = runCatching {
+                                                reader().open(entry.path).use {
+                                                    GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = datVersions.keys.filter(GameNameDatabases::usesChecksums).toSet())
+                                                }
+                                            }
+                                            // Network/decoder errors must NOT silently delete a
+                                            // previously indexed title and commit a truncated DB.
+                                            probed.getOrElse { problem ->
+                                                if (problem is InterruptedException || problem is kotlinx.coroutines.CancellationException) throw problem
+                                                throw IOException(
+                                                    "Archive metadata read failed: ${entry.name}",
+                                                    problem,
+                                                )
                                             }
                                         }
-                                        // Network/decoder errors must NOT silently delete a
-                                        // previously indexed title and commit a truncated DB.
-                                        probed.getOrElse { problem ->
-                                            if (problem is InterruptedException || problem is kotlinx.coroutines.CancellationException) throw problem
-                                            throw IOException(
-                                                "Archive metadata read failed: ${entry.name}",
-                                                problem,
-                                            )
+                                    } else null
+                                    val system = when {
+                                        cachedProbe -> GameSystems.byId(last.systemId)
+                                        ext in GameSystems.archiveExtensions -> archive?.innerName?.let { inner ->
+                                            val detected = archive.system ?: GameSystems.forSourceFile(inner, entry.path)
+                                            GameSystems.forAssignedFile(inner, folder.systemId, detected,
+                                                archive.systemFromHeader)
                                         }
+                                        else -> classify(entry, reader(), folder.systemId)
                                     }
-                                } else null
-                                val system = when {
-                                    cachedProbe -> GameSystems.byId(last.systemId)
-                                    ext in GameSystems.archiveExtensions -> archive?.innerName?.let { inner ->
-                                        val detected = archive.system ?: GameSystems.forSourceFile(inner, entry.path)
-                                        GameSystems.forAssignedFile(inner, folder.systemId, detected,
-                                            archive.systemFromHeader)
+                                    if (system != null && (systemId == null || system.id == systemId)) {
+                                        val internal = if (cachedProbe) last.internalTitle
+                                            else archive?.internalTitle ?: if (ext in GameSystems.archiveExtensions)
+                                                null else extractTitle(entry, reader(), system.id)
+                                        val version = datVersions[system.id] ?: 0L
+                                        val checksums = when {
+                                            cachedProbe && (last.archiveCrc != null || version == 0L) ->
+                                                GameRomChecksums.Result(last.archiveCrc, last.datCrc)
+                                            archive != null -> GameRomChecksums.Result(archive.crc32, archive.datCrc32)
+                                            version > 0L && GameNameDatabases.usesChecksums(system.id) -> datChecksums(reader(), entry, system.id)
+                                            else -> GameRomChecksums.Result(null)
+                                        }
+                                        val verified = when {
+                                            !GameNameDatabases.usesChecksums(system.id) -> last?.verifiedTitle?.takeIf { unchanged }
+                                            version == 0L -> null
+                                            cachedProbe && last.datVersion == version &&
+                                                checksums.crc32 == last.archiveCrc && checksums.datCrc32 == last.datCrc -> last.verifiedTitle
+                                            else -> checksums.crc32?.let { datNameFromCrc(system.id, it) }
+                                                ?: checksums.datCrc32?.let { datNameFromCrc(system.id, it) }
+                                        }
+                                        indexed += IndexedGame(entry, system.id, internal,
+                                            last?.favorite ?: false, last?.lastPlayed ?: 0L,
+                                            last?.customTitle, verified, probeVersion(system.id), version,
+                                            checksums.crc32, checksums.datCrc32)
                                     }
-                                    else -> classify(entry, reader(), folder.systemId)
-                                }
-                                if (system != null && (systemId == null || system.id == systemId)) {
-                                    val internal = if (cachedProbe) last.internalTitle
-                                        else archive?.internalTitle ?: if (ext in GameSystems.archiveExtensions)
-                                            null else extractTitle(entry, reader(), system.id)
-                                    val version = datVersions[system.id] ?: 0L
-                                    val checksums = when {
-                                        cachedProbe && (last.archiveCrc != null || version == 0L) ->
-                                            GameRomChecksums.Result(last.archiveCrc, last.datCrc)
-                                        archive != null -> GameRomChecksums.Result(archive.crc32, archive.datCrc32)
-                                        version > 0L && GameNameDatabases.usesChecksums(system.id) -> datChecksums(reader(), entry, system.id)
-                                        else -> GameRomChecksums.Result(null)
-                                    }
-                                    val verified = when {
-                                        !GameNameDatabases.usesChecksums(system.id) -> last?.verifiedTitle?.takeIf { unchanged }
-                                        version == 0L -> null
-                                        cachedProbe && last.datVersion == version &&
-                                            checksums.crc32 == last.archiveCrc && checksums.datCrc32 == last.datCrc -> last.verifiedTitle
-                                        else -> checksums.crc32?.let { datNameFromCrc(system.id, it) }
-                                            ?: checksums.datCrc32?.let { datNameFromCrc(system.id, it) }
-                                    }
-                                    indexed += IndexedGame(entry, system.id, internal,
-                                        last?.favorite ?: false, last?.lastPlayed ?: 0L,
-                                        last?.customTitle, verified, probeVersion(system.id), version,
-                                        checksums.crc32, checksums.datCrc32)
-                                }
                                 }
                                 val count = processed.incrementAndGet()
                                 if (count % 16 == 0 || count == discovered.get())
@@ -1556,7 +1556,10 @@ class GameLibraryRepository @Inject constructor(
         val head = if (GameSystems.extension(entry.name) == "iso") {
             runCatching { session.open(entry.path).use { media ->
                 ByteArray(0x20).also { if (media.read(0, it, it.size) != it.size) return@use null }
-            } }.getOrNull()
+            } }.getOrElse { error ->
+                if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error
+                null
+            }
         } else null
         return GameSystems.forAssignedFile(entry.name, systemId,
             GameSystems.forSourceFile(entry.name, entry.path, head),
@@ -1584,7 +1587,10 @@ class GameLibraryRepository @Inject constructor(
                     else ByteArray(count).takeIf { media.read(offset, it, count) == count }
                 }
             }
-        }.getOrNull()
+        }.getOrElse { error ->
+            if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error
+            null
+        }
     }
 
 }

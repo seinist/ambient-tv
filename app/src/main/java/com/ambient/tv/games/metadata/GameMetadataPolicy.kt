@@ -63,6 +63,22 @@ internal fun gameMetadataSearchName(value: String): String {
     return name.ifBlank { value.trim() }
 }
 
+/** Strip recognized technical annotations while retaining genuine parenthetical subtitles. */
+internal fun gameMetadataCatalogBase(value: String): String {
+    val technical = Regex("""(?i)^(?:rev(?:ision)?[ ._-]*[\w.-]+|v(?:er(?:sion)?)?[ ._-]*\d[\w.-]*|(?:disc|disk|side|tape|part)[ ._-]*[0-9]+(?:\s+of\s+\d+)?|beta(?:\s+\d+)?|proto(?:type)?(?:\s+\d+)?|demo|sample|unl|pirate|hack|[!]|[abhot]\d+)$""")
+    var name = gameDisplayTitle(value).trim()
+    val suffix = Regex("""\s*(?:\(([^()\[\]]*)\)|\[([^()\[\]]*)\])$""")
+    while (true) {
+        val match = suffix.find(name) ?: break
+        val tag = match.groupValues[1].ifBlank { match.groupValues[2] }.trim()
+        if (!technical.matches(tag)) break
+        val next = gameDisplayTitle(name.substring(0, match.range.first).trim())
+        if (next.isBlank()) break
+        name = next
+    }
+    return name.ifBlank { value.trim() }
+}
+
 /** Retain locale information even for tags before the name. */
 private fun gameSearchLocaleTags(value: String): String {
     val tags = Regex("""\([^()\[\]]*\)|\[[^()\[\]]*\]""").findAll(value)
@@ -86,11 +102,14 @@ internal fun matchingGameCatalogTitles(hint: String, candidates: List<String>): 
     }.distinct()
     val normal = compatible.filter { gameDatSearchKey(gameDisplayTitle(it)) == base }
     if (normal.isNotEmpty()) return normal
+    val technicalBase = gameDatSearchKey(gameMetadataCatalogBase(hint))
+    val technicalMatches = compatible.filter { gameDatSearchKey(gameMetadataCatalogBase(it)) == technicalBase }
+    if (technicalMatches.isNotEmpty()) return technicalMatches
     val clean = gameDatSearchKey(gameMetadataSearchName(hint))
     if (clean.isBlank()) return emptyList()
     // Prefer a real catalog title over another annotated guess. Do not equate different
     // meaningful parenthetical subtitles merely because their stripped stems coincide.
-    return compatible.filter { gameDatSearchKey(gameDisplayTitle(it)) == clean }
+    return compatible.filter { gameDatSearchKey(gameMetadataCatalogBase(it)) == clean }
 }
 
 /** Includes file version and locale so a previous miss cannot suppress a new ROM/region. */
@@ -103,7 +122,7 @@ internal fun gameMetadataFingerprint(game: LibraryGame, query: GameMetadataQuery
 internal fun gameMetadataDigest(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
-/** Old primary-only Libretro misses must not hide images now available from its mirror. */
+/** Invalidate previous lookup misses after changing search normalization for all providers. */
 internal fun gameMetadataLookupFingerprint(provider: String, fingerprint: String): String =
     gameMetadataDigest("rom-search:v4:$provider:$fingerprint")
 

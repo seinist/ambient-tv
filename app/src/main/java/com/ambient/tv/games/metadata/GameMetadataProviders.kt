@@ -200,7 +200,7 @@ class GameMetadataProviders @Inject constructor(
                 !query.serial.isNullOrBlank() -> builder.addQueryParameter("serialnum", query.serial.take(128))
                 hasIdentity -> builder.addQueryParameter("crc", crc).addQueryParameter("romtaille", query.size.toString())
                     .addQueryParameter("romnom", query.filename.take(512)).addQueryParameter("romtype", "rom")
-                else -> builder.addQueryParameter("recherche", gameMetadataSearchName(query.title).take(256))
+                else -> builder.addQueryParameter("recherche", query.title.take(256))
             }
             val payload = getJson(GameMetadataProviderIds.SCREENSCRAPER, builder.build(), missingIsEmpty = true) ?: continue
             results += parseScreenScraper(payload, query, platformIds.toSet(), hasIdentity, artworkKind)
@@ -209,6 +209,10 @@ class GameMetadataProviders @Inject constructor(
         if (results.isEmpty() && hasIdentity && pinned == null) {
             // A hash miss is distinct from provider failure; title fallback still requires confirmation.
             return screenScraper(query.copy(crc32 = null, serial = null, providerGameId = null), artworkKind)
+        }
+        val clean = gameMetadataSearchName(query.title)
+        if (results.isEmpty() && !hasIdentity && clean != query.title) {
+            return screenScraper(query.copy(title = clean), artworkKind)
         }
         return results.distinctBy { if (artworkKind == null) it.metadata.providerGameId else it.metadata.artwork(artworkKind) }
             .take(if (artworkKind == null) MAX_MATCHES else MAX_ARTWORK_CHOICES)
@@ -229,16 +233,19 @@ class GameMetadataProviders @Inject constructor(
             .addQueryParameter("include", "boxart").addQueryParameter("filter[platform]", ids.joinToString(","))
         when { pinned != null -> builder.addQueryParameter("id", pinned)
             crc != null -> builder.addQueryParameter("hash", crc).addQueryParameter("filter[type]", "crc")
-            else -> builder.addQueryParameter("name", gameMetadataSearchName(query.title).take(256)) }
+            else -> builder.addQueryParameter("name", query.title.take(256)) }
+        val clean = gameMetadataSearchName(query.title)
+        suspend fun onMiss(): List<GameMetadataCandidate> = when {
+            crc != null && pinned == null -> theGamesDb(query.copy(crc32 = null), artworkKind)
+            pinned == null && crc == null && clean != query.title -> theGamesDb(query.copy(title = clean), artworkKind)
+            else -> emptyList()
+        }
         val payload = getJson(GameMetadataProviderIds.THEGAMESDB, builder.build(), missingIsEmpty = true)
-            ?: return if (crc != null && pinned == null) theGamesDb(query.copy(crc32 = null), artworkKind) else emptyList()
+            ?: return onMiss()
         val gamesElement = payload.obj("data")["games"]
         if (gamesElement !is JsonArray && gamesElement !is JsonObject) throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
         val games = payload.obj("data").objects("games").filter { it.text("platform") in ids }.take(MAX_MATCHES)
-        if (games.isEmpty()) {
-            if (crc != null && pinned == null) return theGamesDb(query.copy(crc32 = null), artworkKind)
-            return emptyList()
-        }
+        if (games.isEmpty()) return onMiss()
         // Reference catalogues are fetched once and persisted; browsing never fetches them.
         val genres = if (artworkKind == null && games.any { it["genres"] is JsonArray }) lookup("Genres", "genres") else emptyMap()
         // Developers are a default response field in the official API, not an optional fields token.
