@@ -1852,10 +1852,10 @@ internal class MpvPlaybackEngine(
     }
 
     private fun maybeStartHdrScenePass() {
-        if (hdrSceneAttempted || hdrSceneJob != null || released || !attached || !fileReady ||
+        if (hdrSceneAttempted || hdrSceneJob != null || released || ended || !attached || !fileReady ||
             liveStream || broadcastSource || audioOnly || initialStartPositionMs > 0 ||
             !imageOptions.svp.hdrTwoPass || !imageOptions.svp.hardwareResident ||
-            sourceHdrStandard != HdrStandard.HDR10_PLUS || !svpAllowed(context) ||
+            (declaredHdr ?: sourceHdrStandard) != HdrStandard.HDR10_PLUS || !svpAllowed(context) ||
             getPropertyString("seekable") != "yes" || !HdrScenePlanner.supportedSource(url)) return
         val base = activeCpuImageFilters["plex-svp"]?.takeIf { it.endsWith(":hwresident=1") } ?: return
         if (imageOptions.svpMode == "quality" && !svpQualityCleared && !svpQualityProbeFailed) return
@@ -2278,6 +2278,7 @@ internal class MpvPlaybackEngine(
 
     override fun status(): PlaybackStatus {
         pollEvents()
+        maybeStartHdrScenePass()
         syncSdrSurface()
         if (!vulkanOutputReported && acceleration.vulkan && attached && fileReady &&
             getPropertyString("current-vo") == "gpu-next" && outputPixelFormat() != null) {
