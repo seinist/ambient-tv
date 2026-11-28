@@ -32,7 +32,7 @@ MANUAL = {
 }
 DATE_BASED = {"composeBom"}
 # Chromium Cronet release numbers are not a semantic API-major series.
-# All catalog Cronet modules must still publish the same candidate and POM.
+# Only the replacement Cronet artifact is tracked; deprecated aliases must not freeze updates.
 NON_SEMVER = {"chromiumCronet"}
 
 

@@ -53,7 +53,7 @@ dependencies {
 
     implementation(libs.smarttube.appcompat)
     implementation(libs.smarttube.preference)
-    implementation(libs.smarttube.core.ktx)
+    implementation(libs.androidx.core.ktx)
 
     implementation(libs.okhttp.core)
     implementation(libs.okhttp.dns.over.https)

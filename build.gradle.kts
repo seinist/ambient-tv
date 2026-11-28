@@ -15,10 +15,14 @@ plugins {
 val ambientChromiumCronetVersion = libs.versions.chromiumCronet.get()
 subprojects {
     configurations.configureEach {
-        resolutionStrategy.force(
-            "org.chromium.net:cronet-api:$ambientChromiumCronetVersion",
-            "org.chromium.net:cronet:$ambientChromiumCronetVersion",
-        )
+        resolutionStrategy.force("org.chromium.net:cronet:$ambientChromiumCronetVersion")
+        // Cronet 500 replaces the old API artifact. Redirect legacy transitive
+        // requests from Media3 / Play Services without shipping duplicate classes.
+        resolutionStrategy.dependencySubstitution {
+            substitute(module("org.chromium.net:cronet-api"))
+                .using(module("org.chromium.net:cronet:$ambientChromiumCronetVersion"))
+                .because("Cronet 500+ replaces the deprecated API artifact")
+        }
     }
 }
 

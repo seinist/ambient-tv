@@ -196,7 +196,7 @@ class MavenUpdatesTest(unittest.TestCase):
             "media3-datasource-okhttp", "media3-datasource-cronet",
         })
         self.assertEqual({a.name for a in pins["chromiumCronet"].artifacts}, {
-            "cronet", "cronet-api", "cronet-common", "cronet-embedded",
+            "cronet",
         })
         self.assertEqual({a.name for a in pins["okhttp"].artifacts}, {
             "okhttp", "logging-interceptor", "okhttp-dnsoverhttps", "okhttp-brotli",
@@ -207,8 +207,14 @@ class MavenUpdatesTest(unittest.TestCase):
         self.assertEqual({a.name for a in pins["smarttubeSlf4j"].artifacts}, {
             "slf4j-api", "slf4j-nop",
         })
+        self.assertNotIn("smarttubeCronetAdapter", pins)
         self.assertNotIn("smarttubeCoreKtx", pins)
         self.assertNotIn("smarttubeCoroutines", pins)
+        catalog = maven.tomllib.loads(cli.CATALOG.read_text(encoding="utf-8"))
+        coordinates = []
+        for entry in catalog["libraries"].values():
+            coordinates.append(entry.get("module") or (entry["group"] + ":" + entry["name"]))
+        self.assertEqual(len(coordinates), len(set(coordinates)), "duplicate Maven coordinates")
         for key in ("agp", "ksp", "bouncycastle", "chromiumCronet", "junrar",
                     "smarttubeDnsjava", "smarttubeJsonPath", "smarttubeSlf4j"):
             self.assertNotIn(key, maven.MANUAL)
