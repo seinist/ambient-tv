@@ -29,6 +29,7 @@ data class ScheduledPlayback(
     val leadMinutes: Int = 0,
     val durationMinutes: Int = 0,
     val weekly: Boolean = false,
+    val remindAtEnd: Boolean = false,
     val zoneId: String = ZoneId.systemDefault().id,
 ) {
     val game: Boolean get() = provider == "games" || provider == "romm"
@@ -82,4 +83,25 @@ internal fun LiveTvReminder.overlaps(other: LiveTvReminder): Boolean {
     fun end(entry: LiveTvReminder): Long = entry.stopEpochSeconds
         ?: (entry.startEpochSeconds + (entry.plan?.durationMinutes?.coerceAtLeast(1)?.times(60L) ?: 60L))
     return startEpochSeconds < end(other) && other.startEpochSeconds < end(this)
+}
+
+/** A failed/cancelled launch remains in the persistent queue. Only confirmed playback consumes it. */
+internal object ScheduledPlaybackRuntime {
+    private val pending = kotlinx.coroutines.flow.MutableStateFlow<LiveTvReminder?>(null)
+    val awaiting: kotlinx.coroutines.flow.StateFlow<LiveTvReminder?> = pending
+
+    fun awaitStart(entry: LiveTvReminder) { pending.value = entry }
+    fun cancel(entry: LiveTvReminder) { pending.compareAndSet(entry, null) }
+
+    fun confirm(context: Context, expected: LiveTvReminder) {
+        val plan = expected.plan ?: return
+        if (!pending.compareAndSet(expected, null)) return
+        if (scheduledPlaybackIdentity(context, plan.provider, plan.targetId) == plan.sourceIdentity)
+            LiveTvReminderStore(context.applicationContext).completePlan(expected)
+    }
+
+    fun gameStarted(context: Context, fileId: String) {
+        val expected = pending.value ?: return
+        if (expected.plan?.game == true && expected.plan.targetId == fileId) confirm(context, expected)
+    }
 }
