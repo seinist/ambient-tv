@@ -76,9 +76,17 @@ class SeekAudit : Instrumentation() {
             val inbox = VlcTimedMetadataInbox()
             val session = inbox.beginSession()
             val received = LinkedBlockingQueue<VlcTimedMetadataPacket.Message.Epoch>()
+            val lastWireEpoch = java.util.concurrent.atomic.AtomicReference<String>("none")
+            val wireEvents = java.util.concurrent.atomic.AtomicInteger()
             checkNotNull(VlcTimedMetadataReceiver.open {
                 val accepted = inbox.offer(session, it)
-                if (accepted && it is VlcTimedMetadataPacket.Message.Epoch) received.offer(it)
+                when (it) {
+                    is VlcTimedMetadataPacket.Message.Epoch -> {
+                        lastWireEpoch.set("epoch=${it.epoch} id=${it.seekRequestId} target=${it.seekTargetUs} accepted=$accepted")
+                        if (accepted) received.offer(it)
+                    }
+                    is VlcTimedMetadataPacket.Message.Event -> wireEvents.incrementAndGet()
+                }
                 accepted
             }).use { receiver ->
                 val lib = LibVLC(targetContext, arrayListOf("--codec=avcodec", "--no-audio", "--verbose=2"))
@@ -102,11 +110,17 @@ class SeekAudit : Instrumentation() {
                             // JNI returned queue acceptance, not demux completion.
                             val deadline = SystemClock.elapsedRealtime() + 12000
                             var barrier: VlcTimedMetadataPacket.Message.Epoch? = null
+                            var nativeResult = 0L
                             while (SystemClock.elapsedRealtime() < deadline) {
-                                val candidate = received.poll(100, TimeUnit.MILLISECONDS) ?: continue
-                                if (candidate.seekRequestId == id) { barrier = candidate; break }
+                                val status = player.ambientSeekResult()
+                                if (status != 0L) nativeResult = status
+                                check(status != -id) { "Native demux explicitly rejected seek $id; time=${player.time}, lastWireEpoch=${lastWireEpoch.get()}" }
+                                val candidate = received.poll(100, TimeUnit.MILLISECONDS)
+                                if (candidate?.seekRequestId == id) { barrier = candidate; break }
                             }
-                            val completed = checkNotNull(barrier) { "No native completed seek for $id" }
+                            val completed = checkNotNull(barrier) {
+                                "No native completed seek for $id; lastNativeResult=$nativeResult, time=${player.time}, lastWireEpoch=${lastWireEpoch.get()}, wireEvents=${wireEvents.get()}"
+                            }
                             check(completed.epoch > lastEpoch && completed.seekTargetUs == 2000000L)
                             lastEpoch = completed.epoch
                             waitFor("native demux result for $id") { player.ambientSeekResult() == id }
