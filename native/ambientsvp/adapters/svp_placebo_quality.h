@@ -43,6 +43,9 @@ struct svp_placebo_quality {
     int (*submit)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **);
     int (*retire)(AmbientSvpVkHeld *,uint32_t);
+    int (*submit_cached)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+        const VkSemaphore *,VkSemaphore,uint64_t,float,AmbientSvpVkHeld **,uint64_t);
+    uint64_t generation;
     struct svp_placebo_pending pending[SVP_PLACEBO_PENDING];
     unsigned pending_count;
     VkSemaphore done;
@@ -69,6 +72,13 @@ static inline void svp_placebo_quality_retire_texture(pl_gpu gpu,struct svp_plac
         for(unsigned j=0;j<s->pending[i].count;j++)wait|=s->pending[i].textures[j]==texture;
         if(!svp_placebo_retire_one(gpu,s,i,wait))++i;
     }
+}
+static inline void svp_placebo_quality_source_changed(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
+{
+    if(texture)svp_placebo_quality_retire_texture(gpu,s,texture);
+    // Zero disables cache after theoretical generation wrap.
+    if(s->generation!=UINT64_MAX)++s->generation;
+    else s->submit_cached=NULL;
 }
 static inline void svp_placebo_quality_destroy(pl_gpu gpu,struct svp_placebo_quality *s)
 {
@@ -107,7 +117,8 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         s->render_pass=dlsym(s->lib,"ambient_svp_vk_render_held_pass");
         s->submit=dlsym(s->lib,"ambient_svp_vk_submit_held");
         s->retire=dlsym(s->lib,"ambient_svp_vk_retire_held");
-        if(!s->retire)s->submit=NULL;
+        s->submit_cached=dlsym(s->lib,"ambient_svp_vk_submit_held_cached");
+        if(!s->retire){s->submit=NULL;s->submit_cached=NULL;}
         if(!s->create||!s->destroy||!s->render){dlclose(s->lib);s->lib=NULL;return false;}
     }
     if(hdr&&(!s->render_hdr||!hdr->count||hdr->count>3))return false;
@@ -166,6 +177,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index):
         hdr?s->render_hdr(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count):
+        s->submit_cached?s->submit_cached(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,&job,s->generation):
         s->submit?s->submit(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,&job):
         s->render(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase);
     // Defensive panic recovery: if the native boundary could not

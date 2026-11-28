@@ -436,6 +436,91 @@ impl Drop for PairResources{
         self.device.free_memory(self.memory,None);
     }}
 }
+struct HeldCommands{
+    device:ash::Device,family:u32,pool:vk::CommandPool,cmd:vk::CommandBuffer,fence:vk::Fence,
+}
+impl Drop for HeldCommands{
+    fn drop(&mut self){unsafe{
+        self.device.destroy_command_pool(self.pool,None);
+        self.device.destroy_fence(self.fence,None);
+    }}
+}
+impl HeldCommands{
+    fn acquire(core:&Core,family:u32)->Result<Self>{
+        let mut idle=core.held_idle.lock().unwrap_or_else(|e|e.into_inner());
+        if let Some(i)=idle.iter().position(|x|x.family==family){
+            let cmd=idle.swap_remove(i);drop(idle);
+            unsafe{
+                cmd.device.reset_command_pool(cmd.pool,vk::CommandPoolResetFlags::empty()).map_err(err)?;
+                cmd.device.reset_fences(&[cmd.fence]).map_err(err)?;
+            }
+            return Ok(cmd);
+        }
+        drop(idle);
+        let mut x=Self{device:core.device.clone(),family,pool:vk::CommandPool::null(),
+            cmd:vk::CommandBuffer::null(),fence:vk::Fence::null()};
+        unsafe{
+            x.pool=x.device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family)
+                .flags(vk::CommandPoolCreateFlags::TRANSIENT),None).map_err(err)?;
+            x.cmd=x.device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default()
+                .command_pool(x.pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).map_err(err)?[0];
+            x.fence=x.device.create_fence(&vk::FenceCreateInfo::default(),None).map_err(err)?;
+        }
+        Ok(x)
+    }
+    fn recycle(self,core:&Core){
+        if core.lost.load(Ordering::Acquire){return;}
+        let mut idle=core.held_idle.lock().unwrap_or_else(|e|e.into_inner());
+        if idle.len()<MAX_IN_FLIGHT as usize{idle.push(self);}
+    }
+}
+// Immutable GPU snapshot of analysis, before phase-specific masks.
+// A cache belongs to one queue for its entire life; a caller-provided
+// generation changes before any source texture is overwritten.
+#[derive(Clone,Copy,PartialEq,Eq)]
+struct HeldKey{generation:u64,images:[vk::Image;4],count:u32,algorithm:u32}
+struct HeldField{
+    device:ash::Device,queue:vk::Queue,buffer:vk::Buffer,memory:vk::DeviceMemory,
+    key:Option<HeldKey>,extended:bool,
+}
+impl Drop for HeldField{
+    fn drop(&mut self){unsafe{
+        self.device.destroy_buffer(self.buffer,None);
+        self.device.free_memory(self.memory,None);
+    }}
+}
+impl HeldField{
+    fn new(c:&Core,queue:vk::Queue)->Result<Self>{
+        let mut s=Self{device:c.device.clone(),queue,buffer:vk::Buffer::null(),memory:vk::DeviceMemory::null(),key:None,extended:false};
+        unsafe{
+            s.buffer=s.device.create_buffer(&vk::BufferCreateInfo::default().size(c.field_size)
+                .usage(vk::BufferUsageFlags::TRANSFER_SRC|vk::BufferUsageFlags::TRANSFER_DST).sharing_mode(vk::SharingMode::EXCLUSIVE),None).map_err(err)?;
+            let req=s.device.get_buffer_memory_requirements(s.buffer);
+            let ty=(0..c.memory.memory_type_count).find(|&i|req.memory_type_bits&(1<<i)!=0&&
+                c.memory.memory_types[i as usize].property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL))
+                .ok_or("held field memory")?;
+            s.memory=s.device.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(ty),None).map_err(err)?;
+            s.device.bind_buffer_memory(s.buffer,s.memory,0).map_err(err)?;
+        }
+        Ok(s)
+    }
+    unsafe fn copy(&self,p:&VulkanPair,restore:bool){
+        let d=&self.device;let cmd=p.command;
+        let before=[vk::MemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE|vk::AccessFlags::TRANSFER_WRITE|vk::AccessFlags::TRANSFER_READ)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ|vk::AccessFlags::TRANSFER_WRITE)];
+        let after=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE)];
+        unsafe{
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER|vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER,vk::DependencyFlags::empty(),&before,&[],&[]);
+            let (src,dst)=if restore{(self.buffer,p.field)}else{(p.field,self.buffer)};
+            d.cmd_copy_buffer(cmd,src,dst,&[vk::BufferCopy::default().size(p.core.field_size)]);
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),&after,&[],&[]);
+        }
+    }
+}
 struct Core{
     device:ash::Device,
     memory:vk::PhysicalDeviceMemoryProperties,
@@ -445,6 +530,7 @@ struct Core{
     width:u32,height:u32,gw:u32,gh:u32,field_size:u64,mode:u32,
     in_flight:AtomicU32,aux_in_flight:AtomicU32,
     idle:Mutex<Vec<PairResources>>,
+    held_idle:Mutex<Vec<HeldCommands>>,held_field:Mutex<Option<HeldField>>,
     lost:AtomicBool,
     stats_supported:bool,
     stats:Mutex<Option<Arc<StatsPipelines>>>,
@@ -479,7 +565,7 @@ pub struct VulkanPair{
     command:vk::CommandBuffer,
     a:VulkanPicture,b:VulkanPicture,
     phases:usize,
-    extended:Vec<VulkanPair>,auxiliary:bool,
+    extended:Vec<VulkanPair>,auxiliary:bool,cached_extended:bool,
     rgb_outputs:[vk::ImageView;MAX_PHASES],
     hdr_jobs:[Option<StatsJob>;MAX_PHASES],
     fence:vk::Fence,
@@ -512,7 +598,7 @@ impl VulkanPair{
         counter.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<max).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
-            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),auxiliary,
+            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),auxiliary,cached_extended:false,
             rgb_outputs:[vk::ImageView::null();MAX_PHASES],hdr_jobs:std::array::from_fn(|_|None),fence:vk::Fence::null(),
             #[cfg(target_os="android")]
             ahb_inputs:None};
@@ -658,7 +744,7 @@ impl VulkanPair{
         }
         // Algorithm 23 requires adjacent source-pair fields; the
         // reference selects 21 when extended vectors are unavailable.
-        (if algo==23&&self.extended.len()!=2{21}else{algo})<<8
+        (if algo==23&&self.extended.len()!=2&&!self.cached_extended{21}else{algo})<<8
     }
     unsafe fn render(&mut self,phase:f32,matrix:u32,output:vk::ImageView)->Result<()>{
         if self.core.mode>=4 || self.fence!=vk::Fence::null() || self.phases>=MAX_PHASES || !phase.is_finite()
@@ -771,7 +857,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"scatter")?,c"scatter")?,
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"finish")?,c"finish")?])
     }else{None};
-    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
+    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),held_idle:Mutex::new(Vec::new()),held_field:Mutex::new(None),lost:AtomicBool::new(false),
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=4&&
             limits.max_storage_buffer_range>=100001*4*3&&
             u64::from(limits.max_storage_buffer_range)>=4*(3*100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
@@ -883,7 +969,7 @@ pub unsafe extern "C" fn ambient_svp_vk_create_quality(instance:vk::Instance,phy
 /// A submitted held-image job owns the native command resources until its
 /// actual fence retires. The caller retains the images and semaphores.
 pub struct HeldSubmission {
-    core:Arc<Core>,pool:vk::CommandPool,fence:vk::Fence,
+    core:Arc<Core>,commands:Option<HeldCommands>,
     views:Vec<vk::ImageView>,pair:*mut VulkanPair,
 }
 #[unsafe(no_mangle)]
@@ -891,9 +977,10 @@ pub unsafe extern "C" fn ambient_svp_vk_retire_held(job:*mut HeldSubmission,wait
     if job.is_null()||wait>1{return -1;}
     let j=unsafe{&*job};
     let d=&j.core.device;
+    let fence=j.commands.as_ref().unwrap().fence;
     let lost=loop{
-        let status=if wait==1{unsafe{d.wait_for_fences(&[j.fence],true,u64::MAX)}.map(|_|true)}
-            else{unsafe{d.get_fence_status(j.fence)}};
+        let status=if wait==1{unsafe{d.wait_for_fences(&[fence],true,u64::MAX)}.map(|_|true)}
+            else{unsafe{d.get_fence_status(fence)}};
         match status{
             Ok(true)=>break false,
             Ok(false)=>return 0,
@@ -905,9 +992,8 @@ pub unsafe extern "C" fn ambient_svp_vk_retire_held(job:*mut HeldSubmission,wait
     if lost{j.core.lost.store(true,Ordering::Release);}
     unsafe{
         if lost||ambient_svp_vk_release(j.pair)!=1{drop(Box::from_raw(j.pair));}
-        j.core.device.destroy_command_pool(j.pool,None);
         for view in j.views{j.core.device.destroy_image_view(view,None);}
-        j.core.device.destroy_fence(j.fence,None);
+        if let Some(commands)=j.commands{commands.recycle(&j.core);}
     }
     1
 }
@@ -919,7 +1005,17 @@ pub unsafe extern "C" fn ambient_svp_vk_submit_held(s:*const VulkanResident,queu
     unsafe{*job=ptr::null_mut();}
     unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
         ptr::null(),ptr::null(),ptr::null(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),
-        0,ptr::null_mut(),0,job)}
+        0,ptr::null_mut(),0,job,0)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_submit_held_cached(s:*const VulkanResident,queue:vk::Queue,family:u32,
+    images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
+    value:u64,phase:f32,job:*mut *mut HeldSubmission,generation:u64)->i32{
+    if job.is_null(){return -1;}
+    unsafe{*job=ptr::null_mut();}
+    unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
+        ptr::null(),ptr::null(),ptr::null(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),ptr::null_mut(),
+        0,ptr::null_mut(),0,job,generation)}
 }
 /// Renderer bridge for libplacebo-held, canonical RGBA16F textures.
 /// Caller owns queue serialization and image hold/release. Waits are
@@ -946,13 +1042,13 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
     value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
     results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],n:u32,pass:*mut TwoPass,index:u64)->i32{
     unsafe{render_held_impl(s,queue,family,images,count,waits,signal,value,phase,
-        windows,tracks,axes,results,rects,ellipses,shifts,n,pass,index,ptr::null_mut())}
+        windows,tracks,axes,results,rects,ellipses,shifts,n,pass,index,ptr::null_mut(),0)}
 }
 unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
     images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
     value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
     results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],
-    n:u32,pass:*mut TwoPass,index:u64,async_job:*mut *mut HeldSubmission)->i32{
+    n:u32,pass:*mut TwoPass,index:u64,async_job:*mut *mut HeldSubmission,generation:u64)->i32{
     if s.is_null()||queue==vk::Queue::null()||images.is_null()||waits.is_null()||
         !matches!(count,2|3|5)||count==2&&phase!=0.0||signal==vk::Semaphore::null()||value==0||
         !phase.is_finite()||!(0.0..=1.0).contains(&phase){return -1;}
@@ -966,8 +1062,9 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
         if images.iter().enumerate().any(|(i,x)|*x==vk::Image::null()||images[..i].contains(x))||
             waits.iter().enumerate().any(|(i,x)|*x==vk::Semaphore::null()||*x==signal||waits[..i].contains(x)){return -1;}
         let d=&core.device;
-        let mut pool=vk::CommandPool::null();
-        let mut fence=vk::Fence::null();
+        let mut commands=match HeldCommands::acquire(core,family){Ok(x)=>Some(x),Err(_)=>return -1};
+        let cmd=commands.as_ref().unwrap().cmd;
+        let fence=commands.as_ref().unwrap().fence;
         let mut views=Vec::with_capacity(count as usize);
         let mut pair=ptr::null_mut();
         let mut submitted=false;
@@ -976,16 +1073,16 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
         // Allocate the ticket before submitting: publishing a successful
         // async submission must not need any fallible allocation.
         let mut ticket=(!async_job.is_null()).then(||Box::new(HeldSubmission{
-            core:core.clone(),pool:vk::CommandPool::null(),fence:vk::Fence::null(),
+            core:core.clone(),commands:None,
             views:Vec::new(),pair:ptr::null_mut(),
         }));
         let mut deferred=false;
+        let mut cache=core.held_field.lock().unwrap_or_else(|e|e.into_inner());
+        if generation!=0&&cache.is_none(){*cache=HeldField::new(core,queue).ok();}
+        let mut key=HeldKey{generation,images:[vk::Image::null();4],count,algorithm:core.algorithm.load(Ordering::Acquire)};
+        key.images[..count as usize-1].copy_from_slice(&images[..count as usize-1]);
+        let mut publish_cache=false;
         let result=(||->Result<()>{
-            pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family)
-                .flags(vk::CommandPoolCreateFlags::TRANSIENT),None).map_err(err)?;
-            let cmd=d.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default()
-                .command_pool(pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).map_err(err)?[0];
-            fence=d.create_fence(&vk::FenceCreateInfo::default(),None).map_err(err)?;
             for &image in images{
                 views.push(d.create_image_view(&vk::ImageViewCreateInfo::default().image(image)
                     .view_type(vk::ImageViewType::TYPE_2D).format(vk::Format::R16G16B16A16_SFLOAT)
@@ -996,8 +1093,29 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
             let picture=|i:usize|VulkanPicture{y:views[i],u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0};
             let a=picture(0);let b=picture(if count==2{0}else{1});
-            if count==5{pair=ambient_svp_vk_begin_extended(s,cmd,&picture(2),&a,&b,&picture(3));}
-            if pair.is_null(){pair=ambient_svp_vk_begin(s,cmd,&a,&b);}
+            let cached=cache.as_mut().filter(|x|generation!=0&&x.queue==queue);
+            if let Some(x)=cached.as_ref().filter(|x|x.key==Some(key)){
+                let mut p=VulkanPair::new(core.clone(),cmd,a,b)?;
+                p.cached_extended=x.extended;
+                // Restore descriptors used by the phase-specific mask kernels.
+                let [ay,au,av]=a.views();let [by,bu,bv]=b.views();
+                let sampled=vk::DescriptorType::SAMPLED_IMAGE;
+                p.descriptors(p.sets[MAX_PHASES+1],&[(0,ay,sampled),(1,au,sampled),(2,av,sampled),
+                    (3,by,sampled),(4,bu,sampled),(5,bv,sampled)],6);
+                x.copy(&p,true);
+                pair=Box::into_raw(Box::new(p));
+            }else{
+                if count==5{pair=ambient_svp_vk_begin_extended(s,cmd,&picture(2),&a,&b,&picture(3));}
+                if pair.is_null(){pair=ambient_svp_vk_begin(s,cmd,&a,&b);}
+                if !pair.is_null(){
+                    if let Some(x)=cached{
+                        // Do not cache a downgraded extended analysis.
+                        if count!=5||(*pair).extended.len()==2{
+                            x.copy(&*pair,false);publish_cache=true;
+                        }
+                    }
+                }
+            }
             if pair.is_null()||ambient_svp_vk_render(pair,phase,3,views[count as usize-1])!=0{
                 return Err("held renderer pair rejected".into());
             }
@@ -1020,10 +1138,11 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 return Err(err(e));
             }
             submitted=true;
+            if publish_cache{if let Some(x)=cache.as_mut(){x.key=Some(key);x.extended=(*pair).extended.len()==2;}}
             let sealed=ambient_svp_vk_seal(pair,fence)==0;
             if sealed{
                 if let Some(mut job)=ticket.take(){
-                    job.pool=pool;job.fence=fence;job.views=std::mem::take(&mut views);job.pair=pair;
+                    job.commands=commands.take();job.views=std::mem::take(&mut views);job.pair=pair;
                     *async_job=Box::into_raw(job);
                     deferred=true;
                     return Ok(());
@@ -1070,16 +1189,15 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 // query fails. Discard rather than reuse the bundle.
                 drop(Box::from_raw(pair));
             }
-            d.destroy_command_pool(pool,None);
             for view in views{d.destroy_image_view(view,None);}
-            d.destroy_fence(fence,None);
+            if let Some(commands)=commands.take(){commands.recycle(core);}
             return if lost{-1}else if result.is_err(){1}else{0};
         }
         if device_lost{core.lost.store(true,Ordering::Release);}
-        d.destroy_command_pool(pool,None);
+        // Destroy the unsubmitted command buffer before releasing descriptors.
+        drop(commands.take());
         if !submitted&&!pair.is_null(){ambient_svp_vk_cancel(pair);}
         for view in views{d.destroy_image_view(view,None);}
-        d.destroy_fence(fence,None);
         if result.is_ok(){0}else{-1}
     })).unwrap_or(-2)
 }

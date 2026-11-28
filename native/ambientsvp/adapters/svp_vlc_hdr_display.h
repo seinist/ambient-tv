@@ -142,7 +142,7 @@ static inline bool ambient_svp_hdr_source_load(pl_gpu gpu,pl_log log,
 {
     if(dst->id==id&&dst->texture)return true;
     dst->id=0;
-    if(dst->texture)svp_placebo_quality_retire_texture(gpu,&s->quality,dst->texture);
+    svp_placebo_quality_source_changed(gpu,&s->quality,dst->texture);
     struct ambient_ahb_output lease={0};
     if(ambient_display_prepare(owner,pic,&lease,raw,dovi)!=VK_SUCCESS)return false;
     struct pl_color_space color=vlc_placebo_ColorSpace(&pic->format);

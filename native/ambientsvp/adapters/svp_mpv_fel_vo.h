@@ -73,7 +73,7 @@ static inline bool svp_fel_vo_source(struct priv *p,struct vo *vo,struct svp_fel
 {
     if(s->ids[slot]==id&&s->sources[slot])return true;
     s->ids[slot]=0;
-    if(s->sources[slot])svp_placebo_quality_retire_texture(p->gpu,&s->quality,s->sources[slot]);
+    svp_placebo_quality_source_changed(p->gpu,&s->quality,s->sources[slot]);
     if(!svp_fel_eligible(source)||!svp_fel_target(p->gpu,&s->sources[slot],source->w,source->h))return false;
     struct mp_image *mpi=mp_image_new_ref(source);
     if(!mpi)return false;
