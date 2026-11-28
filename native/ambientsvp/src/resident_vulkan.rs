@@ -922,6 +922,8 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
         let mut views=Vec::with_capacity(count as usize);
         let mut pair=ptr::null_mut();
         let mut submitted=false;
+        let mut fence_retired=false;
+        let mut device_lost=false;
         let result=(||->Result<()>{
             pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT),None).map_err(err)?;
@@ -957,10 +959,17 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
                 .wait_semaphore_values(&wait_values).signal_semaphore_values(&values);
             let submit=vk::SubmitInfo::default().push_next(&mut timeline).wait_semaphores(waits)
                 .wait_dst_stage_mask(&stages).command_buffers(&commands).signal_semaphores(&signals);
-            d.queue_submit(queue,&[submit],fence).map_err(err)?;
+            if let Err(e)=d.queue_submit(queue,&[submit],fence){
+                device_lost=e==vk::Result::ERROR_DEVICE_LOST;
+                return Err(err(e));
+            }
             submitted=true;
-            if ambient_svp_vk_seal(pair,fence)!=0{return Err("held renderer seal failed".into());}
-            d.wait_for_fences(&[fence],true,u64::MAX).map_err(err)?;
+            let sealed=ambient_svp_vk_seal(pair,fence)==0;
+            match d.wait_for_fences(&[fence],true,u64::MAX){
+                Ok(())=>fence_retired=true,
+                Err(e)=>{device_lost=e==vk::Result::ERROR_DEVICE_LOST;return Err(err(e));}
+            }
+            if !sealed{return Err("held renderer seal failed".into());}
             if n>0&&(pass.is_null()||(&*pass).version()==0){
                 let rc=if n==1{ambient_svp_vk_hdr_read(pair,0,results,n)}
                     else{ambient_svp_vk_hdr_read_track(pair,0,results,shifts,n)};
@@ -977,8 +986,8 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
         if submitted{
             // A failed wait may only release resources after confirmed
             // retirement/device loss. Retry queue idle before cleanup.
-            let mut lost=false;
-            if result.is_err(){
+            let mut lost=device_lost;
+            if !fence_retired&&!lost{
                 // Keep the caller's held textures alive until retirement
                 // is proven. Unexpected host allocation errors are retried.
                 loop{match d.queue_wait_idle(queue){
@@ -1001,6 +1010,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
             d.destroy_fence(fence,None);
             return if lost{-1}else if result.is_err(){1}else{0};
         }
+        if device_lost{core.lost.store(true,Ordering::Release);}
         d.destroy_command_pool(pool,None);
         if !submitted&&!pair.is_null(){ambient_svp_vk_cancel(pair);}
         for view in views{d.destroy_image_view(view,None);}

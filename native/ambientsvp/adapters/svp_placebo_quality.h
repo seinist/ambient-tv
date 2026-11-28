@@ -85,7 +85,9 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         s->w=w;s->h=h;s->options=*options;
     }
     if(!s->done)s->done=pl_vulkan_sem_create(gpu,pl_vulkan_sem_params(.type=VK_SEMAPHORE_TYPE_TIMELINE));
-    if(!s->done||s->value==UINT64_MAX||!svp_placebo_quality_target(gpu,out,w,h,true))return false;
+    if(!s->done||s->value==UINT64_MAX||*out==a||*out==b||
+        (previous&&*out==previous)||(next&&*out==next)||
+        !svp_placebo_quality_target(gpu,out,w,h,true))return false;
     pl_tex tex[5]={a,b,*out,NULL,NULL};
     unsigned count=3;
     if(a==b){tex[1]=*out;count=2;}

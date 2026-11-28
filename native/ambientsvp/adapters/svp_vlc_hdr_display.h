@@ -48,6 +48,8 @@ static inline void ambient_svp_hdr_scene_close(struct ambient_svp_hdr_display *s
     if(s->scene_lib)dlclose(s->scene_lib);
     ambient_svp_scene_config_release(s->scene);
     s->scene=NULL;s->scene_pass=NULL;s->scene_lib=NULL;s->scene_finished=false;
+    s->scene_interval=NULL;s->scene_lookup=NULL;s->scene_lookup_legacy=NULL;
+    s->scene_finish=NULL;s->scene_destroy=NULL;
 }
 static inline bool ambient_svp_hdr_scene_open(pl_gpu gpu,struct ambient_svp_hdr_display *s,
     const struct ambient_svp_pair *pair,int w,int h,unsigned version)
@@ -432,7 +434,9 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct ambient_svp_hdr_source *a=&s->sources[0],*b=&s->sources[1];
     if(!ambient_svp_hdr_source_load(gpu,log,s,owner,a,pair->a,pair->a_id,raw,dovi)){ambient_svp_scene_config_abort(pair->scene);ambient_svp_hdr_scene_close(s,true);return false;}
     bool same=pair->a_id==pair->b_id||pair->phase==0.f;
-    if(!same&&!ambient_svp_hdr_source_load(gpu,log,s,owner,b,pair->b,pair->b_id,raw,dovi)){ambient_svp_hdr_scene_close(s,true);return false;}
+    if(!same&&!ambient_svp_hdr_source_load(gpu,log,s,owner,b,pair->b,pair->b_id,raw,dovi)){
+        ambient_svp_scene_config_abort(pair->scene);ambient_svp_hdr_scene_close(s,true);return false;
+    }
     s->has_metadata=a->has_hdrplus;s->metadata_aligned=a->aligned;
     if(s->has_metadata)s->metadata=a->hdrplus;
     int w=a->texture->params.w,h=a->texture->params.h;
@@ -446,7 +450,9 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     }
     if(scene&&(!s->has_metadata||!a->aligned||dovi||a->color.transfer!=PL_COLOR_TRC_PQ||
         a->color.primaries!=PL_COLOR_PRIM_BT_2020||!ambient_svp_hdr_scene_compatible(&a->hdrplus)||
-        (!same&&(!b->has_hdrplus||!ambient_svp_hdr_scene_compatible(&b->hdrplus)||b->hdrplus.version!=s->scene_version))))goto original;
+        (!same&&(!b->has_hdrplus||!b->aligned||b->color.transfer!=a->color.transfer||
+            b->color.primaries!=a->color.primaries||!ambient_svp_hdr_scene_compatible(&b->hdrplus)||
+            b->hdrplus.version!=s->scene_version))))goto original;
     if(same){
         *img=ambient_pl_rgb_frame(a->texture,a->color);
         if(scene){
