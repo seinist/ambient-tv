@@ -108,12 +108,20 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
             (float)fmax(0.,phase),&s->quality,extended?s->older:NULL,s->older_id,extended?pic:NULL,id)){
             picture_Release(out);goto fail;
         }
-        bool final=!pic&&!center&&(time+VLC_TICK_FROM_US(llround(1000000.0/s->target))>=end);
-        if(!ambient_svp_attach_scene(out,s->scene,next,final)){picture_Release(out);goto fail;}
+        if(!ambient_svp_attach_scene(out,s->scene,next,false)){picture_Release(out);goto fail;}
         out->date=time;out->p_next=NULL;
         *tail=out;tail=&out->p_next;next++;count++;
     }
     if(!count)goto fail;
+    if(s->scene){
+        for(picture_t *out=head;out;out=out->p_next){
+            struct vlc_ancillary *anc=picture_GetAncillary(out,AMBIENT_SVP_PAIR_ID);
+            struct ambient_svp_pair *pair=anc?vlc_ancillary_GetData(anc):NULL;
+            if(!pair)goto fail;
+            pair->scene_pair_end=next;
+            pair->scene_final=!pic&&!center&&!out->p_next;
+        }
+    }
     if(extended){
         if(s->older)picture_Release(s->older);
         s->older=s->previous;s->older_id=s->previous_id;
