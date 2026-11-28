@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "hdr10plus_frame_reference.h"
 
 static void check(const char *name,const float *actual,const float expected[REF_N][3],
@@ -131,6 +132,48 @@ static void run_frame(pl_gpu gpu,pl_log log,pl_fmt fmt,pl_tex readback,
     pl_gpu_finish(gpu);pl_tex_destroy(gpu,&input);
 }
 
+static void run_large(pl_gpu gpu,pl_log log,pl_fmt fmt,pl_dispatch dp,
+                      struct ambient_hdrplus_spatial *state)
+{
+    size_t count=(size_t)LARGE_W*LARGE_H;
+    float *rgba=malloc(count*4*sizeof(*rgba));
+    assert(rgba);
+    for(unsigned y=0;y<LARGE_H;y++)for(unsigned x=0;x<LARGE_W;x++){
+        size_t i=(size_t)y*LARGE_W+x;
+        const float *v=weighted_rgb_input[(y%REF_H)*REF_W+x%REF_W];
+        for(unsigned k=0;k<3;k++)rgba[4*i+k]=v[k];
+        rgba[4*i+3]=1.f;
+    }
+    pl_tex input=pl_tex_create(gpu,pl_tex_params(.w=LARGE_W,.h=LARGE_H,.format=fmt,
+        .sampleable=true,.initial_data=rgba));
+    pl_tex readback=pl_tex_create(gpu,pl_tex_params(.w=LARGE_W,.h=LARGE_H,.format=fmt,
+        .renderable=true,.host_readable=true));
+    assert(input&&readback);
+    struct ambient_hdrplus m={0};
+    assert(ambient_hdrplus_parse(large_wire,sizeof(large_wire),&m)&&m.metadata_constraints_ok);
+    struct pl_frame src={.num_planes=1,.repr=pl_color_repr_rgb,.color=pl_color_space_hdr10,
+        .crop={0,0,LARGE_W,LARGE_H}};
+    src.color.hdr.max_luma=4000;
+    src.planes[0]=(struct pl_plane){.texture=input,.components=3,.component_mapping={0,1,2,-1}};
+    struct pl_frame target={.color=pl_color_space_hdr10};
+    target.color.hdr.min_luma=.005f;target.color.hdr.max_luma=600;
+    assert(ambient_hdrplus_spatial_render(gpu,log,state,&src,&target,&m));
+    download(gpu,dp,state->output,readback,rgba);
+    double sum=0,worst=0;
+    const unsigned samples=sizeof(large_samples)/sizeof(large_samples[0]);
+    for(unsigned i=0;i<samples;i++){
+        size_t pos=(size_t)large_samples[i].y*LARGE_W+large_samples[i].x;
+        for(unsigned k=0;k<3;k++){
+            double err=fabs((double)rgba[4*pos+k]-large_samples[i].pq[k]);
+            assert(isfinite(err));sum+=err*err;worst=fmax(worst,err);
+        }
+    }
+    double rms=sqrt(sum/(3*samples));
+    fprintf(stderr,"4K full spatial dispatch: %u sampled pixels, max %.8f RMS %.8f\n",samples,worst,rms);
+    assert(worst<=.003 && rms<=.001);
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&input);pl_tex_destroy(gpu,&readback);free(rgba);
+}
+
 int main(void)
 {
     pl_log log=pl_log_create(PL_API_VER,&(struct pl_log_params){
@@ -151,7 +194,13 @@ int main(void)
     struct ambient_hdrplus_spatial state={0};
     for(unsigned i=0;i<sizeof(frames)/sizeof(frames[0]);i++)
         run_frame(gpu,log,fmt,readback,dp,renderer,&state,&frames[i]);
-    // Return to the first metadata after all intervening cache invalidations.
+    // Long deterministic scene sequence, revisiting geometries, display
+    // peaks and source representations in non-monotonic order.
+    const unsigned frame_count=sizeof(frames)/sizeof(frames[0]);
+    for(unsigned i=0;i<32;i++)
+        run_frame(gpu,log,fmt,readback,dp,renderer,&state,&frames[(i*7+3)%frame_count]);
+    run_large(gpu,log,fmt,dp,&state);
+    // Return to the first metadata after resolution and scene invalidation.
     run_frame(gpu,log,fmt,readback,dp,renderer,&state,&frames[0]);
     pl_gpu_finish(gpu);
     ambient_hdrplus_spatial_destroy(gpu,&state);

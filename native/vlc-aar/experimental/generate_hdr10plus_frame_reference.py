@@ -299,5 +299,43 @@ def main():
     print("} frames[] = {")
     print("\n".join(descriptors));print("};")
 
+def large_reference():
+    # 4K raster with geometry defined in actual source pixels. The compact
+    # fixture tiles the existing input; independent reference samples span
+    # the entire image, rotated boundaries, overlap and both ellipse centers.
+    width,height=3840,2160
+    g1=(128,64,2700,1900,1350,970,35,300,1200,650,0)
+    g2=(1100,100,3800,2100,2480,1170,120,350,1370,740,0)
+    windows=(GLOBAL,replace(LOCAL1,geometry=g1),replace(LOCAL2,geometry=g2))
+    peak=600
+    wire=metadata(windows,peak,(),(),0)
+    print(f"enum {{ LARGE_W={width}, LARGE_H={height} }};")
+    print("static const unsigned char large_wire[] = {"+",".join(map(str,wire))+"};")
+    points={(0,0),(width-1,height-1),(1350,970),(2480,1170),(1900,1050)}
+    points.update((x,y) for y in range(0,height,53) for x in range(0,width,67))
+    for w in windows[1:]:
+        *_,cx,cy,angle,inner,outer,minor,mode=w.geometry
+        for radius in (inner,outer):
+            for degree in range(0,360,5):
+                theta=math.radians(degree+angle)
+                for offset in (-1,0,1):
+                    x=round(cx+(radius+offset)*math.cos(theta))
+                    y=round(cy+(radius+offset)*math.sin(theta))
+                    if 0<=x<width and 0<=y<height:
+                        points.add((x,y))
+    print("static const struct { unsigned x,y; float pq[3]; } large_samples[] = {")
+    coverage=[0,0,0]
+    for x,y in sorted(points):
+        _,rgb=source(x%W,y%H,0,False)
+        out=reference(rgb,windows,peak,4000,(),(),x,y)
+        a,b=(weight(w.geometry,x,y) for w in windows[1:])
+        coverage[0]+=a>0 and b>0
+        coverage[1]+=0<a<1 or 0<b<1
+        coverage[2]+=a==b==0
+        print("    {"+f"{x},{y},{{"+",".join(f"{pq(v):.12e}f" for v in out)+"}},")
+    assert all(coverage),coverage
+    print("};")
+
 if __name__=="__main__":
     main()
+    large_reference()

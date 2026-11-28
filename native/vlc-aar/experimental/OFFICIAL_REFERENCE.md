@@ -133,3 +133,10 @@ The lightweight native seek-audit APK now compiles and runs the actual app
 `VlcMetadataSocketAudit.kt` instrumentation source before the real JNI
 seek sequence. This avoids divergence between the app and audit receiver
 contracts and tests positive and terminal-negative ACKs on Android.
+
+A separate 3840×2160 real GPU dispatch uses compact independently generated
+sample positions throughout the raster and along local-window boundaries.
+The complete image is rendered and downloaded; numerical checks sample the
+selected pixels rather than embedding millions of constants. A 32-frame
+non-monotonic scene sequence and return to the small raster exercise cache
+and resolution transitions. This is not a real-time throughput benchmark.
