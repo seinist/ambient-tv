@@ -1,19 +1,11 @@
 diff --git a/src/include/libplacebo/vulkan.h b/src/include/libplacebo/vulkan.h
 --- a/src/include/libplacebo/vulkan.h
 +++ b/src/include/libplacebo/vulkan.h
-@@ -349,7 +349,22 @@
+@@ -349,7 +349,14 @@
  // This will return true if the vulkan swapchain is internally detected
  // as being suboptimal (VK_SUBOPTIMAL_KHR). This might be of use to clients
  // who have `params->allow_suboptimal` enabled.
 -bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw);
-+bool pl_vulkan_swapchain_ambient_presented(pl_swapchain sw)
-+{
-+    if (!sw)
-+        return false;
-+    struct priv *p = PL_PRIV(sw);
-+    return p->impl.destroy == vk_sw_destroy && p->ambient_presented;
-+}
-+
 +bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw);
 +
 +// Ambient VLC: caller has flushed the GPU and proven the single graphics
@@ -82,7 +74,7 @@ diff --git a/src/vulkan/swapchain.c b/src/vulkan/swapchain.c
      pl_mutex_unlock(&p->lock);
  
      switch (res) {
-@@ -884,8 +883,27 @@
+@@ -884,8 +883,35 @@
      pl_mutex_unlock(&p->lock);
  }
  
@@ -105,6 +97,14 @@ diff --git a/src/vulkan/swapchain.c b/src/vulkan/swapchain.c
 +    pl_mutex_unlock(&vk->lock);
 +    p->ambient_retired = empty;
 +    return empty;
++}
++
++bool pl_vulkan_swapchain_ambient_presented(pl_swapchain sw)
++{
++    if (!sw)
++        return false;
++    struct priv *p = PL_PRIV(sw);
++    return p->impl.destroy == vk_sw_destroy && p->ambient_presented;
 +}
 +
 +bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw)
