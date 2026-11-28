@@ -37,6 +37,23 @@ class Media3FrameTimelineTest {
         assertNull(history.neighbor(0, true))
     }
 
+    @Test fun oldFramesBeforeActualRendererResetAreExcluded() {
+        val history = Media3FrameTimeline()
+        history.presented(20_000)
+        history.expectRendererReset(retainHistory = false)
+        val stale = history.beginOutput()
+        history.presentedFromOutput(95_000)
+        history.decoded(100_000, stale)
+        history.endOutput()
+        assertNull(history.neighbor(20_000, true))
+        history.rendererReset(retainHistory = true)
+        val fresh = history.beginOutput()
+        history.presentedFromOutput(100_000)
+        history.decoded(120_000, fresh)
+        history.endOutput()
+        assertEquals(120_000L, history.neighbor(100_000, true))
+    }
+
     @Test fun staleOutputCannotRepopulateHistoryAfterDiscontinuity() {
         val history = Media3FrameTimeline()
         val old = history.beginOutput()

@@ -377,15 +377,15 @@ class VlcPlaybackController(
     private var pendingAttachView: SurfaceView? = null
     private var deferredPrepareGeneration = 0
     private val hdrOutput = SdrHdrSurfaceOutput(
-        disconnect = { if (!released) player.vlcVout.detachViews() },
+        disconnect = { if (!nativeCommandsBlocked()) player.vlcVout.detachViews() },
         routeInput = { surface ->
-            if (!released) {
+            if (!nativeCommandsBlocked()) {
                 player.vlcVout.setVideoSurface(surface, null)
                 player.vlcVout.attachViews()
             }
         },
         restore = { view ->
-            if (!released && attachedView === view) {
+            if (!nativeCommandsBlocked() && attachedView === view) {
                 player.vlcVout.setVideoView(view)
                 player.vlcVout.attachViews()
                 reportWindowSize(view.holder.surfaceFrame.width(), view.holder.surfaceFrame.height())
@@ -393,7 +393,7 @@ class VlcPlaybackController(
         },
         unsafeRestore = {
             pendingAttachView = null
-            if (!released) {
+            if (!nativeCommandsBlocked()) {
                 pause()
                 player.setVideoTrackEnabled(false)
                 errorMessage = context.getString(R.string.sdr_to_hdr_restore_failed)
@@ -401,8 +401,8 @@ class VlcPlaybackController(
         },
     )
     override fun updateSdrToHdr(request: SdrToHdrRequest?): SdrToHdrStatus {
-        if (request == null || released || preserveHdrSource) return hdrOutput.update(null, false, 0, 0, 0f)
-        val track = runCatching { trackAccess.currentVideoTrack }.getOrNull()
+        if (request == null || nativeCommandsBlocked() || preserveHdrSource) return hdrOutput.update(null, false, 0, 0, 0f)
+        val track = if (nativeCommandsBlocked()) null else runCatching { trackAccess.currentVideoTrack }.getOrNull()
         val fps = track?.takeIf { it.frameRateDen > 0 }?.let { it.frameRateNum.toFloat() / it.frameRateDen } ?: 0f
         // Start only while frames flow; a confirmed session survives pause and seek so the TV
         // does not switch HDR -> SDR -> HDR (an HDMI resync each time) around every pause.
@@ -414,7 +414,7 @@ class VlcPlaybackController(
     }
     override fun uiHdrStandard(): HdrStandard? = if (hdrOutput.active) HdrStandard.HDR10 else null
     override fun sdrToHdrPath(): com.ambient.tv.ui.display.SdrToHdrPath {
-        val track = runCatching { trackAccess.currentVideoTrack }.getOrNull()
+        val track = if (nativeCommandsBlocked()) null else runCatching { trackAccess.currentVideoTrack }.getOrNull()
         val fps = track?.takeIf { it.frameRateDen > 0 }?.let { it.frameRateNum.toFloat() / it.frameRateDen } ?: 0f
         val reason = when {
             released || !prepared || ended || track == null -> SdrToHdrUnavailableReason.NOT_READY
@@ -494,6 +494,9 @@ class VlcPlaybackController(
     // Native VLC 4 stop waits for Stopped. All internal reopens share one asynchronous
     // stop, then apply the newest requested position/play state on the main thread.
     private var restartStop: java.util.concurrent.CompletableFuture<Unit>? = null
+    // Non-null until a fully destroyed player has been replaced. Unlike an
+    // ordinary stop, this future owns BOTH the player and library release.
+    private var rebuildRetirement: java.util.concurrent.CompletableFuture<Unit>? = null
     private var restartDurationMs = 0L
     private var forceOutputRebuild = false
     private var restartStopFailed = false
@@ -501,7 +504,7 @@ class VlcPlaybackController(
     private var dvRetirementPending = false
     // All main-thread callbacks must recheck after a call that can initiate a reopen.
     private fun nativeCommandsBlocked(): Boolean = released || restartStopFailed ||
-        vulkanFallbackPosted || restartStop != null || dvRetirementPending
+        vulkanFallbackPosted || restartStop != null || rebuildRetirement != null || dvRetirementPending
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = android.os.SystemClock.elapsedRealtime()
     private var awaitingAudioRelease = false
@@ -545,8 +548,11 @@ class VlcPlaybackController(
     private var pauseAfterRestorePositionMs: Long? = null
     private var pausedSeekVolume: Int? = null
     private var outputMuteVolume: Int? = null
+    private var deferredOutputMute: Boolean? = null
     override fun setOutputMuted(muted: Boolean) {
         if (released) return
+        if (nativeCommandsBlocked()) { deferredOutputMute = muted; return }
+        deferredOutputMute = null
         if (muted) {
             if (outputMuteVolume == null) outputMuteVolume = pausedSeekVolume ?: player.volume.takeIf { it >= 0 } ?: 100
             player.setVolume(0)
@@ -557,6 +563,7 @@ class VlcPlaybackController(
         }
     }
     private fun restorePausedSeekVolume() {
+        if (nativeCommandsBlocked()) return
         if (outputMuteVolume != null) {
             pausedSeekVolume = null
             return
@@ -806,7 +813,9 @@ class VlcPlaybackController(
                         player.setRate(rate)
                         pendingImageTrackSelection = null
                     }
-                    if (dvPrimeActive) player.setVolume(0)
+                    deferredOutputMute?.let(::setOutputMuted)
+                    deferredSpeed?.let(::setSpeed)
+                    if (outputMuteVolume != null || dvPrimeActive) player.setVolume(0)
                     if (!dvPrimeActive && !desiredPlayWhenReady && pauseAfterRestorePositionMs == null) player.pause()
                     if (desiredPlayWhenReady) armRenderCheck()
                 }
@@ -1183,8 +1192,8 @@ class VlcPlaybackController(
         // A driver may never return from stop(). Do not leave the UI in an
         // endless reopen state, and never free or restart a player still
         // owned by that native thread. Keep the future for release() to join.
-        val experimentalStop = ahbFallbackPending || ahbExperimentActive
-        if (experimentalStop) pendingSeekHandler.postDelayed({
+        val stopOwnership = nativeAudioReleases.beginRelease()
+        pendingSeekHandler.postDelayed({
             if (!released && restartStop === stop && player === stopping && !stop.isDone) {
                 restartStopFailed = true
                 openingOrRestarting = false
@@ -1194,7 +1203,8 @@ class VlcPlaybackController(
         }, 12_000L)
         kotlin.concurrent.thread(name = "vlc-reopen-stop", isDaemon = true) {
             val result = runCatching { VlcNativeRetirement.stop(stopping, stoppingLibrary) }
-            result.onSuccess { stop.complete(Unit) }.onFailure { stop.completeExceptionally(it) }
+            result.onSuccess { stop.complete(Unit); stopOwnership.complete(Unit) }
+                .onFailure { stop.completeExceptionally(it); stopOwnership.completeExceptionally(NativeOutputReleaseUncertain(it)) }
             pendingSeekHandler.post {
                 if (released || restartStop !== stop || player !== stopping) return@post
                 restartStop = null
@@ -1372,6 +1382,8 @@ class VlcPlaybackController(
             val retiringLib = libVlc
             val retirement = java.util.concurrent.CompletableFuture<Unit>()
             restartStop = retirement
+            rebuildRetirement = retirement
+            val rebuildOwnership = nativeAudioReleases.beginRelease()
             pendingSeekHandler.postDelayed({
                 if (!released && restartStop === retirement && !retirement.isDone) {
                     restartStopFailed = true
@@ -1392,8 +1404,8 @@ class VlcPlaybackController(
                     VlcNativeRetirement.release(retiringPlayer, retiringLib)
                     VlcNativeRetirement.releaseLibrary(retiringPlayer, retiringLib) { libVlcRelease.releaseWhenIdle(retiringLib) }
                 }
-                closed.onSuccess { retirement.complete(Unit) }
-                    .onFailure { retirement.completeExceptionally(it) }
+                closed.onSuccess { retirement.complete(Unit); rebuildOwnership.complete(Unit) }
+                    .onFailure { retirement.completeExceptionally(it); rebuildOwnership.completeExceptionally(NativeOutputReleaseUncertain(it)) }
                 pendingSeekHandler.post {
                     if (released || restartStop !== retirement) return@post
                     restartStop = null
@@ -1404,6 +1416,7 @@ class VlcPlaybackController(
                         return@post
                     }
                     libVlc = createLibVlc(); player = MediaPlayer(libVlc)
+                    rebuildRetirement = null
                     trackAccess.rebind(player); configurePlayer()
                     ahbFallbackPending = false
                     consumePendingAttachView()
@@ -1795,7 +1808,7 @@ class VlcPlaybackController(
         restartStop == null && !dvRetirementPending && runCatching { player.isPlaying }.getOrDefault(false)
 
     /** A transcoded HTTP response may have no VLC seek index despite having a server start offset. */
-    override fun canSeekNow(): Boolean = !released && prepared && !openingOrRestarting && player.isSeekable
+    override fun canSeekNow(): Boolean = !nativeCommandsBlocked() && prepared && !openingOrRestarting && player.isSeekable
 
     internal fun hasPendingSeek(): Boolean = pendingRestorePositionMs != null
 
@@ -2012,8 +2025,8 @@ class VlcPlaybackController(
     }
 
     private fun logHdrDiagnostics(reason: String) {
-        if (released) return
-        val track = runCatching { trackAccess.currentVideoTrack }.getOrNull()
+        if (nativeCommandsBlocked()) return
+        val track = if (nativeCommandsBlocked()) null else runCatching { trackAccess.currentVideoTrack }.getOrNull()
         val sar = track?.let { if (it.sarNum > 0 && it.sarDen > 0) "${it.sarNum}:${it.sarDen}" else "?" } ?: "?"
         Timber.i(
             "HDR-AUDIT VLC %s | videoTrack=%d size=%dx%d sar=%s time=%d length=%d playing=%s sourceHdr=%s nativeHdrRequested=%s output=%s pendingSeek=%s",
@@ -2216,8 +2229,12 @@ class VlcPlaybackController(
         )
     }
 
+    private var deferredSpeed: Float? = null
     fun setSpeed(speed: Float) {
-        if (!nativeCommandsBlocked()) player.setRate(if (bitstreamPermitted) 1f else speed)
+        if (released) return
+        if (nativeCommandsBlocked()) { deferredSpeed = speed; return }
+        deferredSpeed = null
+        player.setRate(if (bitstreamPermitted) 1f else speed)
     }
 
     fun cycleAudioTrack(): String? {
@@ -2259,7 +2276,7 @@ class VlcPlaybackController(
     fun svpState(): SvpState? {
         val mode = imageOptions.svpMode
         if (mode == "off") return null
-        val track = runCatching { trackAccess.currentVideoTrack }.getOrNull()
+        val track = if (nativeCommandsBlocked()) null else runCatching { trackAccess.currentVideoTrack }.getOrNull()
         val source = track?.takeIf { it.frameRateDen > 0 && it.frameRateNum > 0 }?.let { it.frameRateNum.toDouble() / it.frameRateDen }
             ?: measuredSourceFps
         val size = track?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width to it.height } ?: measuredSourceSize
@@ -2389,21 +2406,27 @@ class VlcPlaybackController(
         fun cleanup(action: () -> Unit) {
             runCatching(action).onFailure { Timber.w(it, "VLC ancillary release failed") }
         }
+        val ownedRebuild = rebuildRetirement
+        val inFlightStop = restartStop
         cleanup { closeTimedMetadataReceiver() }
+        // Rebuild detached this exact player before handing it to the worker.
+        // Never acquire its synchronized Java monitor while release is running.
+        if (ownedRebuild == null) cleanup { detachVideoOutput() }
+        released = true
+        pendingAttachView = null
         cleanup { audioSession.release() }
-        cleanup { detachVideoOutput() }
         cleanup { hdrOutput.release() }
         cleanup { nightProcessing.release() }
-        released = true
-        cleanup { player.setEventListener(null) }
-        cleanup { player.vlcVout.removeCallback(surfaceCallback) }
+        if (ownedRebuild == null && inFlightStop == null) {
+            cleanup { player.setEventListener(null) }
+            cleanup { player.vlcVout.removeCallback(surfaceCallback) }
+        }
         // Drop the upstream connection first: a renderer hand-off must not leave the old live
         // subscription open while the next engine connects.
         cleanup { authProxy?.close() }
         cleanup { audioAuthProxy?.close() }
         val retiringPlayer = player
         val retiringLibVlc = libVlc
-        val inFlightStop = restartStop
         attachedView = null
         // VLC 4's Java stop waits for native Stopped. A blocked network/decoder
         // must not freeze Back or a renderer handoff on the application thread.
@@ -2413,10 +2436,19 @@ class VlcPlaybackController(
             // A Back/renderer switch can arrive while a same-player reopen is stopping.
             // Never call stop/release on the same MediaPlayer concurrently.
             val closed = runCatching {
-                if (inFlightStop != null) inFlightStop.join()
-                else if (!retiringPlayer.isReleased) VlcNativeRetirement.stop(retiringPlayer, retiringLibVlc)
-                if (!retiringPlayer.isReleased) VlcNativeRetirement.release(retiringPlayer, retiringLibVlc)
-                VlcNativeRetirement.releaseLibrary(retiringPlayer, retiringLibVlc) { libVlcRelease.releaseWhenIdle(retiringLibVlc) }
+                if (ownedRebuild != null) {
+                    // The rebuild worker already owns both releases; joining is
+                    // sufficient even if its UI completion callback is queued.
+                    ownedRebuild.join()
+                } else {
+                    if (inFlightStop != null) {
+                        inFlightStop.join()
+                        retiringPlayer.setEventListener(null)
+                        retiringPlayer.vlcVout.removeCallback(surfaceCallback)
+                    } else if (!retiringPlayer.isReleased) VlcNativeRetirement.stop(retiringPlayer, retiringLibVlc)
+                    if (!retiringPlayer.isReleased) VlcNativeRetirement.release(retiringPlayer, retiringLibVlc)
+                    VlcNativeRetirement.releaseLibrary(retiringPlayer, retiringLibVlc) { libVlcRelease.releaseWhenIdle(retiringLibVlc) }
+                }
             }
             closed.onSuccess { audioRelease.complete(Unit) }
                 .onFailure { audioRelease.completeExceptionally(NativeOutputReleaseUncertain(it)) }

@@ -155,6 +155,11 @@ internal class VlcTimedMetadataInbox {
 
     private fun advanceEpoch(session: Long, incoming: Long, targetUs: Long?, requestId: Long): Boolean {
         if (session != generation || incoming < epoch || incoming <= discardedThroughEpoch) return false
+        // Reject unrelated epochs before changing the active journal. A delayed
+        // earlier request must not commit or erase the newest pending seek.
+        val matches = if (requestedId != 0L) requestId == requestedId
+            else requestedTargetUs == null || targetUs == requestedTargetUs
+        if (!matches) return false
         if (incoming != epoch) {
             epoch = incoming
             pendingFences.clear()
@@ -163,8 +168,7 @@ internal class VlcTimedMetadataInbox {
         }
         // VLC may coalesce setTime calls. Never infer the request count from epochs.
         // Old AFM1 senders cannot prove a target after an explicit seek.
-        return if (requestedId != 0L) requestId == requestedId
-            else requestedTargetUs == null || targetUs == requestedTargetUs
+        return true
     }
 
     @Synchronized fun offer(session: Long, event: VlcTimedMetadata) {

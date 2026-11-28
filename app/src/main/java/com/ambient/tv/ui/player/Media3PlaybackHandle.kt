@@ -259,13 +259,16 @@ class Media3PlaybackHandle(
         // timestamps that the millisecond seek API cannot distinguish.
         if (forward && plan.targetMs <= anchor / 1000L || !forward && plan.targetMs >= anchor / 1000L) return
         frameStepCursorUs = plan.cursorUs
-        frameTimeline.invalidatePending()
+        val resetTicket = frameTimeline.expectRendererReset(retainHistory = true)
         if (!Media3ResumePrimer.retarget(player, plan.targetMs)) {
             // Scrubbing/fast seek parameters must not move this request to a sync sample.
             val previous = player.seekParameters
             player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
             try {
-                if (!player.seekToPlaybackPosition(plan.targetMs)) frameStepCursorUs = null
+                if (!player.seekToPlaybackPosition(plan.targetMs)) {
+                    frameStepCursorUs = null
+                    frameTimeline.cancelExpectedReset(resetTicket)
+                }
             } finally { player.setSeekParameters(previous) }
         }
     }
@@ -281,8 +284,9 @@ class Media3PlaybackHandle(
     }
     override fun seekTo(positionMs: Long) {
         frameStepCursorUs = null
-        frameTimeline.clear()
-        if (!Media3ResumePrimer.retarget(player, positionMs)) player.seekToPlaybackPosition(positionMs)
+        val resetTicket = frameTimeline.expectRendererReset(retainHistory = false)
+        if (!Media3ResumePrimer.retarget(player, positionMs) && !player.seekToPlaybackPosition(positionMs))
+            frameTimeline.cancelExpectedReset(resetTicket)
     }
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
         if (!isLive) seekTo(positionMs.coerceAtLeast(0L))

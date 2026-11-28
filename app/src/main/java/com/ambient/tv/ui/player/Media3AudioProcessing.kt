@@ -193,6 +193,21 @@ object Media3AudioProcessing {
                 ) {
                     private val frameTimeline = session.media3Frames
                     private var previousCodec: androidx.media3.exoplayer.mediacodec.MediaCodecAdapter? = null
+                    override fun onPositionReset(positionUs: Long, joining: Boolean, sampleStreamIsResetToKeyFrame: Boolean) {
+                        super.onPositionReset(positionUs, joining, sampleStreamIsResetToKeyFrame)
+                        frameTimeline.rendererReset(retainHistory = true)
+                    }
+
+                    override fun onStreamChanged(formats: Array<Format>, startPositionUs: Long, offsetUs: Long,
+                        mediaPeriodId: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId) {
+                        super.onStreamChanged(formats, startPositionUs, offsetUs, mediaPeriodId)
+                        frameTimeline.rendererReset()
+                    }
+
+                    override fun onDisabled() {
+                        try { super.onDisabled() } finally { previousCodec = null; frameTimeline.rendererReset() }
+                    }
+
                     override fun processOutputBuffer(
                         positionUs: Long, elapsedRealtimeUs: Long,
                         codec: androidx.media3.exoplayer.mediacodec.MediaCodecAdapter?,

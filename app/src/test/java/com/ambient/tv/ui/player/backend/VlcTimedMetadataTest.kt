@@ -215,6 +215,19 @@ class VlcTimedMetadataTest {
         assertEquals(listOf(current), inbox.events.value)
     }
 
+    @Test fun unrelatedEpochCannotDiscardRollbackJournal() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        val original = readEvent(packet(3).inputStream())
+        inbox.offer(session, original)
+        val a = inbox.clearForSeek(1000000, 41)
+        val b = inbox.clearForSeek(2000000, 42)
+        inbox.offer(session, VlcTimedMetadataPacket.Message.Epoch(4, 1000000, 41))
+        inbox.rejectSeek(a)
+        inbox.rejectSeek(b)
+        assertEquals(listOf(original), inbox.events.value)
+    }
+
     @Test fun rejectedRetryDoesNotOverwriteAnEventReceivedDuringNativeCall() {
         val inbox = VlcTimedMetadataInbox()
         val session = inbox.beginSession()

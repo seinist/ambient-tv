@@ -16,6 +16,10 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
     private var pending = -1L
     private var generation = 0L
     private val outputGeneration = ThreadLocal<Long>()
+    // UI seek invalidation precedes the playback-thread reset. Reject old
+    // outputs in that interval instead of assigning them a new generation.
+    private var waitingForReset = false
+    private var rendererResetCount = 0L
 
     init { require(capacity > 0) }
 
@@ -30,9 +34,9 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
     /** A real, non-decode-only output timestamp is useful even if rendering
      * dropped it. It is not proof that the picture was displayed. */
     @Synchronized fun generation(): Long = generation
-    fun beginOutput(): Long = generation().also { outputGeneration.set(it) }
+    @Synchronized fun beginOutput(): Long = (if (waitingForReset) -1L else generation).also { outputGeneration.set(it) }
     fun endOutput() { outputGeneration.remove() }
-    fun presentedFromOutput(ptsUs: Long) = presented(ptsUs, outputGeneration.get() ?: generation())
+    fun presentedFromOutput(ptsUs: Long) { outputGeneration.get()?.let { presented(ptsUs, it) } }
     @Synchronized fun decoded(ptsUs: Long, token: Long = generation) {
         if (token == generation) remember(ptsUs)
     }
@@ -50,6 +54,22 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
 
     /** Frame stepping retains verified history but invalidates in-flight output. */
     @Synchronized fun invalidatePending() { generation++; pending = -1L }
+
+    @Synchronized fun expectRendererReset(retainHistory: Boolean): Long {
+        if (retainHistory) invalidatePending() else clear()
+        waitingForReset = true
+        return rendererResetCount
+    }
+
+    @Synchronized fun cancelExpectedReset(ticket: Long) {
+        if (rendererResetCount == ticket) waitingForReset = false
+    }
+
+    @Synchronized fun rendererReset(retainHistory: Boolean = false) {
+        if (waitingForReset && retainHistory) invalidatePending() else clear()
+        waitingForReset = false
+        rendererResetCount++
+    }
 
     @Synchronized fun clear() {
         generation++
