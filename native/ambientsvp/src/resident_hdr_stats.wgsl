@@ -230,7 +230,18 @@ fn ellipse_center(o:u32)->vec2i{
     return vec2i(i32(atomicLoad(&words[o+52u])),i32(atomicLoad(&words[o+53u])))+
         vec2i(bitcast<i32>(atomicLoad(&words[o+41u])),bitcast<i32>(atomicLoad(&words[o+42u])));
 }
-fn ellipse_value(delta:vec2i,trig:vec2i,a2:u32,b2:u32)->vec4u{
+fn ellipse_value(delta:vec2i,trig:vec2i,angle:u32,a2:u32,b2:u32)->vec4u{
+    // Use an unscaled rational value for exact diagonal rotations and
+    // circles. The matching limit below uses the same representation.
+    if a2==b2{
+        let d=vec2u(abs(delta));
+        return vec4u(wide_add(wide_mul(d.x*d.x,a2),wide_mul(d.y*d.y,a2)),0u,0u);
+    }
+    if angle==45u||angle==135u{
+        let u=u32(abs(select(delta.x+delta.y,delta.y-delta.x,angle==135u)));
+        let v=u32(abs(select(delta.y-delta.x,delta.x+delta.y,angle==135u)));
+        return quad_add(vec4u(wide_mul(u*u,b2),0u,0u),vec4u(wide_mul(v*v,a2),0u,0u));
+    }
     let u=wide_abs(wide_add(signed_product(delta.x,trig.x),signed_product(delta.y,trig.y)));
     let v=wide_abs(wide_add(signed_product(-delta.x,trig.y),signed_product(delta.y,trig.x)));
     return quad_add(quad_mul_word(quad_square(u),b2),quad_mul_word(quad_square(v),a2));
@@ -249,8 +260,12 @@ fn ellipse_contains(id:vec2u,o:u32)->bool{
         return lhs.y<rhs.y||(lhs.y==rhs.y&&lhs.x<=rhs.x);
     }
     let trig=bitcast<vec2i>(pq_table[30722u+angle].xy);
-    let lhs=ellipse_value(delta,trig,a2,b2);
-    let rhs=quad_mul_word(quad_mul_word(vec4u(0u,268435456u,0u,0u),a2),b2);
+    let lhs=ellipse_value(delta,trig,angle,a2,b2);
+    var rhs=quad_mul_word(quad_mul_word(vec4u(0u,268435456u,0u,0u),a2),b2);
+    if a2==b2||angle==45u||angle==135u{
+        rhs=vec4u(wide_mul(a2,b2),0u,0u);
+        if a2!=b2{rhs=quad_add(rhs,rhs);}
+    }
     return quad_le(lhs,rhs);
 }
 // Find exact inclusive-exclusive spans after the motion pass. The
@@ -281,8 +296,8 @@ fn ellipse_scanlines(@builtin(global_invocation_id) id:vec3u){
     }else{
         for(var step=0u;step<12u&&left<right;step++){
             let mid=left+(right-left)/2u;
-            let p=ellipse_value(vec2i(i32(mid)-center.x,dy),trig,a2,b2);
-            let q=ellipse_value(vec2i(i32(mid+1u)-center.x,dy),trig,a2,b2);
+            let p=ellipse_value(vec2i(i32(mid)-center.x,dy),trig,angle,a2,b2);
+            let q=ellipse_value(vec2i(i32(mid+1u)-center.x,dy),trig,angle,a2,b2);
             if quad_le(p,q){right=mid;}else{left=mid+1u;}
         }
     }

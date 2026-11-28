@@ -32,8 +32,15 @@ fn ellipse_rotation(angle:u32)->(i32,i32){
         _=>f64::from(angle).to_radians().sin_cos()};
     ((cos*ANGLE_SCALE as f64).round() as i32,(sin*ANGLE_SCALE as f64).round() as i32)
 }
-fn ellipse_value_fixed(dx:i64,dy:i64,trig:(i32,i32),a2:i128,b2:i128)->i128{
+fn ellipse_value_fixed(dx:i64,dy:i64,trig:(i32,i32),angle:u32,a2:i128,b2:i128)->i128{
     let (c,s)=trig;let (x,y)=(i128::from(dx),i128::from(dy));
+    // Exact circle and diagonal rotations. Q30 sqrt(1/2) is
+    // slightly too large and would exclude points on the true boundary.
+    if a2==b2{return (x*x+y*y)*a2*ANGLE_SCALE*ANGLE_SCALE;}
+    if matches!(angle,45|135){
+        let (u,v)=if angle==45{(x+y,y-x)}else{(y-x,x+y)};
+        return (u*u*b2+v*v*a2)*(ANGLE_SCALE*ANGLE_SCALE/2);
+    }
     let u=x*i128::from(c)+y*i128::from(s);
     let v=-x*i128::from(s)+y*i128::from(c);
     u*u*b2+v*v*a2
@@ -41,7 +48,7 @@ fn ellipse_value_fixed(dx:i64,dy:i64,trig:(i32,i32),a2:i128,b2:i128)->i128{
 #[cfg(test)]
 fn ellipse_contains_fixed(dx:i64,dy:i64,axes:[u32;3])->bool{
     let (a2,b2)=(i128::from(axes[0]).pow(2),i128::from(axes[1]).pow(2));
-    ellipse_value_fixed(dx,dy,ellipse_rotation(axes[2]),a2,b2)<=a2*b2*ANGLE_SCALE*ANGLE_SCALE
+    ellipse_value_fixed(dx,dy,ellipse_rotation(axes[2]),axes[2],a2,b2)<=a2*b2*ANGLE_SCALE*ANGLE_SCALE
 }
 fn pq_table()->&'static Vec<u32>{
     static TABLE:std::sync::OnceLock<Vec<u32>>=std::sync::OnceLock::new();
@@ -116,7 +123,7 @@ fn ellipse_spans(rect:[u32;4],center:[u32;2],axes:[u32;3],height:u32)->Vec<u32>{
     let mut spans=vec![0;2*height as usize];
     for y in rect[1]..rect[3].min(height){
         let dy=i64::from(y)-i64::from(center[1]);
-        let value=|x:u32|ellipse_value_fixed(i64::from(x)-i64::from(center[0]),dy,trig,a2,b2);
+        let value=|x:u32|ellipse_value_fixed(i64::from(x)-i64::from(center[0]),dy,trig,axes[2],a2,b2);
         // Same discrete convex search as the GPU. No floating point root
         // or epsilon is used, including at a tangential intersection.
         let (mut lo,mut hi)=(rect[0],rect[2]-1);
@@ -1254,6 +1261,17 @@ mod legacy_scene_cache_tests{
 #[cfg(test)]
 #[test]
 fn legacy_ellipse_span_reference_counts(){
+    for angle in [45,135]{
+        let spans=ellipse_spans([0,0,8,8],[0,0],[4,2,angle],8);
+        let expected=if angle==45{13}else{6};
+        let count=spans.chunks_exact(2).map(|p|p[1]-p[0]).sum::<u32>();
+        assert_eq!(count,expected,"exact diagonal rotation {angle}");
+    }
+    for (x,y) in [(3,1),(1,3)]{assert!(ellipse_contains_fixed(x,y,[4,2,45]));}
+    for angle in 0..=180{
+        assert!(ellipse_contains_fixed(3,4,[5,5,angle]));
+        assert!(!ellipse_contains_fixed(4,4,[5,5,angle]));
+    }
     for angle in [0,90,180]{
         let spans=ellipse_spans([0,0,8,8],[0,0],[4,2,angle],8);
         assert_eq!(spans.chunks_exact(2).map(|p|p[1]-p[0]).sum::<u32>(),10);

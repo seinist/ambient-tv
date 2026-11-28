@@ -113,6 +113,12 @@ class Reference(unittest.TestCase):
             selected_count=sum(ellipse_decimal_value(x,y,4,2,c,s)<=1
                                for y in range(34) for x in range(66))
             self.assertEqual(selected_count,expected)
+        # Exact diagonal identity eliminates Q30 rounding at the boundary.
+        # (3,1) and (1,3) are precisely on the 45-degree ellipse.
+        for x,y in [(3,1),(1,3)]:
+            self.assertEqual((x+y)**2*4+(y-x)**2*16,2*16*4)
+        self.assertEqual(sum((x+y)**2*4+(y-x)**2*16<=2*16*4
+                             for y in range(34) for x in range(66)),13)
         rng=random.Random(20944030)
         for angle in [1,17,45,73,89,91,137,179]:
             c,s=trig_decimal(angle)
