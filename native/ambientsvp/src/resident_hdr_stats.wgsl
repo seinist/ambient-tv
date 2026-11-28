@@ -6,7 +6,7 @@
 @group(0) @binding(2) var<storage,read_write> words:array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> params:vec4u;
 const BINS:u32=100001u;
-const STRIDE:u32=56u;
+const STRIDE:u32=64u;
 @group(0) @binding(3) var<storage,read> motion:array<vec4i>;
 fn pq(v:vec3f)->vec3f{
     let p=pow(clamp(v,vec3f(0.0),vec3f(1.0)),vec3f(1.0/78.84375));
@@ -18,6 +18,11 @@ fn pq(v:vec3f)->vec3f{
 // support; bounded translation leaves authored window shape intact.
 var<workgroup> track_sum:array<vec4i,64>;
 var<workgroup> track_count:array<vec2u,64>;
+// Normalized spatial moments and cross moments of reciprocal vectors.
+// Fit a full 2D affine gradient after removing translation.
+var<workgroup> fit_pos:array<vec4f,64>;
+var<workgroup> fit_cross:array<vec4f,64>;
+var<workgroup> fit_vel:array<vec4f,64>;
 fn rectangle(o:u32)->vec4u{
     return vec4u(atomicLoad(&words[o]),atomicLoad(&words[o+1u]),
         atomicLoad(&words[o+2u]),atomicLoad(&words[o+3u]));
@@ -33,6 +38,7 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
     let grid=(params.xy+vec2u(step-1u))/step;
     let n=grid.x*grid.y;
     var sum=vec4i(0);var support=vec2u(0);
+    var pos=vec4f(0);var cross=vec4f(0);var vel=vec4f(0);
     for(var direction=0u;direction<2u;direction++){
         let r=select(ar,br,direction==1u);
         let lo=r.xy/step;let hi=min((r.zw+vec2u(step-1u))/step,grid);
@@ -50,20 +56,55 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
             let b=motion[(1u-direction)*n+other.y*grid.x+other.x];
             let back=b.xy*4/max(b.w,1);
             if b.z<0||b.z>64*32||abs(mv.x+back.x)+abs(mv.y+back.y)>16{continue;}
+            // Use the forward field only for the fit; reverse vectors
+            // independently qualify samples through the cycle check above.
+            if direction==0u{
+                let xy=(vec2f(center)-(vec2f(ar.xy)+vec2f(ar.zw))*0.5)/f32(step);
+                let v=vec2f(mv)/(4.0*f32(step));
+                pos+=vec4f(xy,xy*xy);
+                cross+=vec4f(xy.x*v,xy.y*v);
+                vel+=vec4f(v,xy.x*xy.y,1.0);
+            }
             if direction==0u{sum.x+=mv.x;sum.y+=mv.y;support.x+=1u;}
             else{sum.z+=mv.x;sum.w+=mv.y;support.y+=1u;}
         }
     }
     track_sum[lane]=sum;track_count[lane]=support;
+    fit_pos[lane]=pos;fit_cross[lane]=cross;fit_vel[lane]=vel;
     workgroupBarrier();
     for(var stride=32u;stride>0u;stride/=2u){
         if lane<stride{
             track_sum[lane]+=track_sum[lane+stride];
             track_count[lane]+=track_count[lane+stride];
+            fit_pos[lane]+=fit_pos[lane+stride];
+            fit_cross[lane]+=fit_cross[lane+stride];
+            fit_vel[lane]+=fit_vel[lane+stride];
         }
         workgroupBarrier();
     }
     if lane==0u{
+        let nfit=fit_vel[0].w;
+        if nfit>=6.0{
+            let p=fit_pos[0];let v=fit_vel[0];let c=fit_cross[0];
+            let xx=p.z-p.x*p.x/nfit;
+            let yy=p.w-p.y*p.y/nfit;
+            let xy=v.z-p.x*p.y/nfit;
+            let det=xx*yy-xy*xy;
+            // Reject collinear or poorly conditioned windows.
+            if xx>0.0&&yy>0.0&&det>0.01*xx*yy{
+                let cx=c.xy-p.x*v.xy/nfit;
+                let cy=c.zw-p.y*v.xy/nfit;
+                let gx=(yy*cx-xy*cy)/det;
+                let gy=(xx*cy-xy*cx)/det;
+                let gradient=vec4f(gx,gy);
+                if all(abs(gradient)<=vec4f(0.5)){
+                    for(var k=0u;k<4u;k++){
+                        atomicStore(&words[o+56u+k],bitcast<u32>(gradient[k]));
+                    }
+                    atomicStore(&words[o+60u],1u);
+                }
+            }
+        }
         let counts=track_count[0];let total=counts.x+counts.y;
         if total==0u{return;}
         let rect=rectangle(o);
