@@ -264,9 +264,12 @@ def remote_head(repo: str) -> str:
 
 
 def cores_latest(cores: list[dict]) -> dict[str, str]:
+    # Several variants share one upstream repo (VICE, Yabause). Resolve its
+    # HEAD once to avoid duplicate network calls and inconsistent snapshots.
+    repos = list(dict.fromkeys(c["repo"] for c in cores))
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        heads = pool.map(lambda c: remote_head(c["repo"]), cores)
-        return {c["core"]: sha for c, sha in zip(cores, heads)}
+        heads = dict(zip(repos, pool.map(remote_head, repos)))
+    return {c["core"]: heads[c["repo"]] for c in cores}
 
 
 def render_cores(data: dict, commits: dict[str, str]) -> bytes:

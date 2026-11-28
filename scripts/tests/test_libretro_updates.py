@@ -64,10 +64,26 @@ class LibretroUpdateTest(unittest.TestCase):
         self.prepare.assert_called_once()
 
     def test_unchanged_cores_are_not_rewritten(self):
-        pins = {c["repo"]: c["commit"] for c in json.loads(self.cores.read_text())["cores"]}
+        # A remote HEAD has one value per repository. Normalize the fixture
+        # first: the production catalog may deliberately pin shared repos
+        # to different revisions, which is not an unchanged-HEAD scenario.
+        data = json.loads(self.cores.read_text())
+        pins = {c["repo"]: c["commit"] for c in data["cores"]}
+        self.cores.write_bytes(updater.render_cores(data, {
+            c["core"]: pins[c["repo"]] for c in data["cores"]
+        }))
         before = self.cores.read_bytes()
         self.assertEqual(self.run_updater("--apply", pins.__getitem__), 0)
         self.assertEqual(before, self.cores.read_bytes())
+
+    def test_shared_repository_resolved_once(self):
+        cores = [
+            {"core": "first", "repo": "https://github.com/a/shared", "commit": "a" * 40},
+            {"core": "second", "repo": "https://github.com/a/shared", "commit": "c" * 40},
+        ]
+        with mock.patch.object(updater, "remote_head", return_value=NEW) as head:
+            self.assertEqual(updater.cores_latest(cores), {"first": NEW, "second": NEW})
+            head.assert_called_once_with(cores[0]["repo"])
 
     def test_patch_failure_keeps_old_libretrodroid_but_updates_cores(self):
         self.assertEqual(self.run_updater("--apply", lambda repo: NEW, prepare=False), 0)
