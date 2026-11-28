@@ -210,6 +210,10 @@ class GameMetadataProviders @Inject constructor(
             // A hash miss is distinct from provider failure; title fallback still requires confirmation.
             return screenScraper(query.copy(crc32 = null, serial = null, providerGameId = null), artworkKind)
         }
+        val clean = gameMetadataSearchName(query.title)
+        if (results.isEmpty() && !hasIdentity && clean != query.title) {
+            return screenScraper(query.copy(title = clean), artworkKind)
+        }
         return results.distinctBy { if (artworkKind == null) it.metadata.providerGameId else it.metadata.artwork(artworkKind) }
             .take(if (artworkKind == null) MAX_MATCHES else MAX_ARTWORK_CHOICES)
     }
@@ -230,15 +234,18 @@ class GameMetadataProviders @Inject constructor(
         when { pinned != null -> builder.addQueryParameter("id", pinned)
             crc != null -> builder.addQueryParameter("hash", crc).addQueryParameter("filter[type]", "crc")
             else -> builder.addQueryParameter("name", query.title.take(256)) }
+        val clean = gameMetadataSearchName(query.title)
+        suspend fun onMiss(): List<GameMetadataCandidate> = when {
+            crc != null && pinned == null -> theGamesDb(query.copy(crc32 = null), artworkKind)
+            pinned == null && crc == null && clean != query.title -> theGamesDb(query.copy(title = clean), artworkKind)
+            else -> emptyList()
+        }
         val payload = getJson(GameMetadataProviderIds.THEGAMESDB, builder.build(), missingIsEmpty = true)
-            ?: return if (crc != null && pinned == null) theGamesDb(query.copy(crc32 = null), artworkKind) else emptyList()
+            ?: return onMiss()
         val gamesElement = payload.obj("data")["games"]
         if (gamesElement !is JsonArray && gamesElement !is JsonObject) throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
         val games = payload.obj("data").objects("games").filter { it.text("platform") in ids }.take(MAX_MATCHES)
-        if (games.isEmpty()) {
-            if (crc != null && pinned == null) return theGamesDb(query.copy(crc32 = null), artworkKind)
-            return emptyList()
-        }
+        if (games.isEmpty()) return onMiss()
         // Reference catalogues are fetched once and persisted; browsing never fetches them.
         val genres = if (artworkKind == null && games.any { it["genres"] is JsonArray }) lookup("Genres", "genres") else emptyMap()
         // Developers are a default response field in the official API, not an optional fields token.
@@ -456,7 +463,8 @@ internal fun allowedGameProviderHost(provider: String, url: HttpUrl): Boolean =
         GameMetadataProviderIds.SCREENSCRAPER -> url.host in setOf("api.screenscraper.fr", "www.screenscraper.fr", "screenscraper.fr", "media.screenscraper.fr")
         GameMetadataProviderIds.THEGAMESDB -> url.host in setOf("api.thegamesdb.net", "cdn.thegamesdb.net", "images.thegamesdb.net")
         GameMetadataProviderIds.LIBRETRO_DATABASE -> url.host == GameMetadataProviders.LIBRETRO_DATABASE_HOST &&
-            url.encodedPath.startsWith("/" + GameMetadataProviders.LIBRETRO_DATABASE_ROOT + "/metadat/")
+            (url.encodedPath.startsWith("/" + GameMetadataProviders.LIBRETRO_DATABASE_ROOT + "/metadat/") ||
+                url.pathSegments == listOf("libretro", "libretro-database", "master", "dat", "Nintendo - Wii U.dat"))
         else -> false
     }
 

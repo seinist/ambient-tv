@@ -38,7 +38,8 @@ internal fun radioAlphabetFacets(
 ): List<RadioAlphabetFacet> {
     val collator = Collator.getInstance(locale).apply { strength = Collator.PRIMARY }
     val comparator = Comparator<RadioAlphabetFacet> { left, right ->
-        val compared = collator.compare(left.title, right.title)
+        val bucket = (left.letter != "#").compareTo(right.letter != "#")
+        val compared = if (bucket != 0) bucket else collator.compare(left.title, right.title)
         if (compared != 0) compared else left.facet.id.compareTo(right.facet.id)
     }
     return facets.map { facet ->
