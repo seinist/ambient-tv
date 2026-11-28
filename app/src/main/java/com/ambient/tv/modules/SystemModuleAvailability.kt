@@ -25,6 +25,7 @@ internal data class ModuleAvailability(
  */
 internal object SystemModuleAvailability {
     fun bundled(module: SystemModule): Boolean = when (module) {
+        SystemModule.SMARTTUBE -> BuildConfig.SMARTTUBE_BUNDLED
         SystemModule.MONOGRAM -> BuildConfig.MONOGRAM_NATIVE && BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SPOTIFY -> BuildConfig.SPOTIFY_ENABLED && BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.PROJECTM, SystemModule.MPV -> BuildConfig.MODULE_PACKAGING == "full"
@@ -41,17 +42,18 @@ internal object SystemModuleAvailability {
     fun reportProbe(module: SystemModule, external: Boolean, success: Boolean) {
         val offered = state(module).usable
         registry.reportProbe(module, external, success)
-        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM) && offered != state(module).usable)
+        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE) && offered != state(module).usable)
             com.ambient.tv.data.local.LoginStateSignal.changed()
     }
     fun reportFailure(module: SystemModule) {
         val offered = state(module).usable
         registry.reportFailure(module)
-        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM) && offered != state(module).usable)
+        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE) && offered != state(module).usable)
             com.ambient.tv.data.local.LoginStateSignal.changed()
     }
 
     /** Legacy providers retain their compile-time behavior until their loader is migrated. */
+    val smartTubeOffered: Boolean get() = state(SystemModule.SMARTTUBE).usable
     val monogramOffered: Boolean get() = state(SystemModule.MONOGRAM).usable
     val spotifyOffered: Boolean get() = state(SystemModule.SPOTIFY).usable
 }
