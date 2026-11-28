@@ -5,6 +5,7 @@ on:
       - scripts/native_core_candidates/core_benchmark_runner.cpp
       - scripts/native_core_candidates/core_benchmark_input.h
       - scripts/native_core_candidates/core_benchmark_input_test.cpp
+      - scripts/native_rewind/**
       - scripts/native_core_candidates/core_benchmark_vulkan.h
       - scripts/native_core_candidates/core_benchmark_vulkan_test.cpp
       - scripts/build_core_benchmark_runner.sh

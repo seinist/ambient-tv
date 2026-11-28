@@ -6,6 +6,8 @@
 #include <libretro.h>
 #include "core_benchmark_vulkan.h"
 #include "core_benchmark_input.h"
+#include "rewindbuffer.h"
+#include "rewindcapture.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
@@ -20,6 +22,8 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
+#include <thread>
 #include <cstring>
 #include <cmath>
 #include <fstream>
@@ -425,7 +429,11 @@ int main(int argc,char** argv) {
     verify_output=std::getenv("AMBIENT_BENCHMARK_VERIFY_OUTPUT")!=nullptr;
     const char* state_input=std::getenv("AMBIENT_BENCHMARK_STATE_INPUT");
     const bool export_state=std::getenv("AMBIENT_BENCHMARK_EXPORT_STATE")!=nullptr;
-    if((state_input || export_state) && !verify_output)die("State interchange requires correctness mode");
+    const bool verify_rewind=std::getenv("AMBIENT_BENCHMARK_VERIFY_REWIND")!=nullptr;
+    const char* rewind_limit=std::getenv("AMBIENT_BENCHMARK_REWIND_BUDGET_MIB");
+    const size_t rewind_budget_mib=rewind_limit?number(rewind_limit,1024):256;
+    if((state_input || export_state || verify_rewind) && !verify_output)
+        die("State interchange and rewind require correctness mode");
     if(const char* renderer=std::getenv("AMBIENT_BENCHMARK_RENDERER")) {
         if(std::strcmp(renderer,"vulkan")==0){preferred_renderer=RETRO_HW_CONTEXT_VULKAN;require_vulkan=true;}
         else if(std::strcmp(renderer,"gles")==0)require_gles=true;
@@ -576,13 +584,117 @@ int main(int argc,char** argv) {
         }
     }
     if(export_state && !state_ok)die("Core does not support requested state interchange");
+    unsigned rewind_checked=0;
+    uint64_t rewind_history=0;
+    if(verify_rewind) {
+        // Use the same reverse-delta buffer and single-slot compression worker
+        // as LibretroDroid. Capture/restore happens only on the emulation owner.
+        using namespace libretrodroid;
+        constexpr unsigned span=4, anchors=8;
+        const size_t max_state=serialize_size();
+        const size_t total=rewind_budget_mib*1024u*1024u;
+        const size_t budget=rewindStorageBudget(total,max_state,4096);
+        if(!max_state || max_state>256u*1024*1024 || !budget || max_state>budget/2)
+            die("Requested rewind budget cannot hold two core states");
+        RewindBuffer ring(anchors,max_state,budget,span*(anchors-1));
+        AsyncRewindCapture worker;
+        std::vector<uint8_t> scratch(max_state);
+        struct Anchor {unsigned first;size_t bytes;uint64_t state,video,audio,video_count,audio_count;};
+        std::deque<Anchor> expected;
+        auto digest_state=[&](size_t bytes) {
+            uint64_t digest=hash_offset;
+            for(size_t i=0;i<bytes;++i)hash_value(digest,scratch[i],1);
+            return digest;
+        };
+        auto capture=[&](unsigned first) {
+            const size_t bytes=serialize_size();
+            if(!bytes || bytes>max_state || !serialize(scratch.data(),bytes))
+                die("Core cannot capture bounded rewind state");
+            const auto deadline=now()+1000000000ull;
+            while(!worker.trySubmit(ring,scratch.data(),bytes,span)) {
+                if(now()>deadline)die("Rewind worker did not accept capture");
+                std::this_thread::yield();
+            }
+            if(worker.collect(true).result!=RewindCaptureResult::Saved)
+                die("Rewind compression failed");
+            return Anchor{first,bytes,digest_state(bytes),0,0,0,0};
+        };
+        const BenchmarkInput* previous=&inputs.back();
+        auto publish=[&](const BenchmarkInput& next) {
+            current_input.store(&next,std::memory_order_release);
+            if(keyboard_callback)next.keyboard_events(*previous,keyboard_callback);
+            previous=&next;
+        };
+        auto segment=[&](Anchor& anchor) {
+            if(vulkan)vk.idle();
+            else if(hardware)glFinish();
+            video_hash=hash_offset;
+            {std::lock_guard<std::mutex> lock(audio_hash_mutex);audio_hash=hash_offset;}
+            const auto v0=video_frames,a0=audio_frames.load(std::memory_order_relaxed);
+            for(unsigned n=0;n<span;++n) {
+                publish(inputs[(anchor.first+n)%frames]);
+                run();
+                if(vulkan)vk.idle();
+                else if(hardware)glFinish();
+                if(quit || unsupported || (vulkan && !vk.good()))die("Core failed during rewind replay");
+            }
+            anchor.video=video_hash;
+            {std::lock_guard<std::mutex> lock(audio_hash_mutex);anchor.audio=audio_hash;}
+            anchor.video_count=video_frames-v0;
+            anchor.audio_count=audio_frames.load(std::memory_order_relaxed)-a0;
+        };
+        // Build a real forward history. The scratch buffer belongs to the
+        // worker until collect completes; no core calls access it meanwhile.
+        for(unsigned n=0;n<anchors;++n) {
+            auto anchor=capture(n*span);
+            segment(anchor);
+            expected.push_back(anchor);
+            while(expected.size()>ring.getValidCount())expected.pop_front();
+        }
+        if(expected.size()<2 || ring.getHistoryFrames()<span)die("Rewind retained insufficient history");
+        rewind_history=ring.getHistoryFrames();
+        auto restore=[&](const Anchor& anchor,size_t bytes) {
+            if(bytes!=anchor.bytes || digest_state(bytes)!=anchor.state)
+                die("Rewind codec changed serialized bytes");
+            // Restore the frontend input level before loading the core's state.
+            publish(anchor.first?inputs[(anchor.first-1)%frames]:inputs.back());
+            if(!unserialize(scratch.data(),bytes))die("Core rejected rewind state");
+            get_system_av_info(&current_av);
+            if(!valid_timing(current_av.timing) || !valid_geometry(current_av.geometry))
+                die("Invalid A/V state after rewind");
+            Anchor replay=anchor;
+            segment(replay);
+            if(!anchor.video_count || replay.video!=anchor.video || replay.audio!=anchor.audio ||
+               replay.video_count!=anchor.video_count || replay.audio_count!=anchor.audio_count)
+                die("Core output differs after rewind restore");
+            ++rewind_checked;
+        };
+        // Preview (non-destructive), backwards traversal, then resume on a
+        // fresh branch after the old history has been consumed.
+        size_t bytes=0;
+        if(!ring.peek(expected.size()-1,scratch.data(),&bytes))die("Rewind preview failed");
+        restore(expected.front(),bytes);
+        while(!expected.empty()) {
+            if(!ring.pop(scratch.data(),&bytes))die("Rewind pop failed");
+            restore(expected.back(),bytes);
+            expected.pop_back();
+        }
+        ring.clear();
+        // Re-establish the declared previous input before the new anchor.
+        publish(inputs.back());
+        auto branch=capture(0);
+        segment(branch);
+        if(!ring.pop(scratch.data(),&bytes))die("Rewind branch restore failed");
+        restore(branch,bytes);
+    }
     if(verify_output) {
         FILE* proof=std::fopen((prefix+"-output.json").c_str(),"w");
         if(!proof)die("Cannot write correctness proof");
         std::fprintf(proof,"{\"audio_hash\":\"%016llx\",\"video_hash\":",
                      static_cast<unsigned long long>(captured_audio_hash));
         std::fprintf(proof,"\"%016llx\"",static_cast<unsigned long long>(captured_video_hash));
-        std::fprintf(proof,",\"state_loaded\":%s}\n",state_input?"true":"false");
+        std::fprintf(proof,",\"state_loaded\":%s,\"rewind_checked\":%u,\"rewind_history_frames\":%llu}\n",
+                     state_input?"true":"false",rewind_checked,(unsigned long long)rewind_history);
         if(std::fclose(proof))die("Cannot write correctness proof");
     }
     if(std::fclose(csv) || std::fclose(thermal))die("Benchmark output failed");

@@ -334,3 +334,12 @@ are released. Keyboard transitions are also delivered through the registered
 Libretro keyboard callback. Set `@controller.1=1` (or another Libretro device ID)
 in options.txt to select an explicit device on a port. These frontend settings
 are included in the existing fixture hashes.
+
+Set `"verify_rewind": true` to validate each selected binary against the actual
+production reverse-delta buffer and asynchronous capture worker. The separate
+correctness replay captures eight four-frame anchors, verifies a non-destructive
+preview, pops retained anchors in reverse order, compares restored video/audio
+and workload with the original forward segments, then clears and resumes on a
+fresh branch. `"rewind_budget_mib"` defaults to 256; impossible budgets, failed
+serialization, too little retained history or changed output fail explicitly.
+This exercises real core states, not Android UI/renderer lifecycle integration.

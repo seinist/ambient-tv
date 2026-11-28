@@ -33,8 +33,12 @@ def run(args):
         raise ValueError("Training requires pgo-generate")
     verify_output = getattr(args, "verify_output", False)
     export_state = getattr(args, "export_state", False)
+    verify_rewind = getattr(args, "verify_rewind", False)
+    rewind_budget = getattr(args, "rewind_budget_mib", 256)
+    if type(rewind_budget) is not int or not 1 <= rewind_budget <= 1024:
+        raise ValueError("Invalid rewind budget")
     state_input = getattr(args, "state_input", None)
-    if (export_state or state_input) and not verify_output:
+    if (export_state or state_input or verify_rewind) and not verify_output:
         raise ValueError("State interchange requires correctness mode")
     if verify_output and args.training:
         raise ValueError("Correctness mode must not be used for PGO training")
@@ -103,6 +107,9 @@ def run(args):
             extra.append("AMBIENT_BENCHMARK_VERIFY_OUTPUT=1")
         if export_state:
             extra.append("AMBIENT_BENCHMARK_EXPORT_STATE=1")
+        if verify_rewind:
+            extra.extend(("AMBIENT_BENCHMARK_VERIFY_REWIND=1",
+                          "AMBIENT_BENCHMARK_REWIND_BUDGET_MIB="+str(rewind_budget)))
         if state_input:
             cmd("push",state_input,remote+"/state.bin")
             if shell("sha256sum",remote+"/state.bin",capture=True).split()[0]!=state_digest:
@@ -137,7 +144,8 @@ def run(args):
             raise ValueError("Local fixture or build changed during capture")
         metadata={"build":build,"device_fingerprint":fingerprint,"device_serial":serial,
                   "frames":args.frames,"warmup_frames":warmup,"measured_frames":args.frames-warmup,
-                  "verify_output":verify_output,"state_input_sha256":state_digest,**identity}
+                  "verify_output":verify_output,"verify_rewind":verify_rewind,
+                  "state_input_sha256":state_digest,**identity}
         (out/"metadata.json").write_text(json.dumps(metadata,indent=2)+"\n")
         (out/"build.json").write_text(report_text)
     finally:
@@ -156,5 +164,7 @@ if __name__=="__main__":
     p.add_argument("--training",action="store_true")
     p.add_argument("--verify-output",action="store_true")
     p.add_argument("--export-state",action="store_true")
+    p.add_argument("--verify-rewind",action="store_true")
+    p.add_argument("--rewind-budget-mib",type=int,default=256)
     p.add_argument("--state-input",type=Path)
     run(p.parse_args())

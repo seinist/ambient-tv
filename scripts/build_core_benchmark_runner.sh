@@ -23,5 +23,6 @@ git -C "$temp" show FETCH_HEAD:include/libretro_vulkan.h > "$temp/libretro_vulka
 mkdir -p "$(dirname "$out")"
 compiler="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${triple}29-clang++"
 "$compiler" -std=c++17 -O2 -Wall -Wextra -Werror -I"$temp" \
-  "$root/scripts/native_core_candidates/core_benchmark_runner.cpp" -ldl -lEGL -lGLESv3 -lvulkan \
+  -I"$root/scripts/native_rewind" "$root/scripts/native_core_candidates/core_benchmark_runner.cpp" \
+  "$root/scripts/native_rewind/rewindbuffer.cpp" -pthread -ldl -lEGL -lGLESv3 -lvulkan \
   -static-libstdc++ -Wl,-z,max-page-size=16384 -o "$out"

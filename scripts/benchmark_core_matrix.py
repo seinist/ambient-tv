@@ -139,8 +139,8 @@ def matrix(args):
                                      "distinct_hashes":len(hashes)}
     # Optional strict deterministic correctness replay, outside the timed rounds.
     result["correctness_verified"]=False
-    if config.get("verify_output",True) or config.get("verify_states"):
-        def correctness(profile, target, state_input=None, export_state=False):
+    if config.get("verify_output",True) or config.get("verify_states") or config.get("verify_rewind"):
+        def correctness(profile, target, state_input=None, export_state=False, verify_rewind=False):
             record=profiles[profile]
             run(SimpleNamespace(
                 runner=resolve(config["runner"]),binary=resolve(record["binary"]),
@@ -151,7 +151,8 @@ def matrix(args):
                 rom=config["rom"],serial=initial_fixture["device_serial"],
                 frames=warmup+measured,warmup_frames=warmup,training=False,
                 renderer=config.get("renderer","auto"),verify_output=True,
-                export_state=export_state,state_input=state_input))
+                export_state=export_state,state_input=state_input,
+                verify_rewind=verify_rewind,rewind_budget_mib=config.get("rewind_budget_mib",256)))
             meta=json.loads((target/"metadata.json").read_text())
             summary=json.loads((target/"capture-summary.json").read_text())
             if (meta["build"]["binary_sha256"]!=result["profiles"][profile]["binary_sha256"] or
@@ -168,6 +169,10 @@ def matrix(args):
                 raise ValueError("Correctness replay identity mismatch")
             validate_workload([{"round":0,"profile":"baseline",**summary}],warmup,measured)
             proof=json.loads((target/"capture-output.json").read_text())
+            if verify_rewind and (meta.get("verify_rewind") is not True or
+                                  type(proof.get("rewind_checked")) is not int or proof["rewind_checked"]<4 or
+                                  type(proof.get("rewind_history_frames")) is not int or proof["rewind_history_frames"]<4):
+                raise ValueError("Missing complete rewind proof")
             return proof,summary
         def compare_replay(records, state_loaded=False):
             proofs={p:record[0] for p,record in records.items()}
@@ -176,7 +181,8 @@ def matrix(args):
             return proofs
         require_video=bool(config.get("require_video_hash",True))
         interchange=bool(config.get("verify_states"))
-        records={p:correctness(p,out/("verify-"+p),export_state=interchange) for p in ordered}
+        records={p:correctness(p,out/("verify-"+p),export_state=interchange,
+                               verify_rewind=bool(config.get("verify_rewind"))) for p in ordered}
         result["output_correctness"]=compare_replay(records)
         if interchange:
             baseline_state=out/"verify-baseline"/"capture-state.bin"
