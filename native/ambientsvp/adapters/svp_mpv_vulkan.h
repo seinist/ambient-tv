@@ -35,7 +35,13 @@ struct svp_vk_job {
     VkImageView views[SVP_VK_IMAGES];
     unsigned nframes, nviews, capture_count;
     uint64_t capture_tick;
-    bool submitted, sealed;
+    bool submitted, sealed, metadata_pending, metadata_scene;
+    unsigned metadata_count;
+    uint64_t metadata_tick;
+    uint32_t hdr_counts[SVP_VK_PHASES];
+    bool tracked[SVP_VK_PHASES],affine[SVP_VK_PHASES],elliptic[SVP_VK_PHASES];
+    float phases[SVP_VK_PHASES];
+    struct mp_image *fallback;
 };
 struct svp_vk_mpv {
     AmbientSvpVk *engine;
@@ -94,6 +100,7 @@ struct svp_vk_mpv {
     struct svp_vk_job *jobs[SVP_VK_JOBS];
     struct svp_vk_job *idle_commands[SVP_VK_JOBS];
     unsigned idle_count;
+    struct svp_vk_job *metadata_job;
     struct mp_image *previous,*older,*lookahead;
     unsigned algorithm;
     struct mp_image *outputs[SVP_VK_PHASES];
@@ -708,6 +715,7 @@ static void svp_vk_job_free(struct svp_vk_mpv *s,struct svp_vk_job *j)
     if (j->pair && !j->submitted) s->cancel(j->pair);
     for (unsigned i=0;i<j->nviews;i++) s->destroy_view(s->device,j->views[i],NULL);
     for (unsigned i=0;i<j->nframes;i++) av_frame_free(&j->frames[i]);
+    mp_image_unrefp(&j->fallback);
     if (j->fence) s->destroy_fence(s->device,j->fence,NULL);
     free(j);
 }
@@ -738,7 +746,7 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
     for (unsigned i=0;i<SVP_VK_JOBS;i++) {
         struct svp_vk_job *j=s->jobs[i];
         if (!j) continue;
-        if(s->scene_pass&&j->capture_count){outstanding++;continue;}
+        if(j->metadata_pending||(s->scene_pass&&j->capture_count)){outstanding++;continue;}
         // A submitted pair must be released by its own fence check.
         if (j->sealed && s->release(j->pair)==1) {
             j->pair=NULL;
@@ -747,6 +755,7 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
             if(s->idle_count<SVP_VK_JOBS&&s->wait_fences(s->device,1,&j->fence,VK_TRUE,0)==VK_SUCCESS){
                 for(unsigned k=0;k<j->nviews;k++)s->destroy_view(s->device,j->views[k],NULL);
                 for(unsigned k=0;k<j->nframes;k++)av_frame_free(&j->frames[k]);
+                mp_image_unrefp(&j->fallback);
                 VkCommandPool pool=j->pool;VkCommandBuffer cmd=j->cmd;VkFence fence=j->fence;
                 *j=(struct svp_vk_job){.pool=pool,.cmd=cmd,.fence=fence};
                 s->idle_commands[s->idle_count++]=j;
@@ -773,6 +782,7 @@ static void svp_vk_reset_history(struct svp_vk_mpv *s)
 {
     if (!s) return;
     svp_vk_scene_abort(s);
+    if(s->metadata_job){s->metadata_job->metadata_pending=false;s->metadata_job=NULL;}
     mp_image_unrefp(&s->previous);mp_image_unrefp(&s->older);mp_image_unrefp(&s->lookahead);
     for (unsigned i=0;i<s->output_count;i++) mp_image_unrefp(&s->outputs[i]);
     s->next_output=s->output_count=0;s->tick=0;
@@ -1000,6 +1010,49 @@ static bool svp_vk_picture(struct svp_vk_mpv *s,struct svp_vk_job *j,
 /* Record and submit actual hardware frames. All descriptors and frame refs
  * are retained by a bounded job until its fence signals. The output AVVkFrame
  * timeline semaphore is advanced before returning it to MPV's renderer. */
+static bool svp_vk_complete_metadata(struct svp_vk_mpv *s,struct svp_vk_job *j,struct mp_image **outputs)
+{
+    unsigned count=j->metadata_count;
+    {
+        if(!j->sealed||(j->metadata_scene&&!s->scene_pass)||
+            (j->metadata_pending&&s->wait_fences(s->device,1,&j->fence,VK_TRUE,250000000ULL)!=VK_SUCCESS))return false;
+        if(s->scene_pass){
+            for(unsigned i=0;i<count;i++){
+                AmbientSvpHdrSceneResult result;
+                if(s->scene_mode==1){if(s->scene_capture(s->scene_pass,j->pair,i,j->metadata_tick+i)!=1)return false;}
+                else if(s->scene_version==0){
+                    AmbientSvpHdrLegacyScene legacy;
+                    if(s->scene_verify_geometry(s->scene_pass,j->pair,i,j->metadata_tick+i)!=1||
+                        s->scene_lookup_legacy(s->scene_pass,j->metadata_tick+i,&legacy)!=1||
+                        !svp_vk_scene_legacy_metadata(outputs[i],&legacy))return false;
+                }else{
+                    const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)svp_vk_hdr10plus(outputs[i])->data;
+                    uint32_t schema[9];for(unsigned k=0;k<9;k++)schema[k]=m->params[0].distribution_maxrgb[k].percentage;
+                    if(s->scene_lookup(s->scene_pass,j->metadata_tick+i,&schema,&result)!=1||!svp_vk_scene_metadata(outputs[i],&result))return false;
+                }
+            }
+        }
+        for(unsigned i=0;i<count;i++)if(j->hdr_counts[i]){
+            AmbientSvpHdrResult results[3];
+            int32_t shifts[3][2]={{0}};
+            int rc=j->tracked[i]?s->hdr_read_track(j->pair,i,results,shifts,j->hdr_counts[i]):
+                s->hdr_read(j->pair,i,results,j->hdr_counts[i]);
+            float gradients[3][4]={{0}};
+            if(rc!=1)return false;
+            if(j->tracked[i]&&s->hdr_read_affine&&s->hdr_read_affine(j->pair,i,gradients,j->hdr_counts[i])!=1)return false;
+            uint32_t rectangles[3][4]={{0}};
+            if(j->affine[i]&&s->hdr_read_rectangles(j->pair,i,rectangles,j->hdr_counts[i])!=1)return false;
+            uint32_t ellipses[3][3]={{0}};
+            if(j->elliptic[i]&&s->hdr_read_ellipses(j->pair,i,ellipses,j->hdr_counts[i])!=1)return false;
+            if(s->scene_pass){
+                if(s->scene_version==0&&s->scene_mode==2&&j->hdr_counts[i]>1&&
+                    !svp_vk_scene_geometry(outputs[i],results,shifts,rectangles,ellipses,j->hdr_counts[i]))return false;
+            }else if(!svp_vk_hdrplus_measured(outputs[i],results,j->tracked[i]?shifts:NULL,gradients,j->affine[i]?rectangles:NULL,j->elliptic[i]?ellipses:NULL,j->elliptic[i],j->phases[i],j->hdr_counts[i]))return false;
+        }
+    }
+    return true;
+}
+
 static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp_image *b,
     struct mp_image *past,struct mp_image *future,const double *times,const float *phases,unsigned count,struct mp_image **outputs)
 {
@@ -1015,6 +1068,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     bool tracked[SVP_VK_PHASES]={0},affine[SVP_VK_PHASES]={0},elliptic[SVP_VK_PHASES]={0};
     if (s->mode && (s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
         !dynamic && !svp_vk_hdr_metadata_same(a,b)) return false;
+    if(s->metadata_job)return false;
     bool was_scene=s->scene_pass!=NULL;
     svp_vk_reap(s,false);
     if(was_scene&&!s->scene_pass)return false;
@@ -1028,6 +1082,10 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     if (!j) return false;
     if(j->pool&&(s->reset_pool(s->device,j->pool,0)!=VK_SUCCESS||
         s->reset_fences(s->device,1,&j->fence)!=VK_SUCCESS)){svp_vk_job_free(s,j);return false;}
+    if(dynamic&&(!s->scene_pass||s->scene_version==0)&&(!s->scene_pass||s->scene_mode!=1)){
+        j->fallback=mp_image_new_ref(a);
+        if(!j->fallback){svp_vk_job_free(s,j);return false;}
+    }
     struct svp_vk_ref refs[SVP_VK_FRAMES];
     unsigned order[SVP_VK_FRAMES], unique=0, locked=0;
     VkCommandBuffer cmd=VK_NULL_HANDLE;
@@ -1237,43 +1295,18 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         j->capture_tick=s->tick;j->capture_count=count;
         return true;
     }
-    // Metadata must be attached before mpv can observe the output. Only
-    // dynamic HDR waits here, after all FFmpeg frame/queue locks are released.
     if(dynamic){
-        if(!j->sealed||((!s->scene_pass||s->scene_version==0)&&
-            s->wait_fences(s->device,1,&j->fence,VK_TRUE,250000000ULL)!=VK_SUCCESS))goto submitted_fail;
-        if(s->scene_pass){
-            for(unsigned i=0;i<count;i++){
-                AmbientSvpHdrSceneResult result;
-                if(s->scene_mode==1){if(s->scene_capture(s->scene_pass,j->pair,i,s->tick+i)!=1)goto submitted_fail;}
-                else if(s->scene_version==0){
-                    AmbientSvpHdrLegacyScene legacy;
-                    if(s->scene_verify_geometry(s->scene_pass,j->pair,i,s->tick+i)!=1||
-                        s->scene_lookup_legacy(s->scene_pass,s->tick+i,&legacy)!=1||
-                        !svp_vk_scene_legacy_metadata(outputs[i],&legacy))goto submitted_fail;
-                }else{
-                    const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)svp_vk_hdr10plus(outputs[i])->data;
-                    uint32_t schema[9];for(unsigned k=0;k<9;k++)schema[k]=m->params[0].distribution_maxrgb[k].percentage;
-                    if(s->scene_lookup(s->scene_pass,s->tick+i,&schema,&result)!=1||!svp_vk_scene_metadata(outputs[i],&result))goto submitted_fail;
-                }
-            }
-        }
-        for(unsigned i=0;i<count;i++)if(hdr_counts[i]){
-            AmbientSvpHdrResult results[3];
-            int32_t shifts[3][2]={{0}};
-            int rc=tracked[i]?s->hdr_read_track(j->pair,i,results,shifts,hdr_counts[i]):
-                s->hdr_read(j->pair,i,results,hdr_counts[i]);
-            float gradients[3][4]={{0}};
-            if(rc!=1)goto submitted_fail;
-            if(tracked[i]&&s->hdr_read_affine&&s->hdr_read_affine(j->pair,i,gradients,hdr_counts[i])!=1)goto submitted_fail;
-            uint32_t rectangles[3][4]={{0}};
-            if(affine[i]&&s->hdr_read_rectangles(j->pair,i,rectangles,hdr_counts[i])!=1)goto submitted_fail;
-            uint32_t ellipses[3][3]={{0}};
-            if(elliptic[i]&&s->hdr_read_ellipses(j->pair,i,ellipses,hdr_counts[i])!=1)goto submitted_fail;
-            if(s->scene_pass){
-                if(s->scene_version==0&&s->scene_mode==2&&hdr_counts[i]>1&&
-                    !svp_vk_scene_geometry(outputs[i],results,shifts,rectangles,ellipses,hdr_counts[i]))goto submitted_fail;
-            }else if(!svp_vk_hdrplus_measured(outputs[i],results,tracked[i]?shifts:NULL,gradients,affine[i]?rectangles:NULL,elliptic[i]?ellipses:NULL,elliptic[i],phases[i],hdr_counts[i]))goto submitted_fail;
+        j->metadata_scene=s->scene_pass!=NULL;
+        j->metadata_count=count;j->metadata_tick=s->tick;
+        memcpy(j->hdr_counts,hdr_counts,sizeof(hdr_counts));
+        memcpy(j->tracked,tracked,sizeof(tracked));memcpy(j->affine,affine,sizeof(affine));
+        memcpy(j->elliptic,elliptic,sizeof(elliptic));memcpy(j->phases,phases,count*sizeof(*phases));
+        // V1 replay needs only cached metadata. Other outputs remain private
+        // until their own fence and readback are complete at the pull boundary.
+        if(s->scene_pass&&s->scene_version==1){
+            if(!svp_vk_complete_metadata(s,j,outputs))goto submitted_fail;
+        }else{
+            j->metadata_pending=true;s->metadata_job=j;
         }
     }
     return true;
@@ -1293,6 +1326,26 @@ fail:
 static struct mp_image *svp_vk_take_output(struct svp_vk_mpv *s)
 {
     if (!s || s->next_output==s->output_count) return NULL;
+    if(s->metadata_job){
+        struct svp_vk_job *j=s->metadata_job;
+        bool ok=svp_vk_complete_metadata(s,j,s->outputs);
+        if(!ok){
+            // Preserve exact original pixels and metadata, not partially
+            // updated synthetic output. The submitted job retains GPU refs.
+            for(unsigned i=0;i<s->output_count;i++){
+                struct mp_image *old=s->outputs[i];
+                struct mp_image *original=j->fallback?mp_image_new_ref(j->fallback):NULL;
+                if(original&&old){original->pts=old->pts;original->pkt_duration=old->pkt_duration;original->nominal_fps=old->nominal_fps;}
+                mp_image_unrefp(&s->outputs[i]);s->outputs[i]=original;
+            }
+            s->capture_failed=j->metadata_scene;
+            svp_vk_scene_abort(s);
+        }
+        j->metadata_pending=false;s->metadata_job=NULL;
+        svp_vk_reap(s,false);
+    }
+    while(s->next_output<s->output_count&&!s->outputs[s->next_output])s->next_output++;
+    if(s->next_output==s->output_count){s->next_output=s->output_count=0;return NULL;}
     struct mp_image *img=s->outputs[s->next_output];
     s->outputs[s->next_output++]=NULL;
     if (s->next_output==s->output_count) s->next_output=s->output_count=0;
