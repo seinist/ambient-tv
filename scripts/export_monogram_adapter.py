@@ -18,6 +18,28 @@ REQUIRED = (ENTRY, CLASSES[1] + ".class", CLASSES[3] + ".class", "com/sun/jna/Na
             "org/monogram/mtproto/MtprotoNativeLoader.class")
 
 
+SMARTTUBE_PREFIXES = ("com/liskovsoft/", "com/eclipsesource/v8/")
+SMARTTUBE_ENTRY = "com/ambient/tv/youtube/SmartTubeModuleAdapter"
+SMARTTUBE_REQUIRED = (
+    SMARTTUBE_ENTRY + ".class",
+    "com/liskovsoft/youtubeapi/service/YouTubeServiceManager.class",
+    "com/liskovsoft/sharedutils/prefs/GlobalPreferences.class",
+    "com/liskovsoft/youtubeapi/lounge/LoungeService.class",
+    "com/eclipsesource/v8/V8.class",
+)
+
+
+def owns_smarttube(path):
+    if not path.endswith(".class"):
+        return False
+    name = path[:-6]
+    simple = name.rsplit("/", 1)[-1]
+    if simple == "R" or simple.startswith("R$"):
+        return False
+    return (name.startswith(SMARTTUBE_PREFIXES) or name == SMARTTUBE_ENTRY or
+            name.startswith(SMARTTUBE_ENTRY + "$"))
+
+
 def owns(path):
     if not path.endswith(".class"):
         return False
@@ -37,7 +59,9 @@ def read_classes(path):
                     yield name, archive.read(info)
 
 
-def split(inputs, program, classpath):
+def split(inputs, program, classpath, module='monogram'):
+    owner = owns if module == 'monogram' else owns_smarttube
+    required = REQUIRED if module == 'monogram' else SMARTTUBE_REQUIRED
     seen = {}
     owned = set()
     with zipfile.ZipFile(program, "w", compression=zipfile.ZIP_DEFLATED) as p, \
@@ -52,14 +76,14 @@ def split(inputs, program, classpath):
                         raise ValueError(f"conflicting duplicate class: {name}")
                     continue
                 seen[name] = sha
-                if owns(name):
+                if owner(name):
                     p.writestr(name, data)
                     owned.add(name)
                 else:
                     h.writestr(name, data)
-    if not set(REQUIRED) <= owned:
-        raise ValueError(f"missing adapter classes: {set(REQUIRED) - owned}")
-    for prefix in ("uniffi/monogram_mtproto/", "org/rustls/"):
+    if not set(required) <= owned:
+        raise ValueError(f"missing adapter classes: {set(required) - owned}")
+    for prefix in (("uniffi/monogram_mtproto/", "org/rustls/") if module == "monogram" else ()):
         if not any(name.startswith(prefix) for name in owned):
             raise ValueError(f"missing adapter dependency {prefix}")
 
@@ -70,6 +94,7 @@ def main():
     parser.add_argument("--android-lib", type=Path, action="append", required=True)
     parser.add_argument("--d8", type=Path, required=True)
     parser.add_argument("--binding", required=True)
+    parser.add_argument("--module", choices=("monogram", "smarttube"), default="monogram")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{64}", args.binding):
@@ -80,7 +105,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         program = Path(temp) / "program.jar"
         host = Path(temp) / "host.jar"
-        split(args.input, program, host)
+        split(args.input, program, host, args.module)
         cmd = [str(args.d8), "--release", "--min-api", "29", "--classpath", str(host),
                "--output", str(args.output)]
         for lib in args.android_lib:
