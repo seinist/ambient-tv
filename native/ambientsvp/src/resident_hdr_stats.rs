@@ -4,7 +4,7 @@ use super::{Core,Pipeline,Result,err,spirv};
 use ash::vk;
 use std::sync::Arc;
 const BINS:u64=100001;
-const STRIDE:usize=72;
+const STRIDE:usize=76;
 const SHADER:&str=include_str!("resident_hdr_stats.wgsl");
 const UNIFORM:&str="@group(0) @binding(3) var<uniform> params:vec4u;";
 #[repr(C)]
@@ -160,17 +160,17 @@ impl StatsJob{
             slot.as_ref().unwrap().clone()
         };
         if scene&&windows.len()>1&&ellipses.is_none(){return Err("local scene windows require ellipse geometry".into());}
-        if scene&&tracking.is_some_and(|t|t.1!=0.0){return Err("scene capture requires fixed per-output geometry".into());}
         let proxy_count=if scene{u64::from(core.width.div_ceil(5))*u64::from(core.height.div_ceil(5))}else{0};
         let hist=Buffer::new(core,(BINS*windows.len() as u64+proxy_count)*4,
             vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
         let scene_hist=if scene{Some(Buffer::new(core,BINS*4*windows.len() as u64,vk::BufferUsageFlags::TRANSFER_DST,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?)}else{None};
-        let span_words=if scene&&windows.len()>1{2*core.height as usize*(windows.len()-1)}else{0};
+        let static_spans=scene&&tracking.is_some_and(|t|t.1==0.0);
+        let span_words=if static_spans&&windows.len()>1{2*core.height as usize*(windows.len()-1)}else{0};
         let summary=Buffer::new(core,((STRIDE*windows.len()+span_words)*4) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
         let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
-            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some()&&!scene,affine:tracking.is_some_and(|t|t.2),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
+            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
         let mut config=vec![0u32;STRIDE*windows.len()+span_words];
         for (i,w) in windows.iter().enumerate(){
             let row=&mut config[i*STRIDE..(i+1)*STRIDE];
@@ -181,7 +181,7 @@ impl StatsJob{
                 if let Some(e)=ellipses{row[64..67].copy_from_slice(&e[i]);row[67]=1;row[68..71].copy_from_slice(&e[i]);}
             }}
         }
-        if scene&&windows.len()>1{
+        if static_spans&&windows.len()>1{
             let (tracks,_,_)=tracking.ok_or("missing legacy ellipse tracks")?;
             let axes=ellipses.ok_or("missing legacy ellipse axes")?;
             for i in 1..windows.len(){
@@ -286,7 +286,7 @@ impl StatsJob{
         }
         let average=if i==0{proxy_sum as f64/(proxy_count as f64*1_000_000_000.0)}else{0.0};
         let fraction=if i==0{weight_sum as f64/(proxy_count as f64*4_000_000_000.0)}else{0.0};
-        let linear_sum=u64::from(row[56])|(u64::from(row[57])<<32);
+        let linear_sum=u64::from(row[72])|(u64::from(row[73])<<32);
         if (i==0&&row[63]!=self.width.div_ceil(5)*self.height.div_ceil(5))||
             !average.is_finite()||!(0.0..=1.0).contains(&average)||
             !fraction.is_finite()||!(0.0..=1.0).contains(&fraction)||
@@ -799,6 +799,7 @@ impl TwoPass{
         Ok((if i==0{0}else{self.ends[i-1]},self.ends[i]))
     }
     pub(super) fn version(&self)->u32{self.version}
+    pub(super) fn mode(&self)->u32{self.mode}
     pub(super) fn abort(&mut self){self.failed=true;}
     pub(super) fn capture_legacy(&mut self,index:u64,frames:Vec<SceneWindowFrame>)->Result<()>{
         let result=(||->Result<()>{
