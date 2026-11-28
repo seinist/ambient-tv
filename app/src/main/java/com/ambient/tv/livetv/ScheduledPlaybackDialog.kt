@@ -26,7 +26,8 @@ internal fun MediaScheduleAction(item: MediaItem) {
     val context = LocalContext.current.applicationContext
     val identity = remember(provider, item.ratingKey) { scheduledPlaybackIdentity(context, provider, item.ratingKey) } ?: return
     val duration = ((item.durationMs ?: 0L) / 60_000L).coerceIn(0L, 1440L).toInt()
-    ScheduleAction(item.title, item.thumbUrl, ScheduledPlayback(provider, item.ratingKey, identity, durationMinutes = duration))
+    // Private server artwork can contain credentials. Do not copy URLs into the reminder preferences.
+    ScheduleAction(item.title, null, ScheduledPlayback(provider, item.ratingKey, identity, durationMinutes = duration))
 }
 
 @Composable
@@ -104,6 +105,8 @@ internal fun ScheduledPlaybackDialog(entry: LiveTvReminder, store: LiveTvReminde
             onCheckedChange = { plan = plan.copy(restart = it) })
         TvSettingRow(title = stringResource(R.string.schedule_weekly), checked = plan.weekly,
             onCheckedChange = { plan = plan.copy(weekly = it) })
+        if (plan.game) TvSettingRow(title = stringResource(R.string.schedule_remind_end), checked = plan.remindAtEnd,
+            onCheckedChange = { plan = plan.copy(remindAtEnd = it) })
         if (plan.game) ScheduleAdjust(stringResource(R.string.schedule_duration), plan.durationMinutes.toString() + " min",
             { plan = plan.copy(durationMinutes = (plan.durationMinutes - 15).coerceAtLeast(15)) },
             { plan = plan.copy(durationMinutes = (plan.durationMinutes + 15).coerceAtMost(1440)) })
