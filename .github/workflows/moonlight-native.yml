@@ -28,6 +28,7 @@ on:
       - 'scripts/tests/test_moonlight_enet_packets.py'
       - 'scripts/tests/test_moonlight_udp_burst.py'
       - 'scripts/tests/test_moonlight_direct_and_simd.py'
+      - 'scripts/tests/test_moonlight_nanors.py'
       - 'scripts/patches/moonlight/**'
       - 'gradle/external-versions.properties'
       - 'settings.gradle.kts'
@@ -98,6 +99,9 @@ jobs:
       - name: Test JNI picture copy, native downmix and adaptive UDP capacity
         if: matrix.abi == 'arm64-v8a'
         run: python3 scripts/tests/test_moonlight_direct_and_simd.py third_party/moonlight-android/app/src/main/jni/moonlight-core --arm64
+      - name: Verify NanoRS reconstruction on host and ARM64 NEON
+        if: matrix.abi == 'arm64-v8a'
+        run: python3 scripts/tests/test_moonlight_nanors.py third_party/moonlight-android/app/src/main/jni/moonlight-core/moonlight-common-c/nanors --arm64
       - name: Verify upstream GameStream native dependencies
         shell: bash
         run: |

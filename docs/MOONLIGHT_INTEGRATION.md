@@ -119,6 +119,18 @@ Sunshine, and the current-game check and remote quit are separate host requests.
   These do not replace device measurements of actual decoding, presentation,
   network jitter, underruns or input-to-photon latency.
 
+- Native PCM uses a session-owned direct ByteBuffer for stereo or compatible
+  surround output. The sink writes synchronously using AudioTrack's nonblocking
+  ByteBuffer API; only a partial-write tail is copied into its own pending
+  storage. Non-opt-in renderers or direct buffer allocation failure keep the
+  short-array path. The borrowed view cannot outlive the callback.
+- The pinned NanoRS submodule uses a specialized single-erasure reconstruction
+  with the negotiated parity coefficients (including custom audio parity),
+  explicit ARM64 XOR vectorization and the existing finite-field SIMD kernels.
+  Multi-erasure reconstruction remains on the general solver. A regression
+  harness checks unaligned buffers, odd lengths, every single erasure/parity
+  row, multiple erasures, insufficient parity and concurrent initialization.
+
 ## Release and device acceptance gates
 
 - All four native ABIs must compile, pass alignment checks, and appear in the
