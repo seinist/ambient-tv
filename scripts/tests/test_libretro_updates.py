@@ -28,13 +28,14 @@ class LibretroUpdateTest(unittest.TestCase):
         shutil.copyfile(updater.ROOT / "cores/cores.json", self.cores)
         self.old_commit = updater.load_props()["LIBRETRODROID_COMMIT"]
 
-    def run_updater(self, mode, heads, prepare=True):
+    def run_updater(self, mode, heads, prepare=True, compatible=lambda core, revision: True):
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.object(updater, "ROOT", self.root))
             stack.enter_context(mock.patch.object(updater, "PROPS", self.props))
             stack.enter_context(mock.patch.object(updater, "libretrodroid_latest",
                                                   return_value={"LIBRETRODROID_COMMIT": NEW}))
             stack.enter_context(mock.patch.object(updater, "remote_head", side_effect=heads))
+            stack.enter_context(mock.patch.object(updater, "core_candidate_compatible", side_effect=compatible))
             self.prepare = stack.enter_context(mock.patch.object(
                 updater, "prepare_libretrodroid", side_effect=lambda: prepare or self.reverted()))
             stack.enter_context(mock.patch.object(updater, "smarttube_latest", side_effect=AssertionError("scope")))
@@ -84,6 +85,33 @@ class LibretroUpdateTest(unittest.TestCase):
         with mock.patch.object(updater, "remote_head", return_value=NEW) as head:
             self.assertEqual(updater.cores_latest(cores), {"first": "a" * 40, "second": "c" * 40})
             head.assert_called_once_with(cores[0]["repo"])
+
+    def test_incompatible_shared_candidate_preserves_all_variants(self):
+        cores = [
+            {"core": "first", "repo": "https://github.com/a/shared", "commit": "a" * 40},
+            {"core": "second", "repo": "https://github.com/a/shared", "commit": "a" * 40},
+            {"core": "other", "repo": "https://github.com/a/other", "commit": "c" * 40},
+        ]
+        with mock.patch.object(updater, "remote_head", return_value=NEW), mock.patch.object(
+                updater, "core_candidate_compatible", side_effect=lambda core, rev: core["core"] != "second"):
+            self.assertEqual(updater.cores_latest(cores),
+                             {"first": "a"*40, "second": "a"*40, "other": NEW})
+
+    def test_native_jit_candidates_require_review(self):
+        for core in ("citra2018", "yabause"):
+            with mock.patch.object(updater, "get_bytes", side_effect=AssertionError("must not fetch")):
+                self.assertFalse(updater.core_candidate_compatible(
+                    {"core": core, "commit": "a"*40}, NEW))
+
+    def test_candidate_anchor_preflight(self):
+        from core_hotpath_remaining import PATCHES
+        path, old, _ = PATCHES["picodrive"][0]
+        core = {"core": "picodrive", "repo": "https://github.com/a/b", "commit": "a"*40}
+        with mock.patch.object(updater, "get_bytes", return_value=old.encode()) as fetch:
+            self.assertTrue(updater.core_candidate_compatible(core, NEW))
+            fetch.assert_called_once_with(f"https://raw.githubusercontent.com/a/b/{NEW}/{path}")
+        with mock.patch.object(updater, "get_bytes", return_value=b"incompatible"):
+            self.assertFalse(updater.core_candidate_compatible(core, NEW))
 
     def test_patch_failure_keeps_old_libretrodroid_but_updates_cores(self):
         self.assertEqual(self.run_updater("--apply", lambda repo: NEW, prepare=False), 0)

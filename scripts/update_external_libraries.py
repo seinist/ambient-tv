@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -263,6 +264,53 @@ def remote_head(repo: str) -> str:
     return sha
 
 
+def core_candidate_compatible(core: dict, revision: str) -> bool:
+    """Check all reviewed source anchors before moving a public core pin.
+
+    Only source text is fetched; never execute unreviewed upstream code.
+    The two JIT candidates require a coordinated recipe and reference-test
+    rebase. Keep those pins fixed until that review is explicit.
+    """
+    from core_hotpath_patches import prepare_hotpaths, SUPPORTED
+    from core_hotpath_remaining import PATCHES
+
+    name = core["core"]
+    if name in {"citra2018", "yabause"}:
+        print(f"  MANUAL: {name} has a native JIT recipe/reference pin; review {revision} before updating.")
+        return False
+    if name not in SUPPORTED:
+        return True
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Invalid candidate core revision")
+    if name in PATCHES:
+        files = {path for path, _, _ in PATCHES[name]}
+    elif name == "bsnes":
+        files = {"bsnes/target-libretro/libretro.cpp", "bsnes/target-libretro/program.cpp", "libco/arm.c"}
+    elif name == "mesen":
+        files = {"Libretro/libretro.cpp"}
+    elif name == "sameboy":
+        files = {"libretro/libretro.c"}
+    elif name in {"mednafen_pce_fast", "mednafen_supergrafx"}:
+        files = {"libretro.c" if name == "mednafen_pce_fast" else "libretro.cpp"}
+    else:
+        files = {"mednafen/state.h", "mednafen/state.cpp" if name == "mednafen_lynx" else "mednafen/state.c",
+                 "libretro.cpp" if name in {"mednafen_vb", "mednafen_lynx"} else "libretro.c"}
+    upstream = github_repo(core["repo"])
+    try:
+        with tempfile.TemporaryDirectory(prefix="ambient-core-update-") as directory:
+            root = Path(directory)
+            for relative in sorted(files):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                url = f"https://raw.githubusercontent.com/{upstream}/{revision}/{urllib.parse.quote(relative, safe='/')}"
+                path.write_bytes(get_bytes(url))
+            prepare_hotpaths(root, name)
+    except (OSError, ValueError) as error:
+        print(f"  MANUAL: {name} remains at {core['commit']}: candidate {revision} source preflight failed ({error}).")
+        return False
+    return True
+
+
 def cores_latest(cores: list[dict]) -> dict[str, str]:
     # Several variants share one upstream repo (VICE, Yabause). Resolve its
     # HEAD once to avoid duplicate network calls and inconsistent snapshots.
@@ -274,7 +322,14 @@ def cores_latest(cores: list[dict]) -> dict[str, str]:
     pins = {}
     for c in cores:
         pins.setdefault(c["repo"], set()).add(c["commit"])
-    return {c["core"]: c["commit"] if len(pins[c["repo"]]) > 1
+    candidates = [c for c in cores if len(pins[c["repo"]]) == 1
+                  and c["commit"] != heads[c["repo"]]]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        compatible = list(pool.map(lambda c: core_candidate_compatible(c, heads[c["repo"]]), candidates))
+    # Variants sharing the same current pin are updated as a unit: an
+    # incompatible variant must not inadvertently split the shared pin.
+    blocked = {c["repo"] for c, ok in zip(candidates, compatible) if not ok}
+    return {c["core"]: c["commit"] if len(pins[c["repo"]]) > 1 or c["repo"] in blocked
             else heads[c["repo"]] for c in cores}
 
 

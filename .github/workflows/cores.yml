@@ -278,6 +278,19 @@ jobs:
           fi
           test "$(git -C src rev-parse HEAD)" = "$CORE_COMMIT"
 
+      - name: Verify trusted training workflow provenance
+        if: matrix.profile == 'pgo-use'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRAIN_RUN: ${{ inputs.pgo_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$TRAIN_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TRAIN_RUN" |
+            jq -e --arg repo "$GITHUB_REPOSITORY" '
+              .head_branch=="main" and .conclusion=="success" and
+              .event=="workflow_dispatch" and .head_repository.full_name==$repo and
+              .repository.full_name==$repo and .path==".github/workflows/core-pgo-train.yml"'
       - name: Download trained PGO profile
         if: matrix.profile == 'pgo-use'
         uses: actions/download-artifact@v7

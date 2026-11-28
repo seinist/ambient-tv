@@ -180,11 +180,10 @@ Merge with the matching NDK's llvm-profdata:
     python3 scripts/core_pgo.py merge --llvm-profdata /path/to/llvm-profdata \
       --directory trained --report build.json training/*.profraw
 
-Upload the resulting ambient.profdata and metadata.json as a same-repository
-Actions artifact named pgo-CORE-ABI (the explicitly supplied run ID and
-SHA-256 are required for pgo-use). Alternatively use the protected, manually
-dispatched Core PGO training workflow on a configured self-hosted Android
-benchmark runner. Never reuse profiles across different source pins, ABIs or
+Local profiles can be evaluated locally. For CI pgo-use, use the protected,
+manually dispatched Core PGO training workflow on a configured self-hosted
+Android benchmark runner. Only its successful same-repository main-branch
+artifact is accepted; supply the training run ID and SHA-256 explicitly. Never reuse profiles across different source pins, ABIs or
 NDK versions. Training and evaluation content should be separate. No profile
 is automatically published and no speedup is claimed without device evidence.
 
@@ -219,3 +218,10 @@ width and new global compute dispatch follow that budget, while existing
 worker indices and independent IO workers remain stable; no active tasks
 are cancelled or migrated during a cpuset change. Worker count is fixed
 until core teardown, intentionally avoiding unsafe live pool resizing.
+
+Automatic core updates now preflight all reviewed hotpath source anchors
+against the exact proposed upstream commit without executing upstream code.
+Shared variants on the same pin update atomically; different pins remain
+separate. Citra and Yabause JIT reference pins require a coordinated manual
+rebase of recipes and differential tests. A failed preflight keeps the old
+pin and reports the reason, while independent compatible cores can update.
