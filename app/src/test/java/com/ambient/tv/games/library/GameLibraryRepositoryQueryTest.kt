@@ -162,6 +162,19 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(changed, repository().folders().first { it.id == before.id })
     }
 
+    @Test fun individualSystemChoiceSurvivesFavouriteEditAndCanBeReset() = runBlocking {
+        seed("one", folder = "root", favorite = true, manual = "My game", verified = "Old name")
+        val library = repository()
+        assertTrue(library.gameSystemChoices("one").any { it.id == "snes" })
+        assertTrue(library.changeGameSystem("one", "snes"))
+        assertEquals("snes", preferences.gameLibraryOverrides.single { it.path.endsWith("one.sfc") }.systemId)
+        library.setFavorite("one", false)
+        assertEquals("snes", preferences.gameLibraryOverrides.single { it.path.endsWith("one.sfc") }.systemId)
+        assertEquals("My game", repository().game("one")!!.title)
+        assertTrue(library.changeGameSystem("one", null))
+        assertNull(preferences.gameLibraryOverrides.single { it.path.endsWith("one.sfc") }.systemId)
+    }
+
     @Test fun folderLimitExplainsThatAnAssignmentMustBeRemoved() {
         preferences.gameLibraryFolders = (0 until 200).map { index ->
             root.copy(id = "folder-$index", path = "Games/$index")
