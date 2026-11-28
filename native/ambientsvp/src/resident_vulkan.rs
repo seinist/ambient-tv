@@ -944,7 +944,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
                 return Err("held renderer pair rejected".into());
             }
             if n>0{
-                let rc=if !pass.is_null()&&(&*pass).version()==0{ambient_svp_vk_hdr_stats_scene_legacy(pair,0,windows,tracks,axes,n)}
+                let rc=if !pass.is_null()&&(&*pass).version()==0{ambient_svp_vk_hdr_stats_scene_legacy_tracked(pair,0,windows,tracks,axes,phase,n)}
                     else if !pass.is_null(){ambient_svp_vk_hdr_stats_scene(pair,0,windows,n)}
                     else if n==1{ambient_svp_vk_hdr_stats(pair,0,windows,n)}
                     else{ambient_svp_vk_hdr_stats_ellipse(pair,0,windows,tracks,axes,phase,n)};
@@ -961,7 +961,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
             submitted=true;
             if ambient_svp_vk_seal(pair,fence)!=0{return Err("held renderer seal failed".into());}
             d.wait_for_fences(&[fence],true,u64::MAX).map_err(err)?;
-            if n>0&&pass.is_null(){
+            if n>0&&(pass.is_null()||(&*pass).version()==0){
                 let rc=if n==1{ambient_svp_vk_hdr_read(pair,0,results,n)}
                     else{ambient_svp_vk_hdr_read_track(pair,0,results,shifts,n)};
                 if rc!=1||n>1&&(ambient_svp_vk_hdr_read_rectangles(pair,0,rects,n)!=1||
@@ -969,7 +969,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident
                     return Err("held HDR stats readback failed".into());
                 }
             }
-            if !pass.is_null()&&ambient_svp_hdr_pass_capture(pass,pair,0,index)!=1{return Err("scene pass capture failed".into());}
+            if !pass.is_null()&&(&*pass).mode()==1&&ambient_svp_hdr_pass_capture(pass,pair,0,index)!=1{return Err("scene pass capture failed".into());}
             Ok(())
         })();
         if submitted{
@@ -1162,6 +1162,22 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_scene_legacy(pair:*mut VulkanP
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
         let tracking=if count>1{Some((unsafe{std::slice::from_raw_parts(tracks,count as usize)},0.0,true))}else{None};
+        let ellipses=if count>1{Some(unsafe{std::slice::from_raw_parts(axes,count as usize)})}else{None};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,tracking,ellipses,true)else{return -1;};
+        unsafe{job.record(p.command,p.core.width,p.core.height);}
+        p.hdr_jobs[i]=Some(job);0
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_scene_legacy_tracked(pair:*mut VulkanPair,phase:u32,
+    windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],fraction:f32,count:u32)->i32{
+    if !fraction.is_finite()||!(0.0..=1.0).contains(&fraction)||pair.is_null()||windows.is_null()||!(1..=3).contains(&count)||count>1&&(tracks.is_null()||axes.is_null()){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&mut *pair};let i=phase as usize;
+        if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
+            p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
+        let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
+        let tracking=if count>1{Some((unsafe{std::slice::from_raw_parts(tracks,count as usize)},fraction,true))}else{None};
         let ellipses=if count>1{Some(unsafe{std::slice::from_raw_parts(axes,count as usize)})}else{None};
         let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,tracking,ellipses,true)else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
