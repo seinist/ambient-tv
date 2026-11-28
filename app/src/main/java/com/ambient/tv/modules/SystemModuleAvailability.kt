@@ -30,7 +30,7 @@ internal object SystemModuleAvailability {
         SystemModule.MONOGRAM -> BuildConfig.MONOGRAM_NATIVE && BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SPOTIFY -> BuildConfig.SPOTIFY_ENABLED && BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.PROJECTM, SystemModule.MPV, SystemModule.SVP -> BuildConfig.MODULE_PACKAGING == "full"
-        SystemModule.SHADERS -> BuildConfig.MODULE_PACKAGING == "full"
+        SystemModule.SHADERS -> BuildConfig.SHADER_RUNTIME_BUNDLED
         // These engines are not yet removed from the base build.
         else -> true
     }
