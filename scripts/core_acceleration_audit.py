@@ -387,14 +387,22 @@ def requirements(core, abi, profile):
     if core == "mednafen_psx_hw":
         return {"lightrec": ("lightrec/lightrec.c", (("HAVE_LIGHTREC", "1"),)),
                 "threaded_recompiler": ("lightrec/recompiler.c", (("ENABLE_THREADED_COMPILER", "1"), ("HAVE_VULKAN", "1")))}
-    if core == "swanstation" and abi != "x86":
-        arch = {"arm64-v8a": "aarch64", "armeabi-v7a": "aarch32", "x86_64": "x64"}[abi]
-        macros = (("WITH_RECOMPILER", "1"),)
-        if abi in {"arm64-v8a", "x86_64"}:
-            macros += (("WITH_MMAP_FASTMEM", "1"),)
-        return {"dynarec": ("cpu_recompiler_code_generator_" + arch + ".cpp", macros)}
-    if core == "picodrive" and (abi == "armeabi-v7a" or profile == "picodrive-sh2" or (abi == "arm64-v8a" and profile in {"optimized", "optimized-a57"})):
-        return {"sh2_dynarec": ("cpu/sh2/compiler.c", (("DRC_SH2", "1"),))}
+    if core == "swanstation":
+        result = {"cpu_core": ("src/core/cpu_core.cpp", ())}
+        if abi != "x86":
+            arch = {"arm64-v8a": "aarch64", "armeabi-v7a": "aarch32", "x86_64": "x64"}[abi]
+            macros = (("WITH_RECOMPILER", "1"),)
+            if abi in {"arm64-v8a", "x86_64"}:
+                macros += (("WITH_MMAP_FASTMEM", "1"),)
+            result["dynarec"] = ("cpu_recompiler_code_generator_" + arch + ".cpp", macros)
+        return result
+    if core == "picodrive":
+        result = {"frontend": ("platform/libretro/libretro.c", ()),
+                  "frame_loop": ("pico/pico.c", ()),
+                  "renderer": ("pico/draw.c", ())}
+        if abi == "armeabi-v7a" or profile == "picodrive-sh2" or (abi == "arm64-v8a" and profile in {"optimized", "optimized-a57"}):
+            result["sh2_dynarec"] = ("cpu/sh2/compiler.c", (("DRC_SH2", "1"),))
+        return result
     return {}
 
 

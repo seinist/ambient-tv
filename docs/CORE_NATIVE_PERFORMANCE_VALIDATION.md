@@ -298,3 +298,10 @@ into fresh instances of all selected profiles (including baseline), and compare
 replayed output. Unsupported serialization or rejected state loads fail the
 requested validation. This is a baseline-to-candidate state interchange check,
 not proof of the app's complete rewind lifecycle or hardware video parity.
+
+The signed release fingerprint now binds the effective acceleration rules for
+each core/ABI/profile plus the shared parser and evidence implementation. A
+rule change for an unrelated core no longer invalidates all binaries; shared
+verification changes still invalidate every affected build. PicoDrive and
+SwanStation require linked CPU/frontend/render evidence even for interpreter
+fallback architectures; SH2 and fastmem contracts remain conditional on ABI.

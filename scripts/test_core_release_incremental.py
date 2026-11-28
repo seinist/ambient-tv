@@ -173,6 +173,15 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             # Non-patched cores use a conservative fallback, but unrelated
             # published patched recipes are unaffected.
             self.assertEqual(changed, {"mupen64plus_next_gles3"})
+            patches.write_bytes((source / "scripts/core_hotpath_remaining.py").read_bytes())
+            audit = root / "scripts/core_acceleration_audit.py"
+            original = audit.read_text()
+            audit.write_text(original.replace('"src/core/cpu_core.cpp"', '"src/core/cpu_core_revised.cpp"'))
+            changed = {core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]}
+            self.assertEqual(changed, {"swanstation"})
+            audit.write_text(original.replace("missing compiled acceleration evidence", "missing linked acceleration evidence"))
+            self.assertEqual({core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]},
+                             set(jobs))
 
     def test_publish_freshness_ignores_workflow_cleanup_but_rejects_build_changes(self):
         source = Path(__file__).resolve().parents[1]

@@ -90,14 +90,33 @@ def hotpath_fingerprint(core, root):
     return semantic(primary)
 
 
+def acceleration_fingerprint(job, root):
+    # Evaluate only the rule table and its audited-core set from this exact
+    # recipe snapshot. Other parser/verification code remains shared and hashed.
+    # This intentionally fails closed if rule evaluation gains other dependencies.
+    nodes = syntax(root / "scripts/core_acceleration_audit.py")
+    rule_nodes = [n for n in nodes if named(n) in {"requirements", "AUDITED"}]
+    if {named(n) for n in rule_nodes} != {"requirements", "AUDITED"}:
+        raise ValueError("Unexpected acceleration rules")
+    namespace = {}
+    exec(compile(ast.Module(body=rule_nodes, type_ignores=[]), "<core-rules>", "exec"), namespace)
+    rules = namespace["requirements"](job["core"], job["abi"], job["profile"])
+    common = [n for n in nodes if named(n) not in {"requirements", "AUDITED"}]
+    return digest(json.dumps({"shared": semantic(common),
+                              "audited": job["core"] in namespace["AUDITED"],
+                              "rules": rules}, sort_keys=True).encode())
+
+
 def fingerprint(job, ndk, root=ROOT):
     # Shared toolchain/build/audit changes invalidate affected signed builds.
     # Core-specific source patches and NDK helpers are scoped to their core.
     workflow = (root / ".github/workflows/cores.yml").read_text()
     start = workflow.index("      - name: Install NDK")
     end = workflow.index("      - uses: actions/upload-artifact", start)
-    files = {p: digest((root / "scripts" / p).read_bytes()) for p in SHARED if p != "core_build_policy.py"}
+    files = {p: digest((root / "scripts" / p).read_bytes()) for p in SHARED
+             if p not in {"core_build_policy.py", "core_acceleration_audit.py"}}
     files["core_build_policy.py"] = policy_fingerprint(job, root)
+    files["core_acceleration_audit.py"] = acceleration_fingerprint(job, root)
     if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57", "citra-arm64-jit",
                           "yabause-arm64-jit", "picodrive-sh2", "snes9x2010-threaded",
                           "pgo-generate", "pgo-use"}:

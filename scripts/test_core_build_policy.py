@@ -291,10 +291,12 @@ class CoreBuildPolicyTest(unittest.TestCase):
             audit_acceleration([["-DHAVE_DYNAREC", "-DMMAP_JIT_CACHE", "-UHAVE_DYNAREC", "-c", "cpu_threaded.c"],
                                 commands[1]], "gpsp", "arm64-v8a", "baseline")
         self.assertEqual(defines(["-D", "A=4", "-UB", "-D", "B=0", "-UA"]), {"B": "0"})
-        self.assertFalse(audit_acceleration([], "picodrive", "arm64-v8a", "baseline")["sh2_dynarec"])
+        pico = [["-c", "src/"+source] for source, _ in
+                requirements("picodrive", "arm64-v8a", "baseline").values()]
+        self.assertFalse(audit_acceleration(pico, "picodrive", "arm64-v8a", "baseline")["sh2_dynarec"])
         with self.assertRaises(ValueError):
-            audit_acceleration([], "picodrive", "arm64-v8a", "picodrive-sh2")
-        self.assertTrue(audit_acceleration([["-DDRC_SH2", "-c", "src/cpu/sh2/compiler.c"]],
+            audit_acceleration(pico, "picodrive", "arm64-v8a", "picodrive-sh2")
+        self.assertTrue(audit_acceleration(pico+[["-DDRC_SH2", "-c", "src/cpu/sh2/compiler.c"]],
                                           "picodrive", "arm64-v8a", "picodrive-sh2")["sh2_dynarec"])
 
     def test_response_files(self):
@@ -520,19 +522,15 @@ class CoreBuildPolicyTest(unittest.TestCase):
             for abi in entry.get("abis", self.catalog["abis"]):
                 with self.subTest(core=core, abi=abi):
                     rules = requirements(core, abi, "baseline")
-                    # These two recipes intentionally have no acceleration
-                    # requirement for their non-dynarec baseline variants.
-                    if core == "picodrive" and abi != "armeabi-v7a":
-                        continue
-                    if core == "swanstation" and abi == "x86":
-                        continue
+                    # Even interpreter-only targets need linked hotpath evidence.
                     self.assertTrue(rules)
                     commands = [
                         ["-D" + key + "=" + value for key, value in macros]
                         + ["-c", "upstream/" + source]
                         for source, macros in rules.values()
                     ]
-                    self.assertTrue(all(audit_acceleration(commands, core, abi, "baseline").values()))
+                    actual = audit_acceleration(commands, core, abi, "baseline")
+                    self.assertTrue(all(actual[k] for k in rules))
                     with self.assertRaises(ValueError):
                         audit_acceleration([], core, abi, "baseline")
 
