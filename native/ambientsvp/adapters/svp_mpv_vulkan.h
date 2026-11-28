@@ -56,6 +56,7 @@ struct svp_vk_mpv {
     AmbientSvpHdrPass *scene_pass;
     unsigned scene_mode;
     int (*scene_stats)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,uint32_t);
+    int (*scene_interval)(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
     int (*scene_capture)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
     int (*scene_lookup)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
     int (*scene_finish)(AmbientSvpHdrPass *);
@@ -775,11 +776,12 @@ static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_ima
     AmbientSvpHdrPass *(*open)(uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t)=
         dlsym(lib,"ambient_svp_hdr_pass_open");
     s->scene_stats=dlsym(lib,"ambient_svp_vk_hdr_stats_scene");
+    s->scene_interval=dlsym(lib,"ambient_svp_hdr_pass_interval");
     s->scene_capture=dlsym(lib,"ambient_svp_hdr_pass_capture");
     s->scene_lookup=dlsym(lib,"ambient_svp_hdr_pass_lookup");
     s->scene_finish=dlsym(lib,"ambient_svp_hdr_pass_finish");
     s->scene_destroy=dlsym(lib,"ambient_svp_hdr_pass_destroy");
-    if(!open||!s->scene_stats||!s->scene_capture||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)return false;
+    if(!open||!s->scene_stats||!s->scene_interval||!s->scene_capture||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)return false;
     PFN_vkGetPhysicalDeviceProperties props=(PFN_vkGetPhysicalDeviceProperties)s->vkdev->get_proc_addr(s->vkdev->inst,"vkGetPhysicalDeviceProperties");
     if(!props)return false;
     VkPhysicalDeviceProperties device;props(s->vkdev->phys_dev,&device);
@@ -863,7 +865,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         || svp_vk_matrix(a)!=svp_vk_matrix(b) || a->params.color.transfer!=b->params.color.transfer
         || a->params.color.primaries!=b->params.color.primaries) return false;
     if (s->mode>=4 && a->params.chroma_location!=b->params.chroma_location) return false;
-    bool dynamic=s->mode>0 && s->mode<4 && svp_vk_hdrplus_pair(a,b);
+    bool dynamic=s->mode>0 && s->mode<4 && (s->scene_pass?svp_vk_scene_compatible(a)&&svp_vk_scene_compatible(b):svp_vk_hdrplus_pair(a,b));
     if(dynamic && (!s->hdr_stats||!s->hdr_read))return false;
     if(s->scene_pass&&(!dynamic||!svp_vk_scene_compatible(a)||!svp_vk_scene_compatible(b)))return false;
     uint32_t hdr_counts[SVP_VK_PHASES]={0};
@@ -939,7 +941,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
             outputs[i]->params.repr.alpha=PL_ALPHA_NONE;
             outputs[i]->params.chroma_location=PL_CHROMA_UNKNOWN;
         }
-        if(dynamic && (phases[i]>0.0f||s->scene_pass) && !svp_vk_hdrplus_apply(outputs[i],a,b,phases[i]))goto fail;
+        if(dynamic && (phases[i]>0.0f||s->scene_pass) && !svp_vk_hdrplus_apply(outputs[i],a,s->scene_pass?a:b,s->scene_pass?0.0f:phases[i]))goto fail;
         outputs[i]->pts=times[i];outputs[i]->pkt_duration=1.0/s->target_rate;
         outputs[i]->nominal_fps=s->target_rate;
     }
@@ -1129,13 +1131,19 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
         times[count]=time;phases[count++]=(float)(s->algorithm?round(fmax(0.0,phase)*256.0)/256.0:fmax(0.0,phase));
     }
     if (!count) return false;
+    if(s->scene_pass){
+        uint64_t boundary;
+        if(s->scene_interval(s->scene_pass,s->tick,&boundary)!=1||tick>boundary){svp_vk_scene_abort(s);return false;}
+        if(tick==boundary)for(unsigned i=0;i<count;i++)phases[i]=0.0f;
+    }
     const struct mp_image *a=s->previous;
     bool hdr=s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG;
     bool compatible=a->params.color.transfer==next->params.color.transfer &&
         a->params.color.primaries==next->params.color.primaries &&
         svp_vk_matrix(s->previous)==svp_vk_matrix(next);
     bool has_hdrplus=svp_vk_hdr10plus(a)||svp_vk_hdr10plus(next);
-    bool measured_hdrplus=s->mode>0 && s->mode<4 && s->hdr_stats && s->hdr_read && svp_vk_hdrplus_pair(a,next);
+    bool measured_hdrplus=s->mode>0 && s->mode<4 && s->hdr_stats && s->hdr_read &&
+        (s->scene_pass?svp_vk_scene_compatible(a)&&svp_vk_scene_compatible(next):svp_vk_hdrplus_pair(a,next));
     if (s->mode && hdr && compatible && ((has_hdrplus && !measured_hdrplus) ||
         (!svp_vk_hdr_metadata_same(a,next) && !measured_hdrplus) ||
         (s->mode>=4 && a->params.chroma_location!=next->params.chroma_location))) {
