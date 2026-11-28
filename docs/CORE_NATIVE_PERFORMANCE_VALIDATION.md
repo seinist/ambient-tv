@@ -343,3 +343,11 @@ and workload with the original forward segments, then clears and resumes on a
 fresh branch. `"rewind_budget_mib"` defaults to 256; impossible budgets, failed
 serialization, too little retained history or changed output fail explicitly.
 This exercises real core states, not Android UI/renderer lifecycle integration.
+
+PGO generation and use now share the public optimized profile's O3/ThinLTO
+and applicable SH2/DSP-JIT/threaded-renderer contracts. Experimental Citra
+and Yabause native JIT builds remain separate from ordinary PGO training.
+PPSSPP queue publication and worker notification now use the same lock as
+active-width changes; both growing and shrinking wake the appropriate workers.
+Flycast regression coverage stresses producer overflow and consumer-side flush
+while preserving stereo pairs and init/deinit ordering.

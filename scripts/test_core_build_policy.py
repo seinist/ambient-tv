@@ -70,7 +70,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, profile=profile)
             flag = jobs[0]["cflags"].split()[1]
-            commands = [["clang", "-O3", flag, "-c", "a.c"], ["clang", flag, "-shared", "a.o"]]
+            commands = [["clang", "-O3", flag, "-flto=thin", "-c", "a.c"], ["clang", flag, "-flto=thin", "-shared", "a.o"]]
             self.assertEqual(audit_commands("", profile, scoped_commands=commands)["pgo_compiles"], 1)
             with self.assertRaises(ValueError):
                 audit_commands("", profile, scoped_commands=[commands[0], ["clang", "-shared", "a.o"]])

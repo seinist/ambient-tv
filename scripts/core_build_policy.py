@@ -25,8 +25,8 @@ PROFILES = {
     "optimized-a57": (("-O3", "-flto=thin", "-mtune=cortex-a57"), ("-flto=thin",)),
     "yabause-arm64-jit": (("-O3",), ()),
     "citra-arm64-jit": (("-O3",), ()),
-    "pgo-generate": (("-O3", "-fprofile-instr-generate"), ("-fprofile-instr-generate",)),
-    "pgo-use": (("-O3", "-fprofile-instr-use=ambient.profdata", "-Werror=profile-instr-out-of-date"), ("-fprofile-instr-use=ambient.profdata",)),
+    "pgo-generate": (("-O3", "-fprofile-instr-generate", "-flto=thin"), ("-fprofile-instr-generate", "-flto=thin")),
+    "pgo-use": (("-O3", "-fprofile-instr-use=ambient.profdata", "-Werror=profile-instr-out-of-date", "-flto=thin"), ("-fprofile-instr-use=ambient.profdata", "-flto=thin")),
 }
 PUBLIC_EXPERIMENTS = {"optimized", "optimized-a57"}
 PGO_PROFILES = {"pgo-generate", "pgo-use"}

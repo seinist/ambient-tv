@@ -66,7 +66,10 @@ int main() {
         self.assertIn("thread->index < global->activeComputeThreads.load", claim)
         self.assertIn("global_->mutex", refresh)
         self.assertIn("thread->cond.notify_one()", refresh)
-        self.assertIn("width > previous", refresh)
+        self.assertIn("width != previous", refresh)
+        _, enqueue = replacement("ppsspp", "int chosenIndex = global_->roundRobin++")
+        self.assertIn("maxThread = global_->activeComputeThreads.load", enqueue)
+        self.assertIn("chosenThread->cond.notify_one()", enqueue)
 
     def test_picodrive_hash_folds_mirrored_pc_bits(self):
         compiler=shutil.which("cc")
@@ -249,6 +252,37 @@ int main() {
     for (unsigned i=0;i<count;++i) {
         assert(submitted[i*2] == static_cast<int16_t>(i));
         assert(submitted[i*2+1] == static_cast<int16_t>(i ^ 0x5555));
+    }
+    // Stress real overflow, concurrent consumer flush, and ring reuse.
+    // The frontend owns upload/flush; the producer may continue at any rate.
+    for(unsigned round=0;round<12;++round) {
+        retro_audio_deinit();
+        retro_audio_init();
+        submitted.clear();
+        done=false;
+        std::thread fast([&]{
+            for(unsigned i=0;i<200000;++i) {
+                WriteSample(static_cast<int16_t>(i ^ 0x5555),static_cast<int16_t>(i));
+                if((i & 511)==0)std::this_thread::yield();
+            }
+            done.store(true,std::memory_order_release);
+        });
+        unsigned cycle=0;
+        while(!done.load(std::memory_order_acquire)) {
+            if(cycle++ % 3==0)retro_audio_flush_buffer();
+            else retro_audio_upload();
+            std::this_thread::yield();
+        }
+        fast.join();
+        retro_audio_upload();
+        assert(submitted.size()%2==0);
+        for(size_t i=0;i<submitted.size();i+=2)
+            assert(submitted[i+1]==static_cast<int16_t>(submitted[i]^0x5555));
+        assert(audio_write_pos.load()-audio_read_pos.load()<=audio_frame_limit);
+        retro_audio_flush_buffer();
+        assert(audio_read_pos.load()==audio_write_pos.load());
+        assert(!audio_overflow.load());
+        retro_audio_deinit();
     }
 }
 """
