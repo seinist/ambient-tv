@@ -294,12 +294,14 @@ the common dependency graph and the existing app reflection bridge remain
 host-owned. The signed binding fingerprint covers the SmartTube host
 sources, pinned upstream versions, wrapper configuration and patches.
 
-The current candidate is intentionally an override format, not a fully
-stripped modular SmartTube build: the pinned Android resource/assets and
-shared libraries are still needed in the host, and the bundled upstream
-engine remains in both APK variants until resource-only packaging and
-Android linkage have been verified. The module is offered only when the
-pinned wrapper graph is present. No account data is migrated or removed.
+The Full APK retains the bundled engine. The modular preview now uses
+an AGP scoped CLASSES transform to remove SmartTube-owned executable
+classes before D8/R8 and excludes libj2v8.so at native packaging time.
+Generated R classes, Android resources/assets, manifest and common
+dependencies remain in the host. Resource shrinking is disabled for
+preview builds so references from the external DEX remain valid.
+The signed adapter is offered only when the pinned resource graph is
+present. No account data is migrated or removed.
 The startup probe and state flow gate system catalog, settings, Home,
 sidebar and first-run sign-in without changing stored enabled preferences.
 
@@ -313,5 +315,10 @@ with matching Full APKs for all four ABIs and corresponding license notices.
 The SmartTube integration workflow now exports the DEX candidate.
 Format tests cover ownership, resource classes and J2V8 packaging.
 Publication, native 16 KiB validation of the pinned J2V8 binaries,
-resource-only APK packaging, Android playback/TV-link tests and actual
-size measurements are still outstanding.
+Android playback/TV-link tests and actual size measurements are still
+outstanding. The integration workflow exercises the resource-only class
+transform, and the preview APK auditor checks for actual definitions of
+upstream SmartTube and J2V8 classes and the native payload. These checks
+do not by themselves establish runtime linkage or playback compatibility.
+The broad R8 keep rules preserve common host APIs pending device validation
+and future size optimization.
