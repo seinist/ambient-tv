@@ -624,6 +624,8 @@ dependencies {
     // SmartTube network engine "Cronet": the Play Services provider, no bundled native library.
     implementation(libs.androidx.media3.datasource.cronet)
     implementation(libs.play.services.cronet)
+    // Use the canonical API AAR explicitly; retain the Play Services provider.
+    implementation(libs.chromium.cronet)
     implementation(libs.androidx.media3.session)
 
     implementation(libs.retrofit.core)

@@ -1,4 +1,4 @@
-// AMBIENT_TV_ROOT_BUILD_V038
+// AMBIENT_TV_ROOT_BUILD_V039
 buildscript {
     // The catalog is the single source of truth, including this early classpath.
     val kotlinPin = file("gradle/libs.versions.toml").readLines()
@@ -27,6 +27,9 @@ subprojects {
             for (legacy in listOf("cronet-api", "cronet-common", "cronet-fallback", "cronet-shared", "httpengine-native-provider")) {
                 substitute(module("org.chromium.net:$legacy"))
                     .using(module("org.chromium.net:cronet:$ambientChromiumCronetVersion"))
+                    // Explicit @aar selectors retain the old artifact name even
+                    // after module substitution. Resolve the new module's default AAR.
+                    .withoutArtifactSelectors()
                     .because("Cronet 500+ replaces the deprecated transitional artifact")
             }
         }
