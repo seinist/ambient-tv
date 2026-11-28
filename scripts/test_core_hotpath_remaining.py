@@ -46,6 +46,91 @@ class RemainingCoreHotpathTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     prepare_hotpaths(root, core)
 
+    def test_flycast_ring_wrap_overflow_and_flush(self):
+        compiler = shutil.which("c++")
+        self.assertIsNotNone(compiler)
+        changes = PATCHES["flycast"]
+        declaration = next(new for _, old, new in changes if "static std::mutex audio_buffer_mutex;" in old)
+        lifecycle = next(new for _, old, new in changes if old.startswith("void retro_audio_init"))
+        upload = next(new for _, old, new in changes if old.startswith("void retro_audio_upload"))
+        tail = next(new for _, old, new in changes if "int16_t *audio_out_buffer_ptr" in old)
+        source = r"""
+#include <array>
+#include <atomic>
+#include <limits>
+#include <cstdint>
+#include <cstddef>
+#include <cassert>
+#include <vector>
+#include <thread>
+using s16 = int16_t;
+static float audio_samples_per_frame_avg;
+static unsigned vsync_swap_interval_last, vsync_swap_interval_conter;
+static std::vector<int16_t> submitted;
+static size_t audio_batch_cb(const int16_t* data, size_t frames) {
+    submitted.insert(submitted.end(), data, data + frames * 2);
+    return frames;
+}
+""" + declaration + lifecycle + upload + tail + r"""
+int main() {
+    retro_audio_init();
+    // Exercise both uint32 counter wrap and the physical ring wrap.
+    audio_read_pos.store(0xfffffffc);
+    audio_write_pos.store(0xfffffffc);
+    for (int i=0; i<10; ++i) WriteSample(i+100, i);
+    retro_audio_upload();
+    assert(submitted.size() == 20);
+    for (int i=0; i<10; ++i) {
+        assert(submitted[i*2] == i);
+        assert(submitted[i*2+1] == i+100);
+    }
+    assert(audio_read_pos.load() == audio_write_pos.load());
+    submitted.clear();
+    for (unsigned i=0; i<=audio_frame_limit; ++i) WriteSample(1,2);
+    assert(audio_overflow.load());
+    retro_audio_upload();
+    assert(submitted.empty() && !audio_overflow.load());
+    WriteSample(3,4);
+    retro_audio_flush_buffer();
+    retro_audio_upload();
+    assert(submitted.empty());
+    WriteSample(5,6);
+    retro_audio_upload();
+    assert((submitted == std::vector<int16_t>{6,5}));
+    retro_audio_deinit();
+    WriteSample(7,8);
+    retro_audio_upload();
+    assert(submitted.size() == 2);
+    retro_audio_init();
+    submitted.clear();
+    constexpr unsigned count = 60000;
+    std::atomic<bool> done{false};
+    std::thread producer([&]{
+        for (unsigned i=0;i<count;++i) {
+            while (audio_write_pos.load() - audio_read_pos.load() >= 512)
+                std::this_thread::yield();
+            WriteSample(static_cast<int16_t>(i ^ 0x5555), static_cast<int16_t>(i));
+        }
+        done.store(true, std::memory_order_release);
+    });
+    while (!done.load(std::memory_order_acquire) || audio_read_pos.load() != audio_write_pos.load())
+        retro_audio_upload();
+    producer.join();
+    assert(submitted.size() == count * 2);
+    for (unsigned i=0;i<count;++i) {
+        assert(submitted[i*2] == static_cast<int16_t>(i));
+        assert(submitted[i*2+1] == static_cast<int16_t>(i ^ 0x5555));
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "flycast.cpp"
+            binary = path.with_suffix("")
+            path.write_text(source)
+            subprocess.run([compiler, "-std=c++11", "-O2", "-fsanitize=undefined",
+                            "-pthread", str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
     def test_ymir_neon_kernels_compile_without_implicit_vector_casts(self):
         clang = shutil.which("clang")
         self.assertIsNotNone(clang)
