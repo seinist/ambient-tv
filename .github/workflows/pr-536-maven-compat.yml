@@ -45,6 +45,8 @@ jobs:
           bash -n build.sh
           python3 -m py_compile scripts/maven_dependency.py scripts/update_maven_dependencies.py
           python3 -m unittest discover -s scripts/tests -p 'test_maven_updates.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_core_updates.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_libretro_updates.py' -v
 
       - uses: actions/setup-java@v5
         with:
