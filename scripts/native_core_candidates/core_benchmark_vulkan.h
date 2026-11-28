@@ -86,9 +86,9 @@ class BenchmarkVulkan {
 public:
     bool configure(const retro_hw_render_context_negotiation_interface* base) {
         if(created || !base || base->interface_type!=RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN ||
-           base->interface_version<1 || base->interface_version>2)return false;
+           base->interface_version<1)return false;
         const auto* v=reinterpret_cast<const retro_hw_render_context_negotiation_interface_vulkan*>(base);
-        negotiation.interface_type=v->interface_type;negotiation.interface_version=v->interface_version;
+        negotiation.interface_type=v->interface_type;negotiation.interface_version=v->interface_version>=2?2:1;
         negotiation.get_application_info=v->get_application_info;
         negotiation.create_device=v->create_device;negotiation.destroy_device=v->destroy_device;
         if(v->interface_version>=2){negotiation.create_instance=v->create_instance;negotiation.create_device2=v->create_device2;}
@@ -143,22 +143,30 @@ public:
         return init()?reinterpret_cast<const retro_hw_render_interface*>(&iface):nullptr;
     }
     bool frame(bool valid) {
-        std::lock_guard<std::mutex> frame_lock(frame_mutex);
-        if(!created || failed || (valid && !image_set))return false;
+        std::vector<VkSemaphore> frame_waits;
+        std::vector<VkCommandBuffer> frame_commands;
+        VkSemaphore frame_signal=VK_NULL_HANDLE;
+        {
+            std::lock_guard<std::mutex> frame_lock(frame_mutex);
+            if(!created || failed || (valid && !image_set))return false;
+            waits.swap(frame_waits);commands.swap(frame_commands);
+            frame_signal=signal;signal=VK_NULL_HANDLE;image_set=false;
+        }
+        // Never hold the callback state mutex while waiting on the queue lock.
+        // A core worker may own the queue while calling set_image.
         std::lock_guard<std::mutex> queue_lock(queue_mutex);
-        const bool wait_image=valid && commands.empty();
-        std::vector<VkPipelineStageFlags> stages(wait_image?waits.size():0,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        const bool wait_image=valid && frame_commands.empty();
+        std::vector<VkPipelineStageFlags> stages(wait_image?frame_waits.size():0,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         VkSubmitInfo submit{};submit.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.waitSemaphoreCount=static_cast<uint32_t>(stages.size());
-        submit.pWaitSemaphores=stages.empty()?nullptr:waits.data();
+        submit.pWaitSemaphores=stages.empty()?nullptr:frame_waits.data();
         submit.pWaitDstStageMask=stages.data();
-        submit.commandBufferCount=static_cast<uint32_t>(commands.size());
-        submit.pCommandBuffers=commands.data();
-        submit.signalSemaphoreCount=signal?1:0;submit.pSignalSemaphores=signal?&signal:nullptr;
+        submit.commandBufferCount=static_cast<uint32_t>(frame_commands.size());
+        submit.pCommandBuffers=frame_commands.data();
+        submit.signalSemaphoreCount=frame_signal?1:0;submit.pSignalSemaphores=frame_signal?&frame_signal:nullptr;
         bool ok=vkResetFences(context.device,1,&fence)==VK_SUCCESS &&
                 vkQueueSubmit(context.queue,1,&submit,fence)==VK_SUCCESS &&
                 vkWaitForFences(context.device,1,&fence,VK_TRUE,30000000000ull)==VK_SUCCESS;
-        waits.clear();commands.clear();signal=VK_NULL_HANDLE;image_set=false;
         if(!ok)failed=true;
         return ok;
     }

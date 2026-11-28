@@ -11,6 +11,7 @@
 #include <dlfcn.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -36,6 +37,7 @@ static EGLSurface surface = EGL_NO_SURFACE;
 static bool hardware = false, reset_done = false, vulkan = false;
 static BenchmarkVulkan vk;
 static unsigned preferred_renderer=RETRO_HW_CONTEXT_OPENGLES3;
+static bool require_vulkan=false, require_gles=false;
 static uint64_t video_frames = 0, audio_frames = 0;
 static unsigned width = 0, height = 0;
 static void die(const char* message) {
@@ -102,6 +104,15 @@ static bool env(unsigned cmd, void* data) {
     case RETRO_ENVIRONMENT_GET_CAN_DUPE: *static_cast<bool*>(data)=true; return true;
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS: return true;
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: *static_cast<unsigned*>(data)=0; return true;
+    case RETRO_ENVIRONMENT_GET_JIT_CAPABLE: {
+        const long page=sysconf(_SC_PAGESIZE);
+        bool capable=false;
+        if(page>0) {
+            void* ptr=mmap(nullptr,static_cast<size_t>(page),PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+            if(ptr!=MAP_FAILED){capable=mprotect(ptr,static_cast<size_t>(page),PROT_READ|PROT_EXEC)==0;munmap(ptr,static_cast<size_t>(page));}
+        }
+        *static_cast<bool*>(data)=capable;return true;
+    }
     case RETRO_ENVIRONMENT_GET_LANGUAGE: *static_cast<unsigned*>(data)=RETRO_LANGUAGE_ENGLISH; return true;
     case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE: *static_cast<int*>(data)=3; return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: *static_cast<bool*>(data)=false; return true;
@@ -220,8 +231,9 @@ int main(int argc,char** argv) {
             die("Invalid/duplicate option");
     }
     if(const char* renderer=std::getenv("AMBIENT_BENCHMARK_RENDERER")) {
-        if(std::strcmp(renderer,"vulkan")==0)preferred_renderer=RETRO_HW_CONTEXT_VULKAN;
-        else if(std::strcmp(renderer,"gles")!=0 && std::strcmp(renderer,"auto")!=0)
+        if(std::strcmp(renderer,"vulkan")==0){preferred_renderer=RETRO_HW_CONTEXT_VULKAN;require_vulkan=true;}
+        else if(std::strcmp(renderer,"gles")==0)require_gles=true;
+        else if(std::strcmp(renderer,"auto")!=0)
             die("Invalid benchmark renderer preference");
     }
     void* lib=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
@@ -250,6 +262,8 @@ int main(int argc,char** argv) {
     }
     if(!load_game(&game) || unsupported)die("Core load failed or requires unsupported hardware context");
     for(const auto& item:overrides)if(!options.count(item.first))die("Unknown option in fixture");
+    if((require_vulkan && !vulkan) || (require_gles && (!hardware || vulkan)))
+        die("Core did not select the explicitly requested renderer");
     if(vulkan && !vk.init())die("Vulkan context negotiation failed");
     if(hardware && hw.context_reset){hw.context_reset();reset_done=true;}
     set_controller_port_device(0,RETRO_DEVICE_JOYPAD);
