@@ -11,6 +11,7 @@ on:
       - 'scripts/tests/test_svp_pgo_metadata.sh'
       - 'scripts/svp_dependency.py'
       - 'scripts/tests/test_svp_updates.py'
+      - 'scripts/tests/test_svp_mesa.sh'
       - 'scripts/vendor_svp_licenses.sh'
       - 'gradle/external-versions.properties'
       - '.github/workflows/svp-native.yml'
@@ -25,6 +26,7 @@ on:
       - 'scripts/tests/test_svp_pgo_metadata.sh'
       - 'scripts/svp_dependency.py'
       - 'scripts/tests/test_svp_updates.py'
+      - 'scripts/tests/test_svp_mesa.sh'
       - 'scripts/vendor_svp_licenses.sh'
       - 'gradle/external-versions.properties'
       - '.github/workflows/svp-native.yml'
@@ -38,9 +40,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  native-tests:
+  native-portable:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     env:
       # Matches the host x86 build workaround in build_svp_android.sh.
       RUSTFLAGS: "-C target-feature=+ssse3"
@@ -90,44 +92,53 @@ jobs:
         run: cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --no-default-features --lib --tests
       - name: Compile Vulkan path and run portable regressions
         run: cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib --tests
-      - name: Validate integer GPU motion costs using Mesa software Vulkan
+  native-gpu:
+    name: native-gpu (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [math_motion, held_benchmark, shared_device, streaming, uploads]
+    env:
+      RUSTFLAGS: "-C target-feature=+ssse3"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Install Mesa software Vulkan
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan-dev glslang-tools
-          export XDG_RUNTIME_DIR="$RUNNER_TEMP"
-          # Reuse compiled Mesa shaders across the independent test processes.
-          export MESA_SHADER_CACHE_DIR="$RUNNER_TEMP/svp-mesa-cache"
-          export MESA_SHADER_CACHE_MAX_SIZE=1G
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan-dev
+      - name: Run Vulkan test shard
+        env:
+          XDG_RUNTIME_DIR: ${{ runner.temp }}
+          MESA_SHADER_CACHE_DIR: ${{ runner.temp }}/svp-mesa-cache
+          MESA_SHADER_CACHE_MAX_SIZE: 1G
+        run: |
           mkdir -p "$MESA_SHADER_CACHE_DIR"
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::tests::resident_upstream_subpixel_filters_match_phase_planes -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::synthesis_tests::coverage_and_sad_masks_match_upstream -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::synthesis_tests::all_synthesis_equations_match_reference -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::held_cache_and_submission_benchmark -- --ignored --exact --nocapture
-          AMBIENT_SVP_BENCH_ALGORITHM=23 cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::held_cache_and_submission_benchmark -- --ignored --exact --nocapture
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::native_resident_commands_keep_images_on_shared_device -- --ignored --exact --nocapture
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident::tests::resident_motion_matches_unpruned_scalar_search -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_candidate_costs_match_cpu -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_super_phase_and_pyramid_costs_match_cpu -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_select::tests::vulkan_ordered_selection_matches_cpu -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_select::tests::chained_cost_and_selection_without_intermediate_readback -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_select::tests::selected_complete_fields_enter_upstream_smoother -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_search::tests::hierarchical_search_produces_complete_valid_fields -- --ignored --exact
-          # Allow software Vulkan only in the Rust test build.
-          export AMBIENTSVP_TEST_SOFTWARE_VULKAN=1
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::experimental_hierarchical_motion_reaches_streaming_synthesis -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::known_translation_quality_compares_upstream_and_experimental -- --ignored --exact --nocapture
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::translation_and_occlusion_quality_matrix -- --ignored --exact --nocapture
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::dual_output_matches_single_and_drops_prefetch_on_seek -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::adjacent_ready_source_pairs_match_serial_output -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::compact_motion_fields_match_float_fields -- --ignored --exact
-          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::complete_output_overwrite_matches_clear_on_unaligned_planes -- --ignored --exact
+          bash scripts/tests/test_svp_mesa.sh "${{ matrix.group }}"
+
+  native-adapters:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Install C and shader validation dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libvulkan-dev glslang-tools spirv-tools
       - name: Cross-check Android JNI, MediaCodec external memory and private Vulkan cache
+        if: ${{ !cancelled() }}
         run: |
           glslangValidator -V --target-env vulkan1.1 -S comp -o "$RUNNER_TEMP/ahb_convert.spv" native/ambientsvp/shaders/ahb_convert.comp
           spirv-val --target-env vulkan1.1 "$RUNNER_TEMP/ahb_convert.spv"
           rustup target add --toolchain stable aarch64-linux-android
           RUSTFLAGS="" cargo +stable check --manifest-path native/ambientsvp/Cargo.toml --release --locked --target aarch64-linux-android --lib --tests
       - name: Cross-check MPV native Vulkan adapter against pinned FFmpeg headers
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           pin="$(sed -n 's/^FFMPEG_COMMIT=//p' gradle/external-versions.properties)"
@@ -145,6 +156,7 @@ jobs:
             native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c -Wl,--gc-sections -ldl -lm -o "$tmp/metadata"
           "$tmp/metadata"
       - name: Cross-check shared libplacebo quality bridge against pinned headers
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           pin="$(sed -n 's/^MPV_DEP_LIBPLACEBO_COMMIT=//p' gradle/external-versions.properties)"
@@ -166,6 +178,7 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Wno-unused-function -fsyntax-only \
             -I "$inc" -I native/ambientsvp/include -I native/ambientsvp/adapters "$tmp/bridge.c"
       - name: Test C adapters' shared helpers
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           bash -n scripts/prepare_svp_sources.sh
@@ -193,7 +206,22 @@ jobs:
             cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared -I native/ambientsvp/include "${flags[@]}" "$src" -o "$tmp/$variant/libambientsvp.so"
             LD_LIBRARY_PATH="$tmp/$variant" "$tmp/loader" "$expected"
           done
-      # Full synthesis/hardware throughput tests still require a physical GPU.
+
+  # Preserve the existing required check. Every independent group must pass.
+  native-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [native-portable, native-gpu, native-adapters]
+    if: ${{ always() }}
+    steps:
+      - name: Require every native validation group to succeed
+        env:
+          PORTABLE_RESULT: ${{ needs.native-portable.result }}
+          GPU_RESULT: ${{ needs.native-gpu.result }}
+          ADAPTERS_RESULT: ${{ needs.native-adapters.result }}
+        run: |
+          printf 'Portable: %s\nGPU: %s\nAdapters: %s\n' "$PORTABLE_RESULT" "$GPU_RESULT" "$ADAPTERS_RESULT"
+          [[ "$PORTABLE_RESULT" == success && "$GPU_RESULT" == success && "$ADAPTERS_RESULT" == success ]]
 
   hdr10plus-external-reference:
     runs-on: ubuntu-latest
