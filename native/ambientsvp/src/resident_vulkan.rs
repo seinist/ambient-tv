@@ -3062,9 +3062,11 @@ mod gpu_tests{
             // The producer now waits on an unsignalled gate; all binary
             // holds from warm-up have been consumed and are reusable.
             d.reset_fences(&[fence]).unwrap();
-            // Change the actual source pixels behind the gate: the final
-            // readback must prove that the second submission ran, not merely
-            // return the cached warm-up image.
+            // Change actual source pixels before the gated submission.
+            // Final readback must prove a new synthesis, not merely return
+            // the cached warm-up image. Keep the producer gate itself empty:
+            // a driver that serializes submissions must not hang before the
+            // watchdog has been armed.
             d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
             for img in &held[..2]{
@@ -3075,12 +3077,15 @@ mod gpu_tests{
                     &vk::ClearColorValue{float32:[0.5,0.5,0.5,1.0]},&[range()]);
             }
             d.end_command_buffer(cmd).unwrap();
-            let gated_commands=[cmd];
+            let changed_commands=[cmd];
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&changed_commands)],fence).unwrap();
+            d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
+            d.reset_fences(&[fence]).unwrap();
             let gate_wait=[gate];let gate_value=[1u64];let gate_stage=[vk::PipelineStageFlags::ALL_COMMANDS];
             let hold_values=[0u64;3];
             let mut gate_info=vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&gate_value).signal_semaphore_values(&hold_values);
             let producer=vk::SubmitInfo::default().push_next(&mut gate_info).wait_semaphores(&gate_wait)
-                .wait_dst_stage_mask(&gate_stage).command_buffers(&gated_commands).signal_semaphores(&hold);
+                .wait_dst_stage_mask(&gate_stage).signal_semaphores(&hold);
             d.queue_submit(queue,&[producer],fence).unwrap();
             let mut job=ptr::null_mut();
             // The producer gate is opened by a watchdog even if a future
