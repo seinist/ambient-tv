@@ -12,23 +12,31 @@
 #include "ambientsvp_quality.h"
 #define AMBIENT_SVP_PAIR_ID VLC_FOURCC('S','V','P','2')
 struct ambient_svp_pair {
-    picture_t *a,*b;
-    uint64_t a_id,b_id;
+    picture_t *a,*b,*past,*future;
+    uint64_t a_id,b_id,past_id,future_id;
     float phase;
     AmbientSvpQuality quality;
 };
 static inline void ambient_svp_pair_free(void *opaque)
 {
     struct ambient_svp_pair *p=opaque;
-    picture_Release(p->a);picture_Release(p->b);free(p);
+    picture_Release(p->a);picture_Release(p->b);
+    if(p->past)picture_Release(p->past);
+    if(p->future)picture_Release(p->future);
+    free(p);
 }
 static inline bool ambient_svp_attach_pair(picture_t *out,picture_t *a,picture_t *b,
-    uint64_t ai,uint64_t bi,float phase,const AmbientSvpQuality *quality)
+    uint64_t ai,uint64_t bi,float phase,const AmbientSvpQuality *quality,
+    picture_t *past,uint64_t past_id,picture_t *future,uint64_t future_id)
 {
     if(!out||!a||!b||!quality||!ai||!bi||!isfinite(phase)||phase<0.f||phase>1.f)return false;
     struct ambient_svp_pair *p=malloc(sizeof(*p));
     if(!p)return false;
     *p=(struct ambient_svp_pair){.a=picture_Hold(a),.b=picture_Hold(b),.a_id=ai,.b_id=bi,.phase=phase,.quality=*quality};
+    if(past&&future&&past_id&&future_id){
+        p->past=picture_Hold(past);p->future=picture_Hold(future);
+        p->past_id=past_id;p->future_id=future_id;
+    }
     struct vlc_ancillary *anc=vlc_ancillary_CreateWithFreeCb(p,AMBIENT_SVP_PAIR_ID,ambient_svp_pair_free);
     if(!anc){ambient_svp_pair_free(p);return false;}
     int rc=picture_AttachAncillary(out,anc);
