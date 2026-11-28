@@ -180,6 +180,22 @@ class SystemModuleRuntimeTest {
             allowedModuleDependencies = setOf(SystemModule.SHADERS)), pkg.build))
     }
 
+    @Test fun globalNativeOwnershipRejectsHostRootConflictsInBothOrders() {
+        val owners = mutableMapOf<String, SystemModule>()
+        val shared = mutableSetOf<String>()
+        val reserve = SystemModuleRuntime.Companion::reserveGlobalNativeNames
+        reserve(SystemModule.MPV, setOf("libmpv.so"), setOf("libavcodec.so"), owners, shared)
+        reserve(SystemModule.VLC, setOf("libvlc.so"), setOf("libavcodec.so"), owners, shared)
+        val before = owners.toMap()
+        val beforeShared = shared.toSet()
+        reject { reserve(SystemModule.SVP, setOf("libavcodec.so"), emptySet(), owners, shared) }
+        reject { reserve(SystemModule.SVP, setOf("libsvp.so"), setOf("libmpv.so"), owners, shared) }
+        reject { reserve(SystemModule.SVP, setOf("libvlc.so"), emptySet(), owners, shared) }
+        reject { reserve(SystemModule.SVP, setOf("libsame.so"), setOf("libsame.so"), owners, shared) }
+        assertEquals(before, owners)
+        assertEquals(beforeShared, shared)
+    }
+
     @Test fun hostNativeClosureIsExactAndOrderedBeforeModuleActivation() {
         fun lib(name: String, vararg needed: String) = SystemModuleBinary.Native(name, needed.toSet())
         val module = mapOf("libengine.so" to lib("libengine.so", "libavcodec.so", "libc.so"))

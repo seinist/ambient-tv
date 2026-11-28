@@ -65,6 +65,9 @@ internal class SystemModuleRuntime(
     private val verifiedHostHashes = mutableMapOf<String, String>()
     private val verifiedHostElf = mutableMapOf<Pair<String, String>, SystemModuleBinary.Native>()
     private val loadedHostLibraries = mutableSetOf<String>()
+    // Reserve even unsuccessful linker attempts: native constructors can
+    // have run before an error was reported.
+    private val reservedHostLibraries = mutableSetOf<String>()
     private var loading = false
 
     /** Call on a background worker; all initialization is serialized. */
@@ -89,6 +92,7 @@ internal class SystemModuleRuntime(
             // Prepare the complete graph before executing any new code.
             val prepared = linkedMapOf<SystemModule, SystemModuleMaterializer.Materialized>()
             val reserved = nativeOwners.toMutableMap()
+            val reservedHost = reservedHostLibraries.toMutableSet()
             try {
                 for (pkg in order) {
                     val id = SystemModule.fromId(pkg.build.module)
@@ -104,13 +108,13 @@ internal class SystemModuleRuntime(
                     val files = SystemModuleMaterializer.prepare(pkg, root, pageSize, pkg.build.hostNativeSha256.keys)
                     prepared[id] = files
                     validateContract(contract, files)
-                    // DEX native libraries use their own Android linker namespace.
-                    // Reserve global SONAMEs only for host-loader native packages.
-                    for (name in files.native.keys.filter { contract.entryClass == null }) {
-                        val owner = reserved.putIfAbsent(name, id)
-                        if (owner != null && owner != id)
-                            throw SystemModuleTrustException("Conflicting native libraries in module graph")
-                    }
+                    // DEX adapters use a separate linker namespace. All
+                    // host-loader native roots and APK-owned dependencies
+                    // must be disjoint across the complete graph.
+                    if (contract.entryClass == null)
+                        reserveGlobalNativeNames(id, files.native.keys, files.build.hostNativeSha256.keys,
+                            reserved, reservedHost)
+                    SystemModuleMaterializer.verifyFiles(files)
                 }
             } catch (e: Exception) {
                 prepared.values.forEach { it.directory.deleteRecursively() }
@@ -121,7 +125,9 @@ internal class SystemModuleRuntime(
                     // Once activation begins, retain directories and reserve
                     // native names even on failure: constructors may have run.
                     val contract = contractFor(id, files.build)
-                    if (contract.entryClass == null) files.native.keys.forEach { nativeOwners[it] = id }
+                    if (contract.entryClass == null)
+                        reserveGlobalNativeNames(id, files.native.keys, files.build.hostNativeSha256.keys,
+                            nativeOwners, reservedHostLibraries)
                     try {
                         SystemModuleMaterializer.verifyFiles(files)
                         active[id] = activate(files, contract)
@@ -343,6 +349,24 @@ internal class SystemModuleRuntime(
     }
 
     companion object {
+        /** Preflight both directions, including dependencies of earlier or
+         * failed activation attempts. Shared APK libraries may be reused by
+         * multiple modules, but may never be claimed as replaceable roots. */
+        internal fun reserveGlobalNativeNames(
+            module: SystemModule,
+            roots: Set<String>,
+            host: Set<String>,
+            owners: MutableMap<String, SystemModule>,
+            reservedHost: MutableSet<String>,
+        ) {
+            if (roots.any { it in reservedHost || it in host ||
+                    owners[it]?.let { owner -> owner != module } == true } ||
+                host.any { it in owners })
+                throw SystemModuleTrustException("Conflicting global native library ownership")
+            roots.forEach { owners[it] = module }
+            reservedHost.addAll(host)
+        }
+
         internal fun dependenciesAllowed(contract: Contract, build: SystemModuleBuild): Boolean =
             build.dependencies.all { SystemModule.fromId(it.module) in contract.allowedModuleDependencies }
 

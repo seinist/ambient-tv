@@ -775,6 +775,13 @@ published. The high-water mark remains unchanged by rollback. A successful
 no-op update no longer tells the user to restart unless the runtime actually
 requires a restart.
 
+Global native library ownership is preflighted across the full selected
+dependency graph before activation, including both module roots and signed
+APK-owned shared dependencies. Shared host libraries can be reused but
+cannot be replaced by another module. Reservations survive failed linker
+attempts until process restart. All prepared files are verified before the
+first new activation and rechecked immediately before their own activation.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
