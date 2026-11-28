@@ -18,9 +18,15 @@ jobs:
       fail-fast: false
       matrix:
         profile: [citra-arm64-jit, yabause-arm64-jit]
+    # The called workflow declares gated main-only release jobs with write permission.
+    # Its actual candidate build/plan jobs explicitly retain read-only access.
+    permissions:
+      contents: write
+      actions: read
     uses: ./.github/workflows/cores.yml
     with:
       profile: ${{ matrix.profile }}
       publish: false
       publish_experimental: false
-    secrets: inherit
+    secrets:
+      CORES_SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
