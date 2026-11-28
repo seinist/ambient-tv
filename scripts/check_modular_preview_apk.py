@@ -9,7 +9,7 @@ from export_monogram_adapter import owns, owns_smarttube
 
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
 EXTERNAL = {"libprojectM-4.so", "libambientprojectm.so",
-            "libmpv.so", "libambientmpv.so", "libspotify_receiver_core.so", "libmonogram_mtproto.so", "libjnidispatch.so", "libj2v8.so", "libambientsvp.so", "liblibrashader_capi.so"}
+            "libmpv.so", "libambientmpv.so", "libspotify_receiver_core.so", "libmonogram_mtproto.so", "libjnidispatch.so", "libj2v8.so", "libambientsvp.so", "liblibrashader_capi.so", "liblibretrodroid.so"}
 VLC_EXTERNAL = {"libvlc.so", "libvlcjni.so"}
 SHARED = {"libc++_shared.so", "libavcodec.so", "libavutil.so", "libswresample.so"}
 
