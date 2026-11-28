@@ -43,6 +43,11 @@ struct svp_vk_job {
     float phases[SVP_VK_PHASES];
     struct mp_image *fallback;
 };
+struct svp_vk_output_batch {
+    struct mp_image *outputs[SVP_VK_PHASES];
+    struct svp_vk_job *metadata_job;
+    unsigned next,count;
+};
 struct svp_vk_mpv {
     AmbientSvpVk *engine;
     AmbientSvpVk *(*create)(VkInstance,VkPhysicalDevice,VkDevice,PFN_vkGetInstanceProcAddr,uint32_t,uint32_t);
@@ -106,6 +111,8 @@ struct svp_vk_mpv {
     unsigned algorithm;
     struct mp_image *outputs[SVP_VK_PHASES];
     unsigned next_output, output_count;
+    struct svp_vk_output_batch queued[SVP_VK_JOBS-1];
+    unsigned queued_count;
     double origin, source_rate, target_rate;
     uint64_t tick, input_frames, output_frames, generated_frames;
     uint64_t previous_id,older_id,lookahead_id;
@@ -788,6 +795,12 @@ static void svp_vk_reset_history(struct svp_vk_mpv *s)
     mp_image_unrefp(&s->previous);mp_image_unrefp(&s->older);mp_image_unrefp(&s->lookahead);
     for (unsigned i=0;i<s->output_count;i++) mp_image_unrefp(&s->outputs[i]);
     s->next_output=s->output_count=0;s->tick=0;
+    for(unsigned b=0;b<s->queued_count;b++){
+        struct svp_vk_output_batch *q=&s->queued[b];
+        if(q->metadata_job)q->metadata_job->metadata_pending=false;
+        for(unsigned i=0;i<q->count;i++)mp_image_unrefp(&q->outputs[i]);
+    }
+    memset(s->queued,0,sizeof(s->queued));s->queued_count=0;
     svp_vk_reap(s,false);
 }
 static bool svp_vk_destroy_state(struct svp_vk_mpv *s)
@@ -1330,9 +1343,21 @@ fail:
     return false;
 }
 
+static void svp_vk_promote_output(struct svp_vk_mpv *s)
+{
+    if(s->output_count||!s->queued_count)return;
+    const struct svp_vk_output_batch *q=&s->queued[0];
+    memcpy(s->outputs,q->outputs,sizeof(s->outputs));
+    s->metadata_job=q->metadata_job;s->next_output=q->next;s->output_count=q->count;
+    --s->queued_count;
+    memmove(s->queued,s->queued+1,s->queued_count*sizeof(*s->queued));
+    memset(&s->queued[s->queued_count],0,sizeof(*s->queued));
+}
 static struct mp_image *svp_vk_take_output(struct svp_vk_mpv *s)
 {
-    if (!s || s->next_output==s->output_count) return NULL;
+    if(!s)return NULL;
+    svp_vk_promote_output(s);
+    if(s->next_output==s->output_count)return NULL;
     if(s->metadata_job){
         struct svp_vk_job *j=s->metadata_job;
         bool ok=svp_vk_complete_metadata(s,j,s->outputs);
@@ -1352,10 +1377,10 @@ static struct mp_image *svp_vk_take_output(struct svp_vk_mpv *s)
         svp_vk_reap(s,false);
     }
     while(s->next_output<s->output_count&&!s->outputs[s->next_output])s->next_output++;
-    if(s->next_output==s->output_count){s->next_output=s->output_count=0;return NULL;}
+    if(s->next_output==s->output_count){s->next_output=s->output_count=0;return svp_vk_take_output(s);}
     struct mp_image *img=s->outputs[s->next_output];
     s->outputs[s->next_output++]=NULL;
-    if (s->next_output==s->output_count) s->next_output=s->output_count=0;
+    if(s->next_output==s->output_count){s->next_output=s->output_count=0;svp_vk_promote_output(s);}
     s->output_frames++;return img;
 }
 static struct mp_image *svp_vk_take_previous(struct svp_vk_mpv *s)
@@ -1435,6 +1460,32 @@ static bool svp_vk_feed(struct svp_vk_mpv *s,struct mp_image *img)
     }
     if(!svp_vk_pair_frames(s,img,img->pts,NULL)){svp_vk_scene_abort(s);return false;}
     mp_image_unrefp(&s->previous);s->previous=img;s->previous_id=++s->input_frames;return true;
+}
+// Only prefetch while the oldest HDR batch is awaiting its fence and
+// the source filter already has a decoded picture available. Bounded by
+// the native job budget; never allow a later batch to overtake the head.
+static bool svp_vk_can_prefetch(struct svp_vk_mpv *s)
+{
+    if(!s||!s->metadata_job||s->queued_count>=SVP_VK_JOBS-1||!s->previous||
+        s->capture_failed||s->wait_fences(s->device,1,&s->metadata_job->fence,VK_TRUE,0)!=VK_TIMEOUT)return false;
+    for(unsigned i=0;i<SVP_VK_JOBS;i++)if(!s->jobs[i])return true;
+    return false;
+}
+static bool svp_vk_prefetch(struct svp_vk_mpv *s,struct mp_image *img)
+{
+    if(!svp_vk_can_prefetch(s)||!svp_vk_matches(s,img))return false;
+    struct svp_vk_output_batch head={.metadata_job=s->metadata_job,.next=s->next_output,.count=s->output_count};
+    memcpy(head.outputs,s->outputs,sizeof(head.outputs));
+    memset(s->outputs,0,sizeof(s->outputs));s->metadata_job=NULL;s->next_output=s->output_count=0;
+    bool ok=svp_vk_feed(s,img);
+    if(ok&&s->output_count){
+        struct svp_vk_output_batch *q=&s->queued[s->queued_count++];
+        memcpy(q->outputs,s->outputs,sizeof(q->outputs));q->metadata_job=s->metadata_job;
+        q->count=s->output_count;q->next=s->next_output;
+    }
+    memcpy(s->outputs,head.outputs,sizeof(s->outputs));
+    s->metadata_job=head.metadata_job;s->next_output=head.next;s->output_count=head.count;
+    return ok;
 }
 static void svp_vk_eof(struct svp_vk_mpv *s)
 {

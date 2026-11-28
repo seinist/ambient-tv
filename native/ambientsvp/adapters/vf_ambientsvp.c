@@ -232,6 +232,16 @@ static void process(struct mp_filter *f) {
             if (previous) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, previous)); return; }
             svp_vk_reset_history(p->vk);
         }
+        // Pull a ready decoded source while the oldest GPU HDR readback
+        // is pending. The native output FIFO still presents ticks in order.
+        while(!p->vk_disabled&&!p->eof&&p->api.enabled()&&svp_vk_can_prefetch(p->vk)){
+            struct mp_frame prefetched=mp_pin_out_read(f->ppins[0]);
+            if(!prefetched.type)break;
+            if(prefetched.type!=MP_FRAME_VIDEO){mp_pin_out_unread(f->ppins[0],prefetched);break;}
+            if(!svp_vk_prefetch(p->vk,prefetched.data)){
+                mp_pin_out_unread(f->ppins[0],prefetched);break;
+            }
+        }
         struct mp_image *out = svp_vk_take_output(p->vk);
         if(p->vk->capture_failed)p->vk_disabled=true;
         if (out) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out)); return; }
