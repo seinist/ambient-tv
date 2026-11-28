@@ -37,6 +37,7 @@ jobs:
       contents: write
     env:
       CI: 'true'
+      GRADLE_OPTS: '-Dorg.gradle.caching=true'
       NDK_VERSION: '30.0.16248370'
       MPV_SKIP_HOST_DEPS: '1'
       NATIVE_JOBS: '2'
@@ -140,25 +141,145 @@ jobs:
         id: native-tools
         run: |
           set -euo pipefail
-          fingerprint="$({ rustc -Vv; cargo -V; cargo ndk --version; java -version; gcc --version; cmake --version; "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version; echo "${ImageVersion:-unknown}"; echo "$NDK_VERSION"; echo "${SPOTIFY_NATIVE:-0}"; } 2>&1 | sha256sum | cut -d' ' -f1)"
+          fingerprint="$({ rustc -Vv; cargo -V; cargo ndk --version; java -version; gcc --version; cmake --version; "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version; echo "${ImageVersion:-unknown}"; echo "$NDK_VERSION"; } 2>&1 | sha256sum | cut -d' ' -f1)"
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
 
-      - name: Restore native build outputs
-        id: native-cache
+      - name: Resolve individual library input keys
+        id: native-keys
+        env:
+          TOOLCHAIN: ${{ steps.native-tools.outputs.fingerprint }}
+        run: python3 scripts/native_cache_keys.py --toolchain "$TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Restore mpv build cache
+        id: cache-mpv
         if: github.ref == 'refs/heads/main'
         uses: actions/cache/restore@v4
         with:
           path: |
-            app/src/main/jniLibs
+            app/src/main/jniLibs/.mpv-version
+            app/src/main/jniLibs/*/.svp-mpv
+            app/src/main/jniLibs/*/.projectm-pcm
+            app/src/main/jniLibs/*/.ambientmpv-src
+            app/src/main/jniLibs/*/.mpv-patches
+            app/src/main/jniLibs/*/libmpv.so
+            app/src/main/jniLibs/*/libambientmpv.so
+            app/src/main/jniLibs/*/libav*.so
+            app/src/main/jniLibs/*/libsw*.so
+            app/src/main/jniLibs/*/libpostproc.so
+            app/src/main/jniLibs/*/libass.so
+            app/src/main/jniLibs/*/libplacebo.so
+            app/src/main/jniLibs/*/libfreetype.so
+            app/src/main/jniLibs/*/libharfbuzz.so
+            app/src/main/jniLibs/*/libfribidi.so
+            app/src/main/jniLibs/*/libssl.so
+            app/src/main/jniLibs/*/libcrypto.so
+            app/src/main/jniLibs/*/libfontconfig.so
+            app/src/main/jniLibs/*/libxml2.so
+            app/src/main/jniLibs/*/libunibreak.so
+            app/src/main/jniLibs/*/liblua.so
+            app/src/main/jniLibs/*/libcurl.so
+            app/src/main/jniLibs/*/libmbed*.so
+            app/src/main/jniLibs/*/libdav1d.so
+            app/src/main/jniLibs/*/libc++_shared.so
+            app/src/main/jniLibs/*/libzstd.so
+            app/src/main/jniLibs/*/libpng*.so
+            app/src/main/jniLibs/*/libshaderc*.so
+            app/src/main/jniLibs/*/libvulkan*.so
+            app/src/main/jniLibs/*/liblcms*.so
+            app/src/main/jniLibs/*/libiconv.so
+            app/src/main/jniLibs/*/libexpat.so
+            app/src/main/jniLibs/*/libbz2.so
+            .native/mpv-android/buildscripts/prefix/*/include
+          key: ${{ format('ambient-native-main-v2-mpv-{0}', steps.native-keys.outputs.mpv) }}
+
+      - name: Restore vlc build cache
+        id: cache-vlc
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
             app/libs/libvlc-vulkan.aar
             app/libs/.vlc-source-*
             app/libs/.projectm-pcm-vlc-*
             app/libs/.svp-vlc-*
+          key: ${{ format('ambient-native-main-v2-vlc-{0}', steps.native-keys.outputs.vlc) }}
+
+      - name: Restore projectm build cache
+        id: cache-projectm
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            app/src/main/jniLibs/.projectm-version
+            app/src/main/jniLibs/*/libprojectM*.so
+            app/src/main/jniLibs/*/libambientprojectm.so
+            app/src/main/assets/projectm
+          key: ${{ format('ambient-native-main-v2-projectm-{0}', steps.native-keys.outputs.projectm) }}
+
+      - name: Restore svp build cache
+        id: cache-svp
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            app/src/main/jniLibs/*/libambientsvp.so
+            app/src/main/jniLibs/*/.svp-engine
+            app/src/main/assets/licenses/open-svpflow
+          key: ${{ format('ambient-native-main-v2-svp-{0}', steps.native-keys.outputs.svp) }}
+
+      - name: Restore shaders build cache
+        id: cache-shaders
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            app/src/main/jniLibs/*/liblibrashader_capi.so
+            app/src/main/jniLibs/*/.librashader-vulkan-pin
+          key: ${{ format('ambient-native-main-v2-shaders-{0}', steps.native-keys.outputs.shaders) }}
+
+      - name: Restore monogram build cache
+        id: cache-monogram
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
             app/libs/monogram-mtproto.aar
             app/libs/.monogram-native-version
-            app/src/main/assets/projectm
-            app/src/main/assets/licenses/open-svpflow
-          key: ambient-native-main-v1-${{ steps.native-tools.outputs.fingerprint }}-${{ hashFiles('build.sh', 'scripts/**', 'native/**', 'gradle/**', 'app/build.gradle.kts', 'app/src/main/jniLibs/**', 'app/src/main/assets/projectm/**', 'app/libs/**', 'third_party/**', 'libretrodroid_wrapper/**', '.github/workflows/release.yml') }}
+          key: ${{ format('ambient-native-main-v2-monogram-{0}', steps.native-keys.outputs.monogram) }}
+
+      - name: Restore spotify build cache
+        id: cache-spotify
+        if: github.ref == 'refs/heads/main' && env.SPOTIFY_NATIVE == '1'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            app/src/main/jniLibs/.spotify-rusty
+            app/src/main/jniLibs/.spotify-pcm-v39
+            app/src/main/jniLibs/*/libspotify_receiver_core.so
+          key: ${{ format('ambient-native-main-v2-spotify-{0}', steps.native-keys.outputs.spotify) }}
+
+      - name: Restore libretrodroid build cache
+        id: cache-libretrodroid
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            third_party/libretrodroid/src
+            third_party/libretrodroid/.ambient-libretrodroid
+            third_party/libretrodroid/consumer-rules.pro
+            libretrodroid_wrapper/.cxx
+          key: ${{ format('ambient-native-main-v2-libretrodroid-{0}', steps.native-keys.outputs.libretrodroid) }}
+
+      - name: Restore smarttube build cache
+        id: cache-smarttube
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            third_party/smarttube/.engine-version
+            third_party/smarttube/MediaServiceCore
+            third_party/smarttube/SharedModules
+          key: ${{ format('ambient-native-main-v2-smarttube-{0}', steps.native-keys.outputs.smarttube) }}
 
       - name: Check build scripts
         run: |
@@ -185,21 +306,127 @@ jobs:
             python3 scripts/verify_paired_apk_release.py --full dist --modular dist/modular --aapt2 "$ANDROID_HOME/build-tools/37.0.0/aapt2" --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner"
           fi
 
-      - name: Save validated native build outputs
-        if: github.ref == 'refs/heads/main' && steps.native-cache.outputs.cache-hit != 'true'
+      - name: Save mpv build cache
+        if: github.ref == 'refs/heads/main' && steps.cache-mpv.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
-            app/src/main/jniLibs
+            app/src/main/jniLibs/.mpv-version
+            app/src/main/jniLibs/*/.svp-mpv
+            app/src/main/jniLibs/*/.projectm-pcm
+            app/src/main/jniLibs/*/.ambientmpv-src
+            app/src/main/jniLibs/*/.mpv-patches
+            app/src/main/jniLibs/*/libmpv.so
+            app/src/main/jniLibs/*/libambientmpv.so
+            app/src/main/jniLibs/*/libav*.so
+            app/src/main/jniLibs/*/libsw*.so
+            app/src/main/jniLibs/*/libpostproc.so
+            app/src/main/jniLibs/*/libass.so
+            app/src/main/jniLibs/*/libplacebo.so
+            app/src/main/jniLibs/*/libfreetype.so
+            app/src/main/jniLibs/*/libharfbuzz.so
+            app/src/main/jniLibs/*/libfribidi.so
+            app/src/main/jniLibs/*/libssl.so
+            app/src/main/jniLibs/*/libcrypto.so
+            app/src/main/jniLibs/*/libfontconfig.so
+            app/src/main/jniLibs/*/libxml2.so
+            app/src/main/jniLibs/*/libunibreak.so
+            app/src/main/jniLibs/*/liblua.so
+            app/src/main/jniLibs/*/libcurl.so
+            app/src/main/jniLibs/*/libmbed*.so
+            app/src/main/jniLibs/*/libdav1d.so
+            app/src/main/jniLibs/*/libc++_shared.so
+            app/src/main/jniLibs/*/libzstd.so
+            app/src/main/jniLibs/*/libpng*.so
+            app/src/main/jniLibs/*/libshaderc*.so
+            app/src/main/jniLibs/*/libvulkan*.so
+            app/src/main/jniLibs/*/liblcms*.so
+            app/src/main/jniLibs/*/libiconv.so
+            app/src/main/jniLibs/*/libexpat.so
+            app/src/main/jniLibs/*/libbz2.so
+            .native/mpv-android/buildscripts/prefix/*/include
+          key: ${{ steps.cache-mpv.outputs.cache-primary-key }}
+
+      - name: Save vlc build cache
+        if: github.ref == 'refs/heads/main' && steps.cache-vlc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
             app/libs/libvlc-vulkan.aar
             app/libs/.vlc-source-*
             app/libs/.projectm-pcm-vlc-*
             app/libs/.svp-vlc-*
+          key: ${{ steps.cache-vlc.outputs.cache-primary-key }}
+
+      - name: Save projectm build cache
+        if: github.ref == 'refs/heads/main' && steps.cache-projectm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/src/main/jniLibs/.projectm-version
+            app/src/main/jniLibs/*/libprojectM*.so
+            app/src/main/jniLibs/*/libambientprojectm.so
+            app/src/main/assets/projectm
+          key: ${{ steps.cache-projectm.outputs.cache-primary-key }}
+
+      - name: Save svp build cache
+        if: github.ref == 'refs/heads/main' && steps.cache-svp.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/src/main/jniLibs/*/libambientsvp.so
+            app/src/main/jniLibs/*/.svp-engine
+            app/src/main/assets/licenses/open-svpflow
+          key: ${{ steps.cache-svp.outputs.cache-primary-key }}
+
+      - name: Save shaders build cache
+        if: github.ref == 'refs/heads/main' && steps.cache-shaders.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/src/main/jniLibs/*/liblibrashader_capi.so
+            app/src/main/jniLibs/*/.librashader-vulkan-pin
+          key: ${{ steps.cache-shaders.outputs.cache-primary-key }}
+
+      - name: Save monogram build cache
+        if: github.ref == 'refs/heads/main' && steps.cache-monogram.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
             app/libs/monogram-mtproto.aar
             app/libs/.monogram-native-version
-            app/src/main/assets/projectm
-            app/src/main/assets/licenses/open-svpflow
-          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+          key: ${{ steps.cache-monogram.outputs.cache-primary-key }}
+
+      - name: Save spotify build cache
+        if: github.ref == 'refs/heads/main' && env.SPOTIFY_NATIVE == '1' && steps.cache-spotify.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/src/main/jniLibs/.spotify-rusty
+            app/src/main/jniLibs/.spotify-pcm-v39
+            app/src/main/jniLibs/*/libspotify_receiver_core.so
+          key: ${{ steps.cache-spotify.outputs.cache-primary-key }}
+
+      - name: Save libretrodroid build cache
+        if: github.ref == 'refs/heads/main' && steps.cache-libretrodroid.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            third_party/libretrodroid/src
+            third_party/libretrodroid/.ambient-libretrodroid
+            third_party/libretrodroid/consumer-rules.pro
+            libretrodroid_wrapper/.cxx
+          key: ${{ steps.cache-libretrodroid.outputs.cache-primary-key }}
+
+      - name: Save smarttube build cache
+        if: github.ref == 'refs/heads/main' && steps.cache-smarttube.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            third_party/smarttube/.engine-version
+            third_party/smarttube/MediaServiceCore
+            third_party/smarttube/SharedModules
+          key: ${{ steps.cache-smarttube.outputs.cache-primary-key }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v5

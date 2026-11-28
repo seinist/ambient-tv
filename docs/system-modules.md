@@ -483,13 +483,18 @@ newer version but cannot bypass signatures or downgrade/conflict checks.
 An invalid historical catalog is an error, not permission to publish.
 The legacy shader asset-only catalog is not treated as a native candidate.
 
-Main-only Full builds restore an exact native output cache keyed by the native
-source/build inputs and observed compiler/toolchain identity. Existing engine
-stamp/ABI checks still run and missing outputs are rebuilt. No fallback cache
-keys or PR caches are used. This is intentionally conservative: unrelated UI
-changes can reuse native outputs, but shared build recipe changes invalidate
-the group. Per-engine independent cross-run caches remain a later optimization.
-The candidate packaging/validation still uses the actual signed Full APK bytes.
+Main-only Full builds restore independent MPV/FFmpeg, VLC, ProjectM, SVP,
+librashader, Monogram, Spotify, LibretroDroid and SmartTube caches. Keys use
+tracked input blobs, engine-specific upstream pins, shared build recipes,
+and observed compiler/toolchain identity, computed before restoring anything.
+Shared SVP changes invalidate MPV and VLC too. MPV retains the FFmpeg
+headers needed by the local audio compiler. Spotify is only cached when
+enabled; its C++ runtime remains checked by the existing build preflight.
+LibretroDroid caches prepared sources and native incremental build state;
+SmartTube caches its pinned patched checkouts and uses Gradle's build cache.
+No fallback keys or PR cache writes are used. Existing engine validation
+remains authoritative. The candidate packaging still uses signed Full APKs.
+Cache reuse is subject to GitHub eviction and actual CI/device validation.
 
 ### Variant-aware APK updates
 

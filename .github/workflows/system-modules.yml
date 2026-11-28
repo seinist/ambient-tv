@@ -7,6 +7,8 @@ on:
       - 'app/src/main/assets/games/slang/**'
       - 'scripts/package_system_modules.py'
       - 'scripts/prepare_native_module_release.py'
+      - 'scripts/native_cache_keys.py'
+      - 'scripts/test_native_cache_keys.py'
       - 'scripts/verify_paired_apk_release.py'
       - 'scripts/test_verify_paired_apk_release.py'
       - 'scripts/generate_update_manifest.py'
@@ -73,6 +75,7 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p test_package_system_modules.py
           python3 -m unittest discover -s scripts -p test_prepare_native_module_release.py
+          python3 -m unittest discover -s scripts -p test_native_cache_keys.py
           python3 -m unittest discover -s scripts -p test_verify_paired_apk_release.py
           python3 -m unittest discover -s scripts -p test_update_manifest.py
           python3 -m unittest discover -s scripts -p test_incremental_system_modules.py
