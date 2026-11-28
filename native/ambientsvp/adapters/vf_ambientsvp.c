@@ -214,7 +214,7 @@ static void process(struct mp_filter *f) {
 #if SVP_MPV_RESIDENT
     if(p->api.lib && !p->api.enabled() && p->fel.previous){
         struct mp_image *prev=svp_fel_previous(&p->fel);
-        svp_fel_reset(&p->fel);
+        if(!p->fel.previous)svp_fel_reset(&p->fel);
         mp_pin_in_write(f->ppins[1],MAKE_FRAME(MP_FRAME_VIDEO,prev));return;
     }
     struct mp_image *fel=svp_fel_take(&p->fel);
@@ -232,7 +232,12 @@ static void process(struct mp_filter *f) {
     }
 #endif
     if (receive(f)) return;
-    if (p->eof) { mp_pin_in_write(f->ppins[1], MP_EOF_FRAME); p->eof = false; return; }
+    if (p->eof) {
+#if SVP_MPV_RESIDENT
+        if(p->fel.previous){mp_pin_in_write(f->ppins[1],MAKE_FRAME(MP_FRAME_VIDEO,svp_fel_previous(&p->fel)));return;}
+#endif
+        mp_pin_in_write(f->ppins[1], MP_EOF_FRAME); p->eof = false; return;
+    }
     struct mp_frame frame = mp_pin_out_read(f->ppins[0]);
     if (!frame.type) return;
 #if SVP_MPV_RESIDENT
