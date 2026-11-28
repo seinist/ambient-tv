@@ -1,4 +1,5 @@
 import hashlib
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -122,6 +123,44 @@ class SystemModulePackageTest(unittest.TestCase):
                     self.assertEqual(set(archive.namelist()), {
                         "code/classes.dex", "lib/libj2v8.so", "licenses/NOTICE",
                     })
+
+    def test_vlc_pins_patched_bindings_and_shared_runtime(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            aar = root / "vlc.aar"
+            apk = root / "full.apk"
+            notice = root / "NOTICE"
+            notice.write_text("test")
+            jar = io.BytesIO()
+            with zipfile.ZipFile(jar, "w") as archive:
+                archive.writestr("org/videolan/libvlc/AmbientNativeLibraryLoader.class", b"loader")
+            with zipfile.ZipFile(aar, "w") as archive:
+                archive.writestr("classes.jar", jar.getvalue())
+                for abi in packages.ABIS:
+                    for name in packages.NATIVE_ROOTS["vlc"]:
+                        archive.writestr(f"jni/{abi}/{name}", name.encode())
+            binding = packages.vlc_binding(aar)
+            self.assertEqual(binding, hashlib.sha256(jar.getvalue()).hexdigest())
+            with zipfile.ZipFile(apk, "w") as archive:
+                for abi in packages.ABIS:
+                    for name in (*packages.NATIVE_ROOTS["vlc"], "libc++_shared.so"):
+                        archive.writestr(f"lib/{abi}/{name}", name.encode())
+            def dependencies(data, name):
+                return {"libvlc.so", "libc++_shared.so"} if name == "libvlcjni.so" else {"libc.so"}
+            with mock.patch.object(packages, "native_dependencies", side_effect=dependencies):
+                entries = packages.native_module(root, "vlc", 1, [apk], [notice], binding)
+            self.assertEqual(len(entries), 4)
+            for entry in entries:
+                self.assertEqual(entry["hostBindingSha256"], binding)
+                self.assertEqual(entry["hostNativeSha256"], {
+                    "libc++_shared.so": hashlib.sha256(b"libc++_shared.so").hexdigest(),
+                })
+                with zipfile.ZipFile(root / entry["asset"]) as archive:
+                    self.assertEqual(set(archive.namelist()), {
+                        "lib/libvlc.so", "lib/libvlcjni.so", "licenses/NOTICE",
+                    })
+            with self.assertRaisesRegex(ValueError, "binding fingerprint"):
+                packages.native_module(root, "vlc", 2, [apk], [notice])
 
 
 if __name__ == "__main__":
