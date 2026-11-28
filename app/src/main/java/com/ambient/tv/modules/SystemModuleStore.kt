@@ -109,17 +109,21 @@ internal class SystemModuleStore(
             .filter { it.build.version == state.highWater }.associate { "${it.build.abi}/${it.build.profile}" to it.build }
         if (build.version == state.highWater && remembered[identity]?.let { it != build } == true)
             throw SystemModuleTrustException("Conflicting module payload at existing version")
-        var currentVerified = false
-        state.current?.let {
-            val verified = try { verify(directory, module, it) } catch (_: IOException) { null }
-            if (verified != null) {
-                currentVerified = true
-                if (it.build == build) {
-                    validateCandidate(verified)
-                    return@locked verified
-                }
-            }
+        // A signed archive can still belong to an older host binding.
+        // Never displace a compatible rollback with an incompatible selection.
+        fun verifiedCompatible(pointer: Pointer?): Package? {
+            if (pointer == null) return null
+            val pkg = try { verify(directory, module, pointer) } catch (_: IOException) { return null }
+            // Do not swallow cancellation or compatibility-probe failures.
+            return pkg.takeIf { compatible(it.build) }
         }
+        val current = verifiedCompatible(state.current)
+        if (current != null && current.build == build) {
+            validateCandidate(current)
+            return@locked current
+        }
+        val rollback = if (current != null) state.current
+            else state.previous?.takeIf { verifiedCompatible(it) != null }
 
         val id = UUID.randomUUID().toString()
         val packageDir = File(directory, id)
@@ -141,7 +145,7 @@ internal class SystemModuleStore(
             publicationStarted = true
             val floorBuilds = if (build.version == state.highWater) remembered + (identity to build)
                 else mapOf(identity to build)
-            writeState(directory, State(pointer, if (currentVerified) state.current else state.previous, maxOf(state.highWater, build.version), floorBuilds))
+            writeState(directory, State(pointer, rollback, maxOf(state.highWater, build.version), floorBuilds))
             result
         } finally {
             if (!publicationStarted) packageDir.deleteRecursively()

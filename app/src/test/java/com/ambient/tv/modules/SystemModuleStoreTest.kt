@@ -330,6 +330,28 @@ class SystemModuleStoreTest {
         assertEquals(1L, manager.rollback(module)?.build?.version)
     }
 
+    @Test fun incompatibleCurrentDoesNotDisplaceCompatibleRollback() {
+        val manager = store()
+        val one = zip("lib/libone.so")
+        val two = zip("lib/libtwo.so")
+        val three = zip("lib/libthree.so")
+        install(manager, 1, one)
+        install(manager, 2, two)
+        assertEquals(3L, install(manager, 3, three, compatible = { it.version != 2L })?.build?.version)
+        assertEquals(1L, manager.rollback(module)?.build?.version)
+        assertNull(install(manager, 2, two, onOpen = { fail("Downgrade opened") }))
+    }
+
+    @Test fun corruptPreviousIsNotRetainedWhenReplacingIncompatibleCurrent() {
+        val manager = store()
+        val previous = install(manager, 1, zip("lib/libone.so"))!!.archive
+        install(manager, 2, zip("lib/libtwo.so"))
+        previous.writeBytes(byteArrayOf(0))
+        assertEquals(3L, install(manager, 3, zip("lib/libthree.so"),
+            compatible = { it.version != 2L })?.build?.version)
+        assertNull(manager.rollback(module))
+    }
+
     @Test fun corruptedCurrentVersionCanBeRepairedWithoutLosingRollback() {
         val manager = store()
         val one = zip("lib/libone.so")
