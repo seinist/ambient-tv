@@ -1801,7 +1801,7 @@ private fun RendererSettingsPanel(
     val options = buildList {
         add("auto" to stringResource(R.string.player_automatic))
         add("media3" to "Media3")
-        add("vlc" to "VLC")
+        if (com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable) add("vlc" to "VLC")
         if (com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) add("mpv" to "MPV")
     }
     PlayerSidePanel(title = stringResource(R.string.player_renderer), onClose = onBack) {
