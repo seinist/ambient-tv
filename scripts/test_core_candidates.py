@@ -45,6 +45,33 @@ int main(void) {
                             "-I", str(header), str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
+    def test_citra_fastmem_upstream_test_backing_conversion(self):
+        from core_citra_arm64 import prepare_fastmem_tests
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ipc = root / "src/tests/core/hle/kernel/hle_ipc.cpp"
+            vm = root / "src/tests/core/memory/vm_manager.cpp"
+            ipc.parent.mkdir(parents=True)
+            vm.parent.mkdir(parents=True)
+            allocation = "std::make_shared<std::vector<u8>>(Memory::PAGE_SIZE);\n"
+            ipc.write_text("#include <catch2/catch.hpp>\n" + allocation * 6 +
+                           "CHECK(context.GetStaticBuffer(0) == *buffer);\n" +
+                           "CHECK(other_buffer == *buffer);\n" +
+                           "CHECK(context.GetStaticBuffer(0) == *buffer_static);\n" +
+                           "CHECK(other_buffer == *buffer_mapped);\n" +
+                           "CHECK(*output_buffer == input_buffer);\n" * 2 +
+                           "std::vector<u8> other_buffer;\n")
+            vm.write_text("#include <vector>\n" + allocation)
+            prepare_fastmem_tests(root)
+            updated = ipc.read_text()
+            self.assertEqual(updated.count("std::make_shared<AmbientFastmem::MemoryBlock>"), 6)
+            self.assertEqual(updated.count("CHECK(std::equal("), 6)
+            self.assertIn("std::vector<u8> other_buffer;", updated)
+            self.assertIn('#include "core/ambient_fastmem.h"', vm.read_text())
+            self.assertEqual(vm.read_text().count("std::make_shared<AmbientFastmem::MemoryBlock>"), 1)
+            with self.assertRaises(ValueError):
+                prepare_fastmem_tests(root)
+
     def test_citra_fastmem_shared_aliases_and_revocation(self):
         compiler = shutil.which("c++")
         self.assertIsNotNone(compiler)

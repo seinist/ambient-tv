@@ -26,6 +26,38 @@ def replace(root, path, old, new, count=1):
         raise ValueError(f"{path}: expected {count} occurrences of {old[:80]!r}")
     file.write_text(source.replace(old, new))
 
+def prepare_fastmem_tests(root):
+    # The upstream tests also map guest RAM. Allocate their mapped buffers
+    # with the production backing allocator, leaving ordinary host-side
+    # vectors alone. Compare bytes independently of the vector allocator.
+    ipc = "src/tests/core/hle/kernel/hle_ipc.cpp"
+    vm = "src/tests/core/memory/vm_manager.cpp"
+    for path, count in ((ipc, 6), (vm, 1)):
+        replace(root, path, "std::make_shared<std::vector<u8>>",
+                "std::make_shared<AmbientFastmem::MemoryBlock>", count)
+        file = root / path
+        source = file.read_text()
+        first_include = source.index("#include ")
+        file.write_text(source[:first_include] +
+                        '#include "core/ambient_fastmem.h"\n' + source[first_include:])
+    replace(root, ipc, "#include <catch2/catch.hpp>",
+            "#include <algorithm>\n#include <catch2/catch.hpp>")
+    for lhs, rhs, count in (
+            ("context.GetStaticBuffer(0)", "buffer", 1),
+            ("other_buffer", "buffer", 1),
+            ("context.GetStaticBuffer(0)", "buffer_static", 1),
+            ("other_buffer", "buffer_mapped", 1),
+            ("input_buffer", "output_buffer", 2)):
+        old = f"CHECK(*{rhs} == {lhs});" if rhs == "output_buffer" else f"CHECK({lhs} == *{rhs});"
+        # Constructing another vector would introduce an unnecessary copy;
+        # use the four-iterator overload to preserve length comparison.
+        # Evaluate the static-buffer accessor only once (it may return by value).
+        new = (f"{{ const auto& expected = {lhs}; "
+               f"CHECK(std::equal(expected.begin(), expected.end(), "
+               f"{rhs}->begin(), {rhs}->end())); }}")
+        replace(root, ipc, old, new, count)
+
+
 def prepare_fastmem(root, dependency):
     import shutil
     shutil.copyfile(Path(__file__).parent / "native_core_candidates/citra_fastmem.h",
@@ -68,6 +100,7 @@ def prepare_fastmem(root, dependency):
         first_include = updated.index("#include ")
         updated = updated[:first_include] + '#include "core/ambient_fastmem.h"\n' + updated[first_include:]
         file.write_text(updated)
+    prepare_fastmem_tests(root)
     # VMManager::Reset directly clears the page arrays, independently of
     # MapPages and of the size of its managed virtual address region.
     replace(root, "src/core/hle/kernel/vm_manager.cpp",
