@@ -65,8 +65,14 @@ internal fun HdrMedia3Hint() = ImageHint(stringResource(R.string.hdr_plays_throu
 /** SVP group of the settings editors; hidden while the global SVP switch is off. */
 @Composable
 internal fun SvpSettingsGroup(mode: String, options: SvpOptions, change: (String, SvpOptions) -> Unit) {
-    if (!videoImagePreferences(LocalContext.current).svpAvailable ||
-        !com.ambient.tv.modules.SystemModuleAvailability.state(com.ambient.tv.modules.SystemModule.SVP).usable) return
+    val modules by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+    if (!videoImagePreferences(LocalContext.current).svpAvailable) return
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.ambient.tv.ui.player.backend.SvpNative.probe()
+        }
+    }
+    if (!modules.getValue(com.ambient.tv.modules.SystemModule.SVP).usable) return
     val maximum = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.allowSvpInterpolation
     SvpEditorGroup(mode, options, svpUiUnavailable(engineSupportsSvp = true, maximumPerformance = maximum), change)
 }
@@ -271,8 +277,7 @@ internal fun VlcImageOptionsEditor(
     val sparsam = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals
     if (sparsam) ImageHint(stringResource(R.string.image_filters_sparsam_hint))
     // VLC SVP only exists in builds with VLC_SVP; elsewhere the choice would do nothing.
-    if (!sparsam && com.ambient.tv.BuildConfig.VLC_SVP && videoImagePreferences(LocalContext.current).svpAvailable &&
-        com.ambient.tv.modules.SystemModuleAvailability.state(com.ambient.tv.modules.SystemModule.SVP).usable) {
+    if (!sparsam && com.ambient.tv.BuildConfig.VLC_SVP && videoImagePreferences(LocalContext.current).svpAvailable) {
         // VLC's own "Motion" group, with the same SVP sub-levels as MPV.
         Text(stringResource(R.string.image_motion), style = MaterialTheme.typography.titleSmall)
         SvpSettingsGroup(o.svpMode, o.svp) { mode, svp -> change(o.copy(svpMode = mode, svp = svp)) }
