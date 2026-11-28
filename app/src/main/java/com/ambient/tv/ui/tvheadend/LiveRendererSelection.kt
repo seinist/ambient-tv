@@ -19,6 +19,7 @@ internal fun selectLiveRenderer(
     recovery: String? = null,
     dolbyVision: Boolean = false,
     mpvAvailable: Boolean = true,
+    vlcAvailable: Boolean = true,
 ): LiveRendererSelection {
     val supported = setOf("auto", "media3", "vlc", "mpv")
     // Exact width first, else a saved preset of a similar width (same standard class, ±3 %).
@@ -43,7 +44,7 @@ internal fun selectLiveRenderer(
     val safe = RendererCapabilityPolicy.effectiveBackend(selection.key, null, null, null, detectedDolbyVision = dolbyVision)
     return when {
         safe != selection.key -> LiveRendererSelection(safe, LiveRendererOrigin.DOLBY_VISION)
-        safe == "mpv" && !mpvAvailable -> LiveRendererSelection("media3", LiveRendererOrigin.UNAVAILABLE)
+        (safe == "mpv" && !mpvAvailable) || (safe == "vlc" && !vlcAvailable) -> LiveRendererSelection("media3", LiveRendererOrigin.UNAVAILABLE)
         else -> selection
     }
 }
