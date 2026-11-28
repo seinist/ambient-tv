@@ -12,6 +12,7 @@
 #include "hdr10plus_vlc_bridge.h"
 #include <libplacebo/shaders/custom.h>
 #include <libplacebo/shaders/colorspace.h>
+#include "svp_placebo_quality.h"
 struct ambient_svp_hdr_source {
     uint64_t id;
     pl_tex texture;
@@ -23,8 +24,8 @@ struct ambient_svp_hdr_display {
     struct ambient_svp_hdr_source sources[2];
     struct ambient_fel_render fel;
     pl_dispatch dp;
-    pl_tex fields[2],output;
-    uint64_t field_a,field_b;
+    pl_tex output;
+    struct svp_placebo_quality quality;
     struct ambient_hdrplus metadata;
     bool has_metadata,metadata_aligned;
 };
@@ -33,9 +34,8 @@ static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp
     ambient_fel_render_destroy(gpu,&s->fel);
     for(unsigned i=0;i<2;i++){
         pl_tex_destroy(gpu,&s->sources[i].texture);
-        pl_tex_destroy(gpu,&s->fields[i]);
     }
-    pl_tex_destroy(gpu,&s->output);pl_dispatch_destroy(&s->dp);
+    pl_tex_destroy(gpu,&s->output);svp_placebo_quality_destroy(gpu,&s->quality);pl_dispatch_destroy(&s->dp);
     *s=(struct ambient_svp_hdr_display){0};
 }
 static inline bool ambient_svp_hdr_target(pl_gpu gpu,pl_tex *tex,int w,int h)
@@ -113,64 +113,6 @@ static inline bool ambient_svp_hdr_source_load(pl_gpu gpu,pl_log log,
     }
     dst->id=id;
     return true;
-}
-static const char ambient_svp_hdr_motion_header[]=
-    "int svp_y(sampler2D t,ivec2 p){return int(round(clamp(dot(texelFetch(t,p,0).rgb,vec3(.2126,.7152,.0722)),0.,1.)*1023.));}"
-    "int svp_cost(ivec2 base,ivec2 mv,int bound){ivec2 size=textureSize(svp_a,0);int sad=0,n=0;"
-    "for(int y=0;y<16;y+=2){for(int x=0;x<16;x+=2){ivec2 p=base+ivec2(x,y);if(any(greaterThanEqual(p,size)))continue;"
-    "ivec2 q=p+mv;n++;if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,size)))sad+=1023;"
-    "else sad+=abs(svp_y(svp_a,p)-svp_y(svp_b,q));}if(sad*128+abs(mv.x)+abs(mv.y)>=bound)return bound;}"
-    "return sad*64/max(n,1)*128+abs(mv.x)+abs(mv.y);}";
-static inline bool ambient_svp_hdr_motion(pl_gpu gpu,pl_dispatch dp,pl_tex a,pl_tex b,pl_tex *field)
-{
-    int w=(a->params.w+15)/16,h=(a->params.h+15)/16;
-    if(!ambient_svp_hdr_target(gpu,field,w,h))return false;
-    struct pl_shader_desc d[]={
-        {.desc={.name="svp_a",.type=PL_DESC_SAMPLED_TEX},.binding={.object=a}},
-        {.desc={.name="svp_b",.type=PL_DESC_SAMPLED_TEX},.binding={.object=b}},
-    };
-    pl_shader sh=pl_dispatch_begin(dp);
-    if(!sh)return false;
-    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
-        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,.descriptors=d,.num_descriptors=2,
-        .header=ambient_svp_hdr_motion_header,.output_w=w,.output_h=h,
-        .body="ivec2 base=ivec2(gl_FragCoord.xy)*16,mv=ivec2(0);int best=svp_cost(base,mv,2147483647);"
-            "if(best!=0){for(int y=-16;y<=16;y+=4)for(int x=-16;x<=16;x+=4){ivec2 v=ivec2(x,y);"
-            "int c=svp_cost(base,v,best);if(c<best){best=c;mv=v;}}ivec2 pred=mv;"
-            "for(int y=-2;y<=2;y++)for(int x=-2;x<=2;x++){ivec2 v=pred+ivec2(x,y);"
-            "int c=svp_cost(base,v,best);if(c<best){best=c;mv=v;}}}"
-            "color=vec4(vec2(mv),float(best/512),1.);",
-    })){pl_dispatch_abort(dp,&sh);return false;}
-    return pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=*field));
-}
-static inline bool ambient_svp_hdr_synth(pl_gpu gpu,struct ambient_svp_hdr_display *s,
-    pl_tex a,pl_tex b,float phase)
-{
-    int w=a->params.w,h=a->params.h;
-    if(!ambient_svp_hdr_target(gpu,&s->output,w,h))return false;
-    struct pl_shader_desc d[]={
-        {.desc={.name="svp_a",.type=PL_DESC_SAMPLED_TEX},.binding={.object=a}},
-        {.desc={.name="svp_b",.type=PL_DESC_SAMPLED_TEX},.binding={.object=b}},
-        {.desc={.name="svp_f",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->fields[0]}},
-        {.desc={.name="svp_r",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->fields[1]}},
-    };
-    struct pl_shader_var v={.var=pl_var_float("svp_phase"),.data=&phase,.dynamic=true};
-    pl_shader sh=pl_dispatch_begin(s->dp);
-    if(!sh)return false;
-    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
-        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,.descriptors=d,.num_descriptors=4,
-        .variables=&v,.num_variables=1,.output_w=w,.output_h=h,
-        .header="vec4 svp_sample(sampler2D t,vec2 p){ivec2 hi=textureSize(t,0)-1;"
-            "p=clamp(p,vec2(0),vec2(hi));ivec2 q=ivec2(floor(p));vec2 f=fract(p);"
-            "return mix(mix(texelFetch(t,q,0),texelFetch(t,min(q+ivec2(1,0),hi),0),f.x),"
-            "mix(texelFetch(t,min(q+ivec2(0,1),hi),0),texelFetch(t,min(q+1,hi),0),f.x),f.y);}",
-        .body="ivec2 p=ivec2(gl_FragCoord.xy),block=p/16;vec3 f=texelFetch(svp_f,block,0).xyz,r=texelFetch(svp_r,block,0).xyz;"
-            "float t=svp_phase;if(t<=0.)color=texelFetch(svp_a,p,0);else if(t>=1.)color=texelFetch(svp_b,p,0);"
-            "else if(f.z>3072.||r.z>3072.||abs(f.x+r.x)+abs(f.y+r.y)>6.)"
-            "color=t<.5?texelFetch(svp_a,p,0):texelFetch(svp_b,p,0);"
-            "else color=mix(svp_sample(svp_a,vec2(p)-f.xy*t),svp_sample(svp_b,vec2(p)-r.xy*(1.-t)),t);",
-    })){pl_dispatch_abort(s->dp,&sh);return false;}
-    return pl_dispatch_finish(s->dp,pl_dispatch_params(.shader=&sh,.target=s->output));
 }
 static inline float ambient_svp_quant_lerp(float a,float b,float t,float scale)
 {
@@ -265,13 +207,13 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
         if(a->has_hdrplus)s->metadata=a->hdrplus;
         *img=ambient_pl_rgb_frame(a->texture,a->color);return true;
     }
-    if(s->field_a!=a->id||s->field_b!=b->id){
-        s->field_a=s->field_b=0;
-        if(!ambient_svp_hdr_motion(gpu,s->dp,a->texture,b->texture,&s->fields[0])||
-            !ambient_svp_hdr_motion(gpu,s->dp,b->texture,a->texture,&s->fields[1]))return false;
-        s->field_a=a->id;s->field_b=b->id;
+    if(!svp_placebo_quality_render(gpu,&s->quality,a->texture,b->texture,
+        NULL,NULL,&s->output,pair->phase,&pair->quality)){
+        // Preserve the exact reconstructed picture and its metadata
+        // if the renderer cannot share the native Vulkan queue.
+        if(a->has_hdrplus)s->metadata=a->hdrplus;
+        *img=ambient_pl_rgb_frame(a->texture,a->color);return true;
     }
-    if(!ambient_svp_hdr_synth(gpu,s,a->texture,b->texture,pair->phase))return false;
     *img=ambient_pl_rgb_frame(s->output,a->color);
     if(s->has_metadata){
         vlc_video_hdr_dynamic_metadata_t global;
