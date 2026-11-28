@@ -51,6 +51,30 @@ class MonogramDexExportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
                 exporter.split([source, duplicate], root / "program.jar", root / "host.jar")
 
+    def test_smarttube_keeps_resource_classes_and_shared_libraries_in_host(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "input.jar"
+            classes = {name: b"code" for name in exporter.SMARTTUBE_REQUIRED}
+            classes.update({
+                "com/liskovsoft/youtubeapi/R$raw.class": b"resource ids",
+                "com/eclipsesource/v8/LibraryLoader.class": b"native loader",
+                "okhttp3/OkHttpClient.class": b"shared",
+                "com/ambient/tv/youtube/SmartTubeEngine.class": b"host",
+            })
+            with zipfile.ZipFile(source, "w") as archive:
+                for name, value in classes.items():
+                    archive.writestr(name, value)
+            program, host = root / "program.jar", root / "host.jar"
+            exporter.split([source], program, host, "smarttube")
+            with zipfile.ZipFile(program) as archive:
+                self.assertEqual(set(archive.namelist()),
+                                 set(exporter.SMARTTUBE_REQUIRED) | {"com/eclipsesource/v8/LibraryLoader.class"})
+            with zipfile.ZipFile(host) as archive:
+                self.assertIn("com/liskovsoft/youtubeapi/R$raw.class", archive.namelist())
+                self.assertIn("okhttp3/OkHttpClient.class", archive.namelist())
+                self.assertIn("com/ambient/tv/youtube/SmartTubeEngine.class", archive.namelist())
+
 
 if __name__ == "__main__":
     unittest.main()
