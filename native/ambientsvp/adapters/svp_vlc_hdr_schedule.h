@@ -14,12 +14,14 @@ typedef struct {
     vlc_tick_t origin;
     double source,target;
     AmbientSvpQuality quality;
+    struct ambient_svp_scene_config *scene;
 } SvpHdrSchedule;
 static atomic_uint_fast64_t svp_hdr_next_id=1;
 static inline uint64_t svp_hdr_new_id(void){return atomic_fetch_add(&svp_hdr_next_id,1);}
 static void svp_hdr_flush(filter_t *f)
 {
     SvpHdrSchedule *s=f->p_sys;
+    ambient_svp_scene_config_abort(s->scene);
     if(s->previous)picture_Release(s->previous);
     if(s->older)picture_Release(s->older);
     if(s->lookahead)picture_Release(s->lookahead);
@@ -29,7 +31,11 @@ static void svp_hdr_flush(filter_t *f)
 static void svp_hdr_close(filter_t *f)
 {
     SvpHdrSchedule *s=f->p_sys;
+    if(s->scene&&atomic_load(&s->scene->ended)){
+        ambient_svp_scene_config_release(s->scene);s->scene=NULL;
+    }
     svp_hdr_flush(f);
+    ambient_svp_scene_config_release(s->scene);s->scene=NULL;
     dlclose(s->api.lib);
     vlc_video_context_Release(f->vctx_out);f->vctx_out=NULL;
 }
@@ -43,6 +49,7 @@ static bool svp_hdr_eligible(picture_t *p)
 }
 static picture_t *svp_hdr_fallback(SvpHdrSchedule *s,picture_t *pic)
 {
+    ambient_svp_scene_config_abort(s->scene);
     picture_t *head=s->previous,**tail=&head;
     if(head)tail=&head->p_next;
     if(s->lookahead){*tail=s->lookahead;tail=&s->lookahead->p_next;}
@@ -71,7 +78,8 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
     }
     // Drain both queued originals in timestamp order when no future
     // picture can be obtained. Never lose a delayed decoder lease.
-    if(extended&&!pic)return svp_hdr_fallback(s,NULL);
+    if(extended&&!pic&&!s->scene)return svp_hdr_fallback(s,NULL);
+    if(extended&&!pic&&!s->lookahead)extended=false;
     double expected=1000000.0/s->source;
     picture_t *last=s->lookahead?s->lookahead:s->previous;
     if(pic){
@@ -80,7 +88,7 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
             return svp_hdr_fallback(s,pic);
     }
     uint64_t id=pic?svp_hdr_new_id():s->previous_id;
-    if(extended&&!s->lookahead){s->lookahead=pic;s->lookahead_id=id;return NULL;}
+    if(extended&&!s->lookahead&&pic){s->lookahead=pic;s->lookahead_id=id;return NULL;}
     picture_t *center=extended?s->lookahead:pic;
     uint64_t center_id=extended?s->lookahead_id:id;
     vlc_tick_t end=center?center->date:s->previous->date+VLC_TICK_FROM_US(llround(expected));
@@ -100,6 +108,8 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
             (float)fmax(0.,phase),&s->quality,extended?s->older:NULL,s->older_id,extended?pic:NULL,id)){
             picture_Release(out);goto fail;
         }
+        bool final=!pic&&!center&&(time+VLC_TICK_FROM_US(llround(1000000.0/s->target))>=end);
+        if(!ambient_svp_attach_scene(out,s->scene,next,final)){picture_Release(out);goto fail;}
         out->date=time;out->p_next=NULL;
         *tail=out;tail=&out->p_next;next++;count++;
     }
@@ -111,7 +121,16 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
     }else{
         picture_Release(s->previous);s->previous=pic;s->previous_id=id;
     }
-    s->tick=next;if(!pic)s->tick=s->previous_id=0;
+    s->tick=next;
+    if(!pic&&s->previous){
+        // Drain the last interval too, without a future reference.
+        picture_t *rest=svp_hdr_filter(f,NULL);
+        *tail=rest;return head;
+    }
+    if(!pic){
+        if(s->scene)atomic_store(&s->scene->ended,true);
+        s->tick=s->previous_id=0;
+    }
     return head;
 fail:
     while(head){picture_t *nextpic=head->p_next;head->p_next=NULL;picture_Release(head);head=nextpic;}
@@ -144,6 +163,15 @@ static int svp_android_open(filter_t *f)
         .pel=var_InheritInteger(f,"ambientsvp-pel"),.search=var_InheritInteger(f,"ambientsvp-search"),
         .artifacts=var_InheritInteger(f,"ambientsvp-artifacts"),.scene=var_InheritInteger(f,"ambientsvp-scene"),
         .algorithm=var_InheritInteger(f,"ambientsvp-algo")};
+    unsigned mode=var_InheritInteger(f,"ambientsvp-hdr-pass");
+    if(mode){
+        char *plan=var_InheritString(f,"ambientsvp-hdr-plan");
+        char *cache=var_InheritString(f,"ambientsvp-hdr-cache");
+        char *key=var_InheritString(f,"ambientsvp-hdr-key");
+        s->scene=ambient_svp_scene_config_new(mode,s->source,s->target,plan,cache,key);
+        free(plan);free(cache);free(key);
+        if(!s->scene){dlclose(s->api.lib);return VLC_EGENERIC;}
+    }
     f->p_sys=s;f->vctx_out=f->vctx_in;vlc_video_context_Hold(f->vctx_out);
     f->fmt_out.video.i_frame_rate=llround(s->target*1000.0);
     f->fmt_out.video.i_frame_rate_base=1000;f->ops=&svp_hdr_ops;
