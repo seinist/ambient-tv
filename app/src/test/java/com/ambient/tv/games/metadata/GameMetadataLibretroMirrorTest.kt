@@ -32,6 +32,28 @@ class GameMetadataLibretroMirrorTest {
             name = "Tetris (World) (Rev 1).png"))!!.pathSegments[1])
     }
 
+    @Test fun bracketedRomTitlesSurviveStoredUrlValidationAndMirrorFallback() {
+        val title = "[Release] Super Mario World (Europe) [!]"
+        val candidate = GameMetadataPlatforms.libretroCandidates(GameMetadataQuery(
+            "snes", title, "$title.sfc")).first().metadata
+        for (reference in listOf(candidate.coverUrl, candidate.backdropUrl, candidate.titleScreenUrl)) {
+            val url = requireNotNull(reference)
+            assertTrue(url.contains("%5BRelease%5D"))
+            assertTrue(url.contains("%5B!%5D"))
+            assertEquals(url, sanitizedGameMetadataUrl(url))
+            assertEquals(url, sanitizedGameArtworkUrl(provider, url))
+            val canonical = url.toHttpUrl()
+            assertEquals("$title.png", canonical.pathSegments.last())
+            val mirror = requireNotNull(libretroArtworkMirrorUrl(canonical))
+            assertEquals("$title.png", mirror.pathSegments.last())
+            assertEquals(mirror, credentialFreeGameUrl(mirror))
+            assertTrue(allowedGameProviderHost(provider, mirror))
+            assertEquals(mirror.toString(), sanitizedGameArtworkUrl(provider, mirror.toString()))
+        }
+        // Keep rejecting untrusted authority and encoded path traversal.
+        assertNull(sanitizedGameArtworkUrl(provider, "https://user:secret@thumbnails.libretro.com/game.png"))
+    }
+
     @Test fun fallbackConstructionDropsEveryQueryAndFragmentWithoutChangingTheCanonicalReference() {
         val canonical = primary().newBuilder().addQueryParameter("apikey", "secret")
             .addQueryParameter("download", "1").fragment("secret").build()

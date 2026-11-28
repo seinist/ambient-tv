@@ -100,18 +100,46 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
           yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
-          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1" "emulator" "system-images;android-35;google_apis;x86_64" ||
-            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1" "emulator" "system-images;android-35;google_apis;x86_64"
+          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1" "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64" ||
+            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1" "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
+          test -x "$ANDROID_HOME/platform-tools/adb"
+          test -x "$ANDROID_HOME/emulator/emulator"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/platform-tools/adb" version
+      - name: Compile Android JNI test APK before launching the emulator
+        run: |
+          set -euo pipefail
+          ./gradlew :j2v8:assembleDebugAndroidTest -PAPK_ABI=x86_64 \
+            -PJ2V8_SOURCE_TEST_DIR="$RUNNER_TEMP/j2v8-test-jni"
       - name: Run real Android JNI and JavaScript tests
         run: |
           set -euo pipefail
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          export ANDROID_SERIAL=emulator-5554
+          adb="$ANDROID_HOME/platform-tools/adb"
+          test -x "$adb"
           sudo chmod 666 /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name j2v8-test --package "system-images;android-35;google_apis;x86_64"
-          "$ANDROID_HOME/emulator/emulator" -avd j2v8-test -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/j2v8-emulator.log" 2>&1 &
-          trap 'adb emu kill || true' EXIT
-          timeout 300 adb wait-for-device
-          timeout 300 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do sleep 5; done'
-          adb shell input keyevent 82
+          "$adb" start-server
+          "$ANDROID_HOME/emulator/emulator" -avd j2v8-test -port 5554 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/j2v8-emulator.log" 2>&1 &
+          emulator_pid=$!
+          cleanup() {
+            "$adb" -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
+            kill "$emulator_pid" 2>/dev/null || true
+            wait "$emulator_pid" 2>/dev/null || true
+            tail -80 "$RUNNER_TEMP/j2v8-emulator.log" || true
+          }
+          trap cleanup EXIT
+          deadline=$((SECONDS + 300))
+          while :; do
+            kill -0 "$emulator_pid" || { echo "::error::Android emulator exited during boot"; exit 1; }
+            boot="$(timeout 10 "$adb" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+            [[ "$boot" == 1 ]] && break
+            (( SECONDS < deadline )) || { echo "::error::Android emulator boot timeout"; exit 1; }
+            sleep 5
+          done
+          "$adb" -s "$ANDROID_SERIAL" shell input keyevent 82
           ./gradlew :j2v8:connectedDebugAndroidTest -PAPK_ABI=x86_64 \
             -PJ2V8_SOURCE_TEST_DIR="$RUNNER_TEMP/j2v8-test-jni"
       - uses: actions/upload-artifact@v4

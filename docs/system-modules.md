@@ -909,6 +909,14 @@ After GN generation, the effective libraries and linker flags are checked
 before Ninja compilation and retained in build evidence. Native Android
 build and runtime checks remain mandatory.
 
+All four J2V8 source-build jobs passed compilation, ELF alignment, JNI
+exports, static C++ dependency checks and candidate staging on
+cc276e27ad051068fcaf731992e4f350b028dbd9. The subsequent Android job stopped
+before running any JavaScript tests because adb was absent. The SDK now
+explicitly installs platform-tools, checks absolute tool paths, compiles
+the test APK before boot, and uses a bounded device-specific boot check
+with emulator diagnostics. Runtime validation is still required.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
