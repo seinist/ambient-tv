@@ -65,7 +65,7 @@ for abi in ${LIBRASHADER_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     esac
     dest="$OUTPUT/$abi/liblibrashader_capi.so"
     stamp="$OUTPUT/$abi/.librashader-vulkan-pin"
-    expected="$SOURCE_STAMP runtime-vulkan api5 abi2 lto 16k"
+    expected="$SOURCE_STAMP runtime-vulkan api5 abi2 lto 16k soname-v1"
     if [[ -f "$dest" && -f "$stamp" && "$(cat "$stamp")" == "$expected" ]]; then
         echo "Pinned librashader $abi already built"
         continue
@@ -82,11 +82,12 @@ for abi in ${LIBRASHADER_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
       i686-linux-android) export CARGO_TARGET_I686_LINUX_ANDROID_LINKER="$BIN/$clang" ;;
       x86_64-linux-android) export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$BIN/$clang" ;;
     esac
-    cargo build --manifest-path "$WORK/Cargo.toml" -p librashader-capi \
-        --locked --release --target "$target" --no-default-features --features runtime-vulkan
+    cargo rustc --manifest-path "$WORK/Cargo.toml" -p librashader-capi \
+        --locked --release --target "$target" --no-default-features --features runtime-vulkan -- -C link-arg=-Wl,-soname,liblibrashader_capi.so
     mkdir -p "$OUTPUT/$abi"
     cp "$CARGO_CACHE/$target/release/liblibrashader_capi.so" "$dest"
     "$BIN/llvm-strip" --strip-unneeded "$dest"
+    "$BIN/llvm-readelf" -d "$dest" | grep -Eq 'SONAME.*\[liblibrashader_capi\.so\]'
     python3 "$ROOT/scripts/check_elf_page_alignment.py" "$BIN/llvm-readelf" "$dest"
     printf '%s' "$expected" > "$stamp"
     printf '%s: %s bytes\n' "$abi" "$(stat -c%s "$dest")"
