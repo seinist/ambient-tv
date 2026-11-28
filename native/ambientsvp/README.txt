@@ -1560,3 +1560,34 @@ scene intervals and replay. MPV C fixtures test metadata application.
 Full linked MPV/VLC builds, physical-device runs, exact-head CI,
 automatic scene-plan creation/app orchestration, and independent
 ST 2094-40 normative conformance are separate validation work.
+
+
+Ambient TV automatic scene-pass controller
+-----------------------------------------
+The SVP panel now exposes a default-off experimental HDR10+ two-pass
+choice under the resident transport. The app scans readable local
+HEVC files on an IO dispatcher, hashes the complete source and
+extracts registered version-1 HDR10+ SEI metadata in presentation
+order. It maps stable metadata runs to the exact player output
+cadence. Missing, ambiguous, per-frame-varying, discontinuous,
+encrypted and multi-video-track inputs are rejected. This is a
+conservative metadata-derived scene estimate, not authoritative
+editorial scene-cut detection or ST 2094 certification.
+
+MPV stops the old decoder, installs the capture filter and reloads
+from the start. VLC recreates its filter/renderer instance with
+scene options. The first run is visible normal-speed playback;
+after a successful native cache publication, EOF triggers one
+automatic replay from the beginning with measured scene metadata.
+Seeking, changing tracks/settings, surface loss or incomplete
+capture cancels the experimental workflow. Private session files
+are removed on abort or final completion. Ordinary playback remains
+the default; no remote HTTP/NAS content hashing or hidden headless
+renderer is attempted.
+
+VLC requires the extended AHB/libplacebo renderer from PR #510,
+the extended AAR asset marker, Android API 34+ and an HDR10-capable
+display with usable luminance capabilities. Its scene route must
+not select the competing Android SurfaceControl SVP transport.
+Normal builds lacking the extended marker retain normal playback.
+Full linked player/device and CI validation remains necessary.
