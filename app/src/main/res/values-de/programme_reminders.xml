@@ -27,4 +27,6 @@
     <string name="schedule_conflict">Überschneidung mit einer anderen Planung. Automatische Starts werden nicht parallel ausgeführt.</string>
     <string name="schedule_future">Bitte einen zukünftigen Zeitpunkt wählen.</string>
     <string name="schedule_failed">Planung nicht gespeichert. Quelle oder Konto wurde geändert oder der Speicher ist voll.</string>
+    <string name="schedule_remind_end">An Ende der Spielsession erinnern</string>
+    <string name="schedule_session_end_title">Geplante Spielzeit beendet: %1$s</string>
 </resources>
