@@ -62,8 +62,9 @@ data class LiveTvReminder(
     val id: String get() = if (youtube) "youtube:$eventId" else "$sourceId|$eventId"
     fun route(): String = if (youtube) Destinations.youtubePlayer(eventId)
         else Destinations.tvhPlayer("channel", channelUuid, sourceId.ifBlank { null })
-    fun isRelevant(nowMs: Long): Boolean = if (youtube) startEpochSeconds > nowMs / 1000 - 7 * 86400L
-        else (stopEpochSeconds ?: (startEpochSeconds + 3600L)) > nowMs / 1000
+    fun expiryAtMs(): Long = (if (youtube) startEpochSeconds + 7 * 86400L
+        else stopEpochSeconds ?: (startEpochSeconds + 3600L)) * 1000L
+    fun isRelevant(nowMs: Long): Boolean = expiryAtMs() > nowMs
     fun alarmAtMs(leadMinutes: Int, autoSwitch: Boolean): Long =
         if (snoozedUntilMs > 0) snoozedUntilMs else startEpochSeconds * 1000 - (if (autoSwitch) 0 else leadMinutes) * 60_000L
 }
@@ -281,6 +282,8 @@ class LiveTvReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action == Intent.ACTION_BOOT_COMPLETED || intent?.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             LiveTvReminderScheduler.rescheduleAll(context)
+            if (!LiveTvReminderPrompt.foreground) LiveTvReminderStore(context.applicationContext)
+                .reminders.value.filter { it.due }.forEach { notify(context, it) }
             return
         }
         if (!LiveTvReminderScheduler.isFire(intent)) return
@@ -346,6 +349,17 @@ fun LiveTvReminderPromptDialog() {
         delay((nextAt - System.currentTimeMillis()).coerceAtLeast(0L))
         store.markDue(next.id)
     }
+    val expiry = reminders.minOfOrNull { it.expiryAtMs() }
+    LaunchedEffect(resumed, expiry) {
+        if (!resumed || expiry == null) return@LaunchedEffect
+        delay((expiry - System.currentTimeMillis()).coerceAtLeast(0L))
+        val manager = context.getSystemService(NotificationManager::class.java)
+        reminders.filterNot { it.isRelevant(System.currentTimeMillis()) }.forEach {
+            manager?.cancel(it.id, 0)
+            LiveTvReminderScheduler.cancel(context, it)
+        }
+        store.refresh()
+    }
     val nextProbe = reminders.filter { it.youtube && it.due && !it.ready }.minByOrNull { it.startEpochSeconds }
     LaunchedEffect(resumed, nextProbe) {
         if (!resumed || nextProbe == null) return@LaunchedEffect
@@ -368,7 +382,7 @@ fun LiveTvReminderPromptDialog() {
     val due = reminders.filter { it.due && it.isRelevant(now) &&
         (!it.youtube || it.ready || it.startEpochSeconds * 1000 > now) }.sortedBy { it.startEpochSeconds }
     val selected = reminders.firstOrNull { it.id == selectedId }
-    val reminder = selected ?: due.firstOrNull() ?: return
+    val reminder = selected?.takeIf { it.isRelevant(now) } ?: due.firstOrNull() ?: return
     val time = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
         .format(java.util.Date(reminder.startEpochSeconds * 1000))
     val competing = reminders.any { it.id != reminder.id && (it.due ||
