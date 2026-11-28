@@ -1,0 +1,69 @@
+#pragma once
+#include <vlc_common.h>
+#include <vlc_es.h>
+#include <vlc_ancillary.h>
+#include "ambient_dovi_parser.h"
+#include "dovi_fel_api.h"
+#include "dovi_fel_geometry.h"
+#define AMBIENT_FEL_ID VLC_FOURCC('a','F','E','L')
+
+/* AImage import produces the visible rectangle, not the padded coded
+ * surface. Right/bottom padding is harmless when the origin remains
+ * aligned; left/top cropping requires separate BL/EL phase information. */
+static inline bool ambient_dovi_visible_origin(const video_format_t *f)
+{
+    return f && ambient_fel_visible_geometry(f->i_width,f->i_height,
+        f->i_visible_width,f->i_visible_height,f->i_x_offset,f->i_y_offset);
+}
+
+static inline bool ambient_dovi_format(const video_format_t *f)
+{
+    if (!f || !f->dovi.bl_present || !f->dovi.rpu_present)
+        return false;
+    if (f->dovi.profile == 7)
+        return f->dovi.el_present && f->primaries == COLOR_PRIMARIES_BT2020 &&
+            f->space == COLOR_SPACE_BT2020 && f->transfer == TRANSFER_FUNC_SMPTE_ST2084 &&
+            f->color_range == COLOR_RANGE_LIMITED &&
+            ambient_fel_format_geometry(f->i_width,f->i_height,f->i_visible_width,
+                f->i_visible_height,f->i_x_offset,f->i_y_offset);
+    if (f->dovi.el_present) return false;
+    if (f->dovi.profile == 8)
+        return f->primaries == COLOR_PRIMARIES_BT2020 && f->space == COLOR_SPACE_BT2020 &&
+            f->transfer == TRANSFER_FUNC_SMPTE_ST2084 && f->color_range == COLOR_RANGE_LIMITED;
+    // Profile 5 is full-range IPTPQc2, not ordinary BT.2020 YCbCr.
+    // VLC cannot represent IPT in video_format_t. Permit only unspecified
+    // or PQ/2020 container tags; the actual buffer must still report PQ and
+    // full range, and explicit P010 identity sampling is mandatory.
+    return f->dovi.profile == 5 && f->color_range == COLOR_RANGE_FULL &&
+        (f->primaries == COLOR_PRIMARIES_UNDEF || f->primaries == COLOR_PRIMARIES_BT2020) &&
+        (f->space == COLOR_SPACE_UNDEF || f->space == COLOR_SPACE_BT2020) &&
+        (f->transfer == TRANSFER_FUNC_UNDEF || f->transfer == TRANSFER_FUNC_SMPTE_ST2084);
+}
+static inline void ambient_dovi_map(vlc_video_dovi_metadata_t *dst,
+                                     const struct ambient_dovi_metadata *src)
+{
+    *dst = (vlc_video_dovi_metadata_t){0};
+    dst->bl_bit_depth = src->bl_bit_depth;
+    dst->el_bit_depth = src->el_bit_depth;
+    dst->coef_log2_denom = src->coef_log2_denom;
+    dst->nlq_method_idc = VLC_DOVI_NLQ_NONE;
+    dst->source_min_pq = src->source_min_pq;
+    dst->source_max_pq = src->source_max_pq;
+    memcpy(dst->nonlinear_offset, src->nonlinear_offset, sizeof(dst->nonlinear_offset));
+    memcpy(dst->nonlinear_matrix, src->nonlinear_matrix, sizeof(dst->nonlinear_matrix));
+    memcpy(dst->linear_matrix, src->linear_matrix, sizeof(dst->linear_matrix));
+    for (unsigned i = 0; i < 3; ++i) {
+        struct vlc_dovi_reshape_t *d = &dst->curves[i];
+        const struct ambient_dovi_curve *s = &src->curves[i];
+        d->num_pivots = s->num_pivots;
+        memcpy(d->pivots, s->pivots, sizeof(d->pivots));
+        for (unsigned j = 0; j + 1 < s->num_pivots; ++j) {
+            d->mapping_idc[j] = s->mapping[j];
+            d->poly_order[j] = s->poly_order[j];
+            d->mmr_order[j] = s->mmr_order[j];
+            memcpy(d->poly_coef[j], s->poly_coef[j], sizeof(d->poly_coef[j]));
+            d->mmr_constant[j] = s->mmr_constant[j];
+            memcpy(d->mmr_coef[j], s->mmr_coef[j], sizeof(d->mmr_coef[j]));
+        }
+    }
+}

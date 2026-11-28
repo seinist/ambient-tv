@@ -59,6 +59,7 @@ struct svp_placebo_quality {
     int (*retire_capture_group)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t,uint64_t);
     uint64_t capture_end;
     bool capture_failed,device_lost,stalled;
+    bool allow_quarantine,terminal_uncertain;
     int (*submit_stats)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
         const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
@@ -111,6 +112,7 @@ static inline bool svp_placebo_collect_stats(pl_gpu gpu,struct svp_placebo_quali
 }
 static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality *s,unsigned i,unsigned wait)
 {
+    if(s->terminal_uncertain)return false;
     struct svp_placebo_pending *p=&s->pending[i];
     // A renderer-owned statistics result must survive automatic polling.
     // Destruction may explicitly discard it, but backpressure cannot.
@@ -139,6 +141,7 @@ static inline void svp_placebo_quality_retire_texture(pl_gpu gpu,struct svp_plac
 // has not returned. Final destruction uses the stricter drain above.
 static inline bool svp_placebo_quality_try_retire_texture(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
 {
+    if(s->terminal_uncertain)return false;
     while(s->pending_count){
         bool needed=texture==NULL;
         for(unsigned i=0;i<s->pending_count;i++)
@@ -183,6 +186,7 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
     pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index,bool capture,uint64_t *deferred_token)
 {
     if(deferred_token)*deferred_token=0;
+    if(s->terminal_uncertain)return false;
     // Do not pay a fresh blocking timeout for every output on a stuck
     // driver. Recover only after nonblocking polling proves retirement.
     if(s->stalled){
@@ -221,9 +225,14 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
         if(!s->retire){s->submit=NULL;s->submit_cached=NULL;s->submit_capture=NULL;}
         if(!s->create||!s->destroy||!s->render){dlclose(s->lib);s->lib=NULL;return false;}
     }
-    if(hdr&&(!s->render_hdr||!hdr->count||hdr->count>3))return false;
-    if(pass&&(!s->render_pass||!hdr||hdr->count<1||hdr->count>3))return false;
-    if(capture&&s->capture_end&&(!s->submit_capture||!s->retire_capture_group))return false;
+    // No synchronous renderer ABI fallback: native queue waits must not run
+    // under libplacebo's live queue lock.
+    if(!s->retire_status||!s->submit_cached)return false;
+    if(hdr&&(!hdr->count||hdr->count>3))return false;
+    if(pass&&!hdr)return false;
+    if(capture&&(!pass||!s->submit_capture||!s->retire_capture||
+        (s->capture_end&&!s->retire_capture_group)))return false;
+    if(!capture&&hdr&&(!s->submit_stats||!s->collect_stats))return false;
     const int w=a->params.w,h=a->params.h;
     if(!s->engine||w!=s->w||h!=s->h||memcmp(&s->options,options,sizeof(*options))){
         // Incompatible quality/geometry must not consume old stats as
@@ -289,9 +298,19 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
         s->submit_cached?s->submit_cached(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,&job,s->generation):
         s->submit?s->submit(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,&job):
         s->render(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase);
-    // Defensive panic recovery: if the native boundary could not
-    // establish its own retirement, prove queue retirement here before
-    // releasing any renderer texture. Never free an in-flight image.
+    // VLC's terminal owner can retain the complete device on an unknown
+    // native panic. Do not retry a driver call indefinitely under its lock.
+    if(rc==-2&&s->allow_quarantine){
+        s->terminal_uncertain=true;
+        struct svp_placebo_pending *p=&s->pending[s->pending_count++];
+        p->job=job;p->count=held;
+        memcpy(p->textures,tex,held*sizeof(*tex));
+        memcpy(p->holds,holds,held*sizeof(*holds));
+        vk->unlock_queue(vk,family,0);
+        return false;
+    }
+    // MPV's VO still owns the original terminal retirement path. Never
+    // destroy externally owned images without a proven idle/lost result.
     if(rc==-2){VkResult status;do{status=wait_idle(queue);}while(status!=VK_SUCCESS&&status!=VK_ERROR_DEVICE_LOST);}
     vk->unlock_queue(vk,family,0);
     if(rc==0||rc==1){s->value++;retired=true;ok=rc==0;}

@@ -18,6 +18,11 @@ class ImageProcessingPolicyTest {
         assertEquals("off", vlcOptionsForNativeHdr(requested, true, hdr10, false).svpMode)
         assertEquals("off", vlcOptionsForNativeHdr(requested.copy(svp = requested.svp.copy(hardwareResident = false)), true, hdr10, true).svpMode)
         assertEquals("off", vlcOptionsForNativeHdr(requested, true, com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS, true).svpMode)
+        for (hdr in listOf(com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS, com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION)) {
+            assertEquals(requested.svpMode, vlcOptionsForNativeHdr(requested, true, hdr, true, true).svpMode)
+            assertEquals("off", vlcOptionsForNativeHdr(requested, true, hdr, false, true).svpMode)
+            assertEquals("off", vlcOptionsForNativeHdr(requested, false, hdr, true, true).svpMode)
+        }
         assertEquals("off", vlcOptionsForNativeHdr(requested, true, com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION, true).svpMode)
     }
 

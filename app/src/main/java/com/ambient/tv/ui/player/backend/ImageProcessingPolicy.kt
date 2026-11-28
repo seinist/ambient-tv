@@ -730,10 +730,12 @@ internal fun vlcOptionsForNativeHdr(
     nativeHdrPreferred: Boolean,
     sourceHdrStandard: com.ambient.tv.ui.player.HdrStandard? = null,
     hdrResidentAvailable: Boolean = false,
+    hdrBridgeAvailable: Boolean = false,
 ): VlcImageOptions =
     if (!nativeHdrPreferred && sourceHdrStandard == null) options else options.copy(
         softwareProcessing = false, svpMode = if (nativeHdrPreferred && hdrResidentAvailable &&
-            (svpStaticHdrResident(sourceHdrStandard) || sourceHdrStandard == com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS && options.svp.hdrTwoPass) && svpResidentRequested(options.svp)) options.svpMode else "off",
+            (svpStaticHdrResident(sourceHdrStandard) || sourceHdrStandard == com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS && (options.svp.hdrTwoPass || hdrBridgeAvailable) ||
+                sourceHdrStandard == com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION && hdrBridgeAvailable) && svpResidentRequested(options.svp)) options.svpMode else "off",
         deband = "off", denoise = "off",
         brightness = 0, contrast = 0, saturation = 0, gamma = 0,
     )

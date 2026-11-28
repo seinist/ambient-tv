@@ -10,7 +10,8 @@ adapter = pathlib.Path(__file__).resolve().parents[1] / "native/ambientsvp/adapt
 shutil.copyfile(adapter / "svp_mpv_hdr_spatial.h", source / "video/out/svp_mpv_hdr_spatial.h")
 out = source / "video/out/hdr10plus"
 out.mkdir(exist_ok=True)
-for path in sorted((adapter / "hdr10plus").glob("*.h")):
+shared = adapter.parents[1] / "vlc-aar/experimental"
+for path in (shared / name for name in ("hdr10plus_payload.h", "hdr10plus_spatial.h", "hdr10plus_spatial_geometry.h")):
     shutil.copyfile(path, out / path.name)
 def patch(path, edits, marker):
     p = source / path

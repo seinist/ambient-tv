@@ -137,10 +137,10 @@ static inline void ambient_svp_hdr_mark_output(struct ambient_svp_hdr_display *s
     }
     if(s->mark_output)s->mark_output();
 }
-static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp_hdr_display *s)
+static inline bool ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp_hdr_display *s)
 {
     ambient_svp_hdr_scene_close(gpu,s,true);
-    svp_placebo_quality_retire_texture(gpu,&s->quality,NULL);
+    if(!svp_placebo_quality_try_retire_texture(gpu,&s->quality,NULL))return false;
     ambient_fel_render_destroy(gpu,&s->fel);
     for(unsigned i=0;i<4;i++){
         pl_tex_destroy(gpu,&s->sources[i].texture);
@@ -149,6 +149,7 @@ static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp
     pl_tex_destroy(gpu,&s->output);svp_placebo_quality_destroy(gpu,&s->quality);pl_dispatch_destroy(&s->dp);
     if(s->progress_lib)dlclose(s->progress_lib);
     *s=(struct ambient_svp_hdr_display){0};
+    return true;
 }
 static inline bool ambient_svp_hdr_target(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex *tex,int w,int h)
 {
@@ -531,6 +532,8 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct ambient_svp_hdr_display *s,struct ambient_ahb_owner *owner,
     const struct ambient_svp_pair *pair,bool raw,bool dovi,struct pl_frame *img)
 {
+    s->quality.allow_quarantine=true;
+    if(s->quality.terminal_uncertain)return false;
     if(!pair||!owner||!pair->a||!pair->b||!isfinite(pair->phase)||pair->phase<0.f||pair->phase>1.f)return false;
     if(!s->dp)s->dp=pl_dispatch_create(log,gpu);
     if(!s->dp)return false;
@@ -652,6 +655,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     }
     return true;
 original:
+    if(s->quality.terminal_uncertain)return false;
     ambient_svp_hdr_discard_phases(s);
     if(scene){ambient_svp_scene_config_abort(pair->scene);ambient_svp_hdr_scene_close(gpu,s,true);}
     if(a->has_hdrplus)s->metadata=a->hdrplus;

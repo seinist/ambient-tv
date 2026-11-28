@@ -96,4 +96,25 @@ class RenewingMedia3DataSourceTest {
             assertEquals(1, renewals)
         } finally { server.stop(0) }
     }
+
+    @Test fun ordinaryServerErrorIsNotRenewed() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            exchange.sendResponseHeaders(500, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val factory = RenewingMedia3DataSource.Factory(DefaultHttpDataSource.Factory()) {
+                fail("Only expired URLs may be renewed")
+                null
+            }
+            val source = factory.createDataSource()
+            try {
+                val spec = DataSpec.Builder().setUri("http://127.0.0.1:${server.address.port}/").build()
+                val failure = assertThrows(HttpDataSource.InvalidResponseCodeException::class.java) { source.open(spec) }
+                assertEquals(500, failure.responseCode)
+            } finally { source.close() }
+        } finally { server.stop(0) }
+    }
 }

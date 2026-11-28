@@ -46,8 +46,10 @@ def replace(old, new):
 
 replace('# include "dovi_fel_render.h"', '# include "dovi_fel_render.h"\n# include "svp_vlc_hdr_display.h" // ' + marker)
 replace('    struct ambient_fel_render fel;', '    struct ambient_fel_render fel;\n    struct ambient_svp_hdr_display svp_hdr;')
-replace('            ambient_fel_render_destroy(gpu, &sys->fel);',
-        '            ambient_fel_render_destroy(gpu, &sys->fel);\n            ambient_svp_hdr_display_destroy(gpu, &sys->svp_hdr);')
+replace('    ambient_fel_render_destroy(gpu, &sys->fel);',
+        '    if (cancelled(token) || !ambient_svp_hdr_display_destroy(gpu, &sys->svp_hdr)) return false;\n'
+        '    if (cancelled(token)) return false;\n'
+        '    ambient_fel_render_destroy(gpu, &sys->fel);')
 replace('    struct ambient_ahb_output ahb_output = {0};\n    if (sys->ahb) {',
         '    struct ambient_ahb_output ahb_output = {0};\n'
         '    struct vlc_ancillary *svp_anc = picture_GetAncillary(pic, AMBIENT_SVP_PAIR_ID);\n'
@@ -59,6 +61,7 @@ replace('    if (ahb_output.texture) {\n        // The opaque fourcc',
         '    if (svp_pair) {\n'
         '        if (!ambient_svp_hdr_render_pair(gpu, sys->pl->log, &sys->svp_hdr, sys->ahb,\n'
         '                svp_pair, sys->ahb_raw_p010, sys->ahb_dovi, &img)) {\n'
+        '            if (sys->svp_hdr.quality.terminal_uncertain) vlc_ambient_output_quarantine();\n'
         '            failed = true; goto done;\n'
         '        }\n'
         '        svp_generated = true;\n'

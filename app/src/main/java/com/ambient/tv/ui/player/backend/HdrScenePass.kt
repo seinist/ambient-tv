@@ -432,6 +432,18 @@ internal class HdrSceneSession(
     private val range: HdrRangeSource? = null,
     private val dynamic: Boolean = false,
 ) {
+    // Native retirement uncertainty retains the file/range and scene plan until process exit.
+    private companion object {
+        val retained = mutableListOf<HdrSceneSession>()
+    }
+    @Volatile private var retainedByNative = false
+    @Synchronized fun quarantine() {
+        mode = 0
+        if (!retainedByNative) {
+            retainedByNative = true
+            synchronized(retained) { retained.add(this) }
+        }
+    }
     @Volatile var mode: Int = 1
         private set
     private fun captureName(profile: String): String? = reuseKey?.let { HdrSceneReuse.key("capture-v2|$it|$profile")+".stats" }
@@ -496,5 +508,5 @@ internal class HdrSceneSession(
     fun mpvOptions(): String = ":hdr-pass=$mode:hdr-plan=${manifest.path}:hdr-cache=${cache.path}:hdr-key=$key"
     fun vlcOptions(): List<String> = listOf("hdr-pass=$mode","hdr-plan=${manifest.path}","hdr-cache=${cache.path}","hdr-key=$key")
     fun abort() { mode = 0 }
-    fun cleanup() { abort();range?.close();manifest.parentFile?.deleteRecursively() }
+    @Synchronized fun cleanup() { abort(); if (!retainedByNative) { range?.close(); manifest.parentFile?.deleteRecursively() } }
 }

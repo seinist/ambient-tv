@@ -1,0 +1,237 @@
+diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_output/libplacebo/instance_vulkan.c
+--- a/modules/video_output/libplacebo/instance_vulkan.c
++++ b/modules/video_output/libplacebo/instance_vulkan.c
+@@ -28,6 +28,10 @@
+ #include <vlc_plugin.h>
+ 
+ #include <libplacebo/vulkan.h>
++#ifdef __ANDROID__
++# include <vulkan/vulkan_android.h>
++# include "terminal_init_retirement.h"
++#endif
+ 
+ #include "../vulkan/platform.h"
+ #include "instance.h"
+@@ -40,11 +44,16 @@
+     pl_vulkan vulkan;
+ };
+ 
+-static void CloseInstance(vlc_placebo_t *pl);
+-static const struct vlc_placebo_operations instance_opts =
+-{
+-    .close = CloseInstance,
+-};
++static void CloseInstance(vlc_placebo_t *pl);
++static void CloseGpu(vlc_placebo_t *pl);
++#ifdef __ANDROID__
++static void CloseInitGpu(void *opaque) { CloseGpu(opaque); }
++#endif
++static const struct vlc_placebo_operations instance_opts =
++{
++    .close = CloseInstance,
++    .ambient_close_gpu = CloseGpu,
++};
+ 
+ static int InitInstance(vlc_placebo_t *pl, const vout_display_cfg_t *cfg)
+ {
+@@ -81,14 +90,40 @@
+ 
+     // Create vulkan device
+     char *device_name = var_InheritString(pl, "vk-device");
++    bool ambient_ahb = false;
++#ifdef __ANDROID__
++    ambient_ahb = var_InheritBool(pl, "vk-ambient-ahb");
++    // Request interop on this device, not on a separate probe device.
++    // These are optional so unsupported drivers keep a valid copy-back path.
++    const char *interop_extensions[] = {
++        VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
++        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
++        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
++    };
++    VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr = {
++        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES,
++        .samplerYcbcrConversion = VK_TRUE,
++    };
++    VkPhysicalDeviceFeatures2 features = {
++        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
++        .pNext = &ycbcr,
++    };
++#endif
+     sys->vulkan = pl_vulkan_create(pl->log, &(struct pl_vulkan_params) {
+         .instance = sys->instance->instance,
+         .surface = sys->surface,
+         .device_name = device_name,
+         .allow_software = var_InheritBool(pl, "vk-allow-sw"),
+-        .async_transfer = var_InheritBool(pl, "vk-async-xfer"),
+-        .async_compute = var_InheritBool(pl, "vk-async-comp"),
+-        .queue_count = var_InheritInteger(pl, "vk-queue-count"),
++        // Allow two queues in the graphics family, clamped by libplacebo to
++        // the hardware limit. Keep dedicated families disabled for AHB.
++        .async_transfer = !ambient_ahb && var_InheritBool(pl, "vk-async-xfer"),
++        .async_compute = !ambient_ahb && var_InheritBool(pl, "vk-async-comp"),
++        .queue_count = ambient_ahb ? 2 : var_InheritInteger(pl, "vk-queue-count"),
++#ifdef __ANDROID__
++        .opt_extensions = ambient_ahb ? interop_extensions : NULL,
++        .num_opt_extensions = ambient_ahb ? ARRAY_SIZE(interop_extensions) : 0,
++        .features = ambient_ahb ? &features : NULL,
++#endif
+     });
+     free(device_name);
+     if (!sys->vulkan)
+@@ -104,6 +139,10 @@
+     pl->swapchain = pl_vulkan_create_swapchain(sys->vulkan, &swap_params);
+     if (!pl->swapchain)
+         goto error;
++#ifdef __ANDROID__
++    if (ambient_ahb && !pl_vulkan_swapchain_ambient_enable(pl->swapchain))
++        goto error;
++#endif
+ 
+     pl->gpu = sys->vulkan->gpu;
+     pl->ops = &instance_opts;
+@@ -112,31 +151,49 @@
+ error:
+-    CloseInstance(pl);
++#ifdef __ANDROID__
++    if (var_InheritBool(pl,"vk-ambient-ahb") && sys->instance) {
++        struct pl_log_params saved_log=pl_log_update(pl->log,&(struct pl_log_params){0});
++        if (!ambient_init_retire(pl,CloseInitGpu,8000)) {
++            vlc_ambient_output_quarantine();
++            // Return module success only to prevent module-loader fallback;
++            // instance.c sees the poison bit and retains this whole object.
++            pl->ops=&instance_opts;
++            return VLC_SUCCESS;
++        }
++        pl_log_update(pl->log,&saved_log);
++    }
++#endif
++    CloseInstance(pl);
+     return VLC_EGENERIC;
+ }
+ 
+-static void CloseInstance(vlc_placebo_t *pl)
+-{
+-    vlc_placebo_system_t *sys = pl->sys;
+-
+-    pl_swapchain_destroy(&pl->swapchain);
+-
+-    if (sys->surface) {
+-        vlc_vk_instance_t inst = {
+-            .instance = sys->instance->instance,
+-            .get_proc_address = sys->instance->get_proc_addr,
+-        };
+-        vlc_vk_DestroySurface(&inst, sys->surface);
+-    }
+-
+-    pl_vulkan_destroy(&sys->vulkan);
+-    pl_vk_inst_destroy(&sys->instance);
+-
+-    if (sys->platform != NULL)
+-        vlc_vk_platform_Release(sys->platform);
+-
+-    vlc_obj_free(VLC_OBJECT(pl), sys);
+-    pl->sys = NULL;
+-}
++/* GPU-only teardown can run on a terminal worker. The independently
++ * retained platform/window is released on the original VLC owner thread. */
++static void CloseGpu(vlc_placebo_t *pl)
++{
++    vlc_placebo_system_t *sys = pl->sys;
++    pl_swapchain_destroy(&pl->swapchain);
++    if (sys->surface) {
++        vlc_vk_instance_t inst = {
++            .instance = sys->instance->instance,
++            .get_proc_address = sys->instance->get_proc_addr,
++        };
++        vlc_vk_DestroySurface(&inst, sys->surface);
++        sys->surface = VK_NULL_HANDLE;
++    }
++    pl_vulkan_destroy(&sys->vulkan);
++    pl_vk_inst_destroy(&sys->instance);
++    pl->gpu = NULL;
++}
++
++static void CloseInstance(vlc_placebo_t *pl)
++{
++    vlc_placebo_system_t *sys = pl->sys;
++    CloseGpu(pl);
++    if (sys->platform != NULL)
++        vlc_vk_platform_Release(sys->platform);
++    vlc_obj_free(VLC_OBJECT(pl), sys);
++    pl->sys = NULL;
++}
+ 
+ #define PROVIDER_TEXT N_("Vulkan platform module")
+ #define PROVIDER_LONGTEXT N_( \
+@@ -196,6 +253,27 @@
+             ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
+ 
+     set_section("Performance tuning", NULL)
++#ifdef __ANDROID__
++    add_bool("vk-ambient-ahb", false, "Experimental Android buffer interop",
++            "Request AHardwareBuffer features on the rendering device. "
++            "Disabled by default; a compatible display bridge is also required.")
++    add_bool("vk-ambient-hdr10plus", false, "Require per-picture HDR10+ metadata",
++            "Reject opaque HDR10+ when dynamic metadata cannot be verified.")
++    add_bool("vk-ambient-raw-p010", false, "Experimental raw P010 handoff",
++            "Verify native P010 identity sampling before libplacebo color conversion.")
++    add_bool("vk-ambient-dovi-ahb", false, "Experimental Dolby Vision profiles 5/8 AHB",
++            "Decode single-layer Main10 base layer and apply timestamp-bound RPU before RGB conversion.")
++    add_bool("vk-ambient-dovi-fel", false, "Experimental Dolby Vision profile 7 FEL",
++            "Requires the AHB and Dolby Vision options; decodes a second HEVC layer and reconstructs matched pictures.")
++    add_bool("vk-ambient-hdr10plus-spatial", false, "Experimental HDR10+ local-window tone mapping",
++            "Apply local-window OOTFs to RGB PQ or raw P010 AHB frames.")
++    add_integer_with_range("vk-ambient-hdr-target-transfer", 0, 0, 2,
++            "Experimental HDR target transfer", "0 SDR, 1 PQ, 2 HLG. Explicit target luminance required.")
++    add_float_with_range("vk-ambient-hdr-target-max", 0.f, 0.f, 10000.f,
++            "HDR target maximum nits", "Display capability, not source mastering luminance.")
++    add_float_with_range("vk-ambient-hdr-target-min", -1.f, -1.f, 10000.f,
++            "HDR target minimum nits", "Display capability, -1 means unknown.")
++#endif
+     add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
+             ASYNC_XFER_TEXT, ASYNC_XFER_LONGTEXT)
+     add_bool("vk-async-comp", pl_vulkan_default_params.async_compute,
+diff --git a/modules/video_output/libplacebo/instance.h b/modules/video_output/libplacebo/instance.h
+--- a/modules/video_output/libplacebo/instance.h
++++ b/modules/video_output/libplacebo/instance.h
+@@ -31,7 +31,9 @@
+ struct vlc_placebo_t;
+ struct vlc_placebo_operations
+ {
+-    void (*close)(struct vlc_placebo_t *);
++    void (*close)(struct vlc_placebo_t *);
++    // Optional Vulkan-only GPU destruction; never touches the VLC window.
++    void (*ambient_close_gpu)(struct vlc_placebo_t *);
+ 
+     // For acquiring/releasing the context on the current thread. (Optional)
+     int (*make_current)(struct vlc_placebo_t *);
+diff --git a/modules/video_output/libplacebo/instance.c b/modules/video_output/libplacebo/instance.c
+--- a/modules/video_output/libplacebo/instance.c
++++ b/modules/video_output/libplacebo/instance.c
+@@ -72,7 +72,9 @@
+  */
+ vlc_placebo_t *vlc_placebo_Create(const vout_display_cfg_t *cfg, const char *name)
+ {
+-    vlc_object_t *parent = VLC_OBJECT(cfg->window);
++    if (vlc_ambient_output_quarantined())
++        return NULL;
++    vlc_object_t *parent = VLC_OBJECT(cfg->window);
+     vlc_placebo_t *pl = vlc_object_create(parent, sizeof (*pl));
+     if (unlikely(pl == NULL))
+         return NULL;
+@@ -86,8 +88,13 @@
+     module_t *module = vlc_module_load(vlc_object_logger(parent), "libplacebo gpu",
+                                        name, false,
+                                        vlc_placebo_start, pl, cfg);
+-    if (module == NULL)
+-        goto delete_log;
++    // Activation may have quarantined a still-running GPU worker.
++    // Its context/log/native window must survive the caller and no fallback
++    // renderer may be started in this process.
++    if (vlc_ambient_output_quarantined())
++        return NULL;
++    if (module == NULL)
++        goto delete_log;
+ 
+ #if PL_API_VER >= 320
+     pl->cache = pl_cache_create(pl_cache_params(

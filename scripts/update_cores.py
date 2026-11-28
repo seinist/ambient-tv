@@ -60,11 +60,11 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
             print(f"  MANUAL: {name} remains at {core['commit']}: JIT preflight failed for {revision} ({error}).")
             return False
         return True
-    # Some cores have a reviewed build-system recipe but no source
-    # hotpath patch (Snes9x2010). Do not bypass their preflight.
-    ndk_recipes = {"mupen64plus_next_gles3", "snes9x2010"}
-    cmake_recipes = {"swanstation"}
-    if name not in SUPPORTED and name not in ndk_recipes | cmake_recipes:
+    # Build-system recipes have their own coverage, independent of the
+    # source hotpath registry. Snes9x2010 still has a threaded NDK recipe
+    # even after its source-level hotpath patch was removed.
+    build_recipe = name in {"mupen64plus_next_gles3", "snes9x2010", "swanstation"}
+    if name not in SUPPORTED and not build_recipe:
         return True
     if name not in SUPPORTED:
         files = set()
@@ -86,7 +86,7 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
         files.update({"libretro/jni/Android.mk", "libretro-common/libco/amd64.c"})
     elif name == "snes9x2010":
         files.update({"jni/Android.mk", "build/Makefile.common"})
-    elif name in cmake_recipes:
+    elif name == "swanstation":
         files.add("CMakeLists.txt")
     upstream = github_repo(core["repo"])
     try:
@@ -99,9 +99,9 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
                 path.write_bytes(get_bytes(url))
             if name in SUPPORTED:
                 prepare_hotpaths(root, name)
-            if name in ndk_recipes:
+            if name in {"mupen64plus_next_gles3", "snes9x2010"}:
                 prepare_ndk(root / core["jni"], name, "optimized")
-            elif name in cmake_recipes:
+            elif name == "swanstation":
                 prepare_cmake(root, name, "optimized")
     except (OSError, ValueError) as error:
         print(f"  MANUAL: {name} remains at {core['commit']}: candidate {revision} source preflight failed ({error}).")

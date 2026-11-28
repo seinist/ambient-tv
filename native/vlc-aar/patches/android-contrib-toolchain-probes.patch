@@ -1,0 +1,67 @@
+diff --git a/contrib/src/main.mak b/contrib/src/main.mak
+--- a/contrib/src/main.mak
++++ b/contrib/src/main.mak
+@@ -173,10 +173,26 @@
+ cppcheck = $(shell printf '$(2)' | $(CC) $(CFLAGS) -E -dM - 2>/dev/null | grep -E $(1))
+ 
+ EXTRA_CFLAGS += -I$(PREFIX)/include
+-CPPFLAGS := $(CPPFLAGS) $(EXTRA_CFLAGS)
+-CFLAGS := $(CFLAGS) $(EXTRA_CFLAGS)
+-CXXFLAGS := $(CXXFLAGS) $(EXTRA_CFLAGS) $(EXTRA_CXXFLAGS)
+-LDFLAGS := $(LDFLAGS) -L$(PREFIX)/lib $(EXTRA_LDFLAGS)
++CPPFLAGS := $(CPPFLAGS) $(EXTRA_CFLAGS)
++CFLAGS := $(CFLAGS) $(EXTRA_CFLAGS)
++CXXFLAGS := $(CXXFLAGS) $(EXTRA_CFLAGS) $(EXTRA_CXXFLAGS)
++LDFLAGS := $(LDFLAGS) -L$(PREFIX)/lib $(EXTRA_LDFLAGS)
++
++ifdef HAVE_ANDROID
++# The NDK page alignment option is a linker option. Configure probes and
++# libvpx split/reorder compiler flags; the clang unused-argument guards
++# must not be handed to those consumers as separate tokens.
++AMBIENT_PAGE_LINK_FLAG := -Wl,-z,max-page-size=16384
++AMBIENT_PAGE_COMPILE_FLAGS := --start-no-unused-arguments $(AMBIENT_PAGE_LINK_FLAG) --end-no-unused-arguments
++ifneq ($(findstring $(AMBIENT_PAGE_COMPILE_FLAGS),$(CPPFLAGS) $(CFLAGS) $(CXXFLAGS)),)
++CPPFLAGS := $(subst $(AMBIENT_PAGE_COMPILE_FLAGS),,$(CPPFLAGS))
++CFLAGS := $(subst $(AMBIENT_PAGE_COMPILE_FLAGS),,$(CFLAGS))
++CXXFLAGS := $(subst $(AMBIENT_PAGE_COMPILE_FLAGS),,$(CXXFLAGS))
++ifeq ($(findstring max-page-size=16384,$(LDFLAGS)),)
++LDFLAGS += $(AMBIENT_PAGE_LINK_FLAG)
++endif
++endif
++endif
+ 
+ ifdef ENABLE_PDB
+ ifdef HAVE_CLANG
+diff --git a/contrib/src/gcrypt/rules.mak b/contrib/src/gcrypt/rules.mak
+--- a/contrib/src/gcrypt/rules.mak
++++ b/contrib/src/gcrypt/rules.mak
+@@ -59,12 +59,23 @@
+ ifeq ($(ARCH),aarch64)
+ GCRYPT_CONF += --disable-arm-crypto-support
+ endif
+-endif
+-
+-.gcrypt: gcrypt
+-	$(RECONF)
+-	$(MAKEBUILDDIR)
+-	$(MAKECONFIGURE) $(GCRYPT_CONF)
++# Cache a positive TLS result only after the actual Android compiler has
++# compiled and linked a live thread-local object. The upstream configure
++# probe uses -Werror and can misdetect TLS with cross-driver wrappers.
++GCRYPT_CONF += gcry_cv_gcc_storage_class__thread=yes
++endif
++
++.gcrypt: gcrypt
++	$(RECONF)
++	$(MAKEBUILDDIR)
++ifdef HAVE_ANDROID
++	@set -e; probe=$$(mktemp -d); trap 'rm -rf "$$probe"' EXIT; \
++		printf '%s\n' 'static __thread int value;' 'int *ambient_tls_probe(void) { return &value; }' | \
++		$(CC) $(CPPFLAGS) $(CFLAGS) -Werror -fPIC -x c - -c -o "$$probe/tls.o"; \
++		$(CC) -shared "$$probe/tls.o" $(LDFLAGS) -Wl,--no-undefined -o "$$probe/tls.so"; \
++		echo "Android libgcrypt TLS compile/link probe passed"
++endif
++	$(MAKECONFIGURE) $(GCRYPT_CONF)
+ 	+$(MAKEBUILD) bin_PROGRAMS=
+ 	+$(MAKEBUILD) bin_PROGRAMS= install
+ 	touch $@

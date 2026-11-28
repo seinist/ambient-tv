@@ -10,6 +10,7 @@ import android.os.HandlerThread
 import android.os.SystemClock
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -111,49 +112,72 @@ internal object HdrOffscreenAnalysis {
 
     suspend fun vlc(context: Context, session: HdrSceneSession, options: List<String>): Boolean =
         withContext(Dispatchers.Main.immediate) {
-            Sink().use { sink ->
-                val lib = LibVLC(context,ArrayList(options+listOf("--no-audio","--no-spu",
-                    "--no-drop-late-frames","--no-skip-frames","--clock-jitter=0")))
-                var player: MediaPlayer? = null
-                try {
-                    val p = MediaPlayer(lib)
-                    player = p
-                    var terminal = false
-                    var error = false
-                    p.setEventListener { event ->
-                        when(event.type) {
-                            MediaPlayer.Event.EndReached,MediaPlayer.Event.Stopped -> terminal=true
-                            MediaPlayer.Event.EncounteredError -> { terminal=true;error=true }
+            VlcNativeRetirement.ensureAvailable()
+            val sink = Sink()
+            var library: LibVLC? = null
+            var player: MediaPlayer? = null
+            try {
+                val lib = LibVLC(context, ArrayList(options + listOf("--no-audio", "--no-spu",
+                    "--no-drop-late-frames", "--no-skip-frames", "--clock-jitter=0")))
+                library = lib
+                val p = MediaPlayer(lib)
+                player = p
+                var terminal = false
+                var error = false
+                p.setEventListener { event ->
+                    when (event.type) {
+                        MediaPlayer.Event.EndReached, MediaPlayer.Event.Stopped -> terminal = true
+                        MediaPlayer.Event.EncounteredError -> { terminal = true; error = true }
+                    }
+                }
+                p.vlcVout.setVideoSurface(sink.reader.surface, null)
+                p.vlcVout.attachViews()
+                val media = Media(lib, Uri.fromFile(File(session.analysisPath())))
+                try { p.media = media } finally { media.release() }
+                p.play()
+                val start = SystemClock.elapsedRealtime()
+                var last = start
+                var position = -1L
+                var rateSet = false
+                while (!terminal) {
+                    currentCoroutineContext().ensureActive()
+                    if (!session.valid() || VlcNativeRetirement.isQuarantined) return@withContext false
+                    if (!rateSet && p.isPlaying) { p.setRate(4f); rateSet = true }
+                    val now = SystemClock.elapsedRealtime()
+                    val next = p.time
+                    if (next > position) { position = next; last = now }
+                    if (now - last > STALL_MS || now - start > MAX_MS) return@withContext false
+                    delay(50)
+                }
+                !error && session.advance()
+            } finally {
+                // Cancellation must not race native retirement or delete the backing file.
+                withContext(NonCancellable) {
+                    val lib = library
+                    val p = player
+                    if (lib == null) sink.close() else {
+                        try {
+                            if (p != null) {
+                                VlcNativeRetirement.ensureAvailable()
+                                p.setEventListener(null)
+                                p.vlcVout.detachViews()
+                                withContext(Dispatchers.IO) {
+                                    VlcNativeRetirement.stop(p, lib)
+                                    VlcNativeRetirement.release(p, lib)
+                                    VlcNativeRetirement.releaseLibrary(p, lib) { lib.release() }
+                                }
+                            } else withContext(Dispatchers.IO) {
+                                VlcNativeRetirement.ensureAvailable()
+                                boundedNativeOperation(15_000L) { lib.release() }
+                                VlcNativeRetirement.ensureAvailable()
+                            }
+                            sink.close()
+                        } catch (failure: Throwable) {
+                            session.quarantine()
+                            VlcNativeRetirement.quarantineAnalysis(p, lib, sink, failure)
+                            throw NativeOutputReleaseUncertain(failure)
                         }
                     }
-                    p.vlcVout.setVideoSurface(sink.reader.surface,null)
-                    p.vlcVout.attachViews()
-                    val media=Media(lib,Uri.fromFile(File(session.analysisPath())))
-                    try { p.media=media } finally { media.release() }
-                    p.play()
-                    val start=SystemClock.elapsedRealtime()
-                    var last=start
-                    var position=-1L
-                    var rateSet=false
-                    while(!terminal) {
-                        currentCoroutineContext().ensureActive()
-                        if(!session.valid())return@withContext false
-                        if(!rateSet && p.isPlaying){p.setRate(4f);rateSet=true}
-                        val now=SystemClock.elapsedRealtime()
-                        val next=p.time
-                        if(next>position){position=next;last=now}
-                        if(now-last>STALL_MS||now-start>MAX_MS)return@withContext false
-                        delay(50)
-                    }
-                    !error&&session.advance()
-                } finally {
-                    player?.let { p ->
-                        runCatching { p.setEventListener(null) }
-                        runCatching { p.stop() }
-                        runCatching { p.vlcVout.detachViews() }
-                        runCatching { p.release() }
-                    }
-                    lib.release()
                 }
             }
         }

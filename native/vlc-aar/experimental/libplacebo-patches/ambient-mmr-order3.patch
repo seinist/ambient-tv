@@ -1,0 +1,12 @@
+diff --git a/src/shaders/colorspace.c b/src/shaders/colorspace.c
+--- a/src/shaders/colorspace.c
++++ b/src/shaders/colorspace.c
+@@ -101,7 +101,7 @@
+ 
+         if (max_order == 3) {
+             if (min_order < 3)
+-                GLSL("if (order >= 3 { \n");
++                GLSL("if (order >= 3) { \n");
+ 
+             GLSL("s += dot(%s[mmr_idx + 4].xyz, sig2 * sig);    \n"
+                  "s += dot(%s[mmr_idx + 5], sigX2 * sigX);      \n",

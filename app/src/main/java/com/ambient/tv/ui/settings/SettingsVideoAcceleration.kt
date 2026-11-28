@@ -41,6 +41,19 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
             changeHdrGpu = model::onMpvHdrGpuChanged,
             checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } },
         )
+        if (backend == "vlc" && com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT) {
+            VlcExperimentSettings(state.vlcExperimentalFeaturesEnabled, model::onVlcExperimentChanged)
+            if (state.vlcExperimentalFeaturesEnabled) {
+                com.ambient.tv.ui.common.TvSettingRow(
+                    title = stringResource(R.string.settings_vlc_hdr_gpu),
+                    body = stringResource(R.string.settings_vlc_hdr_gpu_hint),
+                    checked = state.vlcHdrGpuEnabled,
+                    onCheckedChange = model::onVlcHdrGpuChanged,
+                )
+                if (android.os.Build.VERSION.SDK_INT < 34 || (caps.checked && !caps.vlcVulkanOutput))
+                    ImageHint(stringResource(R.string.settings_vlc_hdr_gpu_unavailable))
+            }
+        }
         if (backend in setOf("mpv", "vlc", "media3")) GpuOutputPreferenceSettings(mpv = backend == "mpv", state, model)
         if (com.ambient.tv.ui.player.sparsamGpuOutputHeadsUp(backend == "mpv", state.mpvVideoOutputModeKey,
                 com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals)) {
@@ -51,6 +64,17 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
             )
         }
     }
+}
+
+/** Device-local controls; actual playback remains subject to native capability and format checks. */
+@Composable
+internal fun VlcExperimentSettings(enabled: Boolean, change: (Boolean) -> Unit) {
+    com.ambient.tv.ui.common.TvSettingRow(
+        title = stringResource(R.string.vlc_experiment_title),
+        body = stringResource(R.string.vlc_experiment_hint),
+        checked = enabled,
+        onCheckedChange = change,
+    )
 }
 
 /** Production content also used by the account-free debug UI test. */

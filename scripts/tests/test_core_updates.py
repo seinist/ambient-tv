@@ -176,26 +176,29 @@ class CoreUpdateTest(unittest.TestCase):
                 ("swanstation", ".", {"CMakeLists.txt"}, "prepare_cmake")):
             core = {"core": name, "jni": jni, "repo": "https://github.com/a/b", "commit": "a"*40}
             with mock.patch.object(updater, "get_bytes", return_value=b"source") as fetch, mock.patch(
-                    "core_hotpath_patches.prepare_hotpaths"), mock.patch(
+                    "core_hotpath_patches.prepare_hotpaths") as hotpaths, mock.patch(
                     "core_build_policy."+helper, side_effect=ValueError("incompatible build recipe")) as prepare:
                 self.assertFalse(updater.core_candidate_compatible(core, NEW))
                 self.assertTrue(required <= {call.args[0].split(NEW+"/", 1)[1] for call in fetch.call_args_list})
                 prepare.assert_called_once()
+                if name == "snes9x2010":
+                    hotpaths.assert_not_called()
+                else:
+                    hotpaths.assert_called_once()
 
-    def test_snes9x2010_build_only_preflight_checks_real_recipe(self):
+    def test_snes9x2010_checks_real_threading_recipe_without_hotpath(self):
         core = {"core": "snes9x2010", "jni": ".", "repo": "https://github.com/a/b", "commit": "a"*40}
-        files = {
+        sources = {
             "jni/Android.mk": b"include $(CORE_DIR)/build/Makefile.common\nLOCAL_CFLAGS := $(COREFLAGS)\n",
             "build/Makefile.common": b"ifneq ($(HAVE_THREADS),0)\nrthreads/retro_eventcount.c rthreads/rthreads.c\nendif\n",
         }
         def fetch(url):
-            return files[url.split(NEW + "/", 1)[1]]
-        with mock.patch.object(updater, "get_bytes", side_effect=fetch), mock.patch(
-                "core_hotpath_patches.prepare_hotpaths") as patcher:
+            return sources[url.split(NEW + "/", 1)[1]]
+        with mock.patch.object(updater, "get_bytes", side_effect=fetch) as get:
             self.assertTrue(updater.core_candidate_compatible(core, NEW))
-            files["jni/Android.mk"] = b"changed recipe"
+            self.assertEqual({call.args[0].split(NEW+"/", 1)[1] for call in get.call_args_list}, set(sources))
+            sources["build/Makefile.common"] = b"changed recipe"
             self.assertFalse(updater.core_candidate_compatible(core, NEW))
-            patcher.assert_not_called()
 
     def test_upstream_only_core_has_no_artificial_patch_preflight(self):
         for name in ("picodrive", "panda3ds"):
@@ -206,9 +209,10 @@ class CoreUpdateTest(unittest.TestCase):
 
     def test_candidate_anchor_preflight(self):
         from core_hotpath_remaining import PATCHES
-        # Exercise an active single-anchor patch. PicoDrive now selects
-        # its upstream SH2 dynarec via build flags, not this patch table.
+        # Use a currently shipped, single-anchor source recipe. PicoDrive
+        # now uses its upstream SH2 build option rather than this patch map.
         path, old, _ = PATCHES["pcsx_rearmed"][0]
+        self.assertEqual(len(PATCHES["pcsx_rearmed"]), 1)
         core = {"core": "pcsx_rearmed", "repo": "https://github.com/a/b", "commit": "a"*40}
         with mock.patch.object(updater, "get_bytes", return_value=old.encode()) as fetch:
             self.assertTrue(updater.core_candidate_compatible(core, NEW))

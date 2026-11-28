@@ -16,6 +16,7 @@ class AudioSession(
     val sourcePassthrough: Boolean,
     audioOnly: Boolean = false,
 ) {
+    internal val media3Frames by lazy { Media3FrameTimeline() }
     var audioOnly by mutableStateOf(audioOnly)
         private set
     /** User's explicit frame-drop overlay choice when this session temporarily becomes audio-only. */
