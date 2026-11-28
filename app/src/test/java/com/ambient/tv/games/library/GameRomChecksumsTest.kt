@@ -72,6 +72,8 @@ class GameRomChecksumsTest {
         assertEquals(crc(padded), result.datCrc32)
         assertTrue(GameRomChecksums.canHash("game.nds", 512L * 1024 * 1024))
         assertFalse(GameRomChecksums.canHash("game.nds", 512L * 1024 * 1024 + 1))
+        assertTrue(GameRomChecksums.canHash("game.3ds", 4L * 1024 * 1024 * 1024))
+        assertFalse(GameRomChecksums.canHash("game.3ds", 4L * 1024 * 1024 * 1024 + 1))
     }
 
     @Test fun explicitChecksumScansStayBoundedAndExcludeArchivesAndDiscImages() {
