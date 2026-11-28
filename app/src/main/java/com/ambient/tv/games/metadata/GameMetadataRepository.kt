@@ -368,10 +368,14 @@ class GameMetadataRepository @Inject constructor(
      * checksum ([GameLibraryRepository.scan]).
      */
     suspend fun loadNameDatabases(
-        only: Collection<String>? = null, onProgress: (Int, Int) -> Unit = { _, _ -> },
+        only: Collection<String>? = null, onlyMissing: Boolean = false,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): NameDatabaseResult =
         nameDatabaseLock.withLock { withContext(Dispatchers.IO) {
-            val systems = (only ?: library.indexedSystems()).filter { GameNameDatabases.files(it).isNotEmpty() }.distinct().sorted()
+            val existing = if (onlyMissing) library.datCatalogSizes() else emptyMap()
+            val systems = (only ?: library.indexedSystems())
+                .filter { GameNameDatabases.files(it).isNotEmpty() && (!onlyMissing || (existing[it] ?: 0) == 0) }
+                .distinct().sorted()
             val staging = File(context.cacheDir, "game-name-databases-${java.util.UUID.randomUUID()}")
             if (!staging.mkdirs()) throw IOException("The game name database cannot be staged")
             try {
@@ -413,6 +417,21 @@ class GameMetadataRepository @Inject constructor(
                         return@coroutineScope
                     }
                     if (automatic && !options.automatic) return@coroutineScope
+                    // Libretro image filenames contain canonical release tags. Fetch a missing
+                    // local catalog once for the systems actually present in this folder, even
+                    // if the ROM itself cannot be hashed (for example a PSP CSO or PS2 CHD).
+                    if (options.provider == GameMetadataProviderIds.LIBRETRO) {
+                        val systems = (systemId?.let(::listOf) ?: library.indexedSystems())
+                            .filter { GameNameDatabases.files(it).isNotEmpty() && folderId in library.foldersWithSystem(it) }
+                        if (systems.isNotEmpty()) {
+                            try { loadNameDatabases(systems, onlyMissing = true) }
+                            catch (error: IOException) {
+                                // A catalog transport failure must not block already-known
+                                // names, direct artwork URLs or later individual retries.
+                                timber.log.Timber.w(error, "Game name catalog unavailable; trying existing metadata")
+                            }
+                        }
+                    }
                     val total = library.folderGameCount(folderId, systemId)
                     var completed = 0
                     var failed = 0
