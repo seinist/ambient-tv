@@ -91,7 +91,7 @@ internal object GameMetadataPlatforms {
         val names = if (pinned != null) listOf(pinned[1]) else (catalog + listOfNotNull(
             query.canonicalTitle?.takeIf(String::isNotBlank), query.title.takeIf(String::isNotBlank),
             query.filename.substringAfterLast('/').substringBeforeLast('.').takeIf(String::isNotBlank),
-            dsCatalogFilename(query).takeIf(String::isNotBlank),
+            gameCatalogFilename(query.systemId, query.filename).takeIf(String::isNotBlank),
         )).map { it.trim().take(256) }.distinct().take(if (catalog.isEmpty()) 4 else 30)
         return names.flatMap { name -> (pinned?.let { listOf(it[0]) } ?: systems).map { system ->
             val imageName = name.map { if (it in "&*/:`<>?\\|\"" || it.isISOControl()) '_' else it }.joinToString("") + ".png"
@@ -107,9 +107,5 @@ internal object GameMetadataPlatforms {
         } }.take(if (catalog.isEmpty()) 12 else 30)
     }
 }
-
-internal fun dsCatalogFilename(query: GameMetadataQuery): String =
-    if (query.systemId != "nds") "" else query.filename.substringAfterLast('/').substringBeforeLast('.')
-        .replace(Regex("""^\d{4,5}\s*[-_.]\s*"""), "").trim()
 
 internal fun normalizedPlatformName(value: String): String = value.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
