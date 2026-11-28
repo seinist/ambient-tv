@@ -289,12 +289,15 @@ static int svp_android_open(filter_t *f)
     LOAD(create);LOAD(push);LOAD(drain);LOAD(reset);LOAD(destroy);
 #undef LOAD
     s->mode=mode;
-    if (mode) {
-        AmbientSvpAndroidStream *(*create_format)(uint32_t,uint32_t,uint32_t)=
-            dlsym(s->api.lib,"ambient_svp_android_stream_create_format");
-        if (!create_format) goto fail;
-        s->stream=create_format(v->i_visible_width,v->i_visible_height,mode);
-    } else s->stream=s->create(v->i_visible_width,v->i_visible_height);
+    AmbientSvpQuality quality={
+        .preset=var_InheritInteger(f,"ambientsvp-preset"),.block=var_InheritInteger(f,"ambientsvp-block"),
+        .overlap=var_InheritInteger(f,"ambientsvp-overlap"),.pel=var_InheritInteger(f,"ambientsvp-pel"),
+        .search=var_InheritInteger(f,"ambientsvp-search"),.artifacts=var_InheritInteger(f,"ambientsvp-artifacts"),
+        .scene=var_InheritInteger(f,"ambientsvp-scene"),.algorithm=var_InheritInteger(f,"ambientsvp-algo")};
+    AmbientSvpAndroidStream *(*create_quality)(uint32_t,uint32_t,uint32_t,const AmbientSvpQuality *)=
+        dlsym(s->api.lib,"ambient_svp_android_stream_create_quality");
+    if(!create_quality)goto fail;
+    s->stream=create_quality(v->i_visible_width,v->i_visible_height,mode,&quality);
     if (!s->stream) goto fail;
     // Optional ABI extension: older engines retain the fresh-buffer path.
     s->lease_output=dlsym(s->api.lib,"ambient_svp_android_stream_lease_output");
