@@ -88,7 +88,7 @@ class TvheadendViewModel @Inject constructor(
         val added = reminderStore.toggle(com.ambient.tv.livetv.LiveTvReminder(
             sourceId = repository.source.id, channelUuid = event.channelUuid, channelName = event.channelName,
             eventId = event.eventId, title = event.title, startEpochSeconds = event.startEpochSeconds,
-            stopEpochSeconds = event.stopEpochSeconds,
+            stopEpochSeconds = event.stopEpochSeconds, imageUrl = event.imageUrl,
         ))
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             "reminder:${event.eventId}", if (added) com.ambient.tv.R.string.reminder_set else com.ambient.tv.R.string.reminder_removed,
