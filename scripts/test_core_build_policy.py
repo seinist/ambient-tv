@@ -399,11 +399,17 @@ class CoreBuildPolicyTest(unittest.TestCase):
             source = root / "Common/Input/InputState.cpp"
             source.parent.mkdir(parents=True)
             source.write_text("#include <cstdio>\n")
+            decoder = root / "GPU/Common/TextureDecoder.cpp"
+            decoder.parent.mkdir(parents=True)
+            decoder.write_text(r'"QuickTexHashNEON_next:\n"' + "\n" +
+                               r'"blo QuickTexHashNEON_next\n"' + "\n")
             cmake = root / "CMakeLists.txt"
             cmake.write_text("\n".join(f'target_compile_options({target} PRIVATE "-O2")'
                                        for target in ("udis86", "cityhash", "zlib")))
             prepare_cmake(root, "ppsspp", "optimized-a57")
             self.assertIn("#include <cstdlib>", source.read_text())
+            self.assertEqual(decoder.read_text(), r'"1:\n"' + "\n" +
+                             r'"blo 1b\n"' + "\n")
             self.assertEqual(cmake.read_text().count('"-O3"'), 3)
 
     def test_command_boundaries_and_working_directory(self):

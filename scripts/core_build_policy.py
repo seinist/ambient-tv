@@ -535,6 +535,15 @@ def prepare_cmake(root, core, profile):
         if source.count(marker) != 1:
             raise ValueError("PPSSPP input include anchor changed")
         path.write_text(source.replace(marker, marker + "#include <cstdlib>\n"))
+        # ARMv7 inline assembly may be cloned/inlined by ThinLTO. Use
+        # an assembler-local numeric label rather than a fixed symbol.
+        path = root / "GPU/Common/TextureDecoder.cpp"
+        source = path.read_text()
+        label = r'"QuickTexHashNEON_next:\n"'
+        branch = r'"blo QuickTexHashNEON_next\n"'
+        if source.count(label) != 1 or source.count(branch) != 1 or source.count("QuickTexHashNEON_next") != 2:
+            raise ValueError("PPSSPP NEON texture hash label anchors changed")
+        path.write_text(source.replace(label, r'"1:\n"').replace(branch, r'"blo 1b\n"'))
     if "-O3" in PROFILES[profile][0]:
         if core == "dolphin":
             path = root / "Externals/mbedtls/CMakeLists.txt"
