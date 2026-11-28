@@ -296,6 +296,7 @@ subprojects {
     configurations.configureEach {
         resolutionStrategy.force(
             "org.chromium.net:cronet-api:$ambientChromiumCronetVersion",
+            "org.chromium.net:cronet:$ambientChromiumCronetVersion",
         )
     }
 }

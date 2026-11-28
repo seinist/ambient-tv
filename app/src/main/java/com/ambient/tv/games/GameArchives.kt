@@ -4,7 +4,7 @@ import com.ambient.tv.data.files.SeekableMedia
 import com.ambient.tv.games.library.GameRomTitles
 import com.ambient.tv.games.library.GameRomChecksums
 import com.github.junrar.Archive
-import com.github.junrar.exception.UnsupportedRarV5Exception
+import com.github.junrar.exception.UnsupportedRarVersionException
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipFile
@@ -24,7 +24,7 @@ import java.util.zip.CRC32
 class GameArchiveException(message: String) : IOException(message)
 
 /**
- * Packed games: ZIP, 7z, RAR (version 4; RAR5 is not readable) and GZ. An archive is unpacked
+ * Packed games: ZIP, 7z, RAR (RAR4 and RAR5) and GZ. An archive is unpacked
  * completely (a disc is CUE/M3U plus tracks), flat into one folder, and the file to start is picked
  * from what is inside. ZIP and 7z can also be looked into remotely (central directory / header at
  * the end of the file), so the file browser can name the system without copying the archive.
@@ -41,6 +41,8 @@ object GameArchives {
     internal const val MAX_PROBE_HEADER = 72 * 1024
     internal const val MAX_PROBE_ENTRIES = 5_000
     private const val SEVEN_ZIP_PROBE_MEMORY_LIMIT_KIB = 48 * 1024
+    // RAR5/RAR7 may advertise dictionaries far larger than an Android heap.
+    private const val RAR_MAX_DICTIONARY_BYTES = 128L * 1024 * 1024
 
     // Commons Compress delegates these ZIP methods to the optional zstd-jni runtime.
     private fun ZipArchiveEntry.usesZstandard(): Boolean =
@@ -292,7 +294,18 @@ object GameArchives {
             }
             "rar" -> try {
                 Archive(archive).use { rar ->
-                    rar.fileHeaders.filter { !it.isDirectory }.forEach { header ->
+                    val headers = rar.fileHeaders
+                    // Reject link entries rather than materializing symlinks/hardlinks from archives.
+                    // Validate all headers before writing; solid decoding may also visit predecessors.
+                    for (header in headers) {
+                        if (header.redirection != null) {
+                            throw GameArchiveException("${archive.name}: RAR link entries are not supported")
+                        }
+                        if (header.isRar5Family && header.rar5WinSize > RAR_MAX_DICTIONARY_BYTES) {
+                            throw GameArchiveException("${archive.name}: RAR dictionary exceeds memory limit")
+                        }
+                    }
+                    headers.filter { !it.isDirectory }.forEach { header ->
                         val out = target(header.fileName.replace('\\', '/'), header.fullUnpackSize) ?: return@forEach
                         out.outputStream().buffered(256 * 1024).use { stream ->
                             val capped = object : FilterOutputStream(stream) {
@@ -307,8 +320,8 @@ object GameArchives {
                         }
                     }
                 }
-            } catch (error: UnsupportedRarV5Exception) {
-                throw GameArchiveException("${archive.name}: RAR5 is not supported")
+            } catch (error: UnsupportedRarVersionException) {
+                throw GameArchiveException("${archive.name}: unsupported RAR version")
             }
             "gz" -> {
                 val out = target(archive.name.removeSuffix(".gz").removeSuffix(".GZ"), 0) ?: throw GameArchiveException(archive.name)

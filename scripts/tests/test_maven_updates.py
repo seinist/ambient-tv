@@ -196,7 +196,7 @@ class MavenUpdatesTest(unittest.TestCase):
             "media3-datasource-okhttp", "media3-datasource-cronet",
         })
         self.assertEqual({a.name for a in pins["chromiumCronet"].artifacts}, {
-            "cronet-api", "cronet-common", "cronet-embedded",
+            "cronet", "cronet-api", "cronet-common", "cronet-embedded",
         })
         self.assertEqual({a.name for a in pins["okhttp"].artifacts}, {
             "okhttp", "logging-interceptor", "okhttp-dnsoverhttps", "okhttp-brotli",

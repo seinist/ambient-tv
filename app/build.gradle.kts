@@ -574,7 +574,7 @@ dependencies {
         implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
         implementation("org.rustls:rustls-platform-verifier:${externalVersion("MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION")}")
     }
-    // Packed games: ZIP/7z (with LZMA via xz) and RAR4.
+    // Packed games: ZIP/7z (with LZMA via xz) and RAR4/RAR5.
     implementation(libs.commons.compress)
     implementation(libs.xz)
     implementation(libs.junrar)

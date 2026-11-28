@@ -128,6 +128,7 @@ junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
 
 # Host application and SmartTube wrapper Maven coordinates.
 chromium-cronet-api = { module = "org.chromium.net:cronet-api", version.ref = "chromiumCronet" }
+chromium-cronet = { module = "org.chromium.net:cronet", version.ref = "chromiumCronet" }
 chromium-cronet-common = { module = "org.chromium.net:cronet-common", version.ref = "chromiumCronet" }
 chromium-cronet-embedded = { module = "org.chromium.net:cronet-embedded", version.ref = "chromiumCronet" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
@@ -156,7 +157,7 @@ disklrucache = { module = "com.jakewharton:disklrucache", version.ref = "disklru
 netcipher = { module = "info.guardianproject.netcipher:netcipher", version.ref = "netcipher" }
 smarttube-dnsjava = { module = "dnsjava:dnsjava", version.ref = "smarttubeDnsjava" }
 smarttube-slf4j = { module = "org.slf4j:slf4j-nop", version.ref = "smarttubeSlf4j" }
-smarttube-slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "smarttubeSlf4j" }
+smarttube-slf4jApi = { module = "org.slf4j:slf4j-api", version.ref = "smarttubeSlf4j" }
 androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 
