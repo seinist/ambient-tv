@@ -774,7 +774,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=3&&
             limits.max_storage_buffer_range>=100001*4*3&&
-            u64::from(limits.max_storage_buffer_range)>=4*(100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
+            u64::from(limits.max_storage_buffer_range)>=4*(3*100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
         stats:Mutex::new(None)})))
 }
 
@@ -1954,7 +1954,8 @@ mod gpu_tests{
                         if tuned{
                             let tracks=windows.map(|window|HdrTrack{a:window.rect,b:window.rect,ellipse:[window.rect[0],window.rect[1]]});
                             let axes=[[0,0,0],[4,2,0],[4,2,90]];
-                            assert_eq!(ambient_svp_vk_hdr_stats_ellipse(pair,0,windows.as_ptr(),tracks.as_ptr(),axes.as_ptr(),phase,3),0);
+                            if i==0{assert_eq!(ambient_svp_vk_hdr_stats_ellipse(pair,0,windows.as_ptr(),tracks.as_ptr(),axes.as_ptr(),phase,3),0);}
+                            else{assert_eq!(ambient_svp_vk_hdr_stats_scene_legacy(pair,0,windows.as_ptr(),tracks.as_ptr(),axes.as_ptr(),3),0);}
                         }else{
                             assert!(!scene.is_null());
                             let mut global=windows[0];global.count=9;global.percentages[..9].copy_from_slice(&scene_p);
@@ -1974,7 +1975,19 @@ mod gpu_tests{
                     assert_eq!(ambient_svp_vk_seal(pair,fence),0);
                     d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
                     if mode==3{
-                        if tuned{
+                        if tuned&&i==1{
+                            let job=(&*pair).hdr_jobs[0].as_ref().unwrap();
+                            let frames=job.scene_frames().unwrap();
+                            assert_eq!(frames.len(),3);
+                            for (j,f) in frames.iter().enumerate(){
+                                let n=f.frame.bins.iter().map(|&v|u64::from(v)).sum::<u64>();
+                                assert_eq!(n,if j==0{u64::from(w)*u64::from(h)}else{10});
+                                // Independent Decimal ST 2084 fixture for FP16 0x3802;
+                                // allow adjacent half-float rounding in the synthesis.
+                                assert!(f.frame.maxscl.iter().all(|&x|(927..=937).contains(&x)));
+                                assert!((927..=937).contains(&((f.frame.linear_sum+n*5000)/(n*10000))));
+                            }
+                        }else if tuned{
                             let mut shifts=[[0i32;2];3];
                             assert_eq!(ambient_svp_vk_hdr_read_track(pair,0,stats.as_mut_ptr(),shifts.as_mut_ptr(),3),1);
                             assert_eq!(shifts,[[0,0];3]);
@@ -1995,7 +2008,7 @@ mod gpu_tests{
                             assert_eq!(ambient_svp_hdr_scene_validate(0,1,&measured,&measured,1),1);
                             ambient_svp_hdr_scene_destroy(scene);
                         }
-                        for (index,(r,window)) in stats.iter().zip(windows).take(if tuned{3}else{0}).enumerate(){
+                        for (index,(r,window)) in stats.iter().zip(windows).take(if tuned&&i==0{3}else{0}).enumerate(){
                             let area=(window.rect[2]-window.rect[0])*(window.rect[3]-window.rect[1]);
                             if tuned&&index>0{
                                 let (major,minor)=if index==1{(4i32,2i32)}else{(2i32,4i32)};
