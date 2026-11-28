@@ -46,11 +46,13 @@ private fun ScheduleAction(title: String, imageUrl: String?, plan: ScheduledPlay
     val context = LocalContext.current.applicationContext
     val store = remember(context) { LiveTvReminderStore(context) }
     val entries by store.reminders.collectAsState()
+    var editing by remember(plan.provider, plan.targetId) { mutableStateOf(false) }
+    val initialStart = remember(plan.provider, plan.targetId, editing) {
+        ZonedDateTime.now().plusMinutes(15).withSecond(0).withNano(0).toEpochSecond()
+    }
     val draft = LiveTvReminder(plan.provider, "", plan.provider.replaceFirstChar { it.uppercase() }, plan.targetId,
-        title, ZonedDateTime.now().plusMinutes(15).withSecond(0).withNano(0).toEpochSecond(),
-        imageUrl = imageUrl, plan = plan)
+        title, initialStart, imageUrl = imageUrl, plan = plan)
     val existing = entries.firstOrNull { it.id == draft.id }
-    var editing by remember(draft.id) { mutableStateOf(false) }
     TvActionButton(stringResource(if (existing == null) R.string.schedule_playback else R.string.schedule_edit),
         onClick = { editing = true }, enabled = enabled, selected = existing != null, icon = Icons.Filled.Schedule)
     if (editing) ScheduledPlaybackDialog(existing ?: draft, store) { editing = false }
@@ -81,13 +83,13 @@ internal fun ScheduledPlaybackDialog(entry: LiveTvReminder, store: LiveTvReminde
             TvActionButton(stringResource(R.string.common_back), onClick = onClose)
         }) {
         if (exists) DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (exists) TvActionButton(stringResource(R.string.programme_reminder_play), onClick = {
+                TvActionButton(stringResource(R.string.programme_reminder_play), onClick = {
                     val saved = store.find(entry.id)
                     if (saved != null && scheduledPlaybackIdentity(context, initial.provider, initial.targetId) == initial.sourceIdentity) {
                         store.snooze(saved.id); LiveTvReminderPrompt.launchPlan(saved); onClose()
                     } else error = true
                 })
-                if (exists) TvActionButton(stringResource(R.string.reminder_remove), onClick = { store.remove(entry.id); onClose() })
+                TvActionButton(stringResource(R.string.reminder_remove), onClick = { store.remove(entry.id); onClose() })
         }
         Text(time.format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
             .withLocale(Locale.getDefault())))
