@@ -47,7 +47,7 @@ void mp_image_copy_attributes(struct mp_image *,struct mp_image *);
 // Keep entry points checked with the actual expected types.
 void svp_mpv_compile_entrypoints(void *lib,struct mp_image *img)
 {
-    struct svp_vk_mpv *s=svp_vk_new(lib,img,24,60,NULL,0);
+    struct svp_vk_mpv *s=svp_vk_new(lib,img,24,60,NULL);
     if (!s) return;
     if (svp_vk_feed(s,img)) svp_vk_eof(s);
     struct mp_image *out=svp_vk_take_output(s);
