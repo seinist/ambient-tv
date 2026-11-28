@@ -10,7 +10,7 @@ import android.database.sqlite.SQLiteDatabase
  */
 internal object GameLibraryQueryIndex {
     // Bump when title/search/system-label/eligibility rules change, so old projections rebuild without a NAS scan.
-    const val POLICY_VERSION = 6
+    const val POLICY_VERSION = 7
 
     fun create(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_query (
@@ -72,7 +72,7 @@ internal object GameLibraryQueryIndex {
         }
         // A rescan normally changes only game_entries.seen. Keep the title indexes untouched
         // in that case; rewriting every unchanged index page is wasted I/O on TV flash.
-        val stamp = gameQueryDigest(listOf(game.folderId, game.systemId, game.favorite.toString(),
+        val stamp = gameQueryDigest(listOf(POLICY_VERSION.toString(), game.folderId, game.systemId, game.favorite.toString(),
             game.lastPlayed.toString(), game.customTitle.orEmpty(), folderDepth.toString(), systemName, game.filename,
             game.metadataTitle.orEmpty(), game.metadataYear?.toString().orEmpty(), game.coverPath.orEmpty(),
             game.backdropPath.orEmpty(), game.coverWidth?.toString().orEmpty(), game.coverHeight?.toString().orEmpty(),
