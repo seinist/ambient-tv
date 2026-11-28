@@ -168,8 +168,6 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
             jobs += [(core, abi, variant) for core in extended for abi in declared_abis
                      for variant in ("baseline", "optimized")]
             jobs += [(core, "arm64-v8a", "optimized-a57") for core in extended]
-            jobs += [("citra2018", "arm64-v8a", "citra-arm64-jit"),
-                     ("yabause", "arm64-v8a", "yabause-arm64-jit")]
         else:
             jobs += [(core, abi, "optimized") for core in original for abi in declared_abis]
             jobs += [(core, "arm64-v8a", "optimized-a57") for core in original]

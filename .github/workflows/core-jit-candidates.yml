@@ -1,0 +1,26 @@
+name: ARM64 JIT candidates
+on:
+  pull_request:
+    paths:
+      - cores/cores.json
+      - scripts/core_*.py
+      - scripts/test_core_*.py
+      - scripts/native_core_candidates/**
+      - .github/workflows/cores.yml
+      - .github/workflows/core-jit-candidates.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  candidates:
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [citra-arm64-jit, yabause-arm64-jit]
+    uses: ./.github/workflows/cores.yml
+    with:
+      profile: ${{ matrix.profile }}
+      publish: false
+      publish_experimental: false
+    secrets: inherit

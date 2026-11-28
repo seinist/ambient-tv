@@ -73,11 +73,9 @@ class CoreBuildPolicyTest(unittest.TestCase):
                 expected = {(abi, profile) for abi in core.get("abis", self.catalog["abis"])
                             for profile in ("baseline", "optimized")}
                 expected.add(("arm64-v8a", "optimized-a57"))
-                if core["core"] in {"citra2018", "yabause"}:
-                    expected.add(("arm64-v8a", "citra-arm64-jit" if core["core"] == "citra2018" else "yabause-arm64-jit"))
                 self.assertEqual(actual, expected)
         self.assertEqual({item["profile"] for item in matrix},
-                         {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths", "optimized", "optimized-a57", "citra-arm64-jit", "yabause-arm64-jit"})
+                         {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths", "optimized", "optimized-a57"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
         self.assertEqual([item["makevars"] for item in matrix if item["profile"] == "picodrive-sh2"], ["use_sh2drc=1"])
 
