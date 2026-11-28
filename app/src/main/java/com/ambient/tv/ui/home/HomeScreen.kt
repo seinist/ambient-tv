@@ -52,7 +52,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
