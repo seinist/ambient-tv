@@ -20,7 +20,7 @@ object GameRomTitles {
             when (systemId) {
                 "gb" -> text(read(0x134, 16), StandardCharsets.US_ASCII)
                 "gba" -> text(read(0xa0, 12), StandardCharsets.US_ASCII)
-                "nds" -> text(read(0, 12), StandardCharsets.US_ASCII)
+                "nds" -> nds(read)
                 "snes" -> snes(read)
                 "megadrive" -> if (ext in setOf("md", "gen", "68k")) {
                     text(read(0x150, 48), StandardCharsets.US_ASCII)
@@ -35,6 +35,37 @@ object GameRomTitles {
                 else -> null
             }
         }.getOrNull()
+    }
+
+    /** The cartridge's twelve-byte internal ID is not a display title. Read its UTF-16 banner
+     * instead, keeping the read bounded and falling back to the filename if unavailable. */
+    private fun nds(read: (Long, Int) -> ByteArray?): String? {
+        val header = read(0, 0x6c) ?: return null
+        if (header.size < 0x6c) return null
+        val offset = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN).getInt(0x68).toLong() and 0xffffffffL
+        if (offset !in 0x200L..(512L * 1024 * 1024 - 0x840)) return null
+        val versionBytes = read(offset, 2) ?: return null
+        if (versionBytes.size != 2) return null
+        val count = when (u16(versionBytes, 0)) {
+            1 -> 6
+            2 -> 7
+            3, 0x103 -> 8
+            else -> return null
+        }
+        val preferred = when (Locale.getDefault().language) {
+            "ja" -> 0; "fr" -> 2; "de" -> 3; "it" -> 4; "es" -> 5; "zh" -> 6; "ko" -> 7
+            else -> 1
+        }
+        for (index in (listOf(preferred, 1, 0) + (0 until count)).distinct().filter { it < count }) {
+            val bytes = read(offset + 0x240 + index * 0x100, 0x100) ?: continue
+            if (bytes.size != 0x100) continue
+            // The first nonempty line is the game title; following lines often name the publisher.
+            val title = String(bytes, StandardCharsets.UTF_16LE).substringBefore('\u0000')
+                .lineSequence().map(String::trim).firstOrNull(String::isNotBlank) ?: continue
+            if (title.length in 2..96 && title.any(Char::isLetterOrDigit) &&
+                title.none { it.isISOControl() || it == '\ufffd' || it == '\uffff' }) return title
+        }
+        return null
     }
 
     /** SNES has LoROM/HiROM variants and sometimes a 512-byte copier header. */
