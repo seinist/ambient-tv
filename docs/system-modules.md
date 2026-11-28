@@ -283,3 +283,35 @@ module CI. Actual Android linkage, TLS verification, login, session
 restore, playback and APK size must still be tested; independent native
 release publication and corresponding GPL source distribution are not
 yet enabled. Candidate generation is not a signed public release.
+
+### SmartTube external adapter candidate
+
+SmartTubeEngine and YouTubeLoungeBridge now resolve their upstream types
+through a single process-selected loader. The external adapter owns
+com.liskovsoft and com.eclipsesource.v8 implementation classes, including
+the child-owned Android J2V8 native load. Generated Android R classes,
+the common dependency graph and the existing app reflection bridge remain
+host-owned. The signed binding fingerprint covers the SmartTube host
+sources, pinned upstream versions, wrapper configuration and patches.
+
+The current candidate is intentionally an override format, not a fully
+stripped modular SmartTube build: the pinned Android resource/assets and
+shared libraries are still needed in the host, and the bundled upstream
+engine remains in both APK variants until resource-only packaging and
+Android linkage have been verified. The module is offered only when the
+pinned wrapper graph is present. No account data is migrated or removed.
+The startup probe and state flow gate system catalog, settings, Home,
+sidebar and first-run sign-in without changing stored enabled preferences.
+
+Candidate export:
+
+    ./gradlew :app:exportSmartTubeAdapterDex -PAPK_ABI=arm64
+
+Output: app/build/outputs/system-modules/smarttube-dex.
+Use package_system_modules.py --module smarttube --smarttube-dex-dir
+with matching Full APKs for all four ABIs and corresponding license notices.
+The SmartTube integration workflow now exports the DEX candidate.
+Format tests cover ownership, resource classes and J2V8 packaging.
+Publication, native 16 KiB validation of the pinned J2V8 binaries,
+resource-only APK packaging, Android playback/TV-link tests and actual
+size measurements are still outstanding.
