@@ -1143,6 +1143,19 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_read_track(pair:*const VulkanPair,ph
             Some(unsafe{std::slice::from_raw_parts_mut(shifts,count as usize)})).map_or(-1,|_|1)
     })).unwrap_or(-1)
 }
+// Optional metadata-only affine readback, compatible with the legacy tracker.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_read_affine(pair:*const VulkanPair,phase:u32,
+    gradients:*mut [f32;4],count:u32)->i32{
+    if pair.is_null()||gradients.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&*pair};let i=phase as usize;
+        if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
+        match unsafe{p.core.device.get_fence_status(p.fence)}{Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
+        let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        job.gradients(unsafe{std::slice::from_raw_parts_mut(gradients,count as usize)}).map_or(-1,|_|1)
+    })).unwrap_or(-1)
+}
 // The caller must pass the fence of the successful submission containing
 // this exact command buffer. The fence is borrowed and must not be reset
 // or destroyed before release. Never free in-flight descriptors/images.
