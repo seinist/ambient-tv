@@ -183,6 +183,28 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
         atomicStore(&words[o+42u],bitcast<u32>(shift.y));
     }
 }
+// Exact cardinal-angle boundary test, including pixels on the ellipse.
+// Arbitrary-angle windows use the same normalized evaluation in both
+// reductions. Static legacy windows use the higher-precision CPU spans.
+fn ellipse_contains(id:vec2u,o:u32)->bool{
+    let center=vec2i(i32(atomicLoad(&words[o+52u])),i32(atomicLoad(&words[o+53u])))+
+        vec2i(bitcast<i32>(atomicLoad(&words[o+41u])),bitcast<i32>(atomicLoad(&words[o+42u])));
+    let axes=vec2u(atomicLoad(&words[o+68u]),atomicLoad(&words[o+69u]));
+    if any(axes==vec2u(0u)){return false;}
+    let angle=atomicLoad(&words[o+70u]);
+    let delta=vec2i(id)-center;
+    if angle==0u||angle==90u||angle==180u{
+        let d=vec2u(abs(select(delta,delta.yx,angle==90u)));
+        let a2=axes.x*axes.x;let b2=axes.y*axes.y;
+        let lhs=wide_add(wide_mul(d.x*d.x,b2),wide_mul(d.y*d.y,a2));
+        let rhs=wide_mul(a2,b2);
+        return lhs.y<rhs.y||(lhs.y==rhs.y&&lhs.x<=rhs.x);
+    }
+    let rotation=f32(angle)*0.017453292519943295;
+    let q=vec2f(dot(vec2f(delta),vec2f(cos(rotation),sin(rotation)))/f32(axes.x),
+        dot(vec2f(delta),vec2f(-sin(rotation),cos(rotation)))/f32(axes.y));
+    return dot(q,q)<=1.0;
+}
 @compute @workgroup_size(8,8)
 fn collect(@builtin(global_invocation_id) id:vec3u){
     if any(id.xy>=params.xy){return;}
@@ -198,14 +220,7 @@ fn collect(@builtin(global_invocation_id) id:vec3u){
             let span=span_base+2u*id.y;
             inside=id.x>=atomicLoad(&words[span])&&id.x<atomicLoad(&words[span+1u]);
         }else if atomicLoad(&words[o+67u])==1u{
-            let center=vec2f(f32(atomicLoad(&words[o+52u])),f32(atomicLoad(&words[o+53u])))+
-                vec2f(f32(bitcast<i32>(atomicLoad(&words[o+41u]))),f32(bitcast<i32>(atomicLoad(&words[o+42u]))));
-            let axes=vec2f(f32(atomicLoad(&words[o+68u])),f32(atomicLoad(&words[o+69u])));
-            let rotation=f32(atomicLoad(&words[o+70u]))*0.017453292519943295;
-            let delta=vec2f(id.xy)-center;
-            let q=vec2f(dot(delta,vec2f(cos(rotation),sin(rotation)))/axes.x,
-                dot(delta,vec2f(-sin(rotation),cos(rotation)))/axes.y);
-            inside=dot(q,q)<=1.0;
+            inside=ellipse_contains(id.xy,o);
         }
         if inside&&all(id.xy>=lo)&&all(id.xy<hi){
             atomicMax(&words[o+20u],c.x);
@@ -377,14 +392,7 @@ fn scene_linear_sum(@builtin(global_invocation_id) id:vec3u,@builtin(local_invoc
             let span=span_base+2u*id.y;
             inside=id.x>=atomicLoad(&words[span])&&id.x<atomicLoad(&words[span+1u]);
         }else if atomicLoad(&words[o+67u])==1u{
-            let center=vec2f(f32(atomicLoad(&words[o+52u])),f32(atomicLoad(&words[o+53u])))+
-                vec2f(f32(bitcast<i32>(atomicLoad(&words[o+41u]))),f32(bitcast<i32>(atomicLoad(&words[o+42u]))));
-            let axes=vec2f(f32(atomicLoad(&words[o+68u])),f32(atomicLoad(&words[o+69u])));
-            let rotation=f32(atomicLoad(&words[o+70u]))*0.017453292519943295;
-            let delta=vec2f(id.xy)-center;
-            let q=vec2f(dot(delta,vec2f(cos(rotation),sin(rotation)))/axes.x,
-                dot(delta,vec2f(-sin(rotation),cos(rotation)))/axes.y);
-            inside=dot(q,q)<=1.0;
+            inside=ellipse_contains(id.xy,o);
         }
         if inside&&all(id.xy>=lo)&&all(id.xy<hi){value=linear;}
 
