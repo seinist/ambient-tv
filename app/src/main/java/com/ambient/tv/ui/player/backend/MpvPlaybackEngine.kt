@@ -1856,7 +1856,7 @@ internal class MpvPlaybackEngine(
             liveStream || broadcastSource || audioOnly || initialStartPositionMs > 0 ||
             !imageOptions.svp.hdrTwoPass || !imageOptions.svp.hardwareResident ||
             sourceHdrStandard != HdrStandard.HDR10_PLUS || !svpAllowed(context) ||
-            getPropertyString("seekable") != "yes" || HdrScenePlanner.localFile(url) == null) return
+            getPropertyString("seekable") != "yes" || !HdrScenePlanner.supportedSource(url)) return
         val base = activeCpuImageFilters["plex-svp"]?.takeIf { it.endsWith(":hwresident=1") } ?: return
         if (imageOptions.svpMode == "quality" && !svpQualityCleared && !svpQualityProbeFailed) return
         val source = pipelineFps() ?: return
@@ -1864,7 +1864,7 @@ internal class MpvPlaybackEngine(
         hdrSceneAttempted = true
         hdrSceneJob = imageScope.launch {
             val result = try {
-                HdrScenePlanner.scan(url, source, target, false, File(context.noBackupFilesDir, "hdr-scene"))
+                HdrScenePlanner.scan(context, url, headers, source, target, false, File(context.noBackupFilesDir, "hdr-scene"))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { Timber.w(e, "HDR scene plan unavailable"); null }
             if (result == null) { Timber.i("HDR10+ automatic scene plan not supported for this file"); return@launch }
@@ -2718,7 +2718,7 @@ internal class MpvPlaybackEngine(
 
     /** Resolve a fresh timeshift live edge on every reopen, including surface recovery. */
     private fun playbackUrlForOpen(): String =
-        com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, streamOpened).also { streamOpened = true }
+        hdrSceneSession?.playbackPath() ?: com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, streamOpened).also { streamOpened = true }
 
     /** Keep checking incomplete metadata; MediaCodec's absent interlace flag is not a negative. */
     private fun probeShieldBroadcast(): Boolean {
