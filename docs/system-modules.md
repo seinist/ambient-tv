@@ -448,6 +448,30 @@ finish. Verification may need to finish its current bounded I/O before aborting.
 Closing the settings composition also requests cancellation. Device UI and CI
 validation remain required.
 
+### Native candidate and publication pipeline
+
+The Build release workflow accepts a single optional module_candidate on main.
+It builds signed Full APKs, verifies their APK manifest and common identity,
+exports the matching adapter DEX where necessary, and generates a four-ABI
+unsigned module candidate with APK hashes and exact commit/run provenance.
+The candidate checks archive hashes, payload roots and 16 KiB ELF load alignment.
+It does not publish an application release draft. Moonlight is intentionally
+excluded until its final host integration is present.
+
+SVP uses the build-generated resolved-dependency notices. Other modules require
+reviewed notices under third_party_licenses/system_modules/<module>; missing
+notices fail closed. This is not a substitute for corresponding source delivery.
+After verifying the exact artifact on devices and arranging required license and
+source distribution, dispatch System module packages on the same main commit
+with publish=true, reviewed=true, native_module and candidate_run_id. The signing
+job checks the successful same-repository build run, exact main SHA, four ABI
+assets and provenance before accessing the pinned signing key. It publishes
+only a non-latest release, never replacing an application update release.
+Native catalog versions use the originating numeric run ID. The legacy shader
+asset-only publishing mode is retained separately. No native release has been
+published or device-tested by this change; remaining notice/source preparation
+and incremental builds are separate tasks.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

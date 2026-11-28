@@ -6,6 +6,9 @@ on:
       - 'app/src/main/java/com/ambient/tv/modules/**'
       - 'app/src/main/assets/games/slang/**'
       - 'scripts/package_system_modules.py'
+      - 'scripts/prepare_native_module_release.py'
+      - 'scripts/test_prepare_native_module_release.py'
+      - '.github/workflows/release.yml'
       - 'scripts/export_monogram_adapter.py'
       - 'scripts/test_export_monogram_adapter.py'
       - 'scripts/strip_smarttube_classes.py'
@@ -23,7 +26,20 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish verified shader assets (main only)
+        description: Publish reviewed candidate (main only)
+        type: boolean
+        default: false
+      native_module:
+        description: Native module to publish, or none for legacy shader assets
+        type: choice
+        default: none
+        options: [none, monogram, smarttube, spotify, mpv, vlc, libretrodroid, projectm, svp, shaders]
+      candidate_run_id:
+        description: Successful Build release run ID for the reviewed native candidate
+        type: string
+        default: ''
+      reviewed:
+        description: Confirm device validation and corresponding source/license distribution review
         type: boolean
         default: false
 
@@ -46,6 +62,7 @@ jobs:
       - name: Package format tests
         run: |
           python3 -m unittest discover -s scripts -p test_package_system_modules.py
+          python3 -m unittest discover -s scripts -p test_prepare_native_module_release.py
           python3 -m unittest discover -s scripts -p test_check_modular_preview_apk.py
           python3 -m unittest discover -s scripts -p test_export_monogram_adapter.py
           python3 -m unittest discover -s scripts -p test_strip_smarttube_classes.py
@@ -68,7 +85,7 @@ jobs:
 
   publish-shaders:
     needs: package-shaders
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && inputs.native_module == 'none' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -110,4 +127,51 @@ jobs:
           openssl dgst -sha256 -sign "$key" -out module-release/manifest.json.sig module-release/manifest.json
           openssl dgst -sha256 -verify cores/signing-public.pem -signature module-release/manifest.json.sig module-release/manifest.json
           gh release create "$tag" module-release/* --draft --title "System library: Vulkan shaders" --target "$GITHUB_SHA" --notes "Signed optional shader assets."
+          gh release edit "$tag" --draft=false --latest=false
+
+  publish-native:
+    needs: package-shaders
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && inputs.reviewed && inputs.native_module != 'none' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      MODULE: ${{ inputs.native_module }}
+      CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Verify candidate run origin
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_RUN" =~ ^[1-9][0-9]{0,17}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN" | jq -e --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '.path == ".github/workflows/release.yml" and .event == "workflow_dispatch" and .head_branch == "main" and .head_sha == $sha and .conclusion == "success" and .status == "completed" and .head_repository.full_name == $repo'
+      - uses: actions/download-artifact@v5
+        with:
+          name: native-module-candidate-${{ inputs.native_module }}-${{ inputs.candidate_run_id }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: module-release
+      - name: Verify and sign reviewed native candidate
+        env:
+          SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          tag="$(python3 scripts/prepare_native_module_release.py verify --module "$MODULE" --run-id "$CANDIDATE_RUN" --sha "$GITHUB_SHA" --output module-release)"
+          test -n "$SIGNING_KEY"
+          umask 077
+          key="$(mktemp)"
+          pub="$(mktemp)"
+          trap 'rm -f "$key" "$pub"' EXIT
+          printf '%s\\n' "$SIGNING_KEY" > "$key"
+          openssl pkey -in "$key" -pubout -out "$pub"
+          cmp "$pub" cores/signing-public.pem
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          openssl dgst -sha256 -sign "$key" -out module-release/manifest.json.sig module-release/manifest.json
+          openssl dgst -sha256 -verify cores/signing-public.pem -signature module-release/manifest.json.sig module-release/manifest.json
+          gh release create "$tag" module-release/* --draft --target "$GITHUB_SHA" --title "System library: $MODULE" --notes "Reviewed optional native module. Full APK build run: $CANDIDATE_RUN."
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           gh release edit "$tag" --draft=false --latest=false

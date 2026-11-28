@@ -12,6 +12,12 @@ on:
         description: 'Android versionCode (empty = version.properties; increase for updates)'
         type: string
 
+      module_candidate:
+        description: 'Build one unsigned native module candidate from the signed Full APKs (main only)'
+        type: choice
+        default: none
+        options: [none, monogram, smarttube, spotify, mpv, vlc, libretrodroid, projectm, svp, shaders]
+
 permissions:
   contents: read
 
@@ -35,6 +41,16 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      - name: Check module candidate request
+        if: inputs.module_candidate != '' && inputs.module_candidate != 'none'
+        env:
+          MODULE: ${{ inputs.module_candidate }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          echo 'MONOGRAM_NATIVE=1' >> "$GITHUB_ENV"
+          if [[ "$MODULE" == spotify ]]; then echo 'SPOTIFY_NATIVE=1' >> "$GITHUB_ENV"; fi
 
       - name: Resolve version
         env:
@@ -134,7 +150,31 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+      - name: Build native module candidate
+        if: inputs.module_candidate != '' && inputs.module_candidate != 'none'
+        env:
+          MODULE: ${{ inputs.module_candidate }}
+        run: |
+          set -euo pipefail
+          case "$MODULE" in
+            monogram) ./gradlew :app:exportMonogramAdapterDex -PAPK_ABI=arm64 ;;
+            smarttube) ./gradlew :app:exportSmartTubeAdapterDex -PAPK_ABI=arm64 ;;
+          esac
+          notices="third_party_licenses/system_modules/$MODULE"
+          if [[ "$MODULE" == svp ]]; then notices=app/src/main/assets/licenses/open-svpflow; fi
+          python3 scripts/prepare_native_module_release.py build --module "$MODULE" --run-id "$GITHUB_RUN_ID" --sha "$GITHUB_SHA" --output module-candidate --dist dist --aapt2 "$ANDROID_HOME/build-tools/37.0.0/aapt2" --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner" --notices "$notices"
+
+      - name: Upload native module candidate
+        if: inputs.module_candidate != '' && inputs.module_candidate != 'none'
+        uses: actions/upload-artifact@v5
+        with:
+          name: native-module-candidate-${{ inputs.module_candidate }}-${{ github.run_id }}
+          path: module-candidate/
+          if-no-files-found: error
+          compression-level: 0
+
       - name: Create release draft
+        if: inputs.module_candidate == '' || inputs.module_candidate == 'none'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
