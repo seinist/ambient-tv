@@ -137,6 +137,8 @@ int ambient_svp_vk_hdr_read_track(const AmbientSvpVkPair *,uint32_t,AmbientSvpHd
 /* Column-major displacement gradient (dx/dx, dy/dx, dx/dy, dy/dy).
  * Zero means no reliable fit. Same fence and lifetime as hdr_read_track. */
 int ambient_svp_vk_hdr_read_affine(const AmbientSvpVkPair *,uint32_t,float (*)[4],uint32_t);
+/* Ellipse geometry: outer major/minor axes and angle in degrees. */
+int ambient_svp_vk_hdr_stats_ellipse(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],float,uint32_t);
 /* Affine tracking additionally changes the measured rectangle. */
 int ambient_svp_vk_hdr_stats_affine(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,float,uint32_t);
 int ambient_svp_vk_hdr_read_rectangles(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
