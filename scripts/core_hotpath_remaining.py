@@ -813,12 +813,17 @@ PATCHES = {
     [
       "yabause/src/libretro/libretro.c",
       "static int16_t libretro_input_bitmask[12] = {-1,};",
-      "static int32_t libretro_input_bitmask[12] = {-1,};"
+      "static int32_t libretro_input_bitmask[12] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};"
     ],
     [
       "yabause/src/libretro/libretro.c",
       "libretro_input_bitmask[port] = input_state_cb(port, RETRO_DEVICE_JOYPAD, index, RETRO_DEVICE_ID_JOYPAD_MASK);",
       "libretro_input_bitmask[port] = (uint16_t)input_state_cb(port, RETRO_DEVICE_JOYPAD, index, RETRO_DEVICE_ID_JOYPAD_MASK);"
+    ],
+    [
+      "yabause/src/sh2int.c",
+      "   while(context->cycles < cycles)\n   {\n      int cycles_before = context->cycles;\n      int cycles_diff = 0;\n      // Fetch Instruction\n\n      if (yabsys.sh2_cache_enabled)\n      {\n         if ((context->regs.PC & 0xC0000000) == 0xC0000000)\n            context->instruction = DataArrayReadWord(context, context->regs.PC);\n         else\n            context->instruction = ((fetchfunc *)context->fetchlist)[(context->regs.PC >> 20) & 0x0FF](context, context->regs.PC);\n      }\n      else\n      {\n         context->instruction = ((fetchfunc *)context->fetchlist)[(context->regs.PC >> 20) & 0x0FF](context, context->regs.PC);\n      }\n\n      // Execute it\n      ((opcodefunc *)context->opcodes)[context->instruction](context);\n\n      cycles_diff = context->cycles - cycles_before;\n\n      if (context->model == SHMT_SH1)\n         sh1_dma_exec(cycles_diff);\n   }",
+      "   // The CPU model is fixed for the lifetime of a context. Keep the CD\n   // controller's SH1 DMA accounting out of both Saturn SH2 dispatch loops.\n   if (context->model != SHMT_SH1)\n   {\n      while (context->cycles < cycles)\n      {\n         const u32 pc = context->regs.PC;\n         if (yabsys.sh2_cache_enabled && (pc & 0xC0000000) == 0xC0000000)\n            context->instruction = DataArrayReadWord(context, pc);\n         else\n            context->instruction = ((fetchfunc *)context->fetchlist)[(pc >> 20) & 0x0FF](context, pc);\n         ((opcodefunc *)context->opcodes)[context->instruction](context);\n      }\n   }\n   else\n   {\n      while (context->cycles < cycles)\n      {\n         const int cycles_before = context->cycles;\n         const u32 pc = context->regs.PC;\n         if (yabsys.sh2_cache_enabled && (pc & 0xC0000000) == 0xC0000000)\n            context->instruction = DataArrayReadWord(context, pc);\n         else\n            context->instruction = ((fetchfunc *)context->fetchlist)[(pc >> 20) & 0x0FF](context, pc);\n         ((opcodefunc *)context->opcodes)[context->instruction](context);\n         sh1_dma_exec(context->cycles - cycles_before);\n      }\n   }"
     ]
   ],
   "ymir": [
