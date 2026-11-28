@@ -2343,7 +2343,7 @@ private fun AmbientTvApp(
                 com.ambient.tv.livetv.scheduledPlaybackIdentity(scheduleContext, plan.provider, plan.targetId) != plan.sourceIdentity) return@LaunchedEffect
             if (plan.provider == "games") {
                 scheduledGame = reminder
-                if (plan.restart) gameSelections.playFresh(plan.targetId) else gameSelections.play(plan.targetId)
+                gameSelections.playScheduled(plan.targetId, plan.restart)
             } else {
                 requestLocalPlayback(plan.route(), reminder.title) { route ->
                     if (store.find(reminder.id)?.let { it.plan == plan && it.startEpochSeconds == reminder.startEpochSeconds } == true &&
@@ -4186,7 +4186,7 @@ private fun AmbientTvApp(
                 }
                 GameSelectionDialog(
                     state = gameSelectionState,
-                    onDismiss = gameSelections::cancel,
+                    onDismiss = { scheduledGame = null; gameSelections.cancel() },
                     onPlay = { gameSelections.playPending() },
                     onPlayFresh = { gameSelections.playPending(fresh = true) },
                     onWake = { gameSelections.playPending(allowWake = true) },
