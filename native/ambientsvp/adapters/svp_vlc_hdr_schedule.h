@@ -155,7 +155,8 @@ static int svp_android_open(filter_t *f)
         v->i_chroma!=VLC_CODEC_ANDROID_OPAQUE||f->fmt_out.video.i_chroma!=v->i_chroma||
         v->orientation!=ORIENT_NORMAL||v->projection_mode!=PROJECTION_MODE_RECTANGULAR||
         v->i_visible_width<32||v->i_visible_height<32||
-        (uint64_t)v->i_visible_width*v->i_visible_height>1920u*1080u||
+        v->i_visible_width>3840||v->i_visible_height>2160||
+        ((uint64_t)v->i_visible_width*v->i_visible_height>1920u*1080u&&!var_InheritInteger(f,"ambientsvp-hdr-pass"))||
         !v->i_frame_rate||!v->i_frame_rate_base||
         (v->transfer!=TRANSFER_FUNC_SMPTE_ST2084&&v->transfer!=TRANSFER_FUNC_HLG&&!v->dovi.profile))
         return VLC_EGENERIC;
