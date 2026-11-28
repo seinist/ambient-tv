@@ -937,19 +937,35 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held(s:*const VulkanResident,queu
         if submitted{
             // A failed wait may only release resources after confirmed
             // retirement/device loss. Retry queue idle before cleanup.
+            let mut lost=false;
             if result.is_err(){
-                match d.queue_wait_idle(queue){
-                    Ok(())|Err(vk::Result::ERROR_DEVICE_LOST)=>{},
-                    Err(_)=>return -2, // unknown retirement: leak rather than free in-flight resources
-                }
+                // Keep the caller's held textures alive until retirement
+                // is proven. Unexpected host allocation errors are retried.
+                loop{match d.queue_wait_idle(queue){
+                    Ok(())=>break,
+                    Err(vk::Result::ERROR_DEVICE_LOST)=>{lost=true;break;},
+                    Err(_)=>std::thread::yield_now(),
+                }}
             }
-            if ambient_svp_vk_release(pair)!=1{return -2;}
+            if lost{core.lost.store(true,Ordering::Release);}
+            // The seal contract is satisfied by this valid fence and
+            // rendered pair. On confirmed loss drop without pooling.
+            if lost{drop(Box::from_raw(pair));}
+            else if ambient_svp_vk_release(pair)!=1{
+                // Queue idle proves retirement even if a fence status
+                // query fails. Discard rather than reuse the bundle.
+                drop(Box::from_raw(pair));
+            }
+            d.destroy_command_pool(pool,None);
+            for view in views{d.destroy_image_view(view,None);}
+            d.destroy_fence(fence,None);
+            return if lost{-1}else{0};
         }
         d.destroy_command_pool(pool,None);
         if !submitted&&!pair.is_null(){ambient_svp_vk_cancel(pair);}
         for view in views{d.destroy_image_view(view,None);}
         d.destroy_fence(fence,None);
-        if result.is_ok(){0}else if submitted{-2}else{-1}
+        if result.is_ok(){0}else{-1}
     })).unwrap_or(-2)
 }
 #[unsafe(no_mangle)]
