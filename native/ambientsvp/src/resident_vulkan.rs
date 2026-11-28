@@ -1174,7 +1174,7 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_read_affine(pair:*const VulkanPair,p
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_hdr_read_rectangles(pair:*const VulkanPair,phase:u32,
     rectangles:*mut [u32;4],count:u32)->i32{
-    if pair.is_null()||gradients.is_null()||!(1..=3).contains(&count){return -1;}
+    if pair.is_null()||rectangles.is_null()||!(1..=3).contains(&count){return -1;}
     catch_unwind(AssertUnwindSafe(||{
         let p=unsafe{&*pair};let i=phase as usize;
         if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
