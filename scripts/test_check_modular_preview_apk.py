@@ -48,12 +48,20 @@ class ModularPreviewTest(unittest.TestCase):
             data[153:153 + len(text)] = text
             return bytes(data)
         module = "Lcom/ambient/tv/data/telegram/MonogramNativeBackend;"
-        preview.verify_no_monogram_classes(dex(module, False))
-        preview.verify_no_monogram_classes(dex("Lcom/ambient/tv/data/telegram/MonogramModuleFactory;", True))
+        preview.verify_no_optional_classes(dex(module, False))
+        preview.verify_no_optional_classes(dex("Lcom/ambient/tv/data/telegram/MonogramModuleFactory;", True))
         with self.assertRaisesRegex(ValueError, "bundled Monogram"):
-            preview.verify_no_monogram_classes(dex(module, True))
+            preview.verify_no_optional_classes(dex(module, True))
         with self.assertRaisesRegex(ValueError, "bundled Monogram"):
-            preview.verify_no_monogram_classes(dex("Lcom/sun/jna/Native;", True))
+            preview.verify_no_optional_classes(dex("Lcom/sun/jna/Native;", True))
+
+        for name in ("Lcom/liskovsoft/youtubeapi/service/YouTubeServiceManager;",
+                     "Lcom/eclipsesource/v8/V8;",
+                     "Lcom/ambient/tv/youtube/SmartTubeModuleAdapter;"):
+            preview.verify_no_optional_classes(dex(name, False))
+            with self.assertRaisesRegex(ValueError, "bundled SmartTube"):
+                preview.verify_no_optional_classes(dex(name, True))
+        preview.verify_no_optional_classes(dex("Lcom/liskovsoft/youtubeapi/R$raw;", True))
 
 
 if __name__ == "__main__":
