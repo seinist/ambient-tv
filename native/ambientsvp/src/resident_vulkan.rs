@@ -216,12 +216,14 @@ fn quality_source(mode:u32,t:ResidentTuning,w:ResidentSearchWeights)->Result<Str
     }
     Ok(source)
 }
-fn mask_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
-    let source=include_str!("resident_masks.wgsl").replace("SVP_BLOCK",&t.block.to_string())
+fn mask_source(mode:u32,t:ResidentTuning)->String{
+    include_str!("resident_masks.wgsl").replace("SVP_BLOCK",&t.block.to_string())
         .replace("SVP_STEP",&t.step().to_string())
         .replace("SVP_SAD_AREA",match t.artifacts{2=>"50",3=>"100",_=>"0"})
-        .replace("SVP_DEPTH_SCALE",if mode==0{"1"}else{"4"});
-    spirv(&source,"@group(0) @binding(7) var<uniform> params:vec4u;",entry)
+        .replace("SVP_DEPTH_SCALE",if mode==0{"1"}else{"4"})
+}
+fn mask_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
+    spirv(&mask_source(mode,t),"@group(0) @binding(7) var<uniform> params:vec4u;",entry)
 }
 fn tuned_synthesis(source:&str,t:ResidentTuning,mode:u32)->Result<String>{
     let family=include_str!("resident_synthesis_family.wgsl")
@@ -999,6 +1001,10 @@ pub unsafe extern "C" fn ambient_svp_vk_cancel(pair:*mut VulkanPair)->i32{
     if pair.is_null() || unsafe{(*pair).fence}!=vk::Fence::null(){return -1;}
     let mut p=unsafe{Box::from_raw(pair)};p.recycle();drop(p);0
 }
+
+#[cfg(test)]
+#[path="resident_synthesis_tests.rs"]
+mod synthesis_tests;
 
 #[cfg(test)]
 mod tests{
