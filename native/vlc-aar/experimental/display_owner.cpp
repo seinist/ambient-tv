@@ -456,6 +456,9 @@ extern "C" bool ambient_ahb_retire(ambient_ahb_owner *owner) {
 extern "C" bool ambient_ahb_retire_present(ambient_ahb_owner *owner) {
     return owner && owner->retire_present();
 }
+extern "C" bool ambient_ahb_run_terminal(void *opaque, ambient_ahb_terminal_operation operation) {
+    return TerminalRetirement::wait(opaque, operation, std::chrono::seconds(8));
+}
 extern "C" bool ambient_ahb_close(ambient_ahb_owner *owner) {
     if (!owner) return true;
     if (!owner->drain()) return false;

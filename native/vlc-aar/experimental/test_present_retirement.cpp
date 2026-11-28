@@ -20,7 +20,34 @@ VKAPI_ATTR VkResult VKAPI_CALL idle(VkQueue) {
     return response;
 }
 }
+struct TerminalFixture {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool unblock{}, returned{}, cancelled{};
+};
+static bool terminal_operation(void *opaque, TerminalRetirement::Cancelled cancelled, void *token) {
+    auto *f = static_cast<TerminalFixture *>(opaque);
+    std::unique_lock<std::mutex> l(f->mutex);
+    f->cv.wait(l, [&] { return f->unblock; });
+    f->cancelled = cancelled(token);
+    f->returned = true;
+    f->cv.notify_all();
+    return !f->cancelled;
+}
 int main() {
+    TerminalFixture blocked;
+    assert(!TerminalRetirement::wait(&blocked, terminal_operation, 25ms));
+    {
+        std::unique_lock<std::mutex> l(blocked.mutex);
+        blocked.unblock = true;
+        blocked.cv.notify_all();
+        assert(blocked.cv.wait_for(l, 500ms, [&] { return blocked.returned; }));
+        assert(blocked.cancelled);
+    }
+    TerminalFixture ready;
+    ready.unblock = true;
+    assert(TerminalRetirement::wait(&ready, terminal_operation, 500ms));
+    assert(!ready.cancelled);
     auto queue = reinterpret_cast<VkQueue>(1);
     unblock = true;
     assert(PresentRetirement::wait(queue, idle, nullptr, lock, unlock, 500ms) == VK_SUCCESS);

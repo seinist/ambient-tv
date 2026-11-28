@@ -74,6 +74,11 @@ bool ambient_ahb_retire(struct ambient_ahb_owner *);
 /* After queue-fence retirement, also establish presentation queue idle.
  * False retains the entire context, including any detached wait worker. */
 bool ambient_ahb_retire_present(struct ambient_ahb_owner *);
+/* Run terminal GPU work on a bounded worker. Context must be independent of
+ * the retiring vout object and retained on failure or timeout. */
+typedef bool (*ambient_ahb_cancelled)(void *);
+typedef bool (*ambient_ahb_terminal_operation)(void *, ambient_ahb_cancelled, void *);
+bool ambient_ahb_run_terminal(void *, ambient_ahb_terminal_operation);
 /* Only destroy after retirement. False means caller must quarantine the
  * entire libplacebo context as well as this owner; never destroy its device. */
 bool ambient_ahb_close(struct ambient_ahb_owner *);
