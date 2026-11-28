@@ -39,6 +39,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import java.io.File
 import org.videolan.libvlc.interfaces.IVLCVout
 import org.videolan.libvlc.LibVLC
@@ -170,6 +171,7 @@ class VlcPlaybackController(
     }
     private var residentRejected = false
     private val hdrSceneScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val hdrSceneHold = HdrScenePlaybackHold()
     private var hdrSceneJob: Job? = null
     private var hdrSceneSession: HdrSceneSession? = null
     private var hdrSceneAttempted = false
@@ -228,6 +230,8 @@ class VlcPlaybackController(
                 result.cleanup(); return@launch
             }
             var adopted = false
+            var held = false
+            val visiblePlayer = player
             try {
                 val route = hdrSceneOutputOptions() ?: return@launch
                 val effective = vlcOptionsForNativeHdr(
@@ -237,20 +241,28 @@ class VlcPlaybackController(
                 val options = vlcImageMediaOptions(effective,target,true,result.vlcOptions())
                     .filter { it.startsWith(":video-filter=") || it in setOf(":mediacodec-dr",":no-mediacodec-dr") }
                     .map { "--"+it.removePrefix(":") } + route
-                player.pause()
+                coroutineContext.ensureActive()
+                hdrSceneHold.acquire()
+                held = true
+                visiblePlayer.pause()
                 val analyzed = try { HdrOffscreenAnalysis.vlc(context,result,options) }
                     catch (e: kotlinx.coroutines.CancellationException) { throw e }
                     catch (e: Exception) { Timber.w(e,"VLC offscreen HDR capture unavailable"); false }
+                coroutineContext.ensureActive()
                 if (!analyzed) result.discardIncompleteCapture()
-                if (released || !prepared || openingOrRestarting || imageOptions != settings ||
+                if (released || ended || player !== visiblePlayer || !prepared || openingOrRestarting || imageOptions != settings ||
                     attachedView?.holder?.surface?.isValid != true || !result.valid()) return@launch
+                hdrSceneHold.release()
                 hdrSceneSession = result
                 adopted = true
                 restartHdrScenePass()
             } finally {
-                if (!adopted) {
-                    result.cleanup()
-                    if (!released && prepared && !openingOrRestarting && desiredPlayWhenReady) player.play()
+                if (!adopted) result.cleanup()
+                if (held) {
+                    hdrSceneHold.release()
+                    // A cancelled analysis must never resume a replaced/released player.
+                    if (!adopted && !released && !ended && player === visiblePlayer && prepared &&
+                        !openingOrRestarting && errorMessage == null && desiredPlayWhenReady) visiblePlayer.play()
                 }
             }
         }
@@ -749,6 +761,11 @@ class VlcPlaybackController(
                     observePendingSeek()
                 }
                 MediaPlayer.Event.Playing -> {
+                    // A queued native Playing callback must not defeat the capture hold.
+                    if (hdrSceneHold.active) {
+                        player.pause()
+                        return@setEventListener
+                    }
                     if (!startupPlayingReported) {
                         startupPlayingReported = true
                         com.ambient.tv.ui.player.logPlaybackStartup("vlc", "playing_event", startupOpenedAt)
@@ -1051,6 +1068,7 @@ class VlcPlaybackController(
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
         if (released) return
+        if (!hdrSceneRestartPending && hdrSceneHold.active) cancelHdrScenePass()
         frameDropSamples.prepare()
         if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
             // Nothing to wait for: open in this call, not one main-thread round trip later.
@@ -1457,6 +1475,8 @@ class VlcPlaybackController(
         if (released) return
         if (!desiredPlayWhenReady) frameDropSamples.discontinuity()
         desiredPlayWhenReady = true
+        // Keep the intent for replay/fallback; the separate analysis owns the hold.
+        if (hdrSceneHold.active) return
         if (!dvPrimeActive) restorePausedSeekVolume()
         hdrOutput.discontinuity()
         pauseAfterRestorePositionMs = null
@@ -1538,7 +1558,7 @@ class VlcPlaybackController(
                 }
             } else residentLastProgressMs = 0L
             val wanted = wantsResident(effective, if (preserveHdrSource) "off" else deinterlaceMode)
-            if (outputReady && !ended && !openingOrRestarting && !hdrSceneRestartPending && (configuredHdrSceneMode != (hdrSceneSession?.mode ?: 0) || wanted != configuredResident || effectiveMode != configuredSvpMode ||
+            if (outputReady && !ended && !openingOrRestarting && !hdrSceneRestartPending && !hdrSceneHold.active && (configuredHdrSceneMode != (hdrSceneSession?.mode ?: 0) || wanted != configuredResident || effectiveMode != configuredSvpMode ||
                     svpTargetChanged(effectiveMode, configuredSvpRate, svpOutputFps(svpDisplayFps(context), imageOptions.svp))))
                 refreshEffectiveOverrides(player.isSeekable)
         }
@@ -1676,7 +1696,8 @@ class VlcPlaybackController(
         }
         // A newly created engine has no Media yet; prepare() consumes this intent.
         if (prepared && !openingOrRestarting) {
-            if (playWhenReady) player.play() else if (pendingRestorePositionMs == null) player.pause()
+            if (hdrSceneHold.allowsPlayback(playWhenReady)) player.play()
+            else if (pendingRestorePositionMs == null) player.pause()
         }
     }
 

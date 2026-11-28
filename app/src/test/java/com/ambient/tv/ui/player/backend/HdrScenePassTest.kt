@@ -11,6 +11,19 @@ import org.junit.rules.TemporaryFolder
 class HdrScenePassTest {
     @get:Rule val folder = TemporaryFolder()
 
+    @Test fun offscreenHoldKeepsLatestIntentWithoutResumingVisiblePlayer() {
+        val hold = HdrScenePlaybackHold()
+        assertTrue(hold.allowsPlayback(true))
+        hold.acquire()
+        assertFalse(hold.allowsPlayback(true)) // Play while capturing
+        assertFalse(hold.allowsPlayback(false)) // Pause while capturing
+        hold.release()
+        assertFalse(hold.allowsPlayback(false)) // Last intent was pause
+        assertTrue(hold.allowsPlayback(true)) // Last intent was play
+        hold.release() // cancellation cleanup after successful adoption
+        assertFalse(hold.active)
+    }
+
     private fun sei(version: Int = 1, value: Int = 19): ByteArray =
         byteArrayOf(0x4e, 1, 4, 8, 0xb5.toByte(), 0, 0x3c, 0, 1, 4, version.toByte(), value.toByte(), 0x80.toByte())
 

@@ -354,7 +354,7 @@ internal class MpvPlaybackEngine(
      * takes it over through [wantsToPlay] ([mpvHdrFailureHold]). It holds only while a surface
      * shows it; detached (background) audio plays on ([mpvHdrNativePlayAllowed]).
      */
-    private val nativePlayWanted: Boolean get() = mpvHdrNativePlayAllowed(desiredPlayWhenReady, hdrGpuFailure, attached)
+    private val nativePlayWanted: Boolean get() = hdrSceneHold.allowsPlayback(mpvHdrNativePlayAllowed(desiredPlayWhenReady, hdrGpuFailure, attached))
     private var activeShaderPresetKey: String? = null
     private var loadedShaderKeys = emptyList<String>()
     private var loadedShaderTransferKey: String? = null
@@ -413,6 +413,7 @@ internal class MpvPlaybackEngine(
     private var renderCheckJob: Job? = null
     private val imageScope = CoroutineScope(SupervisorJob() + workerHandler.asCoroutineDispatcher("mpv-control"))
     private var imageUpdateJob: Job? = null
+    private val hdrSceneHold = HdrScenePlaybackHold()
     private var hdrSceneJob: Job? = null
     private var hdrSceneSession: HdrSceneSession? = null
     private var hdrSceneAttempted = false
@@ -857,7 +858,8 @@ internal class MpvPlaybackEngine(
         conversionSampleStarted = 0L
         desiredPlayWhenReady = true
         if (ended) { seekTo(0); ended = false }
-        setProperty("pause", "no")
+        // Record intent immediately, but do not resume the visible decoder during capture.
+        if (hdrSceneHold.allowsPlayback(true)) setProperty("pause", "no")
     }
     /**
      * HDMI audio came back after a display mode switch: re-plan for the (possibly changed) sink
@@ -895,6 +897,8 @@ internal class MpvPlaybackEngine(
     override fun canSeekNow(): Boolean = !released && fileReady && getPropertyString("seekable") == "yes"
 
     fun seekBy(deltaMs: Long) {
+        if (released) return
+        cancelHdrSceneForSeek()
         conversionSampleStarted = 0L
         dvPrimeTarget?.let { seekTo((it + deltaMs).coerceAtLeast(0)); return }
         val seconds = deltaMs / 1000.0
@@ -906,8 +910,7 @@ internal class MpvPlaybackEngine(
 
     override fun seekTo(positionMs: Long) {
         if (released) return
-        if (imageOptions.svp.hdrTwoPass) hdrSceneAttempted = true
-        if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePassAndRetireFilter()
+        cancelHdrSceneForSeek()
         val duration = durationMs()
         val endSeek = !liveStream && isPlaybackEndSeek(positionMs, duration)
         if (endSeek && ended) {
@@ -1831,6 +1834,11 @@ internal class MpvPlaybackEngine(
         hdrSceneAttempted = true
     }
 
+    private fun cancelHdrSceneForSeek() {
+        if (imageOptions.svp.hdrTwoPass) hdrSceneAttempted = true
+        if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePassAndRetireFilter()
+    }
+
     private fun cancelHdrScenePassAndRetireFilter() {
         val base = hdrSceneBaseFilter
         cancelHdrScenePass()
@@ -1877,24 +1885,34 @@ internal class MpvPlaybackEngine(
             // ImageReader, not the visible TV surface. Its cache must be
             // complete before the current controller adopts it.
             var adopted = false
+            var held = false
             try {
-                setProperty("pause", "yes")
+                coroutineContext.ensureActive()
+                hdrSceneHold.acquire()
+                held = true
+                if (!trySetProperty("pause", "yes")) return@launch
                 val capture = base.removeSuffix(":hwresident=1") + result.mpvOptions() + ":hwresident=1"
                 val analyzed = try {
                     HdrOffscreenAnalysis.mpv(result,capture,acceleration.hwdec,
                         VideoAccelerationRuntime.capabilities.value.device.device)
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                 catch (e: Exception) { Timber.w(e,"MPV offscreen HDR capture unavailable"); false }
+                coroutineContext.ensureActive()
                 if (!analyzed) result.discardIncompleteCapture()
-                if (released || !attached || !fileReady || !result.valid() || !imageOptions.svp.hdrTwoPass ||
+                if (released || ended || !attached || !fileReady || !result.valid() || !imageOptions.svp.hdrTwoPass ||
                     activeCpuImageFilters["plex-svp"] != base) return@launch
+                // Offscreen renderer has retired. Restart uses the latest user play intent.
+                hdrSceneHold.release()
                 hdrSceneSession = result
                 hdrSceneBaseFilter = base
                 adopted = true
                 if (!restartHdrScenePass()) cancelHdrScenePass()
             } finally {
                 if (!adopted) result.cleanup()
-                if (!released) setProperty("pause",if(nativePlayWanted)"no" else "yes")
+                if (held) {
+                    hdrSceneHold.release()
+                    if (!released && !ended) setProperty("pause", if (nativePlayWanted) "no" else "yes")
+                }
             }
         }
     }
@@ -3108,6 +3126,9 @@ internal class MpvPlaybackEngine(
     private fun trySetProperty(name: String, value: String): Boolean {
         check(android.os.Looper.myLooper() === workerHandler.looper)
         if (released) return false
+        // Also gate indirect resume requests (surface reattach, output recovery,
+        // and renderer hand-off), not just the public play() entry point.
+        if (name == "pause" && value == "no" && hdrSceneHold.active) return true
         val result = MpvNativeBridge.nativeSetPropertyString(handle, name, value)
         if (result < 0) Timber.w("AV-AUDIT MPV property rejected: %s (%d)", name, result)
         return result >= 0
