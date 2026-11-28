@@ -15,8 +15,8 @@ class GameLibraryQueryTest {
         }
     }
 
-    @Test fun blobSortKeysPreserveRootLowercaseUtf16Order() {
-        val values = listOf("Zulu", "alpha", "İ", "I", "Ä", "ß", "\uE000", "\uD801\uDC00", "a", "aA")
+    @Test fun blobSortKeysGroupSymbolsBeforeLettersAndPreserveRootLowercaseUtf16Order() {
+        val values = listOf("9 Games", "~Game", "[Game]", "Zulu", "alpha", "İ", "I", "Ä", "ß", "\uE000", "\uD801\uDC00", "a", "aA")
         val byBlob = values.sortedWith { a, b ->
             val left = gameSortKey(a); val right = gameSortKey(b)
             var result = 0
@@ -26,7 +26,19 @@ class GameLibraryQueryTest {
             }
             if (result == 0) left.size.compareTo(right.size) else result
         }
-        assertEquals(values.sortedBy { it.lowercase(Locale.ROOT) }, byBlob)
+        assertEquals(values.sortedWith(compareBy<String> { gameIndexLetter(it) != '#' }
+            .thenBy { it.lowercase(Locale.ROOT) }), byBlob)
+        assertEquals(listOf('#', '#', '#', '#', '#'), byBlob.take(5).map(::gameIndexLetter))
+    }
+
+    @Test fun indexIncludesNumbersSymbolsWhitespaceAndNonAsciiLetters() {
+        assertEquals('#', gameIndexLetter("  1942"))
+        assertEquals('#', gameIndexLetter("[Demo]"))
+        assertEquals('#', gameIndexLetter("~Title"))
+        assertEquals('#', gameIndexLetter(""))
+        assertEquals('A', gameIndexLetter(" alpha"))
+        assertEquals('Ä', gameIndexLetter("Älpler"))
+        assertEquals('Р', gameIndexLetter("Русский"))
     }
 
     @Test fun arbitrarySearchAndSectionStayBoundParameters() {

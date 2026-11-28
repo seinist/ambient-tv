@@ -557,6 +557,9 @@ struct Core{
     adjacent:Mutex<AdjacentCache>,held_source_ids:Mutex<Option<[u64;4]>>,
     #[cfg(test)]
     held_hits:AtomicU32,
+    // Test-only stage marker: distinguish explicit host waits from driver calls.
+    #[cfg(test)]
+    held_test_stage:AtomicU32,
     #[cfg(test)]
     adjacent_hits:AtomicU32,
     lost:AtomicBool,
@@ -905,6 +908,8 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
         #[cfg(test)]
         held_hits:AtomicU32::new(0),
         #[cfg(test)]
+        held_test_stage:AtomicU32::new(0),
+        #[cfg(test)]
         adjacent_hits:AtomicU32::new(0)})))
 }
 
@@ -1050,8 +1055,12 @@ unsafe fn retire_held_with(job:*mut HeldSubmission,wait:u32,consume:impl FnOnce(
     let d=&j.core.device;
     let fence=j.commands.as_ref().unwrap().fence;
     let lost=loop{
+        #[cfg(test)]
+        if wait==0{j.core.held_test_stage.store(3,Ordering::SeqCst);} // inside vkGetFenceStatus
         let status=if wait!=0{unsafe{d.wait_for_fences(&[fence],true,if wait==2{250_000_000}else{u64::MAX})}.map(|_|true)}
             else{unsafe{d.get_fence_status(fence)}};
+        #[cfg(test)]
+        if wait==0{j.core.held_test_stage.store(5,Ordering::SeqCst);}
         match status{
             Ok(true)=>break false,
             Ok(false)=>return 0,
@@ -1267,7 +1276,12 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 .wait_semaphore_values(&wait_values).signal_semaphore_values(&values);
             let submit=vk::SubmitInfo::default().push_next(&mut timeline).wait_semaphores(waits)
                 .wait_dst_stage_mask(&stages).command_buffers(&submit_commands).signal_semaphores(&signals);
-            if let Err(e)=d.queue_submit(queue,&[submit],fence){
+            #[cfg(test)]
+            core.held_test_stage.store(1,Ordering::SeqCst); // inside vkQueueSubmit
+            let submit_result=d.queue_submit(queue,&[submit],fence);
+            #[cfg(test)]
+            core.held_test_stage.store(2,Ordering::SeqCst); // native post-submit work
+            if let Err(e)=submit_result{
                 device_lost=e==vk::Result::ERROR_DEVICE_LOST;
                 return Err(err(e));
             }
@@ -3028,7 +3042,7 @@ mod gpu_tests{
                     vk::AccessFlags::empty(),if i<2{vk::AccessFlags::TRANSFER_WRITE}else{vk::AccessFlags::SHADER_WRITE},
                     vk::PipelineStageFlags::TOP_OF_PIPE,if i<2{vk::PipelineStageFlags::TRANSFER}else{vk::PipelineStageFlags::COMPUTE_SHADER});
                 if i<2{d.cmd_clear_color_image(cmd,img.image,vk::ImageLayout::GENERAL,
-                    &vk::ClearColorValue{float32:[0.5,0.5,0.5,1.0]},&[range()]);}
+                    &vk::ClearColorValue{float32:[0.25,0.25,0.25,1.0]},&[range()]);}
             }
             d.end_command_buffer(cmd).unwrap();
             // Exercise the identical held submission once with ready input.
@@ -3048,32 +3062,67 @@ mod gpu_tests{
             // The producer now waits on an unsignalled gate; all binary
             // holds from warm-up have been consumed and are reusable.
             d.reset_fences(&[fence]).unwrap();
+            // Change the actual source pixels behind the gate: the final
+            // readback must prove that the second submission ran, not merely
+            // return the cached warm-up image.
+            d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+            for img in &held[..2]{
+                transition(&d,cmd,img.image,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::SHADER_READ,vk::AccessFlags::TRANSFER_WRITE,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+                d.cmd_clear_color_image(cmd,img.image,vk::ImageLayout::GENERAL,
+                    &vk::ClearColorValue{float32:[0.5,0.5,0.5,1.0]},&[range()]);
+            }
+            d.end_command_buffer(cmd).unwrap();
+            let gated_commands=[cmd];
             let gate_wait=[gate];let gate_value=[1u64];let gate_stage=[vk::PipelineStageFlags::ALL_COMMANDS];
             let hold_values=[0u64;3];
             let mut gate_info=vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&gate_value).signal_semaphore_values(&hold_values);
             let producer=vk::SubmitInfo::default().push_next(&mut gate_info).wait_semaphores(&gate_wait)
-                .wait_dst_stage_mask(&gate_stage).signal_semaphores(&hold);
+                .wait_dst_stage_mask(&gate_stage).command_buffers(&gated_commands).signal_semaphores(&hold);
             d.queue_submit(queue,&[producer],fence).unwrap();
             let mut job=ptr::null_mut();
             // The producer gate is opened by a watchdog even if a future
             // regression blocks the submit call, turning a hang into a failure.
+            let stage=&(&*engine).0.held_test_stage;
+            stage.store(0,Ordering::SeqCst);
+            let cpu_driver=instance.get_physical_device_properties(physical).device_type==vk::PhysicalDeviceType::CPU;
             std::thread::scope(|scope|{
                 let (release,blocked)=std::sync::mpsc::channel::<()>();
                 let dev=&d;
                 let watchdog=scope.spawn(move||{
                     let early=blocked.recv_timeout(std::time::Duration::from_secs(30)).is_ok();
+                    let blocked_at=stage.load(Ordering::SeqCst);
                     unsafe{dev.signal_semaphore(&vk::SemaphoreSignalInfo::default().semaphore(gate).value(1))}.unwrap();
-                    early
+                    (early,blocked_at)
                 });
                 let rc=ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,2,0.5,&mut job);
-                let pending=if job.is_null(){-1}else{ambient_svp_vk_retire_held(job,0)};
-                let counter=d.get_semaphore_counter_value(done).unwrap();
-                let _=release.send(());
-                assert!(watchdog.join().unwrap(),"held submit blocked on the GPU producer");
                 assert_eq!(rc,0);
                 assert!(!job.is_null());
-                assert_eq!(pending,0);
-                assert_eq!(counter,1,"consumer signalled before producer gate opened");
+                let pending=ambient_svp_vk_retire_held(job,0);
+                // A watchdog-released driver may already have completed.
+                // A successful retire consumes the ticket exactly once.
+                if pending==1{job=ptr::null_mut();}
+                stage.store(4,Ordering::SeqCst); // inside vkGetSemaphoreCounterValue
+                let counter=d.get_semaphore_counter_value(done).unwrap();
+                stage.store(5,Ordering::SeqCst);
+                let _=release.send(());
+                let (early,blocked_at)=watchdog.join().unwrap();
+                if early{
+                    assert_eq!(pending,0);
+                    assert_eq!(counter,1,"consumer signalled before producer gate opened");
+                }else{
+                    // Mesa CPU Vulkan may block *inside* the driver even
+                    // when the application never waits. Only accept that
+                    // measured case; recording/post-submit host waits
+                    // still fail, as does any blocking on physical GPUs.
+                    assert!(cpu_driver&&matches!(blocked_at,1|3|4),
+                        "held submit blocked on producer: stage={blocked_at}, CPU driver={cpu_driver}");
+                    eprintln!("CPU Vulkan driver blocked inside Vulkan call (stage={blocked_at}); checking retirement and changed source output");
+                    assert!(matches!(pending,0|1));
+                    assert!((1..=2).contains(&counter));
+                }
             });
             d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
             d.reset_fences(&[fence]).unwrap();
@@ -3097,7 +3146,7 @@ mod gpu_tests{
                 assert_eq!(u16::from_ne_bytes(pixel[6..8].try_into().unwrap()),0x3c00);
             }
             d.unmap_memory(readback_memory);
-            assert_eq!(ambient_svp_vk_retire_held(job,1),1);
+            if !job.is_null(){assert_eq!(ambient_svp_vk_retire_held(job,1),1);}
             assert_eq!(d.get_semaphore_counter_value(done).unwrap(),2);
             ambient_svp_vk_destroy(engine);
             for sem in hold{d.destroy_semaphore(sem,None);}d.destroy_semaphore(done,None);d.destroy_semaphore(gate,None);

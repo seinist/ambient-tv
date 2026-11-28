@@ -53,6 +53,7 @@ import com.ambient.tv.games.library.coverAspectRatio
 import com.ambient.tv.games.library.GameLibraryFolder
 import com.ambient.tv.ui.common.AlphabetBar
 import com.ambient.tv.ui.common.alphabetTrackedLetter
+import com.ambient.tv.games.library.gameIndexLetter
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.LocalBrowseRightIndexFocus
 import com.ambient.tv.ui.common.TvActionButton
@@ -92,6 +93,20 @@ import com.ambient.tv.ui.mobile.deviceDensityGridCells
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+/** Use a dedicated touch target on handheld; keep TV chip focus/navigation on television. */
+@Composable
+internal fun GameScanCancelButton(onCancel: () -> Unit) {
+    val label = stringResource(R.string.game_library_scan_cancel)
+    if (LocalHandheldUi.current) {
+        androidx.compose.material3.IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
+            androidx.compose.material3.Icon(Icons.Filled.Close, contentDescription = label,
+                tint = MaterialTheme.colorScheme.onSurface)
+        }
+    } else {
+        TvChip(text = label, icon = Icons.Filled.Close, iconOnly = true, onClick = onCancel)
+    }
+}
 
 /** The folder manager keeps one destination visible at a time; neither ROMs nor OSD are altered. */
 internal enum class GameLibraryManagerPage { HOME, ADD, SOURCES, FOLDER }
@@ -233,11 +248,10 @@ fun GameLibraryScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TvChip(text = stringResource(R.string.game_library_scan_cancel),
-                        icon = Icons.Filled.Close, iconOnly = true, onClick = {
-                            model.cancelScan()
-                            if (!handheld) runCatching { controls.refreshFocus.requestFocus() }
-                        })
+                    GameScanCancelButton {
+                        model.cancelScan()
+                        if (!handheld) runCatching { controls.refreshFocus.requestFocus() }
+                    }
                 }
             }
             if (showSearch) TvTextField(searchText, { searchText = it },
@@ -278,8 +292,7 @@ fun GameLibraryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(gameLibraryProgressMessage(androidx.compose.ui.platform.LocalContext.current, state),
                             modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                        TvChip(text = stringResource(R.string.game_library_scan_cancel), icon = Icons.Filled.Close,
-                            iconOnly = true, onClick = { model.cancelScan() })
+                        GameScanCancelButton(onCancel = model::cancelScan)
                     }
                 }
                 if (choosingDatSystem) {
@@ -419,9 +432,7 @@ internal fun GameLibraryGames(
     val gameIds = remember(games) { games.map { it.fileId } }
     val alphabet = remember(games, section, view, sortKey) {
         if (section == "recent" || view == "rows" || sortKey != "name") emptyList()
-        else games.mapNotNull { game ->
-            game.title.firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }
-        }.distinct()
+        else games.map { gameIndexLetter(it.title) }.distinct()
     }
         val firstFocus = remember(section, view) { FocusRequester() }
         // Keep geometry fixed for this result set while background artwork finishes.
@@ -435,10 +446,10 @@ internal fun GameLibraryGames(
         GameLibraryAlphabetLayout(
             letters = alphabet,
             selectedLetter = games.firstOrNull { it.fileId == focusedId }
-                ?.title?.firstOrNull()?.uppercaseChar(),
+                ?.let { gameIndexLetter(it.title) },
             visibleLetter = {
                 val index = if (view == "list") listState.firstVisibleItemIndex else gridState.firstVisibleItemIndex
-                games.getOrNull(index)?.title?.firstOrNull()?.uppercaseChar()
+                games.getOrNull(index)?.let { gameIndexLetter(it.title) }
             },
             firstContentFocus = firstFocus,
             onReturnToContent = {
@@ -446,7 +457,7 @@ internal fun GameLibraryGames(
                     ?: runCatching { firstFocus.requestFocus() }
             },
             onSelect = { letter ->
-                val index = games.indexOfFirst { it.title.firstOrNull()?.uppercaseChar() == letter }
+                val index = games.indexOfFirst { gameIndexLetter(it.title) == letter }
                 if (index >= 0) {
                     alphabetJumpJob?.cancel()
                     alphabetJumpJob = scope.launch {

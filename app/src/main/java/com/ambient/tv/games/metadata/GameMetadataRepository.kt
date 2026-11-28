@@ -138,7 +138,10 @@ class GameMetadataRepository @Inject constructor(
             if (request.title.isBlank()) emptyList()
             else {
                 val candidates = if (provider == GameMetadataProviderIds.LIBRETRO) {
-                    val titles = library.searchDatTitles(current.systemId, request.title)
+                    val clean = gameMetadataSearchName(request.title)
+                    val titles = library.searchDatTitles(current.systemId, request.title).ifEmpty {
+                        if (clean != request.title) library.searchDatTitles(current.systemId, clean) else emptyList()
+                    }
                     GameMetadataPlatforms.libretroCandidates(request, titles).let { choices ->
                         // Catalog search is local and usable even if the artwork server is offline.
                         // Only fall back to probing guessed image names when the catalog has no hit.
@@ -279,8 +282,18 @@ class GameMetadataRepository @Inject constructor(
         val options = settings.options()
         if (!options.enabled) return@withGame false
         val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
-        val old = library.metadata(current.fileId)
-        val provider = old?.provider?.takeIf { old.matchLocked } ?: options.provider
+        var old = library.metadata(current.fileId)
+        // DAT names are useful even when there is no cover, the provider has no artwork
+        // namespace for this platform, or its server fails. Publish the local title first.
+        val catalog = localCatalogMatches(current, old)
+        catalogDisplayMetadata(current, old, catalog)?.let { named ->
+            currentCoroutineContext().ensureActive()
+            if (!library.saveMetadata(ticket, named)) return@withGame false
+            old = library.metadata(current.fileId)
+        }
+        val platformQuery = GameMetadataQuery(current.systemId, current.title, current.filename)
+        val provider = old?.takeIf { it.matchLocked }?.provider ?: GameMetadataPlatforms.automaticProvider(
+            platformQuery, options.provider, providers.availableProviders())
         // A manually identified game must not silently switch sources when its key is removed.
         if (old?.matchLocked == true && provider !in providers.availableProviders())
             throw GameMetadataProviderException(GameMetadataFailure.CREDENTIALS)
@@ -311,8 +324,9 @@ class GameMetadataRepository @Inject constructor(
         }
         val candidates = try {
             if (provider == GameMetadataProviderIds.LIBRETRO) {
-                GameMetadataPlatforms.libretroCandidates(query,
-                    listOfNotNull(current.verifiedTitle?.takeIf(String::isNotBlank)))
+                val lookup = if (catalog.isNotEmpty() && known?.matchLocked != true)
+                    query.copy(providerGameId = null) else query
+                GameMetadataPlatforms.libretroCandidates(lookup, catalog)
             } else providers.search(query, provider)
         }
         catch (error: GameMetadataProviderException) {
@@ -347,6 +361,21 @@ class GameMetadataRepository @Inject constructor(
         false
     }
 
+    /** Exact system-scoped name matches; this never opens a ROM or contacts the network. */
+    private fun localCatalogMatches(game: LibraryGame, previous: GameMetadata?): List<String> {
+        game.verifiedTitle?.takeIf(String::isNotBlank)?.let { return listOf(it) }
+        if (previous?.matchLocked == true) return emptyList()
+        val filename = gameCatalogFilename(game.systemId, game.filename)
+        val hints = listOfNotNull(filename.takeIf(String::isNotBlank),
+            game.internalTitle?.takeIf(String::isNotBlank)).distinct()
+        return hints.firstNotNullOfOrNull { hint ->
+            val queries = listOf(hint, com.ambient.tv.games.library.gameDisplayTitle(hint),
+                gameMetadataCatalogBase(hint), gameMetadataSearchName(hint)).distinct()
+            val titles = queries.flatMap { library.searchDatTitles(game.systemId, it) }.distinct()
+            matchingGameCatalogTitles(hint, titles).takeIf { it.isNotEmpty() }
+        }.orEmpty()
+    }
+
     data class NameDatabaseResult(val systemIds: Set<String>, val names: Int) {
         val systems: Int get() = systemIds.size
     }
@@ -357,10 +386,14 @@ class GameMetadataRepository @Inject constructor(
      * checksum ([GameLibraryRepository.scan]).
      */
     suspend fun loadNameDatabases(
-        only: Collection<String>? = null, onProgress: (Int, Int) -> Unit = { _, _ -> },
+        only: Collection<String>? = null, onlyMissing: Boolean = false,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): NameDatabaseResult =
         nameDatabaseLock.withLock { withContext(Dispatchers.IO) {
-            val systems = (only ?: library.indexedSystems()).filter { GameNameDatabases.files(it).isNotEmpty() }.distinct().sorted()
+            val existing = if (onlyMissing) library.datCatalogSizes() else emptyMap()
+            val systems = (only ?: library.indexedSystems())
+                .filter { GameNameDatabases.files(it).isNotEmpty() && (!onlyMissing || (existing[it] ?: 0) == 0) }
+                .distinct().sorted()
             val staging = File(context.cacheDir, "game-name-databases-${java.util.UUID.randomUUID()}")
             if (!staging.mkdirs()) throw IOException("The game name database cannot be staged")
             try {
@@ -383,6 +416,25 @@ class GameMetadataRepository @Inject constructor(
             } finally { staging.deleteRecursively() }
         } }
 
+    /** Prepare catalogs before the first checksum scan; isolate unavailable upstream systems.
+     * Automatic metadata being disabled remains a user choice, including during folder scans. */
+    suspend fun prepareNameCatalogs(systems: Collection<String>, automatic: Boolean): Set<String> =
+        withContext(Dispatchers.IO) {
+            val options = settings.options()
+            if (!options.enabled || automatic && !options.automatic) return@withContext emptySet()
+            val loaded = linkedSetOf<String>()
+            for (system in systems.distinct().filter { GameNameDatabases.files(it).isNotEmpty() }) {
+                currentCoroutineContext().ensureActive()
+                try { loaded += loadNameDatabases(listOf(system), onlyMissing = true).systemIds }
+                catch (error: IOException) {
+                    timber.log.Timber.w(error, "Game name catalog unavailable for %s", system)
+                } catch (error: IllegalArgumentException) {
+                    timber.log.Timber.w(error, "Invalid game name catalog for %s", system)
+                }
+            }
+            loaded
+        }
+
     /** Explicit folder work feeds this bounded queue; visible cards only reorder an active batch. */
     suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
                              prioritizedFileIds: () -> List<String> = SharedGameArtworkPriority::prioritizedFileIds,
@@ -402,6 +454,9 @@ class GameMetadataRepository @Inject constructor(
                         return@coroutineScope
                     }
                     if (automatic && !options.automatic) return@coroutineScope
+                    val systems = (systemId?.let(::listOf) ?: library.indexedSystems())
+                        .filter { folderId in library.foldersWithSystem(it) }
+                    prepareNameCatalogs(systems, automatic)
                     val total = library.folderGameCount(folderId, systemId)
                     var completed = 0
                     var failed = 0
