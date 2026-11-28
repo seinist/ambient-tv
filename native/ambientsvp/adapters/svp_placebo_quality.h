@@ -76,7 +76,7 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
         if(!s->create||!s->destroy||!s->render){dlclose(s->lib);s->lib=NULL;return false;}
     }
     if(hdr&&(!s->render_hdr||!hdr->count||hdr->count>3))return false;
-    if(pass&&(!s->render_pass||!hdr||hdr->count!=1))return false;
+    if(pass&&(!s->render_pass||!hdr||hdr->count<1||hdr->count>3))return false;
     const int w=a->params.w,h=a->params.h;
     if(!s->engine||w!=s->w||h!=s->h||memcmp(&s->options,options,sizeof(*options))){
         if(s->engine)s->destroy(s->engine);
