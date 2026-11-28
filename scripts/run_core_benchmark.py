@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
-import tempfile
 import uuid
 
 def sha(path):
@@ -29,7 +28,8 @@ def run(args):
     rom = (content / args.rom).resolve()
     if not rom.is_relative_to(content) or not rom.is_file():
         raise ValueError("ROM must be inside fixture content directory")
-    for folder in (content, args.system):
+    system = args.system.resolve()
+    for folder in (content, system):
         if not folder.is_dir() or any(p.is_symlink() for p in folder.rglob("*")):
             raise ValueError("Fixture directory must exist and contain no symlinks")
     if len(args.input.read_text().splitlines()) != args.frames:
@@ -53,7 +53,7 @@ def run(args):
                           (args.input,"input.txt"),(args.options,"options.txt")):
             cmd("push",path,remote+"/"+name)
         cmd("push",str(content)+"/.",remote+"/content")
-        cmd("push",str(args.system.resolve())+"/.",remote+"/system")
+        cmd("push",str(system)+"/.",remote+"/system")
         shell("chmod","700",remote+"/runner")
         actual=shell("sha256sum",remote+"/core.so",capture=True).split()[0]
         if actual!=build["binary_sha256"]:
@@ -82,7 +82,7 @@ def run(args):
                   "input_sha256":sha(args.input),"settings_sha256":sha(args.options),
                   "runner_sha256":sha(args.runner),"frames":args.frames,
                   "fixture_files":{str(p.relative_to(content)):sha(p) for p in sorted(content.rglob("*")) if p.is_file()},
-                  "bios_files":{str(p.relative_to(args.system)):sha(p) for p in sorted(args.system.rglob("*")) if p.is_file()}}
+                  "bios_files":{str(p.relative_to(system)):sha(p) for p in sorted(system.rglob("*")) if p.is_file()}}
         (out/"metadata.json").write_text(json.dumps(metadata,indent=2)+"\n")
         (out/"build.json").write_text(args.report.read_text())
     finally:

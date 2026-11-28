@@ -5,6 +5,7 @@ on:
       - scripts/native_core_candidates/core_benchmark_runner.cpp
       - scripts/build_core_benchmark_runner.sh
       - scripts/run_core_benchmark.py
+      - scripts/benchmark_core_matrix.py
       - .github/workflows/core-benchmark-runner.yml
   workflow_dispatch:
 permissions:
@@ -19,7 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install NDK
-        run: sdkmanager "ndk;30.0.16248370"
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;30.0.16248370" > /dev/null || "$sdkmanager" --channel=3 "ndk;30.0.16248370" > /dev/null
       - name: Build diagnostic runner
         env:
           ABI: ${{ matrix.abi }}
@@ -27,7 +32,7 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
           bash scripts/build_core_benchmark_runner.sh "$ABI" out/core-benchmark-runner
           python3 scripts/check_elf_pages.py out/core-benchmark-runner
-          python3 -m py_compile scripts/run_core_benchmark.py
+          python3 -m py_compile scripts/run_core_benchmark.py scripts/benchmark_core_matrix.py
       - uses: actions/upload-artifact@v7
         with:
           name: core-benchmark-runner-${{ matrix.abi }}

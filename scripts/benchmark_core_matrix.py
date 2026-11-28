@@ -1,14 +1,11 @@
 """Run all available profiles in rotated, paired rounds on one Android device."""
 import argparse
-from collections import Counter
 import json
 from pathlib import Path
 import re
-import subprocess
-import sys
 import time
 from types import SimpleNamespace
-from run_core_benchmark import run, sha
+from run_core_benchmark import run
 from compare_core_profiles import compare, PUBLIC
 
 def matrix(args):
