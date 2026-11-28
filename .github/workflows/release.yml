@@ -84,6 +84,10 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           echo 'MONOGRAM_NATIVE=1' >> "$GITHUB_ENV"
           if [[ "$MODULE" == spotify ]]; then echo 'SPOTIFY_NATIVE=1' >> "$GITHUB_ENV"; fi
+          if [[ "$MODULE" == mpv ]]; then
+            echo 'MPV_RETAIN_SOURCE_ARCHIVES=1' >> "$GITHUB_ENV"
+            echo 'MPV_ENABLE_VULKAN=1' >> "$GITHUB_ENV"
+          fi
           if [[ "$MODULE" == moonlight ]]; then
             python3 scripts/reconcile_moonlight_module_host.py --check
             echo 'MOONLIGHT_NATIVE=1' >> "$GITHUB_ENV"

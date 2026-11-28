@@ -817,6 +817,14 @@ and binary-notice counts and per-file SHA-256 fingerprints. Missing, extra
 or changed entries stop signing. Original artifact digests remain provenance
 evidence; this is not an independent reconstruction of the Maven binaries.
 
+MPV native candidates retain the exact SHA-256-verified original dependency
+tarballs from the fresh build, and the final source archive must match all
+MPV_DEP_SHA256 pins. The glslang source checkout is included; the downloaded
+SDK, installed prefix and generated per-ABI build trees are excluded.
+An existing dependency tree without retained source archives cannot be
+silently relabeled as source-proven. This does not independently reconstruct
+the patched Git checkouts or validate their resulting binary.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

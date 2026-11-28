@@ -20,6 +20,34 @@ class CorrespondingSourceTest(unittest.TestCase):
             (root / "link").symlink_to(root / "LICENSE")
             self.assertEqual({"src/main.c", "LICENSE"}, {p.as_posix() for _, p in sources.source_files(root)})
 
+    def test_mpv_excludes_sdk_and_generated_builds_but_preserves_source_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            build = root / "buildscripts"
+            for name in ("sdk/tools/file", "prefix/arm64/file", "deps/mpv/_vulkan-arm64/file",
+                         "deps/mpv/_build_arm64/file", "deps/mpv/src/main.c", "source-archives/lua.tar.gz"):
+                path = build / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+            self.assertEqual({"deps/mpv/src/main.c", "source-archives/lua.tar.gz"},
+                {path.as_posix() for _, path in sources.source_files(build)})
+            glslang = root / "glslang"
+            for name in ("build-arm64-v8a/file", "glslang/main.cpp"):
+                path = glslang / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+            self.assertEqual({"glslang/main.cpp"},
+                {path.as_posix() for _, path in sources.source_files(glslang)})
+
+    def test_mpv_source_archives_must_match_all_pins(self):
+        pins = "MPV_DEP_SHA256_a.tar.gz=" + "a" * 64 + "\nMPV_DEP_SHA256_b.tar.xz=" + "b" * 64
+        valid = {"a.tar.gz": "a" * 64, "b.tar.xz": "b" * 64}
+        sources.verify_mpv_archives(valid, pins)
+        for invalid in ({}, {"a.tar.gz": "a" * 64}, {**valid, "b.tar.xz": "0" * 64},
+                        {**valid, "extra.tar": "c" * 64}):
+            with self.assertRaises(ValueError):
+                sources.verify_mpv_archives(invalid, pins)
+
     def test_rust_modules_require_resolved_workspace_source(self):
         self.assertEqual({"svp", "monogram", "spotify", "shaders"}, set(sources.CARGO_MANIFESTS))
         self.assertIsNone(sources.vendor_cargo("vlc", Path("unused")))

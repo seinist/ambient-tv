@@ -22,7 +22,7 @@ ROOTS = {
     "monogram": ("third_party/monogram",),
     "smarttube": ("third_party/smarttube/MediaServiceCore", "third_party/smarttube/SharedModules"),
     "spotify": ("third_party/spotify/rusty-src",),
-    "mpv": (".native/mpv-android/buildscripts",),
+    "mpv": (".native/mpv-android/buildscripts", ".native/glslang"),
     "vlc": (".native/libvlcjni",),
     "libretrodroid": ("third_party/libretrodroid",),
     "projectm": (".native/projectm/source", ".native/projectm/assets"),
@@ -80,8 +80,17 @@ def source_files(root, preserve_vendor=False):
                         or item.suffix.lower() in (".jks", ".keystore", ".p12", ".pfx", ".key")):
                     raise ValueError(f"Unsafe Cargo vendor input: {relative}")
         else:
+            def build_output(name):
+                if name in ("build", "prefix", "install"):
+                    return True
+                if root.name == "buildscripts":
+                    return (base == root and name == "sdk") or bool(re.fullmatch(
+                        r"_(?:build|vulkan)(?:[-_].*)?", name))
+                if root.name == "glslang" and base == root:
+                    return name in {"build-arm64-v8a", "build-armeabi-v7a", "build-x86", "build-x86_64"}
+                return False
             dirs[:] = sorted(d for d in dirs if safe_path((base / d).relative_to(root)) and
-                             not (base / d).is_symlink() and d not in ("build", "prefix", "install"))
+                             not (base / d).is_symlink() and not build_output(d))
         for name in sorted(names):
             path = base / name
             relative = path.relative_to(root)
@@ -148,6 +157,7 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     j2v8 = None
     vlc_contrib = None
     vlc_archives = {}
+    mpv_archives = {}
     with gzip.open(path, "rb") as stream, tarfile.open(fileobj=stream, mode="r|") as archive:
         for member in archive:
             name = member.name
@@ -213,6 +223,11 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                     if j2v8 is not None or not 0 < member.size <= MAX_INVENTORY_BYTES:
                         raise ValueError("Invalid J2V8 provenance member")
                     j2v8 = json.load(archive.extractfile(member))
+                if module == "mpv" and root == ".native/mpv-android/buildscripts" and relative.startswith("source-archives/"):
+                    filename = relative.removeprefix("source-archives/")
+                    if "/" in filename or not member.size:
+                        raise ValueError("Invalid MPV source archive entry")
+                    mpv_archives[filename] = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
                 if module == "vlc":
                     prefix = "upstream/.native/libvlcjni/vlc/contrib/tarballs/"
                     if name.startswith(prefix) and "/" not in name[len(prefix):] and is_vlc_source_tarball(name[len(prefix):]):
@@ -251,6 +266,8 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
         for row in rows:
             if not all(re.fullmatch(r"[a-f0-9]{64}", row.get(key, "")) for key in ("inputSha256", "textSha256", "apkSha256")) or not re.fullmatch(r"[a-f0-9]{40}", row.get("gitBlob", "")):
                 raise ValueError("Invalid J2V8 binary fingerprints")
+    if module == "mpv":
+        verify_mpv_archives(mpv_archives, (ROOT / "gradle/external-versions.properties").read_text())
     if module == "vlc":
         if not isinstance(vlc_contrib, dict) or vlc_contrib.get("schema") != 1 or vlc_contrib.get("reviewRequired") is not True:
             raise ValueError("Missing VLC contrib provenance")
@@ -265,6 +282,19 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                 row["file"].startswith("libplacebo-") and row.get("recipeVerification") == "sha512" for row in rows):
             raise ValueError("Missing pinned VLC contrib source evidence")
     return j2v8
+
+
+def verify_mpv_archives(archives, pins):
+    expected = {}
+    for line in pins.splitlines():
+        if not line.startswith("MPV_DEP_SHA256_"):
+            continue
+        match = re.fullmatch(r"MPV_DEP_SHA256_([A-Za-z0-9._+-]+)=([a-f0-9]{64})", line)
+        if not match or match[1] in expected:
+            raise ValueError("Invalid MPV source archive pin")
+        expected[match[1]] = match[2]
+    if not expected or archives != expected:
+        raise ValueError("MPV source archives differ from pinned build inputs")
 
 
 def validate_cargo_inventory(module, inventory, files, original_locks, checksums, locks):

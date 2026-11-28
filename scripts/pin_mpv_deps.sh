@@ -26,10 +26,17 @@ DEPS="$BUILDSCRIPTS/deps"
 
 fetch_tarball() {
   local dir="$1" url="$2" file expected actual download
-  [[ -d "$DEPS/$dir" ]] && return 0
   file="$(basename "$url")"
   expected="$(external_version "MPV_DEP_SHA256_$file")"
   [[ -n "$expected" ]] || fail "no SHA-256 pin for $file (add MPV_DEP_SHA256_$file to $EXTERNAL_VERSIONS)"
+  if [[ -d "$DEPS/$dir" ]]; then
+    if [[ "${MPV_RETAIN_SOURCE_ARCHIVES:-0}" == 1 ]]; then
+      local retained="$BUILDSCRIPTS/source-archives/$file"
+      [[ -f "$retained" && ! -L "$retained" ]] || fail "missing original source archive for existing $dir; rebuild from a fresh dependency checkout"
+      [[ "$(sha256sum "$retained" | cut -d ' ' -f1)" == "$expected" ]] || fail "retained source archive checksum mismatch: $file"
+    fi
+    return 0
+  fi
   mkdir -p "$DEPS"
   download="$DEPS/.$file.download"
   echo "Fetching $file"
@@ -44,8 +51,13 @@ fetch_tarball() {
   rm -rf "$DEPS/$dir.partial"
   mkdir "$DEPS/$dir.partial"
   tar -xf "$download" -C "$DEPS/$dir.partial" --strip-components=1
+  if [[ "${MPV_RETAIN_SOURCE_ARCHIVES:-0}" == 1 ]]; then
+    mkdir -p "$BUILDSCRIPTS/source-archives"
+    mv "$download" "$BUILDSCRIPTS/source-archives/$file"
+  else
+    rm -f "$download"
+  fi
   mv "$DEPS/$dir.partial" "$DEPS/$dir"
-  rm -f "$download"
 }
 
 prefetch() {
