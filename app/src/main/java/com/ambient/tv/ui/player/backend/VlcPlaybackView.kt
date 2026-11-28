@@ -227,8 +227,32 @@ class VlcPlaybackController(
                 svpOutputFps(svpDisplayFps(context), imageOptions.svp) != target) {
                 result.cleanup(); return@launch
             }
-            hdrSceneSession = result
-            restartHdrScenePass()
+            var adopted = false
+            try {
+                val route = hdrSceneOutputOptions() ?: return@launch
+                val effective = vlcOptionsForNativeHdr(
+                    effectiveVlcImageOptions(settings,reducedVideoEffects(context),vlcSvpAllowed(context)),
+                    nativeHdrPreferred,sourceHdrStandard,true)
+                if (effective.svpMode == "off") return@launch
+                val options = vlcImageMediaOptions(effective,target,true,result.vlcOptions())
+                    .filter { it.startsWith(":video-filter=") || it in setOf(":mediacodec-dr",":no-mediacodec-dr") }
+                    .map { "--"+it.removePrefix(":") } + route
+                player.pause()
+                val analyzed = try { HdrOffscreenAnalysis.vlc(context,result,options) }
+                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) { Timber.w(e,"VLC offscreen HDR capture unavailable"); false }
+                if (!analyzed) result.discardIncompleteCapture()
+                if (released || !prepared || openingOrRestarting || imageOptions != settings ||
+                    attachedView?.holder?.surface?.isValid != true || !result.valid()) return@launch
+                hdrSceneSession = result
+                adopted = true
+                restartHdrScenePass()
+            } finally {
+                if (!adopted) {
+                    result.cleanup()
+                    if (!released && prepared && !openingOrRestarting && desiredPlayWhenReady) player.play()
+                }
+            }
         }
     }
 
