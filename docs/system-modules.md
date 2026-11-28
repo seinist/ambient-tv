@@ -322,3 +322,32 @@ upstream SmartTube and J2V8 classes and the native payload. These checks
 do not by themselves establish runtime linkage or playback compatibility.
 The broad R8 keep rules preserve common host APIs pending device validation
 and future size optimization.
+
+### VLC native-first migration
+
+The custom pinned VLC 4 AAR now patches its Java JNI load sites to use the
+same verified absolute native library paths selected by SystemModuleHost.
+A marker in classes.jar gates native modularization; older/unpatched AARs
+and the Maven fallback remain bundled. The signed VLC package binds to
+the exact patched classes.jar digest and hashes of any approved shared
+APK-owned native dependencies. The normal Full build keeps VLC available
+without downloading anything. The modular preview omits libvlc.so and
+libvlcjni.so when the patched AAR is present, and its release APK audit
+requires those roots to be absent in the normal custom VLC build.
+
+VlcBackendAvailability probes an actual LibVLC instance through the
+selected native runtime before playback. The Vulkan capability probe and
+controller constructor use the same gate. A missing or failed VLC
+renderer is filtered from settings and player controls; saved preferences
+are retained while Media3 is used instead. Live TV and local audio
+recovery also honor VLC availability.
+
+Native candidate generation uses package_system_modules.py --module vlc
+--vlc-aar <matching-patched-aar> and the four matching Full ABI APKs
+(--apk), with license notices (--license). The Java LibVLC wrapper and
+Android resources still remain in the host, because current controllers
+use its types directly. Full Java/DEX separation would require a wider
+playback interface refactor. The custom JNI source patch, native package
+binding and preview exclusion have regression tests. Actual pinned
+upstream rebuild, Vulkan/HDR/SVP/PCM compatibility, Android linker
+validation and signed publication remain to be verified.
