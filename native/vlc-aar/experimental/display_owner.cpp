@@ -350,7 +350,8 @@ struct ambient_ahb_owner {
             if (reclaim_result == VK_ERROR_DEVICE_LOST) device_lost = true;
             quarantine(s); return false;
         }
-        // hold_and_flush enqueues the signal BEFORE this wait on the same queue.
+        // hold_and_flush submits the signal before this wait, including when
+        // libplacebo selected another queue in the same graphics family.
         VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
         VkSubmitInfo info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         info.waitSemaphoreCount = 1;
@@ -368,9 +369,9 @@ struct ambient_ahb_owner {
         return true;
     }
 
-    // A terminal fence covers all earlier submissions on the single shared
-    // graphics queue, including libplacebo work flushed by the caller.
-    // Never use vkQueueWaitIdle on an uncertain semaphore dependency.
+    // A terminal fence covers raw conversion/reclaim work on queue zero.
+    // The caller subsequently retires presentation and every other queue
+    // in the same graphics family before destroying any GPU resources.
     bool retire() {
         if (retired) return true;
         if (device_lost || !queue) { retired = true; return true; }

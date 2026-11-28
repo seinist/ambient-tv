@@ -1,18 +1,20 @@
 #pragma once
 
 // C adapter for the pinned libplacebo 5.264.1 display module. This is intentionally
-// restricted to a single graphics queue; concurrent queue families need additional
-// target-image sharing and explicit synchronization before they can be enabled.
+// restricted to one graphics queue family. A second queue in that family
+// can overlap conversion and rendering via explicit binary semaphores.
+// Dedicated compute/transfer families still need additional image sharing.
 #include <libplacebo/vulkan.h>
 #include <libplacebo/renderer.h>
 #include <vulkan/vulkan_android.h>
 #include <string.h>
 
-static inline bool ambient_pl_single_queue(pl_vulkan vk, VkDevice device, uint32_t family)
+static inline bool ambient_pl_single_queue_family(pl_vulkan vk, VkDevice device, uint32_t family)
 {
     return vk && device && vk->device == device && vk->num_queues == 1 &&
-           vk->queue_graphics.index == family && vk->queue_graphics.count == 1 &&
-           vk->queues && vk->queues[0].index == family && vk->queues[0].count == 1 &&
+           vk->queue_graphics.index == family && vk->queue_graphics.count > 0 &&
+           vk->queues && vk->queues[0].index == family &&
+           vk->queues[0].count == vk->queue_graphics.count &&
            vk->lock_queue && vk->unlock_queue;
 }
 
@@ -95,7 +97,7 @@ static inline uint32_t ambient_pl_descriptor_budget(pl_vulkan vk)
 static inline bool ambient_pl_ahb_device_enabled(pl_vulkan vk)
 {
     return vk && vk->api_version >= VK_API_VERSION_1_1 &&
-        ambient_pl_single_queue(vk, vk->device, vk->queue_graphics.index) &&
+        ambient_pl_single_queue_family(vk, vk->device, vk->queue_graphics.index) &&
         ambient_pl_extension_enabled(vk, VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) &&
         ambient_pl_extension_enabled(vk, VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) &&
         ambient_pl_extension_enabled(vk, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME) &&
@@ -103,14 +105,15 @@ static inline bool ambient_pl_ahb_device_enabled(pl_vulkan vk)
 }
 
 // Wrap exactly once while held by the external owner. No cross-device
-// handle import or CPU download. Both sides use graphics queue index zero.
+// handle import or CPU download. Raw conversion uses queue index zero;
+// libplacebo may rotate through queues in the same family.
 static inline pl_tex ambient_pl_wrap_rgb_held(pl_gpu gpu, VkDevice device,
                                                    uint32_t family, VkImage image,
                                                    VkFormat format, int width, int height,
                                                    VkImageUsageFlags usage)
 {
     if (!gpu || !image || width <= 0 || height <= 0 ||
-        !ambient_pl_single_queue(pl_vulkan_get(gpu), device, family) ||
+        !ambient_pl_single_queue_family(pl_vulkan_get(gpu), device, family) ||
         (usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) !=
         (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
         return NULL;
@@ -205,7 +208,7 @@ static inline bool ambient_pl_hold_rgb(pl_gpu gpu, pl_tex texture, uint32_t fami
 {
     if (!gpu || !texture || !semaphore) return false;
     pl_vulkan vk = pl_vulkan_get(gpu);
-    if (!vk || !ambient_pl_single_queue(vk, vk->device, family)) return false;
+    if (!vk || !ambient_pl_single_queue_family(vk, vk->device, family)) return false;
     struct pl_vulkan_hold_params hold = {0};
     hold.tex = texture;
     hold.layout = VK_IMAGE_LAYOUT_GENERAL;

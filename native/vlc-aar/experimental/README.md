@@ -1068,3 +1068,13 @@ The broad FEL synthetic reference exposed an FP32 cancellation issue near a gamu
 The linked CI now also builds an isolated x86_64 AAR and the matching audit APK, checks exact packaged native library bytes, and runs the actual JNI/demux/socket test on a hardware-accelerated Android API-35 emulator. ARM64 remains a separate build and artifact for physical-device execution. A missing KVM device, failed emulator boot, native build or missing native metadata fails the job rather than reporting a skip/pass.
 
 The separate, default-off **Process HDR using GPU** preference is visible only with the experimental switch on. Auto and Vulkan may negotiate an explicit characterized BT.2020 PQ or HLG swapchain on API 34+; explicit Android output retains native presentation. The renderer verifies actual HDR transfer, primaries and at least ten-bit target depth, rejects non-HDR AHB pictures, and uses the existing libplacebo processing for HDR10/HLG, spatial HDR10+ or reconstructed Dolby Vision. Dolby Vision and HDR10+ are rendered to static PQ/HLG, not advertised as proprietary dynamic-metadata passthrough. If the swapchain/format fails, native source/base-layer policy is restored. SDR output/tone mapping remains separate. Physical display and decoder validation remain necessary.
+
+### Experimental queue topology and retirement
+
+AHB conversion uses graphics queue zero; libplacebo may use up to two queues
+in the same graphics family, subject to the actual device limit. Explicit
+conversion-ready and reclaim semaphores synchronize the queues. Dedicated
+compute/transfer families remain disabled until cross-family ownership is
+validated. Terminal cleanup waits on queue zero and every additional queue
+before releasing Vulkan resources; an uncertain result quarantines output.
+The throughput effect and driver behavior require Android hardware tests.

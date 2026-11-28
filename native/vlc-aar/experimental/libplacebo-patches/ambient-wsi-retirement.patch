@@ -8,9 +8,9 @@ diff --git a/src/include/libplacebo/vulkan.h b/src/include/libplacebo/vulkan.h
 -bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw);
 +bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw);
 +
-+// Ambient VLC: caller has flushed the GPU and proven the single graphics
-+// queue idle, including present operations. No submissions may follow.
-+// Return false if command callbacks are still pending; retain the device.
++// Ambient VLC: caller has flushed and proven graphics queue zero idle.
++// Wait for other queues in this family (call on bounded terminal worker).
++// No submissions may follow. False means retain the device.
 +bool pl_vulkan_swapchain_ambient_mark_retired(pl_swapchain sw);
 +// True only when the most recent submit actually queued a present.
 +bool pl_vulkan_swapchain_ambient_presented(pl_swapchain sw);
@@ -74,7 +74,7 @@ diff --git a/src/vulkan/swapchain.c b/src/vulkan/swapchain.c
      pl_mutex_unlock(&p->lock);
  
      switch (res) {
-@@ -884,8 +883,35 @@
+@@ -884,8 +883,45 @@
      pl_mutex_unlock(&p->lock);
  }
  
@@ -86,10 +86,20 @@ diff --git a/src/vulkan/swapchain.c b/src/vulkan/swapchain.c
 +        return false;
 +    struct priv *p = PL_PRIV(sw);
 +    struct vk_ctx *vk = p->vk;
-+    if (p->impl.destroy != vk_sw_destroy || vk->pool_graphics->num_queues != 1)
++    if (p->impl.destroy != vk_sw_destroy || vk->pools.num != 1 ||
++        vk->pool_graphics->num_queues < 1)
 +        return false;
-+    // The caller already flushed and waited on the sole queue. Run deferred
-+    // callbacks nonblocking, and reject if any submission remains outstanding.
++    // Queue zero has already retired. All other queues were flushed before
++    // the raw terminal fence; no new work may be submitted at this point.
++    struct vk_cmdpool *pool = vk->pool_graphics;
++    for (int i = 1; i < pool->num_queues; i++) {
++        vk->lock_queue(vk->queue_ctx, pool->qf, i);
++        VkResult res = vk->QueueWaitIdle(pool->queues[i]);
++        vk->unlock_queue(vk->queue_ctx, pool->qf, i);
++        if (res != VK_SUCCESS && res != VK_ERROR_DEVICE_LOST)
++            return false;
++    }
++    // Drain callbacks nonblocking and reject if anything remains outstanding.
 +    vk_poll_commands(vk, 0);
 +    pl_mutex_lock(&vk->lock);
 +    bool empty = vk->cmds_pending.num == 0 && vk->num_pending_callbacks == 0 &&
