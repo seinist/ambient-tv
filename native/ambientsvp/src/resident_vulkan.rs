@@ -1279,6 +1279,16 @@ pub unsafe extern "C" fn ambient_svp_hdr_scene_finish(scene:*const HdrScene,out:
 pub unsafe extern "C" fn ambient_svp_hdr_scene_destroy(scene:*mut HdrScene){
     if !scene.is_null(){let _=catch_unwind(AssertUnwindSafe(||unsafe{drop(Box::from_raw(scene))}));}
 }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_scene_validate(first:u64,end:u64,measured:*const SceneResult,
+    authored:*const SceneResult,count:u32)->i32{
+    if measured.is_null()||authored.is_null()||count==0||count>1_000_000{return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        i32::from(hdr_stats::validate_scene_sequence(first,end,
+            std::slice::from_raw_parts(measured,count as usize),
+            std::slice::from_raw_parts(authored,count as usize)))
+    })).unwrap_or(-1)
+}
 // The caller must pass the fence of the successful submission containing
 // this exact command buffer. The fence is borrowed and must not be reset
 // or destroyed before release. Never free in-flight descriptors/images.
