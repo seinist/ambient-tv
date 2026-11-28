@@ -1,0 +1,47 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+--- a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
++++ b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+@@ -67,10 +67,12 @@
+     private PairingManager pm;
+     private boolean ambientCancelled;
+     private Call ambientCall;
++    private OkHttpClient ambientArtworkClient;
+ 
+     public synchronized void cancelPendingRequests() {
+         ambientCancelled = true;
+         if (ambientCall != null) ambientCall.cancel();
++        if (ambientArtworkClient != null) ambientArtworkClient.connectionPool().evictAll();
+     }
+ 
+     private static final int DEFAULT_HTTPS_PORT = 47984;
+@@ -417,6 +419,17 @@
+ 
+     // This hack is Android-specific but we do it on all platforms
+     // because it doesn't really matter
++    // Only dedicated, pinned artwork clients opt in. Pairing and control retain the
++    // upstream per-call TLS behavior. One caller owns this client at a time.
++    public synchronized void enableAmbientArtworkPool() {
++        if (serverCert == null || httpsPort <= 0 || ambientCancelled)
++            throw new IllegalStateException("Pinned HTTPS artwork required");
++        if (ambientArtworkClient == null) {
++            ambientArtworkClient = performAndroidTlsHack(httpClientLongConnectTimeout)
++                    .newBuilder().connectionPool(new ConnectionPool(2, 20, TimeUnit.SECONDS)).build();
++        }
++    }
++
+     private OkHttpClient performAndroidTlsHack(OkHttpClient client) {
+         // Doing this each time we create a socket is required
+         // to avoid the SSLv3 fallback that causes connection failures
+@@ -452,7 +465,11 @@
+         final Call call;
+         synchronized (this) {
+             if (ambientCancelled) throw new IOException("Moonlight request cancelled");
+-            call = performAndroidTlsHack(client).newCall(request);
++            if (ambientArtworkClient != null) {
++                if (!path.equals("appasset") || !baseUrl.isHttps())
++                    throw new IOException("Artwork client restricted to pinned HTTPS assets");
++                call = ambientArtworkClient.newCall(request);
++            } else call = performAndroidTlsHack(client).newCall(request);
+             ambientCall = call;
+         }
+         Response response = call.execute();

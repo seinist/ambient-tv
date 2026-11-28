@@ -35,6 +35,27 @@ class MoonlightNativeTransport @Inject constructor(
     private data class ArtworkProof(val target: MoonlightVerifiedHost, val at: Long)
     private val artworkProofs = android.util.LruCache<String, ArtworkProof>(32)
     private val artworkProofLocks = Array(16) { Mutex() }
+    private data class ArtworkClient(val target: MoonlightVerifiedHost, val deviceId: String, val http: NvHTTP)
+    private val artworkClients = object : android.util.LruCache<String, ArtworkClient>(16) {
+        override fun entryRemoved(evicted: Boolean, key: String, oldValue: ArtworkClient, newValue: ArtworkClient?) {
+            if (oldValue !== newValue) oldValue.http.cancelPendingRequests()
+        }
+    }
+    private val artworkRequestLocks = Array(16) { Mutex() }
+
+    private fun artworkClient(target: MoonlightVerifiedHost): NvHTTP {
+        check(current(target))
+        val id = target.profile.id
+        val deviceId = prefs.moonlightDeviceId
+        val cached = artworkClients.get(id)
+        if (cached != null && cached.target.profile == target.profile &&
+            cached.target.identity == target.identity && cached.target.httpsPort == target.httpsPort &&
+            cached.deviceId == deviceId) return cached.http
+        return makeHttp(target.profile, target.pinnedCertificate, target.httpsPort).also {
+            it.enableAmbientArtworkPool()
+            artworkClients.put(id, ArtworkClient(target, deviceId, it))
+        }
+    }
 
     private suspend fun artworkHost(hostId: String): MoonlightVerifiedHost =
         artworkProofLocks[(hostId.hashCode() and Int.MAX_VALUE) % artworkProofLocks.size].withLock {
@@ -137,7 +158,11 @@ class MoonlightNativeTransport @Inject constructor(
     suspend fun loadArtwork(hostId: String, appId: Int): ByteArray {
         require(appId > 0)
         val host = artworkHost(hostId)
-        val data = withHttp(host.profile, host.pinnedCertificate, host.httpsPort) { http ->
+        val data = artworkRequestLocks[(hostId.hashCode() and Int.MAX_VALUE) % artworkRequestLocks.size].withLock {
+            withContext(Dispatchers.IO) {
+                val client = artworkClient(host)
+                try {
+                    withHttp(host.profile, host.pinnedCertificate, host.httpsPort, client) { http ->
             http.getBoxArt(com.limelight.nvstream.http.NvApp("Moonlight", appId, false)).use { stream ->
                 val output = java.io.ByteArrayOutputStream(16 * 1024)
                 val chunk = ByteArray(8192)
@@ -152,8 +177,14 @@ class MoonlightNativeTransport @Inject constructor(
                     ?: throw IOException("Sunshine has no artwork for this app")
             }
         }
-        if (trust.identity(hostId) != host.identity || requireHost(hostId) != host.profile)
-            throw SecurityException("Moonlight host changed")
+                } catch (error: Exception) {
+                    // Cancelled NvHTTP instances are single-use; remove on every failure.
+                    artworkClients.remove(hostId)
+                    throw error
+                }
+            }
+        }
+        if (!current(host)) throw SecurityException("Moonlight host changed")
         return data
     }
 
@@ -172,13 +203,13 @@ class MoonlightNativeTransport @Inject constructor(
 
     private suspend fun <T> withHttp(
         host: MoonlightHost, certificate: java.security.cert.X509Certificate?, httpsPort: Int = 0,
-        action: (NvHTTP) -> T,
+        reuse: NvHTTP? = null, action: (NvHTTP) -> T,
     ): T = coroutineScope {
         suspendCancellableCoroutine { continuation ->
             val current = AtomicReference<NvHTTP?>()
             val job = launch(Dispatchers.IO) {
                 try {
-                    val http = makeHttp(host, certificate, httpsPort)
+                    val http = reuse ?: makeHttp(host, certificate, httpsPort)
                     current.set(http)
                     if (!continuation.isActive) {
                         http.cancelPendingRequests()
@@ -207,12 +238,13 @@ class MoonlightNativeTransport @Inject constructor(
     }
 
     /** Device-local forget. Does NOT terminate the active game or send remote unpair commands. */
-    fun forgetHost(hostId: String) { artworkProofs.remove(hostId); trust.clear(hostId) }
+    fun forgetHost(hostId: String) { trust.clear(hostId); artworkProofs.remove(hostId); artworkClients.remove(hostId) }
 
     suspend fun resetClientIdentity() = pairingMutex.withLock {
         withContext(Dispatchers.IO) {
             // Revoke local trust first. A partial Keystore failure never leaves accepted old pins.
             artworkProofs.evictAll()
+            artworkClients.evictAll()
             prefs.moonlightHosts.forEach { trust.clear(it.id) }
             clientIdentity.resetIdentity()
             prefs.resetMoonlightDeviceId()
