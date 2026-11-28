@@ -299,12 +299,9 @@ class GameLibraryRepository @Inject constructor(
         ensureQueryIndex()
         folderEpochs[id] = (folderEpochs[id] ?: 0L) + 1L
         val updated = before.copy(systemId = systemId)
-        val others = present.filterNot { it.id == id }
-        preferences.gameLibraryOverrides = preferences.gameLibraryOverrides.map { choice ->
-            if (folderContains(before, choice.sourceId, choice.path) &&
-                others.none { folderContains(it, choice.sourceId, choice.path) }) choice.copy(metadata = null)
-            else choice
-        }
+        // Auto detection must run again; preserve portable choices until a new
+        // system is actually confirmed.
+        db.writableDatabase.execSQL("UPDATE game_entries SET probe_version=0 WHERE folder_id=?", arrayOf(id))
         preferences.gameLibraryFolders = present.map { if (it.id == id) updated else it }
         ensureQueryIndex()
         changed()
@@ -1458,6 +1455,7 @@ class GameLibraryRepository @Inject constructor(
                     async(Dispatchers.IO) {
                         val indexed = ArrayList<IndexedGame>()
                         val ready = ArrayList<IndexedGame>(64)
+                        var lastPublish = System.nanoTime()
                         val descriptors = mutableMapOf<String, Set<String>>()
                         var lease: GameScanFileSession? = null
                         fun reader(): GameScanFileSession =
@@ -1548,11 +1546,18 @@ class GameLibraryRepository @Inject constructor(
                                         if (entry.id !in previous && !GameSystems.acceptsFile(system, "playlist.m3u")) ready += resolved
                                     }
                                 }
-                                if (ready.size >= 64) { publishAdditions(ready); ready.clear() }
+                                if (ready.isNotEmpty() && (ready.size >= 64 ||
+                                        System.nanoTime() - lastPublish >= 500_000_000L)) {
+                                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                    publishAdditions(ready)
+                                    ready.clear()
+                                    lastPublish = System.nanoTime()
+                                }
                                 val count = processed.incrementAndGet()
                                 if (count % 16 == 0 || count == discovered.get())
                                     onProgress(count, discovered.get())
                             }
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
                             if (ready.isNotEmpty()) publishAdditions(ready)
                         } finally {
                             lease?.close()
@@ -1572,6 +1577,7 @@ class GameLibraryRepository @Inject constructor(
             selected.removeAll { it.entry.path !in visible }
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             val discardedPaths = mutableListOf<String>()
+            val changedSystems = hashSetOf<Pair<String, String>>()
             var abandoned = emptySet<String>()
             var removedChoices = emptySet<Pair<String, String>>()
             val accepted = synchronized(queryLock) {
@@ -1593,6 +1599,8 @@ class GameLibraryRepository @Inject constructor(
                         scanContext.ensureActive()
                         val e = game.entry
                         val last = previous[e.id]
+                        if (last != null && last.systemId != game.systemId)
+                            changedSystems += e.sourceId to e.path
                         if (last != null && (last.size != e.size || last.modified != e.modified || last.systemId != game.systemId)) {
                             writable.rawQuery("SELECT path FROM game_artwork WHERE file_id=? AND pinned=0", arrayOf(e.id)).use { rows ->
                                 while (rows.moveToNext()) discardedPaths += rows.getString(0)
@@ -1611,7 +1619,11 @@ class GameLibraryRepository @Inject constructor(
                                 arrayOf(folder.id, e.id)) == 0)
                             writable.insertOrThrow("game_entries", null, values)
                         configuration.overrides[e.sourceId to e.path]?.metadata?.let { portable ->
-                            if (GameMetadataStorage.read(writable, e.id) == null) GameMetadataStorage.write(writable, e.id, portable)
+                            if (GameMetadataStorage.read(writable, e.id) == null) {
+                                val restored = if ((e.sourceId to e.path) in changedSystems)
+                                    portable.withoutSystemIdentity() else portable
+                                GameMetadataStorage.write(writable, e.id, restored)
+                            }
                         }
                     }
                     removedChoices = existingChoices(writable, "$folderWhere AND seen!=?",
@@ -1626,6 +1638,13 @@ class GameLibraryRepository @Inject constructor(
                 }
                 abandoned.forEach(artworkFiles::remove)
                 discardedPaths.forEach(artworkFiles::removePath)
+                if (changedSystems.isNotEmpty()) {
+                    preferences.gameLibraryOverrides = preferences.gameLibraryOverrides.map { choice ->
+                        if ((choice.sourceId to choice.path) in changedSystems)
+                            choice.copy(metadata = choice.metadata?.withoutSystemIdentity())
+                        else choice
+                    }
+                }
                 if (purgePortableChoices(removedChoices)) {
                     queryConfiguration = null
                     ensureQueryIndex()
@@ -1638,6 +1657,19 @@ class GameLibraryRepository @Inject constructor(
             selected.size
         }
     }
+
+    /** Preserve deliberately edited text, not the old system's scraper identity. */
+    private fun GameMetadata.withoutSystemIdentity(): GameMetadata = GameMetadata(
+        title = title.takeIf { "title" in lockedFields }.orEmpty(),
+        summary = summary.takeIf { "summary" in lockedFields }.orEmpty(),
+        year = year.takeIf { "year" in lockedFields },
+        genres = genres.takeIf { "genres" in lockedFields }.orEmpty(),
+        developer = developer.takeIf { "developer" in lockedFields }.orEmpty(),
+        publisher = publisher.takeIf { "publisher" in lockedFields }.orEmpty(),
+        players = players.takeIf { "players" in lockedFields }.orEmpty(),
+        region = region.takeIf { "region" in lockedFields }.orEmpty(),
+        lockedFields = lockedFields - setOf("cover", "backdrop", "title_screen"),
+    )
 
     private fun indexedValues(folderId: String, game: IndexedGame, generation: Long): android.content.ContentValues {
         val e = game.entry
