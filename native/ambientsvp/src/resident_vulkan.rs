@@ -1425,6 +1425,44 @@ mod gpu_tests{
             }
             d.unmap_memory(readback_memory);
             ambient_svp_vk_destroy(engine);
+            // Exercise the actual four-picture GPU path and retained
+            // auxiliary field lifetime, not just the scalar blend probe.
+            let tune=ResidentTuning{block:16,overlap:4,pel:2,radius:1,satd:0,chroma:1,lambda:64,pnew:50,scene:50,artifacts:1};
+            let engine=ambient_svp_vk_create_config(instance.handle(),physical,d.handle(),
+                Some(entry.static_fn().get_instance_proc_addr),w,h,0,&tune);
+            assert!(!engine.is_null());
+            assert_eq!(ambient_svp_vk_set_synthesis(engine,23),0);
+            d.reset_fences(&[fence]).unwrap();
+            d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+            transition(&d,cmd,images[6].image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,vk::ImageLayout::GENERAL,
+                vk::AccessFlags::TRANSFER_READ,vk::AccessFlags::SHADER_WRITE,
+                vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+            let pair=ambient_svp_vk_begin_extended(engine,cmd,&a,&a,&b,&b);
+            assert!(!pair.is_null());
+            assert_eq!((&*pair).extended.len(),2);
+            assert_eq!((&*engine).0.aux_in_flight.load(Ordering::Acquire),2);
+            assert_eq!(ambient_svp_vk_set_synthesis(engine,11),-1);
+            assert_eq!(ambient_svp_vk_render(pair,0.5,0,images[6].view),0);
+            transition(&d,cmd,images[6].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
+                vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+            d.cmd_copy_image_to_buffer(cmd,images[6].image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,readback,&region);
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),&host,&[],&[]);
+            d.end_command_buffer(cmd).unwrap();
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+            assert_eq!(ambient_svp_vk_seal(pair,fence),0);
+            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            assert_eq!(ambient_svp_vk_release(pair),1);
+            assert_eq!((&*engine).0.aux_in_flight.load(Ordering::Acquire),0);
+            assert_eq!((&*engine).0.in_flight.load(Ordering::Acquire),0);
+            let mapped=d.map_memory(readback_memory,0,bytes,vk::MemoryMapFlags::empty()).unwrap();
+            for pixel in std::slice::from_raw_parts(mapped.cast::<u8>(),bytes as usize).chunks_exact(4){
+                assert!(pixel[..3].iter().all(|&v|v.abs_diff(80)<=1)&&pixel[3]==255,"extended result {pixel:?}");
+            }
+            d.unmap_memory(readback_memory);
+            ambient_svp_vk_destroy(engine);
             // Actual R16 plane / RGBA16F Vulkan execution. Adjacent
             // 10-bit luma codes must stay distinguishable at source ticks.
             for (mode,tuned) in [(1,false),(2,false),(3,false),(3,true)]{
