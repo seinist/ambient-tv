@@ -196,6 +196,9 @@ fn quality_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
     quality_spirv_weighted(mode,t,ResidentSearchWeights::legacy(t),entry)
 }
 fn quality_spirv_weighted(mode:u32,t:ResidentTuning,w:ResidentSearchWeights,entry:&str)->Result<Vec<u32>>{
+    spirv(&quality_source(mode,t,w)?,"@group(0) @binding(7) var<uniform> geometry:vec4u;",entry)
+}
+fn quality_source(mode:u32,t:ResidentTuning,w:ResidentSearchWeights)->Result<String>{
     if !t.valid()||!w.valid(){return Err("invalid weighted search configuration".into());}
     let scale=match mode{0=>"255.0",1|4=>"65535.0/64.0",2|5=>"65535.0",3=>"1023.0",_=>return Err("unknown quality format".into())};
     let mut source=include_str!("resident_quality.wgsl").to_owned();
@@ -211,7 +214,7 @@ fn quality_spirv_weighted(mode:u32,t:ResidentTuning,w:ResidentSearchWeights,entr
         if source.matches(name).count()!=1{return Err(format!("quality shader placeholder {name}"));}
         source=source.replace(name,&value);
     }
-    spirv(&source,"@group(0) @binding(7) var<uniform> geometry:vec4u;",entry)
+    Ok(source)
 }
 fn tuned_synthesis(source:&str,t:ResidentTuning)->Result<String>{
     let entry=source.find("@compute @workgroup_size(8,8)").ok_or("tuned synthesis entry")?;
@@ -865,10 +868,15 @@ mod tests{
             assert_eq!(super::tuned_motion_spirv(mode,t).unwrap()[0],0x07230203);
             assert_eq!(super::quality_spirv(mode,t,"analyse").unwrap()[0],0x07230203);
             assert_eq!(super::quality_spirv(mode,t,"scene").unwrap()[0],0x07230203);
+            assert_eq!(super::quality_spirv(mode,t,"snapshot").unwrap()[0],0x07230203);
             let out=if mode==0{super::spirv(&super::tuned_synthesis(super::SYNTHESIS,t).unwrap(),
                 "@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")}
                 else if mode>=4{super::raw_synthesis_config(mode,Some(t))}else{super::high_synthesis_config(mode,Some(t))};
             assert_eq!(out.unwrap()[0],0x07230203);
+        }
+        for filter in 1..=2{
+            let mut w=super::ResidentSearchWeights::legacy(t);w.filter=filter;
+            assert_eq!(super::quality_spirv_weighted(0,t,w,"analyse").unwrap()[0],0x07230203);
         }
         let m=super::motion_spirv().unwrap();
         let s=super::synthesis_spirv().unwrap();
