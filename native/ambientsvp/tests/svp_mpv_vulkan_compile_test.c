@@ -169,6 +169,9 @@ int main(void)
     assert(scene->maxscl[0].num==1200&&scene->average_maxrgb.num==600&&scene->fraction_bright_pixels.num==321);
     assert(scene->distribution_maxrgb[2].percentile.num==255&&!scene->tone_mapping_flag&&a.ambient_svp_hdr_generated);
     scene->distribution_maxrgb[3].percentage=26;
+    assert(svp_vk_scene_compatible(&a));
+    assert(svp_vk_scene_metadata(&a,&measured));
+    scene->distribution_maxrgb[3].percentage=10;
     assert(!svp_vk_scene_compatible(&a));
     assert(!svp_vk_scene_metadata(&a,&measured));
     struct dovi_fixture d=make_dovi(),d2;
