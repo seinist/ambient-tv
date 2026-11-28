@@ -61,7 +61,7 @@ on:
       profile:
         description: Compiler profile (optimized and optimized-a57 are public; other candidates are diagnostic)
         type: choice
-        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths, pgo-generate, pgo-use]
+        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths, pgo-generate, pgo-use, citra-arm64-jit]
         default: baseline
       pgo_run_id:
         description: Trusted same-repository artifact run ID (pgo-use only)
@@ -298,8 +298,11 @@ jobs:
             LDFLAGS_EXTRA="${LDFLAGS_EXTRA//ambient.profdata/$pgo_data}"
             pgo_args=(--profile-data "$pgo_data")
           fi
-          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ]]; then
+          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 || "$PROFILE" == citra-arm64-jit ]]; then
             python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
+          fi
+          if [[ "$PROFILE" == citra-arm64-jit ]]; then
+            python3 scripts/core_citra_arm64.py --root src
           fi
           if [ "$BUILD_KIND" = "cmake" ]; then
             export ANDROID_NDK_HOME="$NDK" ANDROID_NDK_ROOT="$NDK"
@@ -322,7 +325,7 @@ jobs:
             if [ -n "$CFLAGS_EXTRA$CPPFLAGS_EXTRA" ]; then
               flags+=("-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA $CPPFLAGS_EXTRA")
             fi
-            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* || "$PROFILE" = pgo-* ]]; then
+            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* || "$PROFILE" = pgo-* || "$PROFILE" = citra-arm64-jit ]]; then
               flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
             fi
             cmake -G "Unix Makefiles" -S src -B build \

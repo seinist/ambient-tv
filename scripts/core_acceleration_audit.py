@@ -190,9 +190,12 @@ def requirements(core, abi, profile):
         result = {"cpu_interpreter": ("src/core/arm/dyncom/arm_dyncom_interpreter.cpp", ()),
                   "audio": ("src/audio_core/libretro_sink.cpp", ()),
                   "frontend": ("src/citra_libretro/citra_libretro.cpp", ())}
-        # This pinned fork only links Dynarmic on x86_64. Do not claim ARM64 JIT.
         if abi == "x86_64":
             result["dynarmic"] = ("src/core/arm/dynarmic/arm_dynarmic.cpp", ())
+        if abi == "arm64-v8a" and profile == "citra-arm64-jit":
+            result["dynarmic"] = ("src/core/arm/dynarmic/arm_dynarmic.cpp", (("AMBIENT_CITRA_ARM64_JIT", "1"),))
+            result["dynarmic_arm64_emitter"] = ("backend/arm64/emit_arm64_a32.cpp", ())
+            result["dynarmic_arm64_interface"] = ("backend/arm64/a32_interface.cpp", ())
         return result
     if core == "panda3ds":
         return {"dynarmic": ("src/core/CPU/cpu_dynarmic.cpp", (("CPU_DYNARMIC", "1"),)),
