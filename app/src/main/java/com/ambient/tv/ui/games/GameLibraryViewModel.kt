@@ -22,8 +22,11 @@ import com.ambient.tv.games.metadata.GameMetadataBatchException
 import com.ambient.tv.ui.files.FilesViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +82,15 @@ data class GameLibraryUiState(
     val nameCatalogs: Map<String, Int> = emptyMap(),
 )
 
+/** Folder operations belong to the library, not to whichever settings or browse route
+ * happens to be visible. Leaving the settings page must not cancel an ongoing scan. */
+@Singleton
+class GameLibraryWork @Inject constructor() {
+    internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    internal var job: Job? = null
+    internal val progress = MutableStateFlow(GameLibraryUiState())
+}
+
 @HiltViewModel
 class GameLibraryViewModel @Inject constructor(
     private val library: GameLibraryRepository,
@@ -88,11 +100,29 @@ class GameLibraryViewModel @Inject constructor(
     private val preferences: AppPreferences,
     @ApplicationContext private val context: Context,
     private val metadata: GameMetadataRepository,
+    private val work: GameLibraryWork = GameLibraryWork(),
 ) : ViewModel() {
     private val mutable = MutableStateFlow(GameLibraryUiState())
     val state: StateFlow<GameLibraryUiState> = mutable.asStateFlow()
     // A cancelled job still owns its progress until its final cleanup has completed.
-    private var scan: Job? = null
+    private var scan: Job?
+        get() = work.job
+        set(value) { work.job = value }
+
+    private fun updateScan(transform: (GameLibraryUiState) -> GameLibraryUiState) {
+        mutable.update(transform)
+        val current = mutable.value
+        // Never retain an entire browse result or a view model in the shared progress state.
+        work.progress.update { it.copy(scanning = current.scanning, busy = current.scanning,
+            scanPhase = current.scanPhase, scanProcessed = current.scanProcessed,
+            scanDiscovered = current.scanDiscovered, scanFolderName = current.scanFolderName,
+            activeScanFolderId = current.activeScanFolderId, enriching = current.enriching,
+            error = current.error, message = current.message, nameCatalogs = current.nameCatalogs) }
+    }
+    private fun showScanError(error: Throwable, fallback: Int) {
+        libraryReadError = null
+        updateScan { it.copy(error = gameOperationError(context, error, fallback)) }
+    }
     private var browse: Job? = null
     // Reloads may finish after an import/scan failed. Only the read collector owns clearing
     // its own error; successful catalog refreshes must not erase operation feedback.
@@ -118,6 +148,21 @@ class GameLibraryViewModel @Inject constructor(
     private var loadedSystems: Pair<com.ambient.tv.games.library.GameLibraryRevision, List<String>>? = null
 
     init {
+        viewModelScope.launch {
+            work.progress.collect { progress ->
+                mutable.update { state ->
+                    state.copy(scanning = progress.scanning, busy = if (progress.scanning) true
+                        else if (state.scanning) false else state.busy,
+                        scanPhase = progress.scanPhase, scanProcessed = progress.scanProcessed,
+                        scanDiscovered = progress.scanDiscovered, scanFolderName = progress.scanFolderName,
+                        activeScanFolderId = progress.activeScanFolderId, enriching = progress.enriching,
+                        error = if (progress.scanning || state.scanning) progress.error else state.error,
+                        message = if (progress.scanning || state.scanning) progress.message else state.message,
+                        nameCatalogs = if (progress.nameCatalogs.isNotEmpty()) progress.nameCatalogs else state.nameCatalogs)
+                }
+                if (!progress.scanning) refreshRevision.update { it + 1 }
+            }
+        }
         viewModelScope.launch {
             combine(library.revisions, files.revision, preferences.changes().onStart { emit(Unit) }, selection, refreshRevision) { _, _, _, query, refresh ->
                 query?.let { LibraryRequest(
@@ -198,9 +243,9 @@ class GameLibraryViewModel @Inject constructor(
     /** Optional, offline, user-supplied DAT files. Never download a catalog implicitly. */
     fun importDat(systemId: String, uri: Uri) {
         if (scan?.isCompleted == false) return
-        scan = viewModelScope.launch {
+        scan = work.scope.launch {
             resetMetadataFailures()
-            mutable.update { it.copy(busy = true, scanning = true, scanPhase = GameLibraryScanPhase.NAME_DATABASES,
+            updateScan { it.copy(busy = true, scanning = true, scanPhase = GameLibraryScanPhase.NAME_DATABASES,
                 scanProcessed = 0, scanDiscovered = 1, error = null, message = null) }
             var catalogsCurrent = false
             try {
@@ -209,15 +254,15 @@ class GameLibraryViewModel @Inject constructor(
                         ?: throw java.io.FileNotFoundException("DAT file is unavailable")
                 }
                 val catalogSizes = library.datCatalogSizes()
-                mutable.update { it.copy(nameCatalogs = catalogSizes) }
+                updateScan { it.copy(nameCatalogs = catalogSizes) }
                 catalogsCurrent = true
                 scanFoldersWithNames(systemId)
-                mutable.update { it.copy(message = context.getString(R.string.game_catalog_imported, count)) }
+                updateScan { it.copy(message = context.getString(R.string.game_catalog_imported, count)) }
             } catch (cancelled: CancellationException) {
-                mutable.update { it.copy(message = null) }
+                updateScan { it.copy(message = null) }
                 throw cancelled
             }
-            catch (error: Exception) { showError(error, nameDatabaseErrorFallback(R.string.game_error_import)) }
+            catch (error: Exception) { showScanError(error, nameDatabaseErrorFallback(R.string.game_error_import)) }
             finally { finishNameDatabaseWork(refreshCatalogs = !catalogsCurrent) }
         }
     }
@@ -258,7 +303,7 @@ class GameLibraryViewModel @Inject constructor(
         mutable.update { it.copy(removingFolders = it.removingFolders + folder.id, error = null) }
         viewModelScope.launch {
             try {
-                if (mutable.value.activeScanFolderId == folder.id) scan?.cancelAndJoin()
+                if (work.progress.value.activeScanFolderId == folder.id) scan?.cancelAndJoin()
                 metadata.cancelFolder(folder.id)
                 withContext(Dispatchers.IO) { library.removeFolder(folder.id) }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -269,17 +314,17 @@ class GameLibraryViewModel @Inject constructor(
     fun changeFolderSystem(folder: GameLibraryFolder, systemId: String) {
         if (scan?.isCompleted == false || folder.id in mutable.value.removingFolders ||
             folder.systemId == systemId) return
-        scan = viewModelScope.launch {
+        scan = work.scope.launch {
             resetMetadataFailures()
-            mutable.update { it.copy(busy = true, scanning = true, activeScanFolderId = folder.id,
+            updateScan { it.copy(busy = true, scanning = true, activeScanFolderId = folder.id,
                 scanPhase = GameLibraryScanPhase.FILES, error = null, message = null) }
             try {
                 metadata.cancelFolder(folder.id)
                 val updated = withContext(Dispatchers.IO) { library.changeFolderSystem(folder.id, systemId) }
                 scanAndEnrich(updated, scanFiles = true)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { showError(error, R.string.game_error_update) }
-            finally { mutable.update { it.copy(busy = false, scanning = false,
+            catch (error: Exception) { showScanError(error, R.string.game_error_update) }
+            finally { updateScan { it.copy(busy = false, scanning = false,
                 activeScanFolderId = null, enriching = false) } }
         }
     }
@@ -375,17 +420,17 @@ class GameLibraryViewModel @Inject constructor(
 
     fun scanAll(systemId: String? = null) {
         if (scan?.isCompleted == false) return
-        scan = viewModelScope.launch {
+        scan = work.scope.launch {
             resetMetadataFailures()
-            mutable.update { it.copy(busy = true, scanning = true,
+            updateScan { it.copy(busy = true, scanning = true,
                 scanPhase = GameLibraryScanPhase.FILES, scanProcessed = 0, scanDiscovered = 0,
                 error = null, message = null) }
             try {
                 scanEveryFolder(systemId)
                 refreshRevision.update { it + 1 }
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { showError(error, R.string.game_error_scan) }
-            finally { mutable.update { it.copy(busy = false, scanning = false,
+            catch (error: Exception) { showScanError(error, R.string.game_error_scan) }
+            finally { updateScan { it.copy(busy = false, scanning = false,
                 activeScanFolderId = null, enriching = false) } }
         }
     }
@@ -422,21 +467,21 @@ class GameLibraryViewModel @Inject constructor(
      */
     fun loadNameDatabases(systemId: String? = null) {
         if (scan?.isCompleted == false) return
-        scan = viewModelScope.launch {
+        scan = work.scope.launch {
             resetMetadataFailures()
-            mutable.update { it.copy(busy = true, scanning = true, error = null,
+            updateScan { it.copy(busy = true, scanning = true, error = null,
                 scanPhase = GameLibraryScanPhase.NAME_DATABASES,
                 scanProcessed = 0, scanDiscovered = 0, message = null) }
             var catalogsCurrent = false
             try {
                 val result = metadata.loadNameDatabases(systemId?.let(::listOf)) { done, total ->
-                    mutable.update { it.copy(scanProcessed = done, scanDiscovered = total) }
+                    updateScan { it.copy(scanProcessed = done, scanDiscovered = total) }
                 }
                 val catalogSizes = library.datCatalogSizes()
-                mutable.update { it.copy(nameCatalogs = catalogSizes) }
+                updateScan { it.copy(nameCatalogs = catalogSizes) }
                 catalogsCurrent = true
                 if (result.systems == 0) {
-                    mutable.update { it.copy(message = context.getString(R.string.game_name_databases_none)) }
+                    updateScan { it.copy(message = context.getString(R.string.game_name_databases_none)) }
                     return@launch
                 }
                 if (systemId == null) {
@@ -446,21 +491,21 @@ class GameLibraryViewModel @Inject constructor(
                             library.folders().none { it.id == folder.id }) continue
                         scanAndEnrich(folder, scanFiles = true, matchingNames = true)
                     }
-                    mutable.update { it.copy(message = context.getString(R.string.game_name_databases_loaded,
+                    updateScan { it.copy(message = context.getString(R.string.game_name_databases_loaded,
                         result.names, result.systems)) }
                     return@launch
                 }
                 val affected = scanFoldersWithNames(systemId)
                 val name = GameSystems.byId(systemId)?.name ?: systemId
-                mutable.update { it.copy(message = context.getString(if (!affected)
+                updateScan { it.copy(message = context.getString(if (!affected)
                     R.string.game_name_databases_later else R.string.game_name_databases_loaded_one, result.names, name)) }
             } catch (error: CancellationException) {
-                mutable.update { it.copy(message = null) }
+                updateScan { it.copy(message = null) }
                 throw error
             }
             catch (error: Exception) {
-                mutable.update { it.copy(message = null) }
-                showError(error, nameDatabaseErrorFallback(R.string.game_error_name_databases))
+                updateScan { it.copy(message = null) }
+                showScanError(error, nameDatabaseErrorFallback(R.string.game_error_name_databases))
             }
             finally { finishNameDatabaseWork(refreshCatalogs = !catalogsCurrent) }
         }
@@ -479,11 +524,11 @@ class GameLibraryViewModel @Inject constructor(
                 // or fails. Publish those counts without replacing the operation's actual error.
                 try {
                     val catalogSizes = library.datCatalogSizes()
-                    mutable.update { it.copy(nameCatalogs = catalogSizes) }
+                    updateScan { it.copy(nameCatalogs = catalogSizes) }
                 } catch (_: Exception) { /* Keep the last counts if the database cannot be read. */ }
             }
         } finally {
-            mutable.update { it.copy(busy = false, scanning = false,
+            updateScan { it.copy(busy = false, scanning = false,
                 activeScanFolderId = null, enriching = false) }
         }
     }
@@ -512,25 +557,25 @@ class GameLibraryViewModel @Inject constructor(
     private fun startFolderWork(folder: GameLibraryFolder, scanFiles: Boolean) {
         if (scan?.isCompleted == false) return
         if (folder.id in mutable.value.removingFolders) return
-        scan = viewModelScope.launch {
+        scan = work.scope.launch {
             resetMetadataFailures()
-            mutable.update { it.copy(busy = true, scanning = true, scanProcessed = 0,
+            updateScan { it.copy(busy = true, scanning = true, scanProcessed = 0,
                 scanPhase = if (scanFiles) GameLibraryScanPhase.FILES else GameLibraryScanPhase.METADATA,
                 scanDiscovered = 0, scanFolderName = folder.path, error = null, message = null) }
             try {
                 scanAndEnrich(folder, scanFiles)
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
-                showError(error, if (scanFiles) R.string.game_error_scan else R.string.game_error_search)
+                showScanError(error, if (scanFiles) R.string.game_error_scan else R.string.game_error_search)
             }
-            finally { mutable.update { it.copy(busy = false, scanning = false,
+            finally { updateScan { it.copy(busy = false, scanning = false,
                 activeScanFolderId = null, enriching = false) } }
         }
     }
 
     private suspend fun scanAndEnrich(folder: GameLibraryFolder, scanFiles: Boolean,
                                       matchingNames: Boolean = false, systemId: String? = null) {
-        mutable.update { it.copy(activeScanFolderId = folder.id,
+        updateScan { it.copy(activeScanFolderId = folder.id,
             scanPhase = when {
                 !scanFiles -> GameLibraryScanPhase.METADATA
                 matchingNames -> GameLibraryScanPhase.MATCHING_NAMES
@@ -547,7 +592,7 @@ class GameLibraryViewModel @Inject constructor(
             val remote = files.sources().firstOrNull { it.id == folder.sourceId }?.kind != "local"
             if (assigned != null && !remote) metadata.prepareNameCatalogs(listOf(assigned), automatic = true)
             library.scan(folder.id, systemId = systemId) { processed, known ->
-                mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+                updateScan { it.copy(scanProcessed = processed, scanDiscovered = known) }
             }
             if ((assigned == null || remote) && library.folders().any { it.id == folder.id }) {
                 val detected = assigned?.let(::listOf)
@@ -557,23 +602,23 @@ class GameLibraryViewModel @Inject constructor(
                 // additional pass; remote folders use DAT filename matching without relisting.
                 if (!remote && loaded.any(com.ambient.tv.games.metadata.GameNameDatabases::usesChecksums) &&
                     folder.id !in mutable.value.removingFolders && library.folders().any { it.id == folder.id }) {
-                    mutable.update { it.copy(scanPhase = GameLibraryScanPhase.MATCHING_NAMES,
+                    updateScan { it.copy(scanPhase = GameLibraryScanPhase.MATCHING_NAMES,
                         scanProcessed = 0, scanDiscovered = 0) }
                     library.scan(folder.id, systemId = systemId) { processed, known ->
-                        mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+                        updateScan { it.copy(scanProcessed = processed, scanDiscovered = known) }
                     }
                 }
             }
             val sizes = library.datCatalogSizes()
-            mutable.update { it.copy(nameCatalogs = sizes) }
+            updateScan { it.copy(nameCatalogs = sizes) }
         }
         if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) return
-        mutable.update { it.copy(enriching = true, scanPhase = GameLibraryScanPhase.METADATA,
+        updateScan { it.copy(enriching = true, scanPhase = GameLibraryScanPhase.METADATA,
             scanProcessed = 0, scanDiscovered = 0) }
         if (scanFiles) metadata.importLocalFolder(folder.id, systemId = systemId)
         try {
             metadata.enrichFolder(folder.id, automatic = scanFiles, systemId = systemId, maxParallelism = 2) { processed, known ->
-                mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+                updateScan { it.copy(scanProcessed = processed, scanDiscovered = known) }
             }
         } catch (error: GameMetadataBatchException) {
             // The folder was fully attempted. Keep its partial result visible while other
@@ -582,7 +627,7 @@ class GameLibraryViewModel @Inject constructor(
             if (firstMetadataFailureReason == null) firstMetadataFailureReason =
                 gameOperationError(context, error.firstFailure, R.string.game_error_search)
             libraryReadError = null
-            mutable.update { it.copy(error = context.getString(R.string.game_metadata_partial_failure,
+            updateScan { it.copy(error = context.getString(R.string.game_metadata_partial_failure,
                 metadataFailedGames, firstMetadataFailureReason)) }
         }
     }
