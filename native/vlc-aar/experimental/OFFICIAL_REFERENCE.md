@@ -121,3 +121,10 @@ degree-16 curves, SDR/PQ/HLG targets, final neutral HLG encoding and scene
 cache replay. These are authored-target synthetic reference fixtures for the
 documented renderer model; they are not certified independent HDR10+
 conformance vectors or a substitute for real Android WSI tests.
+
+The frame oracle additionally checks final PQ, colored HLG at 400 and 1000
+nits, neutral and in-gamut colored BT.709/BT.1886 SDR, and actual packed
+10-bit GPU quantization. It exercises the same final color-map policy as
+the production renderer, with deterministic dithering disabled for numeric
+comparison. Wide-gamut SDR compression remains renderer policy, not an
+independent normative reference.

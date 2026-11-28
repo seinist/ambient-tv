@@ -194,17 +194,40 @@ def source(x,y,kind,neutral):
     # Non-repeating asymmetric raster, black and highlight clipping included.
     v = 0. if i%29==0 else 2000*((i*37)%211/210)**2
     rgb = (v,v,v) if neutral else (v,v*(.15+.8*((i*13)%31)/30),v*(.1+.85*((i*7)%19)/18))
-    if not neutral:
+    if neutral == 2:
+        # In-gamut but non-neutral colors for an independent SDR/HLG
+        # transfer reference, avoiding renderer-specific gamut compression.
+        rgb=(v,v*.94,v*.91)
+    if neutral != 1:
         k=i%3
         rgb=rgb[k:]+rgb[:k]
     return tuple(pq(v) for v in rgb),rgb
 
-def hlg_neutral(nits,peak,black):
+def hlg_rgb(rgb,peak,black):
     gamma=max(1.,1.2+.42*math.log10(peak/1000))
     beta=math.sqrt(3*(black/peak)**(1/gamma))
-    scene=12*(nits/peak)**(1/gamma)
-    signal=.5*math.sqrt(scene) if scene<=1 else .17883277*math.log(scene-.28466892)+.55991073
-    return clamp((signal-beta)/(1-beta))
+    norm=[v/peak for v in rgb]
+    lum=sum(a*b for a,b in zip(norm,(KR,KG,KB)))
+    if lum<=0:
+        return (0.,0.,0.)
+    # Inverse BT.2100 display OOTF operates on scene luminance, not
+    # each color channel independently. OETF is applied per channel.
+    factor=12*lum**((1-gamma)/gamma)
+    result=[]
+    for v in norm:
+        scene=v*factor
+        signal=.5*math.sqrt(scene) if scene<=1 else .17883277*math.log(scene-.28466892)+.55991073
+        result.append(clamp((signal-beta)/(1-beta)))
+    return result
+
+def sdr_rgb(rgb,peak,black):
+    # BT.2020 to BT.709, D65, derived from the standard xy primaries.
+    mat=((1.660491,-.587641,-.072850),(-.124550,1.132900,-.008349),
+         (-.018151,-.100579,1.118730))
+    lin=[sum(a*b for a,b in zip(row,rgb)) for row in mat]
+    assert all(-1e-4<=v<=peak+1e-4 for v in lin), lin
+    lb,lw=black**(1/2.4),peak**(1/2.4)
+    return [clamp((max(v,black)**(1/2.4)-lb)/(lw-lb)) for v in lin]
 
 def emit_array(name,rows):
     print(f"static const float {name}[REF_N][3] = {{")
@@ -228,6 +251,10 @@ def main():
         ("v1_pq",(v1,),1500,(),(),1,0,False,0,False),
         ("sdr_prepass",(GLOBAL,LOCAL1,LOCAL2),203,(),(),0,0,False,1,False),
         ("hlg_neutral",(GLOBAL,LOCAL1,LOCAL2),600,(),(),0,0,False,2,True),
+        ("hlg_color_1000",(v1,),1000,(),(),1,0,False,2,2),
+        ("hlg_color_400",(v1,),400,(),(),1,0,False,2,2),
+        ("sdr_final_neutral",(v1,),203,(),(),1,0,False,1,True),
+        ("sdr_final_color",(v1,),203,(),(),1,0,False,1,2),
         ("max_degree",(replace(GLOBAL,kx=0,ky=0,anchors=(1023,)*15),),600,(),(),0,0,False,0,False),
     ]
     print("/* Independent authored-target reference; generated, not a normative corpus. */")
@@ -245,8 +272,12 @@ def main():
                 result=reference(rgb,windows,peak,4000,mg,tg,x,y)
                 assert all(math.isfinite(v) and 0<=v<=peak+1e-8 for v in result)
                 inp.append(pixels); expected.append(tuple(pq(v) for v in result))
-                if target==2:
-                    final.append(tuple(hlg_neutral(v,peak,.005) for v in result))
+                if target==0:
+                    final.append(tuple(pq(v) for v in result))
+                elif target==2:
+                    final.append(tuple(hlg_rgb(result,peak,.005)))
+                elif target==1 and neutral:
+                    final.append(tuple(sdr_rgb(result,peak,peak/1000)))
                 if len(windows)==3:
                     a,b=(weight(w.geometry,x,y) for w in windows[1:])
                     coverage[0]+=a>0 and b>0

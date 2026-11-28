@@ -86,7 +86,7 @@ static void run_frame(pl_gpu gpu,pl_log log,pl_fmt fmt,pl_tex readback,
     check(f->name,rgba,f->expected,f->kind?.0035:.0025,f->kind?.001:.0008);
     if(f->final){
         // Match the production final renderer: no additional dynamic OOTF
-        // or peak analysis, with a characterized HLG display.
+        // or peak analysis. Validate PQ, characterized HLG and in-gamut SDR.
         target.num_planes=1;target.repr=pl_color_repr_rgb;
         target.planes[0]=(struct pl_plane){.texture=readback,.components=3,
             .component_mapping={0,1,2,-1}};
@@ -96,9 +96,32 @@ static void run_frame(pl_gpu gpu,pl_log log,pl_fmt fmt,pl_tex readback,
         cm.tone_mapping_algo=0;cm.inverse_tone_mapping=false;
         struct pl_render_params rp=pl_render_default_params;
         rp.color_map_params=&cm;rp.peak_detect_params=NULL;
+        rp.dither_params=NULL;
         assert(pl_render_image(renderer,&img,&target,&rp));
         assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=rgba)));
-        check("HLG final renderer",rgba,f->final,.012,.004);
+        check(f->target==2?"HLG final renderer":f->target==1?"SDR final renderer":"PQ final renderer",
+              rgba,f->final,f->target==2?.012:f->target==1?.015:.004,
+              f->target==2?.004:f->target==1?.005:.0015);
+        // Quantize the actual final renderer into a packed 10-bit target.
+        // Compare code values after readback (not CPU rounding of GPU floats).
+        pl_fmt ten=pl_find_named_fmt(gpu,"rgb10a2");
+        assert(ten && (ten->caps&PL_FMT_CAP_RENDERABLE) && (ten->caps&PL_FMT_CAP_SAMPLEABLE));
+        pl_tex quantized=pl_tex_create(gpu,pl_tex_params(.w=REF_W,.h=REF_H,
+            .format=ten,.renderable=true,.sampleable=true));
+        assert(quantized);
+        target.planes[0].texture=quantized;
+        target.repr.bits.sample_depth=10;target.repr.bits.color_depth=10;
+        assert(pl_render_image(renderer,&img,&target,&rp));
+        download(gpu,dp,quantized,readback,rgba);
+        for(unsigned i=0;i<REF_N;i++)for(unsigned k=0;k<3;k++){
+            double code=rgba[4*i+k]*1023.;
+            assert(isfinite(code) && fabs(code-round(code))<.002);
+        }
+        check("10-bit final renderer",rgba,f->final,
+              f->target==2?.013:f->target==1?.016:.005,
+              f->target==2?.005:f->target==1?.006:.0025);
+        pl_gpu_finish(gpu);pl_tex_destroy(gpu,&quantized);
+        target.planes[0].texture=readback;
     }
     // A malformed frame must not replace the input or the good cache.
     img=src;
