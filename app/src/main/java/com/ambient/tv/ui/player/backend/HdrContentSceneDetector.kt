@@ -101,16 +101,32 @@ internal object HdrContentSceneDetector {
 
     suspend fun analyze(file: File, expectedPts: Set<Long>): Set<Long>? {
         if (expectedPts.size !in 2..1_000_000) return null
+        val seen = HashSet<Long>()
+        val result = scanInternal(file) { pts, _ -> pts in expectedPts && seen.add(pts) }
+        return result?.takeIf { seen == expectedPts }
+    }
+
+    suspend fun scan(file: File, onSample: (Long, ByteArray) -> Boolean): Set<Long>? =
+        scanInternal(file) { pts, input ->
+            val bytes = ByteArray(input.remaining())
+            input.get(bytes)
+            onSample(pts,bytes)
+        }
+
+    private suspend fun scanInternal(file: File, onSample: (Long, java.nio.ByteBuffer) -> Boolean): Set<Long>? {
+        val expectedPts = HashSet<Long>()
         val ex = MediaExtractor()
         var codec: MediaCodec? = null
         var started = false
         try {
             ex.setDataSource(file.path)
             val index = (0 until ex.trackCount).singleOrNull {
-                ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME) == "video/hevc"
+                ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
             } ?: return null
             val format = ex.getTrackFormat(index)
             val mime = format.getString(MediaFormat.KEY_MIME) ?: return null
+            if (mime != "video/hevc" || format.getInteger(MediaFormat.KEY_WIDTH) !in 32..3840 ||
+                format.getInteger(MediaFormat.KEY_HEIGHT) !in 32..2160) return null
             format.setInteger(MediaFormat.KEY_COLOR_FORMAT,MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
             ex.selectTrack(index)
             val decoder = MediaCodec.createDecoderByType(mime)
@@ -137,8 +153,13 @@ internal object HdrContentSceneDetector {
                             decoder.queueInputBuffer(id,0,0,0,MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             inputEnded = true
                         } else {
-                            if (size > input.capacity() || size == 0) return null
-                            decoder.queueInputBuffer(id,0,size,ex.sampleTime,0)
+                            val pts = ex.sampleTime
+                            if (size > input.capacity() || size !in 1 until (16*1024*1024) ||
+                                ex.sampleTrackIndex != index || (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0 ||
+                                expectedPts.size >= 1_000_000 || !expectedPts.add(pts)) return null
+                            val sample = input.duplicate().apply { position(0); limit(size) }
+                            if (!onSample(pts,sample)) return null
+                            decoder.queueInputBuffer(id,0,size,pts,0)
                             ex.advance()
                         }
                         progress = true
@@ -163,7 +184,7 @@ internal object HdrContentSceneDetector {
                 if (progress) lastProgress = android.os.SystemClock.elapsedRealtime()
                 else if (android.os.SystemClock.elapsedRealtime()-lastProgress > 15_000) return null
             }
-            if (decoded != expectedPts.size) return null
+            if (decoded != expectedPts.size || decoded < 2) return null
             return tracker.finish()
         } finally {
             if (started) runCatching { codec?.stop() }

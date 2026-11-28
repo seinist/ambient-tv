@@ -174,6 +174,7 @@ class VlcPlaybackController(
     private val hdrSceneHold = HdrScenePlaybackHold()
     private var hdrSceneJob: Job? = null
     private var hdrSceneSession: HdrSceneSession? = null
+    private val retiredHdrScenes = mutableListOf<HdrSceneSession>()
     private var hdrSceneAttempted = false
     private var hdrSceneRestartPending = false
     private var hdrSceneReattaching = false
@@ -200,7 +201,7 @@ class VlcPlaybackController(
     private fun cancelHdrScenePass() {
         hdrSceneJob?.cancel()
         hdrSceneJob = null
-        hdrSceneSession?.cleanup()
+        hdrSceneSession?.let { it.abort(); retiredHdrScenes += it }
         hdrSceneSession = null
         hdrSceneRestartPending = false
         hdrSceneAttempted = true
@@ -1188,6 +1189,8 @@ class VlcPlaybackController(
             player.setEventListener(null)
             player.vlcVout.removeCallback(surfaceCallback)
             player.stop(); player.release(); libVlcRelease.releaseWhenIdle(libVlc)
+            retiredHdrScenes.forEach(HdrSceneSession::cleanup)
+            retiredHdrScenes.clear()
             configuredSoftwareProcessing = effectiveImage.softwareProcessing
             configuredResident = desiredResident
             configuredHdrSceneMode = desiredSceneMode
@@ -2089,6 +2092,8 @@ class VlcPlaybackController(
         authProxy?.close()
         val retiringPlayer = player
         val retiringLibVlc = libVlc
+        val retiringScenes = retiredHdrScenes.toList()
+        retiredHdrScenes.clear()
         attachedView = null
         // VLC 4's Java stop waits for native Stopped. A blocked network/decoder
         // must not freeze Back or a renderer handoff on the application thread.
@@ -2100,7 +2105,10 @@ class VlcPlaybackController(
                 .onFailure { Timber.w(it, "VLC native stop failed") }
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 runCatching { retiringPlayer.release() }
-                    .onSuccess { audioRelease.complete(Unit) }
+                    .onSuccess {
+                        retiringScenes.forEach(HdrSceneSession::cleanup)
+                        audioRelease.complete(Unit)
+                    }
                     .onFailure { audioRelease.completeExceptionally(it) }
                 libVlcRelease.releaseWhenIdle(retiringLibVlc)
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "native release done")

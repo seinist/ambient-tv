@@ -416,6 +416,7 @@ internal class MpvPlaybackEngine(
     private val hdrSceneHold = HdrScenePlaybackHold()
     private var hdrSceneJob: Job? = null
     private var hdrSceneSession: HdrSceneSession? = null
+    private val retiredHdrScenes = mutableListOf<HdrSceneSession>()
     private var hdrSceneAttempted = false
     private var hdrSceneBaseFilter: String? = null
     var imageOptions by mutableStateOf(initialImageOptions.normalized())
@@ -1828,7 +1829,7 @@ internal class MpvPlaybackEngine(
     private fun cancelHdrScenePass() {
         hdrSceneJob?.cancel()
         hdrSceneJob = null
-        hdrSceneSession?.cleanup()
+        hdrSceneSession?.let { it.abort(); retiredHdrScenes += it }
         hdrSceneSession = null
         hdrSceneBaseFilter = null
         hdrSceneAttempted = true
@@ -3164,7 +3165,11 @@ internal class MpvPlaybackEngine(
         imageScope.cancel()
         detachVideoOutput()
         released = true
-        if (stopEventPump()) MpvNativeBridge.nativeDestroy(handle)
+        if (stopEventPump()) {
+            MpvNativeBridge.nativeDestroy(handle)
+            retiredHdrScenes.forEach(HdrSceneSession::cleanup)
+            retiredHdrScenes.clear()
+        }
         // A leaked mpv context costs memory until the process ends; a closed descriptor still in
         // use by the waiter can corrupt an unrelated stream.
         else error("MPV event waiter did not stop; audio output is still owned")

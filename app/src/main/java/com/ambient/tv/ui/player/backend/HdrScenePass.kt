@@ -1,11 +1,8 @@
 package com.ambient.tv.ui.player.backend
 
 import android.content.Context
-import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.net.Uri
 import java.io.File
-import java.nio.ByteBuffer
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -34,7 +31,7 @@ internal object HdrScenePlanner {
     // bridge; use the same authenticated resource rather than creating a
     // second SMB/NFS client. Freeze bytes for both passes to prevent a
     // changed network resource being replayed against stale scene metadata.
-    private suspend fun snapshot(context: Context, url: String, headers: Map<String,String>, run: File): File? {
+    private suspend fun snapshot(context: Context, url: String, headers: Map<String,String>, run: File, digest: MessageDigest): File? {
         val uri = Uri.parse(url)
         val file = File(run,"source.media")
         suspend fun copy(input: java.io.InputStream, length: Long): Boolean {
@@ -47,7 +44,7 @@ internal object HdrScenePlanner {
                         currentCoroutineContext().ensureActive()
                         val n = stream.read(buffer,0,minOf(buffer.size.toLong(),length-written).toInt())
                         if (n <= 0) return false
-                        out.write(buffer,0,n);written += n
+                        out.write(buffer,0,n);digest.update(buffer,0,n);written += n
                         if (run.usableSpace < FREE_RESERVE) return false
                     }
                     if (stream.read() != -1) return false
@@ -281,11 +278,13 @@ internal object HdrScenePlanner {
         created(run)
         if (run.path.any { it in ":,{}%\"\\\n\r" }) return null
         val local = localFile(url)
-        val file = local ?: snapshot(context,url,headers,run) ?: return null
+        val digest = MessageDigest.getInstance("SHA-256")
+        val file = local ?: snapshot(context,url,headers,run,digest) ?: return null
         val length = file.length()
         val modified = file.lastModified()
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().buffered().use { input ->
+        // Network/content snapshots are hashed during the copy. Local media
+        // still needs a whole-file digest to bind both native passes.
+        if (local != null) file.inputStream().buffered().use { input ->
             val buffer = ByteArray(1024*1024)
             while (true) {
                 currentCoroutineContext().ensureActive()
@@ -295,42 +294,19 @@ internal object HdrScenePlanner {
             }
         }
         val key = hex(digest.digest())
-        val extractor = MediaExtractor()
-        val samples = try {
-            extractor.setDataSource(file.path)
-            val video = (0 until extractor.trackCount).filter {
-                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
-            }
-            if (video.size != 1) return null
-            val format = extractor.getTrackFormat(video.single())
-            val width = format.getInteger(MediaFormat.KEY_WIDTH)
-            val height = format.getInteger(MediaFormat.KEY_HEIGHT)
-            if (format.getString(MediaFormat.KEY_MIME) != "video/hevc" ||
-                width !in 32..3840 || height !in 32..2160) return null
-            extractor.selectTrack(video.single())
-            val buffer = ByteBuffer.allocate(MAX_SAMPLE)
-            val samples = ArrayList<Sample>()
-            val known = HashMap<String,String>()
-            while (extractor.sampleTrackIndex >= 0) {
-                currentCoroutineContext().ensureActive()
-                if (samples.size >= MAX_FRAMES || (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0) return null
-                buffer.clear()
-                val count = extractor.readSampleData(buffer,0)
-                if (count <= 0 || count >= MAX_SAMPLE || extractor.sampleTrackIndex != video.single()) return null
-                val bytes = ByteArray(count)
-                buffer.position(0);buffer.get(bytes)
-                val hdr = metadata(bytes) ?: return null
-                if (hdr !in known && known.size >= MAX_SCENES) return null
-                samples += Sample(extractor.sampleTime,known.getOrPut(hdr) { hdr })
-                if (!extractor.advance()) break
-            }
-            samples
-        } finally { extractor.release() }
+        val samples = ArrayList<Sample>()
+        val known = HashMap<String,String>()
+        // Parse compressed HDR metadata from the same extractor samples
+        // already being fed to the content-cut decoder. No second demux pass.
+        val cuts = HdrContentSceneDetector.scan(file) { pts, bytes ->
+            if (samples.size >= MAX_FRAMES || bytes.size !in 3 until MAX_SAMPLE) return@scan false
+            val hdr = metadata(bytes) ?: return@scan false
+            if (hdr !in known && known.size >= MAX_SCENES) return@scan false
+            samples += Sample(pts,known.getOrPut(hdr) { hdr })
+            true
+        } ?: return null
         val version = samples.firstOrNull()?.metadata?.substringBefore(':') ?: return null
         if (samples.any { it.metadata.substringBefore(':') != version }) return null
-        val pts = samples.map { it.ptsUs }.toHashSet()
-        if (pts.size != samples.size) return null
-        val cuts = HdrContentSceneDetector.analyze(file,pts) ?: return null
         val plan = plan(samples,source,target,vlc,cuts) ?: return null
         if (version == "0" && plan.ends.last() > 1_000_000L) return null
         currentCoroutineContext().ensureActive()
