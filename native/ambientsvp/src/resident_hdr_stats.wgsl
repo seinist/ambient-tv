@@ -6,7 +6,7 @@
 @group(0) @binding(2) var<storage,read_write> words:array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> params:vec4u;
 const BINS:u32=100001u;
-const STRIDE:u32=72u;
+const STRIDE:u32=76u;
 @group(0) @binding(3) var<storage,read> motion:array<vec4i>;
 @group(0) @binding(4) var<storage,read> pq_table:array<vec4u>;
 fn pq_index(v:f32)->u32{
@@ -41,6 +41,8 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
     let w=g.x;
     if w==0u||w>=params.z{return;}
     let o=w*STRIDE;
+    // Phase-zero geometry is authored, not inferred from motion.
+    if bitcast<f32>(atomicLoad(&words[o+43u]))==0.0{return;}
     let ar=rectangle(o+44u);
     let br=rectangle(o+48u);
     let step=max(params.w,1u);
@@ -396,9 +398,9 @@ fn scene_linear_sum(@builtin(global_invocation_id) id:vec3u,@builtin(local_invoc
                 if low>0xffffffffu-v{high+=1u;}
                 low+=v;
             }
-            let old=atomicAdd(&words[o+56u],low);
+            let old=atomicAdd(&words[o+72u],low);
             let carry=select(0u,1u,old>0xffffffffu-low);
-            atomicAdd(&words[o+57u],high+carry);
+            atomicAdd(&words[o+73u],high+carry);
         }
         workgroupBarrier();
     }
