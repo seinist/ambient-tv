@@ -302,7 +302,7 @@ pub struct Stream{
     idle_commands:Vec<BatchCommands>,preflight:Option<DisplayImage>,output_pool:Arc<Mutex<OutputPool>>,
 }
 impl Stream{
-    fn new(width:u32,height:u32,mode:u32)->Result<Self>{
+    fn new(width:u32,height:u32,mode:u32,quality:Option<ResidentOptions>)->Result<Self>{
         if !matches!(mode,0|4|6){return Err("unsupported compositor mode".into());}
         let owner=DeviceOwner::new()?;
         let names=[c"VK_ANDROID_external_memory_android_hardware_buffer",c"VK_EXT_queue_family_foreign",c"VK_KHR_external_semaphore_fd"];
@@ -311,7 +311,10 @@ impl Stream{
         let importer=unsafe{ambient_svp_ahb_importer_create(owner.instance.handle(),owner.physical,owner.d().handle(),
             get,owner.queue,owner.family,pointers.as_ptr(),pointers.len() as u32,1)};
         if importer.is_null(){return Err("Android importer rejected device".into());}
-        let resident=unsafe{ambient_svp_vk_create_format(owner.instance.handle(),owner.physical,owner.d().handle(),get,width,height,if mode==0{0}else{3})};
+        let format=if mode==0{0}else{3};
+        let resident=unsafe{if let Some(q)=quality{
+            ambient_svp_vk_create_quality(owner.instance.handle(),owner.physical,owner.d().handle(),get,width,height,format,&q)
+        }else{ambient_svp_vk_create_format(owner.instance.handle(),owner.physical,owner.d().handle(),get,width,height,format)}};
         if resident.is_null(){unsafe{ambient_svp_ahb_importer_destroy(importer)};return Err("resident device rejected geometry".into());}
         // Preflight real compositor-format output before consuming frames.
         let mut s=Self{owner,importer,resident,width,height,mode,previous:ptr::null_mut(),retired:Vec::new(),
@@ -378,7 +381,14 @@ pub unsafe extern "C" fn ambient_svp_android_stream_create(width:u32,height:u32)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_android_stream_create_format(width:u32,height:u32,mode:u32)->*mut Stream{
     if width<32||height<32||(width|height)&1!=0||u64::from(width)*u64::from(height)>1920*1080{return ptr::null_mut();}
-    catch_unwind(AssertUnwindSafe(||Stream::new(width,height,mode).map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s))))).unwrap_or(ptr::null_mut())
+    catch_unwind(AssertUnwindSafe(||Stream::new(width,height,mode,None).map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s))))).unwrap_or(ptr::null_mut())
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_android_stream_create_quality(width:u32,height:u32,mode:u32,
+    quality:*const ResidentOptions)->*mut Stream{
+    if quality.is_null()||width<32||height<32||(width|height)&1!=0||u64::from(width)*u64::from(height)>1920*1080{return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||Stream::new(width,height,mode,Some(unsafe{*quality}))
+        .map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s))))).unwrap_or(ptr::null_mut())
 }
 /// Extra source-picture reference transferred unconditionally via callback.
 /// On failure, caller still owns its ORIGINAL picture reference for fallback.
