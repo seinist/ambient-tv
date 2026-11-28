@@ -1295,6 +1295,7 @@ private fun DetailHero(
                             modifier = if (!primaryPlayable && !restoreTrailer) Modifier.focusRequester(initialActionFocus) else Modifier,
                         )
                     }
+                    com.ambient.tv.livetv.MediaScheduleAction(item)
                     if (onMore != null && detailActions.hasMenuActions) {
                         TvActionButton(
                             text = stringResource(R.string.detail_more_actions),
