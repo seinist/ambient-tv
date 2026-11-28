@@ -504,6 +504,87 @@ fn validate_scene_sequence_rejects_gaps_and_metadata_changes(){
     assert!(!validate_scene_sequence(0,4,&[a,b],&[a,SceneResult{percentiles:[1;9],..b}]));
 }
 
+// Version 0 legacy windows have independent selected-pixel populations.
+// Geometry may move between frames, but each output frame must use the
+// identical authored ellipse in both passes. A scene's topology and
+// percentile indices cannot change within its interval.
+#[repr(C)]
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub struct LegacyWindowResult{
+    pub count:u32,pub percentages:[u32;15],pub maxscl:[u32;3],
+    pub average:u32,pub percentiles:[u32;15],pub fraction:u32,
+}
+#[repr(C)]
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub struct LegacySceneResult{
+    pub first:u64,pub end:u64,pub count:u32,pub windows:[LegacyWindowResult;3],
+}
+struct LegacyWindow{
+    count:u32,percentages:[u32;15],bins:Vec<u64>,maxscl:[u32;3],linear_sum:u128,
+}
+impl LegacyWindow{
+    fn new(f:&SceneWindowFrame)->Result<Self>{
+        if f.count>15||f.percentages[..f.count.min(15) as usize].iter().any(|&v|v>100)||
+            f.percentages[..f.count.min(15) as usize].windows(2).any(|p|p[0]>=p[1]){
+            return Err("invalid legacy percentile indices".into());
+        }
+        Ok(Self{count:f.count,percentages:f.percentages,bins:vec![0;BINS as usize],maxscl:[0;3],linear_sum:0})
+    }
+    fn push(&mut self,f:SceneWindowFrame,w:u32,h:u32,global:bool)->Result<()>{
+        let n=f.frame.bins.iter().map(|&v|u64::from(v)).sum::<u64>();
+        let area=u64::from(w)*u64::from(h);
+        if f.count!=self.count||f.percentages[..f.count.min(15) as usize]!=self.percentages[..self.count as usize]||
+            f.frame.width!=w||f.frame.height!=h||f.frame.bins.len()!=BINS as usize||
+            n==0||n>area||global&&n!=area||f.frame.linear_sum>n*1_000_000_000||
+            f.frame.maxscl.iter().any(|&v|v>100000){
+            return Err("invalid legacy selected pixel population".into());
+        }
+        for (sum,v) in self.bins.iter_mut().zip(f.frame.bins){*sum=sum.checked_add(u64::from(v)).ok_or("legacy histogram overflow")?;}
+        for (peak,v) in self.maxscl.iter_mut().zip(f.frame.maxscl){*peak=(*peak).max(v);}
+        self.linear_sum+=u128::from(f.frame.linear_sum);
+        Ok(())
+    }
+    fn finish(self)->Result<LegacyWindowResult>{
+        let n=self.bins.iter().sum::<u64>();
+        if n==0{return Err("empty legacy window".into());}
+        let d=u128::from(n)*10000;
+        let mut r=LegacyWindowResult{count:self.count,percentages:self.percentages,maxscl:self.maxscl,
+            average:((self.linear_sum+d/2)/d) as u32,..Default::default()};
+        for (j,&pct) in self.percentages[..self.count as usize].iter().enumerate(){
+            let rank=if pct==99{n-n/5000}else{((u128::from(n)*u128::from(pct)+99)/100) as u64}.max(1);
+            let mut total=0;
+            for (i,&v) in self.bins.iter().enumerate(){total+=v;if total>=rank{r.percentiles[j]=i as u32;break;}}
+        }
+        // Section 10.3: newly generated version-0 FBP is not measured.
+        if !valid_legacy_window(&r){return Err("invalid legacy scene result".into());}
+        Ok(r)
+    }
+}
+fn valid_legacy_window(r:&LegacyWindowResult)->bool{
+    if r.count>15||r.fraction!=0||r.maxscl.iter().any(|&v|v>100000){return false;}
+    let peak=*r.maxscl.iter().max().unwrap_or(&0);
+    let p=&r.percentages[..r.count as usize];let v=&r.percentiles[..r.count as usize];
+    r.average<=peak&&p.iter().all(|&x|x<=100)&&p.windows(2).all(|x|x[0]<x[1])&&
+        v.iter().all(|&x|x<=peak)&&v.windows(2).all(|x|x[0]<=x[1])
+}
+struct LegacyScene{first:u64,end:u64,next:u64,windows:Vec<LegacyWindow>}
+impl LegacyScene{
+    fn new(first:u64,end:u64,frames:&[SceneWindowFrame])->Result<Self>{
+        if first>=end||!(1..=3).contains(&frames.len()){return Err("invalid legacy scene topology".into());}
+        Ok(Self{first,end,next:first,windows:frames.iter().map(LegacyWindow::new).collect::<Result<Vec<_>>>()?})
+    }
+    fn push(&mut self,index:u64,frames:Vec<SceneWindowFrame>,w:u32,h:u32)->Result<()>{
+        if index!=self.next||index>=self.end||frames.len()!=self.windows.len(){return Err("legacy scene topology or order changed".into());}
+        for (i,(window,frame)) in self.windows.iter_mut().zip(frames).enumerate(){window.push(frame,w,h,i==0)?;}
+        self.next+=1;Ok(())
+    }
+    fn finish(self)->Result<LegacySceneResult>{
+        if self.next!=self.end{return Err("incomplete legacy scene".into());}
+        let mut result=LegacySceneResult{first:self.first,end:self.end,count:self.windows.len() as u32,..Default::default()};
+        for (i,w) in self.windows.into_iter().enumerate(){result.windows[i]=w.finish()?;}
+        Ok(result)
+    }
+}
 // Two-pass cache: explicitly supplied authoritative scene boundaries and
 // content fingerprint, renderer/configuration fingerprint, fixed geometry.
 // All frames must be captured in presentation order. The cache is create-only
@@ -511,8 +592,8 @@ fn validate_scene_sequence_rejects_gaps_and_metadata_changes(){
 const PASS_P:[u32;9]=[1,5,10,25,50,75,90,95,99];
 const MAX_SCENES:usize=100_000;
 pub(super) struct TwoPass{
-    mode:u32,key:String,profile:String,width:u32,height:u32,ends:Vec<u64>,
-    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,failed:bool,
+    mode:u32,version:u32,key:String,profile:String,width:u32,height:u32,ends:Vec<u64>,
+    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,legacy_results:Vec<LegacySceneResult>,legacy_current:Option<LegacyScene>,failed:bool,
 }
 fn read_bounded(path:&std::path::Path,max:u64)->Result<String>{
     use std::io::Read;
@@ -529,7 +610,10 @@ fn parse_num<T:std::str::FromStr>(s:Option<&str>)->Result<T>{
 }
 impl TwoPass{
     pub(super) fn open(mode:u32,plan:&std::path::Path,cache:&std::path::Path,key:&str,profile:&str,w:u32,h:u32)->Result<Self>{
-        if !matches!(mode,1|2)||key.len()!=64||!key.bytes().all(|v|v.is_ascii_hexdigit())||
+        Self::open_version(mode,1,plan,cache,key,profile,w,h)
+    }
+    pub(super) fn open_version(mode:u32,version:u32,plan:&std::path::Path,cache:&std::path::Path,key:&str,profile:&str,w:u32,h:u32)->Result<Self>{
+        if version>1||!matches!(mode,1|2)||key.len()!=64||!key.bytes().all(|v|v.is_ascii_hexdigit())||
             profile.is_empty()||profile.len()>1024||profile.bytes().any(|v|!v.is_ascii_graphic())||
             w==0||h==0||w>3840||h>2160||u64::from(w)*u64::from(h)>3840*2160||plan==cache{
             return Err("invalid two-pass identity or geometry".into());
@@ -546,19 +630,43 @@ impl TwoPass{
             ends.push(end);first=end;
         }
         if ends.is_empty(){return Err("empty scene plan".into());}
-        let mut s=Self{mode,key:key.into(),profile:profile.into(),width:w,height:h,ends,path:cache.into(),
-            next:0,results:Vec::new(),current:None,failed:false};
+        let mut s=Self{mode,version,key:key.into(),profile:profile.into(),width:w,height:h,ends,path:cache.into(),
+            next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,failed:false};
         if mode==2{s.read_cache()?;}
         else if cache.exists(){return Err("scene cache already exists".into());}
         Ok(s)
     }
     fn header(&self)->String{
-        format!("AMBIENTSVP_SCENE_CACHE_1\n{}\n{}\n{} {}\n",self.key,self.profile,self.width,self.height)
+        format!("AMBIENTSVP_SCENE_CACHE_{}\n{}\n{}\n{} {}\n",self.version,self.key,self.profile,self.width,self.height)
     }
     fn read_cache(&mut self)->Result<()>{
         let contents=read_bounded(&self.path,32_000_000)?;
         let header=self.header();
         let body=contents.strip_prefix(&header).ok_or("scene cache identity mismatch")?;
+        if self.version==0{
+            let mut start=0;
+            for l in body.lines(){
+                if self.legacy_results.len()>=self.ends.len(){return Err("extra legacy scene".into());}
+                let mut f=l.split_ascii_whitespace();
+                let first=parse_num(f.next())?;let end=parse_num(f.next())?;let count:u32=parse_num(f.next())?;
+                if first!=start||end!=self.ends[self.legacy_results.len()]||!(1..=3).contains(&count){return Err("legacy cache interval".into());}
+                let mut result=LegacySceneResult{first,end,count,..Default::default()};
+                for w in &mut result.windows[..count as usize]{
+                    w.count=parse_num(f.next())?;
+                    if w.count>15{return Err("legacy cache percentile count".into());}
+                    for v in &mut w.maxscl{*v=parse_num(f.next())?;}
+                    w.average=parse_num(f.next())?;w.fraction=parse_num(f.next())?;
+                    for j in 0..w.count as usize{
+                        w.percentages[j]=parse_num(f.next())?;w.percentiles[j]=parse_num(f.next())?;
+                    }
+                    if !valid_legacy_window(w){return Err("invalid legacy cache values".into());}
+                }
+                if f.next().is_some(){return Err("extra legacy cache fields".into());}
+                self.legacy_results.push(result);start=end;
+            }
+            if self.legacy_results.len()!=self.ends.len(){return Err("incomplete legacy cache".into());}
+            return Ok(());
+        }
         for l in body.lines(){
             if self.results.len()>=self.ends.len(){return Err("extra scene result".into());}
             let mut fields=l.split_ascii_whitespace();
@@ -586,9 +694,32 @@ impl TwoPass{
         let i=self.ends.partition_point(|&v|v<=index);
         Ok((if i==0{0}else{self.ends[i-1]},self.ends[i]))
     }
+    pub(super) fn version(&self)->u32{self.version}
     pub(super) fn abort(&mut self){self.failed=true;}
+    pub(super) fn capture_legacy(&mut self,index:u64,frames:Vec<SceneWindowFrame>)->Result<()>{
+        let result=(||->Result<()>{
+            if self.version!=0||self.mode!=1||self.failed||index!=self.next||self.legacy_results.len()>=self.ends.len(){
+                return Err("legacy scene capture order".into());
+            }
+            let end=self.ends[self.legacy_results.len()];
+            if self.legacy_current.is_none(){self.legacy_current=Some(LegacyScene::new(index,end,&frames)?);}
+            self.legacy_current.as_mut().unwrap().push(index,frames,self.width,self.height)?;
+            self.next+=1;
+            if self.next==end{self.legacy_results.push(self.legacy_current.take().unwrap().finish()?);}
+            Ok(())
+        })();
+        if result.is_err(){self.abort();}result
+    }
+    pub(super) fn lookup_legacy(&mut self,index:u64)->Result<LegacySceneResult>{
+        if self.version!=0||self.mode!=2||self.failed||index!=self.next||index>=*self.ends.last().unwrap(){
+            self.abort();return Err("legacy replay order".into());
+        }
+        let i=self.ends.partition_point(|&v|v<=index);
+        let result=*self.legacy_results.get(i).ok_or("missing legacy result")?;
+        self.next+=1;Ok(result)
+    }
     pub(super) fn capture(&mut self,index:u64,frame:SceneFrame)->Result<()>{
-        if self.mode!=1||self.failed||index!=self.next||self.results.len()>=self.ends.len(){
+        if self.version!=1||self.mode!=1||self.failed||index!=self.next||self.results.len()>=self.ends.len(){
             self.abort();return Err("out of order scene capture".into());
         }
         let end=self.ends[self.results.len()];
@@ -601,7 +732,7 @@ impl TwoPass{
         Ok(())
     }
     pub(super) fn lookup(&mut self,index:u64)->Result<SceneResult>{
-        if self.mode!=2||self.failed||index!=self.next||index>=*self.ends.last().unwrap(){
+        if self.version!=1||self.mode!=2||self.failed||index!=self.next||index>=*self.ends.last().unwrap(){
             self.abort();return Err("out of order second pass".into());
         }
         let i=self.ends.partition_point(|&v|v<=index);
@@ -611,7 +742,9 @@ impl TwoPass{
     }
     pub(super) fn finish(&mut self)->Result<()>{
         use std::io::Write;
-        if self.failed||self.next!=*self.ends.last().unwrap()||self.results.len()!=self.ends.len()||self.current.is_some(){
+        if self.failed||self.next!=*self.ends.last().unwrap()||
+            (if self.version==0{self.legacy_results.len()!=self.ends.len()||self.legacy_current.is_some()}
+                else{self.results.len()!=self.ends.len()||self.current.is_some()}){
             return Err("incomplete two-pass run".into());
         }
         if self.mode==2{return Ok(());}
@@ -624,6 +757,17 @@ impl TwoPass{
             write!(&mut data," {}",r.average).map_err(|_|"cache formatting")?;
             for v in r.percentiles{write!(&mut data," {}",v).map_err(|_|"cache formatting")?;}
             writeln!(&mut data," {}",r.fraction).map_err(|_|"cache formatting")?;
+        }
+        for r in &self.legacy_results{
+            use std::fmt::Write as _;
+            write!(&mut data,"{} {} {}",r.first,r.end,r.count).map_err(|_|"cache formatting")?;
+            for w in &r.windows[..r.count as usize]{
+                write!(&mut data," {}",w.count).map_err(|_|"cache formatting")?;
+                for v in w.maxscl{write!(&mut data," {}",v).map_err(|_|"cache formatting")?;}
+                write!(&mut data," {} {}",w.average,w.fraction).map_err(|_|"cache formatting")?;
+                for j in 0..w.count as usize{write!(&mut data," {} {}",w.percentages[j],w.percentiles[j]).map_err(|_|"cache formatting")?;}
+            }
+            data.push('\n');
         }
         // Unique create-new sibling; hard-link publication never overwrites
         // an existing cache and never exposes a partially written file.
