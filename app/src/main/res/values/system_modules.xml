@@ -19,4 +19,11 @@
     <string name="module_state_active_external">Active (downloaded)</string>
     <string name="module_state_failed">Module unavailable or incompatible</string>
     <string name="module_settings_spotify_experimental">Experimental: Spotify currently rejects the audio keys used by this receiver. Loading the module does not guarantee playback.</string>
+    <string name="module_settings_searching">Finding compatible release…</string>
+    <string name="module_settings_verifying">Verifying package…</string>
+    <string name="module_settings_committing">Saving selection…</string>
+    <string name="module_settings_cancelling">Cancelling download…</string>
+    <string name="module_settings_progress">Download: %1$d%%</string>
+    <string name="module_settings_cancel">Cancel download</string>
+    <string name="module_settings_cancelled">Download cancelled. Previous selection retained.</string>
 </resources>

@@ -47,6 +47,7 @@ class SystemModuleStoreTest {
         onOpen: () -> Unit = {},
         validateCandidate: (SystemModuleStore.Package) -> Unit = {},
         compatible: (SystemModuleBuild) -> Boolean = { true },
+        beforePublish: () -> Unit = {},
     ): SystemModuleStore.Package? {
         val digest = MessageDigest.getInstance("SHA-256").digest(signedArchive)
             .joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -60,7 +61,7 @@ class SystemModuleStoreTest {
             update(bytes)
             sign()
         }
-        return store.install(module, tag, bytes, signature, validateCandidate = validateCandidate, compatible = compatible) { onOpen(); received.inputStream() }
+        return store.install(module, tag, bytes, signature, validateCandidate = validateCandidate, compatible = compatible, beforePublish = beforePublish) { onOpen(); received.inputStream() }
     }
 
     private fun reject(block: () -> Unit) {
@@ -209,6 +210,35 @@ class SystemModuleStoreTest {
                 fail("Unauthenticated metadata reached host probe"); true
             }) { error("unreachable") }
         }
+    }
+
+    @Test fun cancellationBeforeAtomicPublicationRetainsSelectionAndVersionFloor() {
+        val manager = store()
+        val one = zip("lib/libone.so")
+        val two = zip("lib/libtwo.so")
+        install(manager, 1, one)
+        val transfer = SystemModuleDownload()
+        reject { install(manager, 9, two, validateCandidate = { transfer.cancel() }, beforePublish = transfer::beginPublication) }
+        assertEquals(1L, manager.current(module)?.build?.version)
+        assertEquals(2L, install(manager, 2, two)?.build?.version)
+        assertEquals(1L, manager.rollback(module)?.build?.version)
+    }
+
+    @Test fun publicationBoundaryRejectsLateCancellation() {
+        val transfer = SystemModuleDownload()
+        transfer.beginPublication()
+        assertFalse(transfer.cancel())
+        transfer.check()
+        assertEquals(SystemModuleDownload.COMMITTING, transfer.progress.value)
+    }
+
+    @Test fun cancelledTransferCancelsNewHttpCalls() {
+        val transfer = SystemModuleDownload()
+        val call = okhttp3.OkHttpClient().newCall(okhttp3.Request.Builder().url("https://github.com/").build())
+        assertTrue(transfer.cancel())
+        reject { transfer.attach(call) }
+        assertTrue(call.isCanceled())
+        assertEquals(SystemModuleDownload.CANCELLING, transfer.progress.value)
     }
 
     @Test fun incompatibleCandidateDoesNotPublishOrAdvanceVersionFloor() {

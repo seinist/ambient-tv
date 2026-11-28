@@ -54,6 +54,7 @@ internal class SystemModuleStore(
         profile: String = "baseline",
         validateCandidate: (Package) -> Unit = {},
         compatible: (SystemModuleBuild) -> Boolean = { true },
+        beforePublish: () -> Unit = {},
         openArchive: (SystemModuleBuild) -> InputStream,
     ): Package? = locked(module) { directory ->
         val state = readState(directory)
@@ -89,6 +90,7 @@ internal class SystemModuleStore(
             syncDirectory(directory)
             // Once publication starts, retain the payload even if the directory
             // sync fails after rename. Never delete a possibly referenced package.
+            beforePublish()
             publicationStarted = true
             writeState(directory, State(pointer, if (currentVerified) state.current else state.previous, maxOf(state.highWater, build.version)))
             result

@@ -32,6 +32,13 @@ private fun ModuleDialog(dismiss: () -> Unit) {
     var installed by remember { mutableStateOf<SystemModuleBuild?>(null) }
     var busy by remember { mutableStateOf(true) }
     var notice by remember { mutableStateOf<Int?>(null) }
+    var transfer by remember { mutableStateOf<SystemModuleDownload?>(null) }
+    val idle = remember { kotlinx.coroutines.flow.MutableStateFlow(SystemModuleDownload.SEARCHING) }
+    val progress by (transfer?.progress ?: idle).collectAsState()
+    DisposableEffect(transfer) {
+        val active = transfer
+        onDispose { active?.cancel() }
+    }
 
     LaunchedEffect(selected) {
         busy = true
@@ -48,9 +55,10 @@ private fun ModuleDialog(dismiss: () -> Unit) {
         }
     }
 
-    fun action(block: (SystemModule) -> Boolean) {
+    fun action(download: SystemModuleDownload? = null, block: (SystemModule) -> Boolean) {
         if (busy) return
         val module = selected
+        transfer = download
         busy = true
         notice = null
         scope.launch {
@@ -61,14 +69,15 @@ private fun ModuleDialog(dismiss: () -> Unit) {
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                notice = R.string.module_settings_error
+                notice = if (download?.wasCancelled() == true) R.string.module_settings_cancelled else R.string.module_settings_error
             } finally {
+                transfer = null
                 busy = false
             }
         }
     }
 
-    AppDialog(onDismiss = { if (!busy) dismiss() }, title = stringResource(R.string.module_settings_title), content = {
+    AppDialog(onDismiss = { if (!busy) dismiss() else transfer?.cancel() }, title = stringResource(R.string.module_settings_title), content = {
         Text(stringResource(R.string.module_settings_description))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             modules.forEach { module ->
@@ -105,7 +114,22 @@ private fun ModuleDialog(dismiss: () -> Unit) {
         notice?.let { Text(stringResource(it), style = MaterialTheme.typography.bodySmall) }
         TvActionButton(text = stringResource(R.string.module_settings_install),
             enabled = !busy && SystemModuleHost.downloadsEnabled, loading = busy,
-            onClick = { action { SystemModuleHost.installLatest(it) != null } })
+            onClick = {
+                val download = SystemModuleDownload()
+                action(download) { SystemModuleHost.installLatest(it, download) != null }
+            })
+        if (transfer != null) {
+            Text(when (progress) {
+                SystemModuleDownload.SEARCHING -> stringResource(R.string.module_settings_searching)
+                SystemModuleDownload.VERIFYING -> stringResource(R.string.module_settings_verifying)
+                SystemModuleDownload.COMMITTING -> stringResource(R.string.module_settings_committing)
+                SystemModuleDownload.CANCELLING -> stringResource(R.string.module_settings_cancelling)
+                else -> stringResource(R.string.module_settings_progress, progress)
+            }, style = MaterialTheme.typography.bodyMedium)
+            TvActionButton(text = stringResource(R.string.module_settings_cancel),
+                enabled = progress != SystemModuleDownload.COMMITTING && progress != SystemModuleDownload.CANCELLING,
+                onClick = { transfer?.cancel() })
+        }
         TvActionButton(text = stringResource(R.string.module_settings_rollback), enabled = !busy && SystemModuleHost.downloadsEnabled,
             onClick = { action { SystemModuleHost.rollback(it) != null } })
         TvActionButton(text = stringResource(R.string.module_settings_remove), enabled = !busy && SystemModuleHost.downloadsEnabled && (installed != null || status.runtime == ModuleRuntimeState.FAILED),

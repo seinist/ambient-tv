@@ -437,6 +437,17 @@ without downloading its ZIP or changing the installed selection. Invalid metadat
 network errors and archive/preflight failures stop the search; they never trigger
 an automatic downgrade. The persisted version floor remains authoritative.
 
+### Cancellable module downloads
+
+Settings shows release discovery, signed-byte transfer percentage, verification
+and atomic publication separately. Cancellation closes the active HTTP call and
+is checked again before the selection pointer is committed. A cancelled staging
+operation cannot advance the version floor or replace the previous selection.
+Once atomic publication starts, cancellation is disabled; the transaction must
+finish. Verification may need to finish its current bounded I/O before aborting.
+Closing the settings composition also requests cancellation. Device UI and CI
+validation remain required.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

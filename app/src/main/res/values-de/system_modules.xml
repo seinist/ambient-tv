@@ -19,4 +19,11 @@
     <string name="module_state_active_external">Aktiv (heruntergeladen)</string>
     <string name="module_state_failed">Modul nicht verfügbar oder inkompatibel</string>
     <string name="module_settings_spotify_experimental">Experimentell: Spotify verweigert derzeit die vom Receiver verwendeten Audioschlüssel. Das Laden des Moduls garantiert keine Wiedergabe.</string>
+    <string name="module_settings_searching">Kompatibles Release wird gesucht …</string>
+    <string name="module_settings_verifying">Paket wird geprüft …</string>
+    <string name="module_settings_committing">Auswahl wird gespeichert …</string>
+    <string name="module_settings_cancelling">Download wird abgebrochen …</string>
+    <string name="module_settings_progress">Download: %1$d%%</string>
+    <string name="module_settings_cancel">Download abbrechen</string>
+    <string name="module_settings_cancelled">Download abgebrochen. Die bisherige Auswahl bleibt erhalten.</string>
 </resources>

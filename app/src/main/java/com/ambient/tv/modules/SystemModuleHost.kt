@@ -181,12 +181,13 @@ internal object SystemModuleHost {
     val downloadsEnabled: Boolean get() = BuildConfig.CORES_PUBLIC_KEY.isNotBlank()
 
     @Synchronized
-    fun installLatest(module: SystemModule): SystemModuleBuild? {
+    fun installLatest(module: SystemModule, transfer: SystemModuleDownload = SystemModuleDownload()): SystemModuleBuild? {
         require(module in supported && downloadsEnabled)
-        val transport = SystemModuleTransport()
+        val transport = SystemModuleTransport(transfer)
         // Only a signed catalog with no compatible candidate permits continuing.
         // Trust, network and payload validation errors must stop the search.
         return transport.releaseTags(module).firstNotNullOfOrNull { tag -> install(module, tag, transport) }
+            .also { transfer.check() }
     }
 
     @Synchronized

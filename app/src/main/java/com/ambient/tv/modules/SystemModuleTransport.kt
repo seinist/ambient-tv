@@ -9,7 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 /** Fixed-origin GitHub release transport. No URLs or trust keys from unsigned metadata. */
-internal class SystemModuleTransport {
+internal class SystemModuleTransport(private val transfer: SystemModuleDownload = SystemModuleDownload()) {
     private val client = OkHttpClient.Builder()
         .followRedirects(false)
         .followSslRedirects(false)
@@ -28,11 +28,20 @@ internal class SystemModuleTransport {
         compatible: (SystemModuleBuild) -> Boolean = { true },
     ): SystemModuleStore.Package? {
         require(Regex("modules-[A-Za-z0-9][A-Za-z0-9._-]{0,100}").matches(tag))
+        transfer.check()
         val manifest = readMetadata(releaseUrl(tag, "manifest.json"), SystemModuleChannel.MAX_MANIFEST_BYTES)
         val signature = readMetadata(releaseUrl(tag, "manifest.json.sig"), 256)
-        return store.install(module, tag, manifest, signature, profile, validateCandidate, compatible) { build ->
+        return store.install(module, tag, manifest, signature, profile, validateCandidate = { pkg ->
+            transfer.update(SystemModuleDownload.VERIFYING)
+            validateCandidate(pkg)
+            transfer.check()
+        }, compatible = { build ->
+            transfer.check()
+            compatible(build)
+        }, beforePublish = transfer::beginPublication) { build ->
+            transfer.update(0)
             open(releaseUrl(tag, build.asset), build.size, exactSize = true)
-        }
+        }.also { transfer.check() }
     }
 
     /** Lazy, bounded discovery. Every candidate must still be authenticated by install(). */
@@ -44,7 +53,7 @@ internal class SystemModuleTransport {
                 .addQueryParameter("per_page", "100").addQueryParameter("page", page.toString()).build()
             val request = Request.Builder().url(url).header("Accept", "application/vnd.github+json")
                 .header("Accept-Encoding", "identity").build()
-            val raw = client.newCall(request).execute().use { response ->
+            val raw = transfer.attach(client.newCall(request)).execute().use { response ->
                 if (!response.isSuccessful) throw IOException("Module catalog HTTP ${response.code}")
                 val body = response.body ?: throw IOException("Missing release catalog")
                 if (body.contentLength() > 8 * 1024 * 1024) throw IOException("Release catalog too large")
@@ -52,6 +61,7 @@ internal class SystemModuleTransport {
                 body.byteStream().use { input ->
                     val buffer = ByteArray(16384)
                     while (true) {
+                        transfer.check()
                         val n = input.read(buffer)
                         if (n == -1) break
                         if (n == 0 || n > 8 * 1024 * 1024 - out.size()) throw IOException("Release catalog exceeds bounds")
@@ -97,8 +107,8 @@ internal class SystemModuleTransport {
         repeat(6) {
             if (!allowed(url) || (url.host == "github.com" && url.encodedPath != initial.encodedPath))
                 throw SystemModuleTrustException("Untrusted module download origin or repository path")
-            val response = client.newCall(Request.Builder().url(url)
-                .header("Accept-Encoding", "identity").get().build()).execute()
+            val response = transfer.attach(client.newCall(Request.Builder().url(url)
+                .header("Accept-Encoding", "identity").get().build())).execute()
             if (response.code in setOf(301, 302, 303, 307, 308)) {
                 response.use {
                     url = response.header("Location")?.let(url::resolve)
@@ -117,11 +127,14 @@ internal class SystemModuleTransport {
                 return object : FilterInputStream(body.byteStream()) {
                     private var count = 0L
                     private fun account(n: Int): Int {
+                        transfer.check()
                         if (n > 0) {
                             count += n
                             if (count > limit) throw SystemModuleTrustException("Module response exceeds bounds")
-                        } else if (n == -1 && exactSize && count != limit) {
-                            throw SystemModuleTrustException("Module response is truncated")
+                            if (exactSize) transfer.update((count * 100 / limit).toInt())
+                        } else if (n == -1 && exactSize) {
+                            if (count != limit) throw SystemModuleTrustException("Module response is truncated")
+                            transfer.update(SystemModuleDownload.VERIFYING)
                         }
                         return n
                     }
