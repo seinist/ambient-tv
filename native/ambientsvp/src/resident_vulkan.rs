@@ -216,6 +216,13 @@ fn quality_source(mode:u32,t:ResidentTuning,w:ResidentSearchWeights)->Result<Str
     }
     Ok(source)
 }
+fn mask_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
+    let source=include_str!("resident_masks.wgsl").replace("SVP_BLOCK",&t.block.to_string())
+        .replace("SVP_STEP",&t.step().to_string())
+        .replace("SVP_SAD_AREA",match t.artifacts{2=>"50",3=>"100",_=>"0"})
+        .replace("SVP_DEPTH_SCALE",if mode==0{"1"}else{"4"});
+    spirv(&source,"@group(0) @binding(7) var<uniform> params:vec4u;",entry)
+}
 fn tuned_synthesis(source:&str,t:ResidentTuning)->Result<String>{
     let entry=source.find("@compute @workgroup_size(8,8)").ok_or("tuned synthesis entry")?;
     let threshold=match t.artifacts{1=>64,2=>48,3=>32,_=>48};
@@ -386,6 +393,7 @@ struct Core{
     memory:vk::PhysicalDeviceMemoryProperties,
     motion:Pipeline,synthesis:Pipeline,
     quality:Option<(Pipeline,Pipeline,Pipeline)>,tuning:Option<ResidentTuning>,
+    masks:Option<[Pipeline;3]>,algorithm:AtomicU32,
     width:u32,height:u32,gw:u32,gh:u32,field_size:u64,mode:u32,
     in_flight:AtomicU32,
     idle:Mutex<Vec<PairResources>>,
@@ -568,6 +576,33 @@ impl VulkanPair{
             }
         }
     }
+    unsafe fn prepare_masks(&self,phase:f32)->u32{
+        let c=&self.core;
+        let algo=c.algorithm.load(Ordering::Acquire);
+        if algo==0||phase==0.0||phase==1.0{return 0;}
+        let Some(masks)=&c.masks else{return 0;};
+        let set=self.sets[MAX_PHASES+1];
+        let n=c.gw*c.gh;
+        let words=[c.gw,c.gh,(phase*256.0).round() as u32,0];
+        let barrier=[vk::BufferMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .buffer(self.field).offset(0).size(c.field_size)];
+        unsafe{
+            // A previous output phase may still be reading these masks.
+            for (p,groups) in masks.iter().zip([n.div_ceil(64),(2*n).div_ceil(64),n.div_ceil(64)]){
+                c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
+                p.dispatch(self.command,set,words,groups,1);
+            }
+            c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
+        }
+        // Algorithm 23 requires adjacent source-pair fields; the
+        // reference selects 21 when extended vectors are unavailable.
+        (if algo==23{21}else{algo})<<8
+    }
     unsafe fn render(&mut self,phase:f32,matrix:u32,output:vk::ImageView)->Result<()>{
         if self.core.mode>=4 || self.fence!=vk::Fence::null() || self.phases>=MAX_PHASES || !phase.is_finite()
             || !(0.0..=1.0).contains(&phase) || (matrix>3 && (self.core.mode==0 || !matches!(matrix,4|6))) || output==vk::ImageView::null()
@@ -581,7 +616,8 @@ impl VulkanPair{
             (3,by,sampled),(4,bu,sampled),(5,bv,sampled),(7,output,vk::DescriptorType::STORAGE_IMAGE)],6);
         let c=&self.core;
         let flags=if self.a.rgb(){64}else{self.a.nv12|(self.b.nv12<<1)|(self.a.chroma_location<<2)|(self.b.chroma_location<<4)};
-        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),flags,matrix,c.width|(c.height<<16)],
+        let algo=unsafe{self.prepare_masks(phase)};
+        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),flags|algo,matrix,c.width|(c.height<<16)],
             c.width.div_ceil(8),c.height.div_ceil(8));}
         self.rgb_outputs[self.phases]=output;
         self.phases+=1;
@@ -602,7 +638,8 @@ impl VulkanPair{
             (7,outputs[0],storage),(8,outputs[1],storage),(9,outputs.get(2).copied().unwrap_or(vk::ImageView::null()),storage)];
         self.descriptors(set,&images[..6+outputs.len()],6);
         let c=&self.core;
-        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),0,0,c.width|(c.height<<16)],
+        let algo=unsafe{self.prepare_masks(phase)};
+        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),algo,0,c.width|(c.height<<16)],
             c.width.div_ceil(8),c.height.div_ceil(8));}
         self.phases+=1;
         Ok(())
@@ -623,7 +660,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     // Keep the first two directional fields and scene word ABI stable;
     // append immutable coarse snapshots and two global predictors.
     let n=u64::from(gw)*u64::from(gh);
-    let field_size=n*32+if tuning.is_some(){n*32+48}else{0};
+    let field_size=n*32+if tuning.is_some(){n*96+48}else{0};
     if width>limits.max_image_dimension2_d || height>limits.max_image_dimension2_d
         || limits.max_per_stage_descriptor_sampled_images<6 || limits.max_per_stage_descriptor_storage_images<raw_planes(mode) as u32
         || limits.max_per_stage_descriptor_storage_buffers<1 || limits.max_push_constants_size<16
@@ -667,7 +704,13 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
             Pipeline::new(&device,&types,&quality_spirv_weighted(mode,t,w,"scene")?,c"scene")?,
             Pipeline::new(&device,&types,&quality_spirv_weighted(mode,t,w,"snapshot")?,c"snapshot")?))
     }else{None};
-    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
+    let masks=if let Some(t)=tuning{
+        let mut types=vec![vk::DescriptorType::SAMPLED_IMAGE;6];types.push(vk::DescriptorType::STORAGE_BUFFER);
+        Some([Pipeline::new(&device,&types,&mask_spirv(mode,t,"clear")?,c"clear")?,
+            Pipeline::new(&device,&types,&mask_spirv(mode,t,"scatter")?,c"scatter")?,
+            Pipeline::new(&device,&types,&mask_spirv(mode,t,"finish")?,c"finish")?])
+    }else{None};
+    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=3&&
             limits.max_storage_buffer_range>=100001*4*3,
         stats:Mutex::new(None)})))
@@ -716,6 +759,16 @@ pub unsafe extern "C" fn ambient_svp_vk_create_weighted(instance:vk::Instance,ph
         new_core(&instance,physical,device,width,height,mode,Some(unsafe{*tuning}),Some(unsafe{*weights}))
             .map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s)))
     })).unwrap_or(ptr::null_mut())
+}
+/// Configure the reference synthesis family before the first pair.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_set_synthesis(s:*const VulkanResident,algorithm:u32)->i32{
+    if s.is_null()||!matches!(algorithm,1|2|11|13|21|22|23){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let c=unsafe{&(*s).0};
+        if c.tuning.is_none()||c.in_flight.load(Ordering::Acquire)!=0{return -1;}
+        c.algorithm.store(algorithm,Ordering::Release);0
+    })).unwrap_or(-1)
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_destroy(s:*mut VulkanResident){
