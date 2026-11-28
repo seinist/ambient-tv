@@ -193,12 +193,12 @@ fn signed_product(a:i32,b:i32)->vec2u{
 }
 fn wide_abs(a:vec2u)->vec2u{return select(a,wide_neg(a),(a.y&0x80000000u)!=0u);}
 fn quad_add(a:vec4u,b:vec4u)->vec4u{
-    var out=vec4u(0u);var carry=0u;
+    var result=vec4u(0u);var carry=0u;
     for(var i=0u;i<4u;i++){
         let lo=a[i]+b[i];let hi=lo+carry;
-        carry=select(0u,1u,lo<a[i]||hi<lo);out[i]=hi;
+        carry=select(0u,1u,lo<a[i]||hi<lo);result[i]=hi;
     }
-    return out;
+    return result;
 }
 fn quad_square(a:vec2u)->vec4u{
     let p=wide_mul(a.x,a.x);let q=wide_mul(a.x,a.y);let r=wide_mul(a.y,a.y);
@@ -206,13 +206,13 @@ fn quad_square(a:vec2u)->vec4u{
     return quad_add(quad_add(vec4u(p,0u,0u),vec4u(0u,0u,r)),quad_add(cross,cross));
 }
 fn quad_mul_word(a:vec4u,b:u32)->vec4u{
-    var out=vec4u(0u);var carry=0u;
+    var result=vec4u(0u);var carry=0u;
     for(var i=0u;i<4u;i++){
         let p=wide_mul(a[i],b);
         let low=p.x+carry;
-        carry=p.y+select(0u,1u,low<p.x);out[i]=low;
+        carry=p.y+select(0u,1u,low<p.x);result[i]=low;
     }
-    return out;
+    return result;
 }
 fn quad_le(a:vec4u,b:vec4u)->bool{
     for(var i=4u;i>0u;i--){
@@ -220,14 +220,21 @@ fn quad_le(a:vec4u,b:vec4u)->bool{
     }
     return true;
 }
-fn ellipse_contains(id:vec2u,o:u32)->bool{
-    let center=vec2i(i32(atomicLoad(&words[o+52u])),i32(atomicLoad(&words[o+53u])))+
+fn ellipse_center(o:u32)->vec2i{
+    return vec2i(i32(atomicLoad(&words[o+52u])),i32(atomicLoad(&words[o+53u])))+
         vec2i(bitcast<i32>(atomicLoad(&words[o+41u])),bitcast<i32>(atomicLoad(&words[o+42u])));
+}
+fn ellipse_value(delta:vec2i,trig:vec2i,a2:u32,b2:u32)->vec4u{
+    let u=wide_abs(wide_add(signed_product(delta.x,trig.x),signed_product(delta.y,trig.y)));
+    let v=wide_abs(wide_add(signed_product(-delta.x,trig.y),signed_product(delta.y,trig.x)));
+    return quad_add(quad_mul_word(quad_square(u),b2),quad_mul_word(quad_square(v),a2));
+}
+fn ellipse_contains(id:vec2u,o:u32)->bool{
     let axes=vec2u(atomicLoad(&words[o+68u]),atomicLoad(&words[o+69u]));
     if any(axes==vec2u(0u)){return false;}
     let angle=atomicLoad(&words[o+70u]);
     if angle>180u{return false;}
-    let delta=vec2i(id)-center;
+    let delta=vec2i(id)-ellipse_center(o);
     let a2=axes.x*axes.x;let b2=axes.y*axes.y;
     if angle==0u||angle==90u||angle==180u{
         let d=vec2u(abs(select(delta,delta.yx,angle==90u)));
@@ -236,11 +243,57 @@ fn ellipse_contains(id:vec2u,o:u32)->bool{
         return lhs.y<rhs.y||(lhs.y==rhs.y&&lhs.x<=rhs.x);
     }
     let trig=bitcast<vec2i>(pq_table[30722u+angle].xy);
-    let u=wide_abs(wide_add(signed_product(delta.x,trig.x),signed_product(delta.y,trig.y)));
-    let v=wide_abs(wide_add(signed_product(-delta.x,trig.y),signed_product(delta.y,trig.x)));
-    let lhs=quad_add(quad_mul_word(quad_square(u),b2),quad_mul_word(quad_square(v),a2));
+    let lhs=ellipse_value(delta,trig,a2,b2);
     let rhs=quad_mul_word(quad_mul_word(vec4u(0u,268435456u,0u,0u),a2),b2);
     return quad_le(lhs,rhs);
+}
+// Find exact inclusive-exclusive spans after the motion pass. The
+// fixed-point ellipse value is a convex quadratic in x, so discrete
+// minimum and both membership boundaries can be found by binary search.
+// No approximate root or per-pixel transcendental arithmetic is needed.
+@compute @workgroup_size(64)
+fn ellipse_scanlines(@builtin(global_invocation_id) id:vec3u){
+    let w=id.y+1u;let y=id.x;
+    if w>=params.z||y>=params.y{return;}
+    let o=w*STRIDE;
+    let base=atomicLoad(&words[o+71u]);
+    if base==0u{return;}
+    let dest=base+2u*y;
+    atomicStore(&words[dest],0u);atomicStore(&words[dest+1u],0u);
+    let rect=rectangle(o);
+    if y<rect.y||y>=rect.w||rect.x>=rect.z{return;}
+    let axes=vec2u(atomicLoad(&words[o+68u]),atomicLoad(&words[o+69u]));
+    let angle=atomicLoad(&words[o+70u]);
+    if any(axes==vec2u(0u))||angle>180u{return;}
+    let center=ellipse_center(o);
+    let trig=bitcast<vec2i>(pq_table[30722u+angle].xy);
+    let a2=axes.x*axes.x;let b2=axes.y*axes.y;
+    let dy=i32(y)-center.y;
+    var left=rect.x;var right=rect.z-1u;
+    if angle==0u||angle==90u||angle==180u{
+        left=u32(clamp(center.x,i32(left),i32(right)));
+    }else{
+        while left<right{
+            let mid=left+(right-left)/2u;
+            let p=ellipse_value(vec2i(i32(mid)-center.x,dy),trig,a2,b2);
+            let q=ellipse_value(vec2i(i32(mid+1u)-center.x,dy),trig,a2,b2);
+            if quad_le(p,q){right=mid;}else{left=mid+1u;}
+        }
+    }
+    let middle=left;
+    if !ellipse_contains(vec2u(middle,y),o){return;}
+    left=rect.x;right=middle;
+    while left<right{
+        let mid=left+(right-left)/2u;
+        if ellipse_contains(vec2u(mid,y),o){right=mid;}else{left=mid+1u;}
+    }
+    atomicStore(&words[dest],left);
+    left=middle;right=rect.z;
+    while left+1u<right{
+        let mid=left+(right-left)/2u;
+        if ellipse_contains(vec2u(mid,y),o){left=mid;}else{right=mid;}
+    }
+    atomicStore(&words[dest+1u],right);
 }
 @compute @workgroup_size(8,8)
 fn collect(@builtin(global_invocation_id) id:vec3u){
