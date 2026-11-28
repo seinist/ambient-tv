@@ -14,14 +14,17 @@ class GameNameDatabasesTest {
         for (system in GameNameDatabases.systems) {
             assertTrue(system, GameSystems.byId(system) != null)
             for (path in GameNameDatabases.files(system)) {
-                assertTrue(path, path.startsWith("metadat/no-intro/") || path.startsWith("metadat/headered/"))
+                assertTrue(path, path.startsWith("metadat/no-intro/") || path.startsWith("metadat/headered/") || path.startsWith("metadat/redump/"))
                 assertTrue(path, path.endsWith(".dat"))
             }
         }
-        // Disc images are never hashed, so a checksum database could not name them.
+        // Disc release catalogs supply title candidates, never full-image checksums.
         for (disc in listOf("psx", "ps2", "saturn", "dreamcast", "gamecube", "wii", "psp")) {
-            assertTrue(disc, GameNameDatabases.files(disc).isEmpty())
+            assertTrue(disc, GameNameDatabases.files(disc).isNotEmpty())
+            assertFalse(disc, GameNameDatabases.usesChecksums(disc))
         }
+        assertEquals(2, GameNameDatabases.files("nds").size)
+        assertTrue(GameNameDatabases.usesChecksums("nds"))
         // Combined systems take every console they play.
         assertEquals(2, GameNameDatabases.files("gb").size)
         assertEquals(4, GameNameDatabases.files("megadrive").size)
