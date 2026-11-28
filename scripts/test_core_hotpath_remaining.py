@@ -19,7 +19,7 @@ def replacement(core, needle):
 class RemainingCoreHotpathTests(unittest.TestCase):
     def test_exact_anchor_application_and_atomic_rejection(self):
         self.assertEqual(len(PATCHES), 39)
-        self.assertEqual(sum(map(len, PATCHES.values())), 181)
+        self.assertEqual(sum(map(len, PATCHES.values())), 193)
         for core, changes in PATCHES.items():
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -45,6 +45,49 @@ class RemainingCoreHotpathTests(unittest.TestCase):
                 self.assertEqual(expected, {name: (root / name).read_bytes().decode() for name in files})
                 with self.assertRaises(ValueError):
                     prepare_hotpaths(root, core)
+
+    def test_ymir_neon_kernels_compile_without_implicit_vector_casts(self):
+        clang = shutil.which("clang")
+        self.assertIsNotNone(clang)
+        changes = PATCHES["ymir"]
+        helper = next(new for _, old, new in changes if old == "FORCE_INLINE static void Color888ShadowMasked(")
+        helper = helper.split("FORCE_INLINE static void Color888ShadowMasked(")[0]
+        kernels = [new.split("\n", 1)[1] for _, old, new in changes
+                   if old.startswith("#elif defined(_M_ARM64)") and "AmbientMask4" in new]
+        self.assertEqual(len(kernels), 6)
+        source = r"""
+#include <stdint.h>
+#include <stddef.h>
+#include <arm_neon.h>
+using uint8 = uint8_t;
+using uint32 = uint32_t;
+#define FORCE_INLINE inline
+namespace std {
+inline void memcpy(void* dst, const void* src, size_t n) { __builtin_memcpy(dst, src, n); }
+}
+template<class T> struct Span {
+    T* p;
+    size_t n;
+    T* data() const { return p; }
+    size_t size() const { return n; }
+    T& operator[](size_t i) const { return p[i]; }
+};
+""" + helper
+        for i, kernel in enumerate(kernels):
+            source += """
+void kernel%d(Span<uint32> pixels, Span<uint32> dest, Span<const bool> mask,
+             Span<const uint32> topColors, Span<const uint32> btmColors,
+             Span<const uint32> src, Span<const uint8> ratios) {
+    size_t i = 0;
+""" % i + kernel + "\n}\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ymir.cpp"
+            output = path.with_suffix(".o")
+            path.write_text(source)
+            subprocess.run([clang, "--target=aarch64-none-elf", "-ffreestanding",
+                            "-flax-vector-conversions=none", "-std=c++11", "-O3",
+                            "-c", str(path), "-o", str(output)], check=True)
+            self.assertGreater(output.stat().st_size, 0)
 
     def test_melonds_full_screen_copy_skips_clear_only_when_safe(self):
         compiler = shutil.which("c++")
