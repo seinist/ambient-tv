@@ -9,6 +9,8 @@ on:
       - 'scripts/prepare_svp_vlc*.py'
       - 'scripts/prepare_svp_sources.sh'
       - 'scripts/build_svp_android.sh'
+      - 'scripts/build_mpv_android.sh'
+      - 'scripts/build_mpv_vulkan.sh'
       - 'scripts/profile_svp_android.sh'
       - 'scripts/svp_pgo_metadata.sh'
       - 'scripts/tests/test_svp_pgo_metadata.sh'
@@ -27,6 +29,8 @@ on:
       - 'scripts/prepare_svp_vlc*.py'
       - 'scripts/prepare_svp_sources.sh'
       - 'scripts/build_svp_android.sh'
+      - 'scripts/build_mpv_android.sh'
+      - 'scripts/build_mpv_vulkan.sh'
       - 'scripts/profile_svp_android.sh'
       - 'scripts/svp_pgo_metadata.sh'
       - 'scripts/tests/test_svp_pgo_metadata.sh'
@@ -214,6 +218,50 @@ jobs:
           done
 
   # Preserve the existing required check. Every independent group must pass.
+  linked-mpv-android:
+    name: Linked MPV Android integration
+    if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'perf/svp-native-pipeline' && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [native-portable, native-adapters]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      MPV_SKIP_HOST_DEPS: '1'
+      MPV_ENABLE_VULKAN: '1'
+      NATIVE_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends build-essential autoconf automake autopoint gettext libtool libtool-bin pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo curl wget unzip zip xz-utils patch perl python3 python3-venv python3-jinja2 libssl-dev glslang-tools
+          python3 -m venv "$RUNNER_TEMP/mpv-meson"
+          "$RUNNER_TEMP/mpv-meson/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0' jinja2
+          echo "$RUNNER_TEMP/mpv-meson/bin" >> "$GITHUB_PATH"
+      - name: Install reviewed Android NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'ndk;30.0.16248370'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - name: Build and link the actual patched Android MPV stack
+        run: bash scripts/build_mpv_android.sh
+      - name: Verify installed libraries and SVP source receipts
+        run: |
+          expected="$(bash scripts/prepare_svp_sources.sh --hash mpv)"
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            dir="app/src/main/jniLibs/$abi"
+            test -s "$dir/libmpv.so"
+            test -s "$dir/libambientmpv.so"
+            test "$(cat "$dir/.svp-mpv")" = "$expected"
+          done
+
   native-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 5
