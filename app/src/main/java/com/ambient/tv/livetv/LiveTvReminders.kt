@@ -58,11 +58,12 @@ data class LiveTvReminder(
     val imageUrl: String? = null,
     val ready: Boolean = false,
     val probeAttempts: Int = 0,
+    val plan: ScheduledPlayback? = null,
 ) {
-    val id: String get() = if (youtube) "youtube:$eventId" else "$sourceId|$eventId"
-    fun route(): String = if (youtube) Destinations.youtubePlayer(eventId)
+    val id: String get() = if (plan != null) "plan:${plan.provider}:${plan.targetId}" else if (youtube) "youtube:$eventId" else "$sourceId|$eventId"
+    fun route(): String = plan?.route() ?: if (youtube) Destinations.youtubePlayer(eventId)
         else Destinations.tvhPlayer("channel", channelUuid, sourceId.ifBlank { null })
-    fun expiryAtMs(): Long = (if (youtube) startEpochSeconds + 7 * 86400L
+    fun expiryAtMs(): Long = (if (youtube || plan != null) startEpochSeconds + 7 * 86400L
         else stopEpochSeconds ?: (startEpochSeconds + 3600L)) * 1000L
     fun isRelevant(nowMs: Long): Boolean = expiryAtMs() > nowMs
     fun alarmAtMs(leadMinutes: Int, autoSwitch: Boolean): Long =
@@ -109,6 +110,28 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
         !exists
     }
 
+    fun putPlan(reminder: LiveTvReminder): Boolean = synchronized(lock) {
+        if (reminder.plan == null || reminder.startEpochSeconds * 1000 <= System.currentTimeMillis()) return@synchronized false
+        val current = load()
+        if (current.size >= 200 && current.none { it.id == reminder.id }) return@synchronized false
+        val next = (current.filterNot { it.id == reminder.id } + reminder).sortedBy { it.startEpochSeconds }
+        save(next)
+        LiveTvReminderScheduler.cancel(context, reminder)
+        context.getSystemService(NotificationManager::class.java)?.cancel(reminder.id, 0)
+        LiveTvReminderScheduler.schedule(context, reminder)
+        true
+    }
+
+    /** Consume only the exact occurrence that successfully reached navigation. */
+    fun completePlan(expected: LiveTvReminder) = synchronized(lock) {
+        val current = load()
+        val entry = current.firstOrNull { it.id == expected.id && it.startEpochSeconds == expected.startEpochSeconds && it.plan == expected.plan }
+            ?: return@synchronized
+        val next = entry.nextOccurrence(System.currentTimeMillis())
+        if (next == null) remove(entry.id) else putPlan(next)
+        Unit
+    }
+
     fun remove(id: String) = synchronized(lock) {
         val current = load()
         current.firstOrNull { it.id == id }?.let {
@@ -124,7 +147,7 @@ class LiveTvReminderStore @Inject constructor(@ApplicationContext private val co
         val byId = events.associateBy { it.eventId }
         val changed = mutableListOf<LiveTvReminder>()
         val next = current.map { old ->
-            val event = byId[old.eventId]?.takeIf { !old.youtube && old.sourceId == sourceId && it.channelUuid == old.channelUuid }
+            val event = byId[old.eventId]?.takeIf { old.plan == null && !old.youtube && old.sourceId == sourceId && it.channelUuid == old.channelUuid }
             if (event == null) old else {
                 val moved = event.startEpochSeconds != old.startEpochSeconds
                 old.copy(startEpochSeconds = event.startEpochSeconds, stopEpochSeconds = event.stopEpochSeconds,
@@ -225,7 +248,10 @@ object LiveTvReminderScheduler {
     }
 
     fun alarmAt(context: Context, reminder: LiveTvReminder): Long =
-        reminder.alarmAtMs(leadMinutes(context, reminder.youtube), autoSwitch(context, reminder.youtube))
+        reminder.alarmAtMs(reminder.plan?.leadMinutes ?: leadMinutes(context, reminder.youtube), shouldAutoSwitch(context, reminder))
+
+    fun shouldAutoSwitch(context: Context, reminder: LiveTvReminder): Boolean =
+        reminder.plan?.automatic ?: autoSwitch(context, reminder.youtube)
 
     private fun pending(context: Context, reminder: LiveTvReminder, create: Boolean): PendingIntent? =
         PendingIntent.getBroadcast(
@@ -275,6 +301,8 @@ object LiveTvReminderPrompt {
     var foreground = false
         internal set
     val selectedId = MutableStateFlow<String?>(null)
+    val plannedLaunch = MutableStateFlow<LiveTvReminder?>(null)
+    fun launchPlan(reminder: LiveTvReminder) { plannedLaunch.value = reminder }
     fun select(id: String) { selectedId.value = id }
 }
 
@@ -340,6 +368,7 @@ fun LiveTvReminderPromptDialog() {
     val reminders by store.reminders.collectAsState()
     val selectedId by LiveTvReminderPrompt.selectedId.collectAsState()
     val pendingRoute by LauncherIntents.requests.collectAsState()
+    val pendingPlan by LiveTvReminderPrompt.plannedLaunch.collectAsState()
     // Inexact Android alarms can be delayed; while the app is visible a single
     // cancellable timer also wakes for the nearest pending reminder.
     val next = reminders.filterNot { it.due }.minByOrNull { LiveTvReminderScheduler.alarmAt(context, it) }
@@ -385,22 +414,28 @@ fun LiveTvReminderPromptDialog() {
     val reminder = selected?.takeIf { it.isRelevant(now) } ?: due.firstOrNull() ?: return
     val time = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
         .format(java.util.Date(reminder.startEpochSeconds * 1000))
-    val competing = reminders.any { it.id != reminder.id && (it.due ||
-        kotlin.math.abs(it.startEpochSeconds - reminder.startEpochSeconds) <= 60L) }
-    val automatic = selected == null && due.size == 1 && !competing && pendingRoute == null &&
+    val competing = reminders.any { it.id != reminder.id && (it.due || reminder.overlaps(it)) }
+    val automatic = selected == null && due.size == 1 && !competing && pendingRoute == null && pendingPlan == null &&
         now - lastLaunchAt >= 60_000L && (!reminder.youtube || reminder.ready) &&
-        LiveTvReminderScheduler.autoSwitch(context, reminder.youtube) &&
+        LiveTvReminderScheduler.shouldAutoSwitch(context, reminder) &&
         reminder.startEpochSeconds * 1000 <= now
     if (automatic) {
         LaunchedEffect(reminder.id) {
-            if (store.find(reminder.id)?.due != true || LauncherIntents.requests.value != null) return@LaunchedEffect
+            if (store.find(reminder.id)?.due != true || LauncherIntents.requests.value != null || LiveTvReminderPrompt.plannedLaunch.value != null) return@LaunchedEffect
             lastLaunchAt = System.currentTimeMillis()
-            if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
-            LauncherIntents.post(reminder.route())
+            if (reminder.plan != null) { store.snooze(reminder.id); LiveTvReminderPrompt.launchPlan(reminder) }
+            else {
+                if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
+                LauncherIntents.post(reminder.route())
+            }
         }
         return
     }
     val closeSelection = { LiveTvReminderPrompt.selectedId.value = null }
+    if (selected != null && !selected.due && selected.plan != null) {
+        ScheduledPlaybackDialog(selected, store) { closeSelection() }
+        return
+    }
     AppDialog(
         onDismiss = { closeSelection(); if (reminder.due) store.snooze(reminder.id) },
         title = if (reminder.due) stringResource(R.string.reminder_title, reminder.title) else reminder.title,
@@ -410,8 +445,11 @@ fun LiveTvReminderPromptDialog() {
                 TvActionButton(stringResource(R.string.programme_reminder_play), {
                     closeSelection()
                     lastLaunchAt = System.currentTimeMillis()
-                    if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
-                    LauncherIntents.post(reminder.route())
+                    if (reminder.plan != null) { store.snooze(reminder.id); LiveTvReminderPrompt.launchPlan(reminder) }
+                    else {
+                        if (reminder.youtube) store.snooze(reminder.id) else store.remove(reminder.id)
+                        LauncherIntents.post(reminder.route())
+                    }
                 }, selected = true)
                 TvActionButton(stringResource(R.string.programme_reminder_snooze), { closeSelection(); store.snooze(reminder.id) })
             }
