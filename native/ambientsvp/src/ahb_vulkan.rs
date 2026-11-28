@@ -24,9 +24,14 @@ struct Core{
     memory:vk::PhysicalDeviceMemoryProperties,
     limits:vk::PhysicalDeviceLimits,high_supported:bool,
     queue:vk::Queue,family:u32,
-    in_flight:AtomicU32,
+    in_flight:AtomicU32,max_jobs:AtomicU32,
 }
 pub struct Importer(Arc<Core>);
+impl Importer{
+    pub(crate) fn enable_extended_budget(&self){
+        if self.0.in_flight.load(Ordering::Acquire)==0{self.0.max_jobs.store(8,Ordering::Release);}
+    }
+}
 fn valid_source_format(mode:u32,ahb:u32,format:vk::Format,model:vk::SamplerYcbcrModelConversion,range:vk::SamplerYcbcrRange)->bool{
     let p010=format==vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
     match mode{
@@ -114,7 +119,7 @@ unsafe fn make_importer(instance:vk::Instance,physical:vk::PhysicalDevice,device
     let ahb=ash::android::external_memory_android_hardware_buffer::Device::new(&instance,&d);
     let fd=ash::khr::external_semaphore_fd::Device::new(&instance,&d);
     let memory=unsafe{instance.get_physical_device_memory_properties(physical)};
-    Ok(Importer(Arc::new(Core{device:d,ahb,fd,memory,limits:properties.limits,high_supported,queue,family,in_flight:AtomicU32::new(0)})))
+    Ok(Importer(Arc::new(Core{device:d,ahb,fd,memory,limits:properties.limits,high_supported,queue,family,in_flight:AtomicU32::new(0),max_jobs:AtomicU32::new(MAX_JOBS)})))
 }
 
 /// Borrowed player-owned storage image. The caller locks the AVVkFrame,
@@ -192,7 +197,7 @@ impl Job{
             || info.width.div_ceil(8)>core.limits.max_compute_work_group_count[0]
             || info.height.div_ceil(8)>core.limits.max_compute_work_group_count[1]
         {return Err("AHB image/dispatch limits".into());}
-        core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|(n<MAX_JOBS).then_some(n+1))
+        core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|(n<core.max_jobs.load(Ordering::Acquire)).then_some(n+1))
             .map_err(|_|"AHB outstanding job budget")?;
         let mut j=Self{core,info,mode,buffer:frame.buffer,source:vk::Image::null(),source_memory:vk::DeviceMemory::null(),
             source_view:vk::ImageView::null(),conversion:vk::SamplerYcbcrConversion::null(),sampler:vk::Sampler::null(),
@@ -508,7 +513,7 @@ unsafe fn submit_impl(importer:*const Importer,frame:*mut *mut Frame,mode:u32,
     if unsafe{(*frame).is_null()}{return -4;}
     catch_unwind(AssertUnwindSafe(||{
         let core=unsafe{(&*importer).0.clone()};
-        if core.in_flight.load(Ordering::Acquire)>=MAX_JOBS{return -2;}
+        if core.in_flight.load(Ordering::Acquire) >=core.max_jobs.load(Ordering::Acquire){return -2;}
         let Ok(mut j)=Job::new(core,unsafe{&**frame},destination,mode)else{return -4;};
         if j.record_submit().is_err(){return -4;}
         // No fallible work between successful submit and publishing the
