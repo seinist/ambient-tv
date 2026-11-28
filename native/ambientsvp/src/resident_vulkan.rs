@@ -876,6 +876,82 @@ pub unsafe extern "C" fn ambient_svp_vk_create_quality(instance:vk::Instance,phy
         p
     })).unwrap_or(ptr::null_mut())
 }
+/// Renderer bridge for libplacebo-held, canonical RGBA16F textures.
+/// Caller owns queue serialization and image hold/release. Waits are
+/// binary hold semaphores; signal is a caller-owned timeline semaphore.
+/// This bounded synchronous submission never maps or copies pixels.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_render_held(s:*const VulkanResident,queue:vk::Queue,family:u32,
+    images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
+    value:u64,phase:f32)->i32{
+    if s.is_null()||queue==vk::Queue::null()||images.is_null()||waits.is_null()||
+        !matches!(count,3|5)||signal==vk::Semaphore::null()||value==0||
+        !phase.is_finite()||!(0.0..=1.0).contains(&phase){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let core=&(*s).0;
+        if core.mode!=3||core.tuning.is_none()||core.lost.load(Ordering::Acquire){return -1;}
+        let images=std::slice::from_raw_parts(images,count as usize);
+        let waits=std::slice::from_raw_parts(waits,count as usize);
+        if images.iter().enumerate().any(|(i,x)|*x==vk::Image::null()||images[..i].contains(x))||
+            waits.iter().enumerate().any(|(i,x)|*x==vk::Semaphore::null()||*x==signal||waits[..i].contains(x)){return -1;}
+        let d=&core.device;
+        let mut pool=vk::CommandPool::null();
+        let mut fence=vk::Fence::null();
+        let mut views=Vec::with_capacity(count as usize);
+        let mut pair=ptr::null_mut();
+        let mut submitted=false;
+        let result=(||->Result<()>{
+            pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family)
+                .flags(vk::CommandPoolCreateFlags::TRANSIENT),None).map_err(err)?;
+            let cmd=d.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default()
+                .command_pool(pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).map_err(err)?[0];
+            fence=d.create_fence(&vk::FenceCreateInfo::default(),None).map_err(err)?;
+            for &image in images{
+                views.push(d.create_image_view(&vk::ImageViewCreateInfo::default().image(image)
+                    .view_type(vk::ImageViewType::TYPE_2D).format(vk::Format::R16G16B16A16_SFLOAT)
+                    .subresource_range(vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1).layer_count(1)),None).map_err(err)?);
+            }
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
+            let picture=|i:usize|VulkanPicture{y:views[i],u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0};
+            let a=picture(0);let b=picture(1);
+            if count==5{pair=ambient_svp_vk_begin_extended(s,cmd,&picture(2),&a,&b,&picture(3));}
+            if pair.is_null(){pair=ambient_svp_vk_begin(s,cmd,&a,&b);}
+            if pair.is_null()||ambient_svp_vk_render(pair,phase,3,views[count as usize-1])!=0{
+                return Err("held renderer pair rejected".into());
+            }
+            d.end_command_buffer(cmd).map_err(err)?;
+            let stages=vec![vk::PipelineStageFlags::ALL_COMMANDS;count as usize];
+            let wait_values=vec![0u64;count as usize];let signals=[signal];let values=[value];let commands=[cmd];
+            let mut timeline=vk::TimelineSemaphoreSubmitInfo::default()
+                .wait_semaphore_values(&wait_values).signal_semaphore_values(&values);
+            let submit=vk::SubmitInfo::default().push_next(&mut timeline).wait_semaphores(waits)
+                .wait_dst_stage_mask(&stages).command_buffers(&commands).signal_semaphores(&signals);
+            d.queue_submit(queue,&[submit],fence).map_err(err)?;
+            submitted=true;
+            if ambient_svp_vk_seal(pair,fence)!=0{return Err("held renderer seal failed".into());}
+            d.wait_for_fences(&[fence],true,u64::MAX).map_err(err)?;
+            Ok(())
+        })();
+        if submitted{
+            // A failed wait may only release resources after confirmed
+            // retirement/device loss. Retry queue idle before cleanup.
+            if result.is_err(){
+                match d.queue_wait_idle(queue){
+                    Ok(())|Err(vk::Result::ERROR_DEVICE_LOST)=>{},
+                    Err(_)=>return -2, // unknown retirement: leak rather than free in-flight resources
+                }
+            }
+            if ambient_svp_vk_release(pair)!=1{return -2;}
+        }
+        d.destroy_command_pool(pool,None);
+        if !submitted&&!pair.is_null(){ambient_svp_vk_cancel(pair);}
+        for view in views{d.destroy_image_view(view,None);}
+        d.destroy_fence(fence,None);
+        if result.is_ok(){0}else if submitted{-2}else{-1}
+    })).unwrap_or(-2)
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_destroy(s:*mut VulkanResident){
     if !s.is_null(){let _=catch_unwind(AssertUnwindSafe(||unsafe{drop(Box::from_raw(s))}));}
