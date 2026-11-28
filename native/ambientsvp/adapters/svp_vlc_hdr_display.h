@@ -13,6 +13,7 @@
 #include <libplacebo/shaders/custom.h>
 #include <libplacebo/shaders/colorspace.h>
 #include "svp_placebo_quality.h"
+#include "svp_hdr_curve.h"
 struct ambient_svp_hdr_source {
     uint64_t id;
     pl_tex texture;
@@ -133,7 +134,11 @@ static inline bool ambient_svp_hdrplus_lerp(struct ambient_hdrplus *out,
             x->saturation_mapping!=y->saturation_mapping)return false;
         if(i){
             const struct ambient_hdrplus_geometry *g=&x->geometry,*k=&y->geometry;
-            if(g->angle!=k->angle||g->overlap!=k->overlap)return false;
+            if(g->angle>180||k->angle>180||g->overlap!=k->overlap)return false;
+            int delta=(int)k->angle-(int)g->angle;
+            if(delta>90)delta-=180;
+            if(delta< -90)delta+=180;
+            o->geometry.angle=(uint8_t)(((int)lroundf(g->angle+t*delta)+180)%180);
 #define G(field) o->geometry.field=(uint16_t)roundf(g->field+(k->field-(float)g->field)*t)
             G(left);G(top);G(right);G(bottom);G(center_x);G(center_y);
             G(semimajor_inner);G(semimajor_outer);G(semiminor_outer);
@@ -173,6 +178,78 @@ static inline bool ambient_svp_hdrplus_lerp(struct ambient_hdrplus *out,
             grids[i]->values[j][k]=(uint8_t)roundf(x->values[j][k]+
                 (y->values[j][k]-(float)x->values[j][k])*t);
         }
+    }
+    return true;
+}
+static inline void ambient_svp_hdr_rect(uint32_t r[4],const struct ambient_hdrplus_geometry *g)
+{
+    r[0]=g->left;r[1]=g->top;r[2]=(uint32_t)g->right+1;r[3]=(uint32_t)g->bottom+1;
+}
+static inline bool ambient_svp_hdr_prepare_stats(struct svp_placebo_hdr *job,
+    const struct ambient_hdrplus *m,const struct ambient_hdrplus *a,const struct ambient_hdrplus *b,int w,int h)
+{
+    if(w<2||h<2||w>65536||h>65536||m->window_count<1||m->window_count>3)return false;
+    *job=(struct svp_placebo_hdr){.count=m->window_count};
+    for(unsigned i=0;i<job->count;i++){
+        const struct ambient_hdrplus_window *p=&m->windows[i];
+        if(p->histogram_count>15)return false;
+        job->windows[i].rect[2]=w;job->windows[i].rect[3]=h;
+        job->windows[i].count=p->histogram_count;
+        for(unsigned j=0;j<p->histogram_count;j++)job->windows[i].percentages[j]=p->histogram[j].percentage;
+        if(i){
+            const struct ambient_hdrplus_geometry *g=&p->geometry;
+            ambient_svp_hdr_rect(job->windows[i].rect,g);
+            ambient_svp_hdr_rect(job->tracks[i].a,&a->windows[i].geometry);
+            ambient_svp_hdr_rect(job->tracks[i].b,&b->windows[i].geometry);
+            job->tracks[i].ellipse[0]=g->center_x;job->tracks[i].ellipse[1]=g->center_y;
+            job->axes[i][0]=g->semimajor_outer;job->axes[i][1]=g->semiminor_outer;job->axes[i][2]=g->angle;
+        }
+    }
+    return true;
+}
+static inline bool ambient_svp_hdr_apply_stats(struct ambient_hdrplus *m,
+    const struct svp_placebo_hdr *job,int w,int h)
+{
+    if(job->count!=m->window_count)return false;
+    for(unsigned i=0;i<job->count;i++){
+        struct ambient_hdrplus_window *p=&m->windows[i];
+        const AmbientSvpHdrResult *r=&job->results[i];
+        if(!r->pixels||r->average>100000||r->brightest>r->pixels)return false;
+        if(i){
+            struct ambient_hdrplus_geometry *g=&p->geometry;
+            const uint32_t *box=job->rects[i],*e=job->ellipses[i];
+            int x=(int)g->center_x+job->shifts[i][0],y=(int)g->center_y+job->shifts[i][1];
+            if(box[0]+1>=box[2]||box[1]+1>=box[3]||box[2]>(uint32_t)w||box[3]>(uint32_t)h||
+                x<0||y<0||x>=w||y>=h||!e[0]||e[0]>65535||!e[1]||e[1]>e[0]||e[2]>180||
+                !g->semimajor_outer||(uint64_t)(box[2]-box[0])*(box[3]-box[1])<r->pixels)return false;
+            unsigned inner=(unsigned)lround((double)g->semimajor_inner*e[0]/g->semimajor_outer);
+            if(!inner||inner>e[0])return false;
+            g->left=box[0];g->top=box[1];g->right=box[2]-1;g->bottom=box[3]-1;
+            g->center_x=x;g->center_y=y;g->semimajor_inner=inner;g->semimajor_outer=e[0];g->semiminor_outer=e[1];g->angle=e[2];
+        }
+        uint32_t peak=0;
+        for(unsigned c=0;c<3;c++){
+            if(r->maxscl[c]>100000)return false;
+            if(r->maxscl[c]>peak)peak=r->maxscl[c];
+            p->maxscl[c]=r->maxscl[c]/100000.f;
+        }
+        if(r->average>peak)return false;
+        p->average=r->average/100000.f;p->fraction=0.f;
+        uint32_t highlight=peak;
+        bool reserved=ambient_hdrplus_reserved_markers(p,m->version);
+        for(unsigned j=0;j<p->histogram_count;j++){
+            if(r->percentiles[j]>peak||(j&&r->percentiles[j]<r->percentiles[j-1]))return false;
+            p->histogram[j].percentile=reserved&&(j==1||j==2)?(j==1?0.f:255.f/100000.f):r->percentiles[j]/100000.f;
+            if(p->histogram[j].percentage>=90)highlight=r->percentiles[j];
+        }
+        SvpHdrCurve curve;
+        if(!svp_hdr_curve(peak,r->average,highlight,m->target_nits,&curve))return false;
+        p->tone_mapping=curve.count!=0;p->anchor_count=curve.count;
+        p->knee_x=curve.knee_x/4095.f;p->knee_y=curve.knee_y/4095.f;
+        memset(p->anchors,0,sizeof(p->anchors));
+        for(unsigned j=0;j<curve.count;j++)p->anchors[j]=curve.anchors[j]/1023.f;
+        if(!ambient_hdrplus_distribution_ordered(p,m->version)||
+            (p->tone_mapping&&!ambient_hdrplus_usable_curve(p,m->target_nits)))return false;
     }
     return true;
 }
@@ -218,9 +295,14 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
         for(unsigned i=2;extended&&i<4;i++)
             extended=s->sources[i].color.transfer==a->color.transfer&&s->sources[i].color.primaries==a->color.primaries;
     }
-    if(!svp_placebo_quality_render(gpu,&s->quality,a->texture,b->texture,
+    struct svp_placebo_hdr job;
+    int w=a->texture->params.w,h=a->texture->params.h;
+    if((s->has_metadata&&(a->color.transfer!=PL_COLOR_TRC_PQ||a->color.primaries!=PL_COLOR_PRIM_BT_2020||
+            !ambient_svp_hdr_prepare_stats(&job,&s->metadata,&a->hdrplus,&b->hdrplus,w,h)))||
+        !svp_placebo_quality_render_hdr(gpu,&s->quality,a->texture,b->texture,
         extended?s->sources[2].texture:NULL,extended?s->sources[3].texture:NULL,
-        &s->output,pair->phase,&pair->quality)){
+        &s->output,pair->phase,&pair->quality,s->has_metadata?&job:NULL)||
+        (s->has_metadata&&!ambient_svp_hdr_apply_stats(&s->metadata,&job,w,h))){
         // Preserve the exact reconstructed picture and its metadata
         // if the renderer cannot share the native Vulkan queue.
         if(a->has_hdrplus)s->metadata=a->hdrplus;
