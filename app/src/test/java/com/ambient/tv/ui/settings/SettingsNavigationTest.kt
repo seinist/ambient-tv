@@ -63,7 +63,8 @@ class SettingsNavigationTest {
                 // Monogram is only offered by builds that contain its native core.
                 .filter { it != MediaSystem.TELEGRAM || com.ambient.tv.modules.SystemModuleAvailability.monogramOffered }
                 // Native Spotify must have passed its actual runtime probe.
-                .filter { it != MediaSystem.SPOTIFY || com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered },
+                .filter { it != MediaSystem.SPOTIFY || com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered }
+                .filter { it != MediaSystem.YOUTUBE || com.ambient.tv.modules.SystemModuleAvailability.smartTubeOffered },
             MediaSystem.addOrder,
         )
     }
