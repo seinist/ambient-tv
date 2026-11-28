@@ -74,7 +74,7 @@ static inline bool ambient_hdrplus_curve_monotone(const struct ambient_hdrplus_w
         delta[i]=x-last;last=x;
     }
     delta[w->anchor_count]=1.0-last;
-    return ambient_hdrplus_nonnegative_bernstein(delta,w->anchor_count,10);
+    return ambient_hdrplus_nonnegative_bernstein(delta,w->anchor_count,14);
 }
 
 /* Validate actual distribution values, not the v1 reserved markers. */
