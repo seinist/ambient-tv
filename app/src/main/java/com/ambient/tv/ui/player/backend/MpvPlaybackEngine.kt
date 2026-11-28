@@ -413,6 +413,10 @@ internal class MpvPlaybackEngine(
     private var renderCheckJob: Job? = null
     private val imageScope = CoroutineScope(SupervisorJob() + workerHandler.asCoroutineDispatcher("mpv-control"))
     private var imageUpdateJob: Job? = null
+    private var hdrSceneJob: Job? = null
+    private var hdrSceneSession: HdrSceneSession? = null
+    private var hdrSceneAttempted = false
+    private var hdrSceneBaseFilter: String? = null
     var imageOptions by mutableStateOf(initialImageOptions.normalized())
         private set
     /** Only an SVP that runs (or can still run for this file) keeps display-mode matching off. */
@@ -812,6 +816,7 @@ internal class MpvPlaybackEngine(
     fun detachSurface(surface: Surface? = null) {
         if (surface != null && attachedSurface !== surface) return
         if (!attached || released) return
+        if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePass()
         restoreSdrSurface()
         sdrSurfaceFailed = false
         sdrToHdr.reset()
@@ -901,6 +906,11 @@ internal class MpvPlaybackEngine(
 
     override fun seekTo(positionMs: Long) {
         if (released) return
+        if (hdrSceneSession != null || hdrSceneJob != null) {
+            cancelHdrScenePass()
+            val filters = desiredImageFilters(imageOptions, isMpvSdrTransfer(currentMpvTransfer()))
+            rebuildMpvVideoFilterChain(filters, explicitDeinterlaceFilter)
+        }
         val duration = durationMs()
         val endSeek = !liveStream && isPlaybackEndSeek(positionMs, duration)
         if (endSeek && ended) {
@@ -1092,6 +1102,7 @@ internal class MpvPlaybackEngine(
         // Persist the user's selection; Sparsam applies a cheap effective view at the boundary.
         val next = options.normalized()
         if (next != imageOptions) {
+            if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePass()
             onOutputTransition()
             // A new explicit panel selection must not inherit the last shader's retry backoff.
             shaderReloadFailures = 0
@@ -1814,6 +1825,73 @@ internal class MpvPlaybackEngine(
 
     private fun currentMpvUpscaling(): Boolean = currentMpvFittedScale() > MPV_ANY_UPSCALE_SCALE
 
+    private fun cancelHdrScenePass() {
+        hdrSceneJob?.cancel()
+        hdrSceneJob = null
+        hdrSceneSession?.cleanup()
+        hdrSceneSession = null
+        hdrSceneBaseFilter = null
+        hdrSceneAttempted = true
+    }
+
+    private fun hdrSceneFilter(base: String): String {
+        val session = hdrSceneSession ?: return base
+        if (!session.valid() || base != hdrSceneBaseFilter || !base.endsWith(":hwresident=1")) {
+            cancelHdrScenePass()
+            return base
+        }
+        // Keep the resident suffix: existing decoder policy checks it.
+        return base.removeSuffix(":hwresident=1") + session.mpvOptions() + ":hwresident=1"
+    }
+
+    private fun maybeStartHdrScenePass() {
+        if (hdrSceneAttempted || hdrSceneJob != null || released || !attached || !fileReady ||
+            liveStream || broadcastSource || audioOnly || initialStartPositionMs > 0 ||
+            !imageOptions.svp.hdrTwoPass || !imageOptions.svp.hardwareResident ||
+            sourceHdrStandard != HdrStandard.HDR10_PLUS || !svpAllowed(context) ||
+            getPropertyString("seekable") != "yes" || HdrScenePlanner.localFile(url) == null) return
+        val base = activeCpuImageFilters["plex-svp"]?.takeIf { it.endsWith(":hwresident=1") } ?: return
+        if (imageOptions.svpMode == "quality" && !svpQualityCleared && !svpQualityProbeFailed) return
+        val source = pipelineFps() ?: return
+        val target = svpOutputFps(displayFps() ?: svpDisplayFps(context), imageOptions.svp) ?: return
+        hdrSceneAttempted = true
+        hdrSceneJob = imageScope.launch {
+            val result = try {
+                HdrScenePlanner.scan(url, target, false, File(context.noBackupFilesDir, "hdr-scene"))
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Timber.w(e, "HDR scene plan unavailable"); null }
+            if (result == null) { Timber.i("HDR10+ automatic scene plan not supported for this file"); return@launch }
+            if (released || !attached || !fileReady || !imageOptions.svp.hdrTwoPass ||
+                activeCpuImageFilters["plex-svp"] != base || kotlin.math.abs(result.plan.source-source) > 0.0001 ||
+                kotlin.math.abs(result.plan.target-target) > 0.0001) {
+                result.cleanup(); return@launch
+            }
+            hdrSceneSession = result
+            hdrSceneBaseFilter = base
+            if (!restartHdrScenePass()) cancelHdrScenePass()
+        }
+    }
+
+    private fun restartHdrScenePass(): Boolean {
+        val base = hdrSceneBaseFilter ?: return false
+        val session = hdrSceneSession ?: return false
+        if (!session.valid() || !attached || released) return false
+        val filters = activeCpuImageFilters.toMutableMap()
+        filters["plex-svp"] = hdrSceneFilter(base)
+        if (hdrSceneSession == null) return false
+        val wasPlaying = nativePlayWanted
+        setProperty("pause", "yes")
+        if (!rebuildMpvVideoFilterChain(filters, explicitDeinterlaceFilter)) {
+            setProperty("pause", if (wasPlaying) "no" else "yes")
+            return false
+        }
+        fallbackTrackSelection = listOf("aid", "sid", "speed").map(::getPropertyString)
+        ended = false
+        reopenStream(0, preferPendingSeek = false, hdrSceneRestart = true)
+        setProperty("pause", if (wasPlaying) "no" else "yes")
+        return true
+    }
+
     private fun desiredImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> =
         desiredCopyBackImageFilters(o, sdr)
 
@@ -1839,7 +1917,7 @@ internal class MpvPlaybackEngine(
             if ((!sdr || declaredHdr != null || dolbyVisionDetected) && !resident) return@buildMap
             mpvSvpFilter(mode, pipelineFps(), displayFps() ?: svpDisplayFps(context), tuning, size?.first, size?.second,
                 hardwareResident = resident)?.let {
-                put("plex-svp", it)
+                put("plex-svp", hdrSceneFilter(it))
             }
         }
     }
@@ -2169,7 +2247,7 @@ internal class MpvPlaybackEngine(
         }
         val eof = observedFlag("eof-reached") ?: (getPropertyString("eof-reached") == "yes")
         if (!eof) awaitingEofReset = false
-        if (loaded && fileReady && !awaitingEofReset && dvPrimeTarget == null && eof) ended = true
+        if (loaded && fileReady && !awaitingEofReset && dvPrimeTarget == null && eof && hdrSceneSession?.mode != 1) ended = true
         return PlaybackStatus(positionMs(), durationMs(), isPlaying(), ended, errorMessage)
     }
     /** First picture shown (or audio file loaded): ends the watchdog's opening phase. */
@@ -2478,6 +2556,7 @@ internal class MpvPlaybackEngine(
             when (event) {
                 0 -> {
                     refreshImageSource()
+                    maybeStartHdrScenePass()
                     // mediacodec_embed cannot present software frames. MPV can drop an
                     // unsupported video track (e.g. AV1 on Shield) without an end-file error
                     // and continue playing audio. Reopen once on GLES after playback has
@@ -2517,6 +2596,11 @@ internal class MpvPlaybackEngine(
                     val nativeError = runCatching { MpvNativeBridge.nativePlaybackError(handle) }.getOrDefault(0)
                     val eof = observedFlag("eof-reached") ?: (getPropertyString("eof-reached") == "yes")
                     if (!mpvTerminalEnd(reason, nativeError, eof)) return@repeat
+                    val scene = hdrSceneSession
+                    if (scene != null) {
+                        if (nativeError >= 0 && (eof || reason == 0) && scene.mode == 1 && scene.advance() && restartHdrScenePass()) return@repeat
+                        cancelHdrScenePass()
+                    }
                     // Before the track cache goes: did the file open with a video track?
                     val loadedWithVideo = fileReady && runCatching { videoTracks().isNotEmpty() }.getOrDefault(false)
                     invalidateTracks()
@@ -2692,7 +2776,8 @@ internal class MpvPlaybackEngine(
         setProperty("pause", if (nativePlayWanted) "no" else "yes")
     }
 
-    private fun reopenStream(positionMs: Long, preferPendingSeek: Boolean = true, liveUrlOverride: String? = null) {
+    private fun reopenStream(positionMs: Long, preferPendingSeek: Boolean = true, liveUrlOverride: String? = null, hdrSceneRestart: Boolean = false) {
+        if (!hdrSceneRestart && (hdrSceneSession != null || hdrSceneJob != null)) cancelHdrScenePass()
         val resumePositionMs = deferredSeek.takeReopenPosition(
             if (liveStream) 0L else positionMs, preferPendingSeek && !liveStream,
         )
@@ -3012,6 +3097,7 @@ internal class MpvPlaybackEngine(
         }
         finishDvPrime()
         sdrToHdr.reset()
+        cancelHdrScenePass()
         imageScope.cancel()
         detachVideoOutput()
         released = true
