@@ -197,7 +197,7 @@ elseif (ARCHITECTURE_x86_64)""")
         file.write_text(source)
     path = folder + "arm_dynarmic.cpp"
     replace(root, path, "#include <dynarmic/interface/A32/context.h>",
-            '#include <array>\n#include <mutex>\n#include "core/hle/hle.h"')
+            '#include <array>\n#include <mutex>\n#include "core/hle/lock.h"')
     replace(root, folder + "arm_dynarmic.h", "    Memory::PageTable* current_page_table = nullptr;",
             "    Memory::PageTable* current_page_table = nullptr;\n    std::map<Memory::PageTable*, uint64_t> jit_generations;")
     replace(root, path, "    if (iter != jits.end()) {\n        jit = iter->second.get();",
