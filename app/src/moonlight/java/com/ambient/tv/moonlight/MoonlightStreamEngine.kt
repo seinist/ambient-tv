@@ -717,7 +717,7 @@ class MoonlightStreamEngine @Inject constructor(
                             adaptNetworkQuality = true)
                         break
                     }
-                    backlogSeconds = if (pendingVideo >= 8) backlogSeconds + 1 else 0
+                    backlogSeconds = if (pendingVideo >= moonlightVideoBacklogThreshold(session.profile.fps)) backlogSeconds + 1 else 0
                     noPresentationSeconds = if (lastPresented > 0 && video.presented == lastPresented && video.rendered > lastFrames)
                         noPresentationSeconds + 1 else 0
                     if (noOutputSeconds == 3 || backlogSeconds == 3 || noPresentationSeconds == 3) session.video?.requestRecovery()

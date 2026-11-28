@@ -2,6 +2,10 @@ package com.ambient.tv.moonlight
 
 import java.util.concurrent.atomic.AtomicLongArray
 
+/** Native queue has a 3..15 frame bound; detect sustained pressure before overflow. */
+internal fun moonlightVideoBacklogThreshold(fps: Int): Int =
+    ((fps / 10).coerceIn(3, 15) - 1).coerceAtLeast(2)
+
 /** Bound decoder input waits by frame rate while leaving direct-submit network ingress short. */
 internal fun moonlightDecoderInputTimeoutUs(mode: String, fps: Int, direct: Boolean, config: Boolean): Long {
     if (direct) return 500L

@@ -19,6 +19,13 @@ class MoonlightFramePacerTest {
         assertFalse(pacer.shouldDrain(1000000L, 1001000000L))
         assertTrue(pacer.shouldDrain(1000000L, 1100000000L))
     }
+    @Test fun backlogThresholdTracksNativeQueueBound() {
+        assertEquals(2, moonlightVideoBacklogThreshold(24))
+        assertEquals(5, moonlightVideoBacklogThreshold(60))
+        assertEquals(11, moonlightVideoBacklogThreshold(120))
+        assertEquals(14, moonlightVideoBacklogThreshold(240))
+    }
+
     @Test fun decoderWaitsScaleWithoutBlockingDirectIngress() {
         assertEquals(500L, moonlightDecoderInputTimeoutUs("latency", 120, true, false))
         assertEquals(3_000L, moonlightDecoderInputTimeoutUs("latency", 120, false, true))
