@@ -4,6 +4,7 @@
 # Usage:
 #   ./build.sh debug          # MPV (if needed) + debug APK
 #   ./build.sh release        # release APKs for all ABIs, including Monogram
+#   ./build.sh release-arm    # release APKs for arm64-v8a and armeabi-v7a only
 #   ./build.sh arm64          # arm64-v8a release APK only
 #   ./build.sh armv7          # armeabi-v7a release APK only
 #   ./build.sh x86            # x86 release APK only (emulator)
@@ -97,6 +98,10 @@ NNEDI3_VENDOR_SCRIPT="$ROOT_DIR/scripts/vendor_nnedi3_quality_ladder.py"
 
 # App-owned native engines are built for these Android ABIs (TV ARM + emulator x86).
 SUPPORTED_ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
+BUILD_VERSION_ARGS=()
+if [[ -n "${AMBIENT_TV_LOCAL_BUILD_CODE:-}" ]]; then
+    BUILD_VERSION_ARGS+=("-PversionCode=$AMBIENT_TV_LOCAL_BUILD_CODE" "-PversionName=$AMBIENT_TV_LOCAL_BUILD_NAME")
+fi
 
 external_version() {
     local key="$1"
@@ -932,7 +937,7 @@ run_release_gradle() {
         strip_args+=("-PprivateKeysFile=$keys_file")
         log "Private build: account keys from $keys_file are built in (do not publish this APK)"
     fi
-    "$ROOT_DIR/gradlew" --no-daemon --no-configuration-cache "${strip_args[@]}" "$@"
+    "$ROOT_DIR/gradlew" --no-daemon --no-configuration-cache "${BUILD_VERSION_ARGS[@]}" "${strip_args[@]}" "$@"
     rc=$?
     set -e
     restore_native_release_libs
@@ -940,7 +945,9 @@ run_release_gradle() {
 }
 
 # Safety net: never leave release-stripped binaries in the development source tree.
-trap restore_native_release_libs EXIT INT TERM
+trap restore_native_release_libs EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 find_build_tool() {
     local tool="$1"
@@ -1018,7 +1025,7 @@ sign_release_apk() {
 
 verify_gradle_build_graph() {
     log "Verifying active Gradle build graph and SmartTube JVM targets"
-    "$ROOT_DIR/gradlew" --no-daemon --no-configuration-cache verifySmartTubeBuildGraph
+    "$ROOT_DIR/gradlew" --no-daemon --no-configuration-cache "${BUILD_VERSION_ARGS[@]}" "$@" verifySmartTubeBuildGraph
 }
 
 prepare_nnedi3_quality_ladder() {
@@ -1046,12 +1053,16 @@ build_debug() {
     ensure_projectm
     verify_gradle_build_graph
     log "Building Ambient TV DEBUG APK"
-    "$ROOT_DIR/gradlew" --no-daemon --no-configuration-cache assembleDebug
+    "$ROOT_DIR/gradlew" --no-daemon --no-configuration-cache "${BUILD_VERSION_ARGS[@]}" assembleDebug
     mkdir -p "$DIST_DIR"
     local debug_dir="$ROOT_DIR/app/build/outputs/apk/debug"
     local src name code metadata label dest
     metadata="$(apk_output_metadata "$debug_dir")"
     { IFS= read -r src; IFS= read -r name; IFS= read -r code; } <<< "$metadata"
+    if [[ -n "${AMBIENT_TV_LOCAL_BUILD_CODE:-}" ]]; then
+        [[ "$code" == "$AMBIENT_TV_LOCAL_BUILD_CODE" && "$name" == "$AMBIENT_TV_LOCAL_BUILD_NAME" ]] ||
+            fail "APK metadata does not match the reserved build version."
+    fi
     label="$(apk_version_label "$name" "$code")"
     dest="$DIST_DIR/ambient-tv-debug-${label}.apk"
     [[ -n "$src" && -f "$src" ]] || fail "Debug APK was not created under $debug_dir"
@@ -1066,6 +1077,10 @@ package_release_variant_output() {
     # Select only the output AGP reports for this invocation, never an old matching filename.
     metadata="$(apk_output_metadata "$release_dir" "$variant")"
     { IFS= read -r src; IFS= read -r name; IFS= read -r code; } <<< "$metadata"
+    if [[ -n "${AMBIENT_TV_LOCAL_BUILD_CODE:-}" ]]; then
+        [[ "$code" == "$AMBIENT_TV_LOCAL_BUILD_CODE" && "$name" == "$AMBIENT_TV_LOCAL_BUILD_NAME" ]] ||
+            fail "APK metadata does not match the reserved build version."
+    fi
     [[ -n "$src" && -f "$src" ]] || fail "${variant} release APK was not created under app/build/outputs/apk/release/."
 
     local suffix label
@@ -1133,7 +1148,7 @@ build_release_variant() {
     ensure_mpv
     ensure_vlc_vulkan
     ensure_projectm
-    verify_gradle_build_graph
+    verify_gradle_build_graph -PAPK_ABI="$abi_mode"
     log "Building Ambient TV ${variant} RELEASE APK"
     run_release_gradle :app:packageRelease -PAPK_ABI="$abi_mode"
     mkdir -p "$DIST_DIR"
@@ -1238,32 +1253,39 @@ build_release_variant_adb() {
 }
 
 build_release() {
+    local abi_mode="${1:-all}"
+    local -a variants=(ARM64 ARMV7 X86 X86_64)
+    local -a release_abis=("${SUPPORTED_ABIS[@]}")
+    if [[ "$abi_mode" == arm-only ]]; then
+        variants=(ARM64 ARMV7)
+        release_abis=(arm64-v8a armeabi-v7a)
+    fi
     # Full release APKs ship Monogram. Debug and single-ABI release stay opt-in.
     if [[ -z "${MONOGRAM_NATIVE+x}" ]]; then
         export MONOGRAM_NATIVE=1
         log "Including pinned Monogram MTProto in this release (GPL-3.0-only). Set MONOGRAM_NATIVE=0 to leave it out."
     fi
-    ensure_monogram_native "${SUPPORTED_ABIS[*]}"
+    ensure_monogram_native "${release_abis[*]}"
     UPDATE_APKS=()
-    UPDATE_ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
+    UPDATE_ABIS=("${release_abis[@]}")
     rm -f "$DIST_DIR/update.json"
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_libretrodroid
     ensure_moonlight_sources
-    ensure_librashader_native "${SUPPORTED_ABIS[*]}"
+    ensure_librashader_native "${release_abis[*]}"
     ensure_youtube_engine
     ensure_mpv
     ensure_vlc_vulkan
     ensure_projectm
-    verify_gradle_build_graph
-    log "Building Ambient TV RELEASE APKs (arm64-v8a, armeabi-v7a, x86, x86_64)"
-    run_release_gradle :app:packageRelease -PMONOGRAM_NATIVE="$MONOGRAM_NATIVE"
+    verify_gradle_build_graph -PAPK_ABI="$abi_mode"
+    log "Building Ambient TV RELEASE APKs (${release_abis[*]})"
+    run_release_gradle :app:packageRelease -PAPK_ABI="$abi_mode" -PMONOGRAM_NATIVE="$MONOGRAM_NATIVE"
     mkdir -p "$DIST_DIR"
 
     local release_dir="$ROOT_DIR/app/build/outputs/apk/release"
     local variant
-    for variant in ARM64 ARMV7 X86 X86_64; do
+    for variant in "${variants[@]}"; do
         package_release_variant_output "$variant" "$release_dir"
         UPDATE_APKS+=("$LAST_BUILT_APK")
     done
@@ -1451,7 +1473,7 @@ print_usage() {
     cat <<EOT
 Usage: $0 <command> [args]
 
-Android: debug, release, arm64, armv7, x86, x86_64, all, clean, gen-keystore
+Android: debug, release, release-arm, arm64, armv7, x86, x86_64, all, clean, gen-keystore
 Deploy: arm64-adb, armv7-adb, x86-adb, x86_64-adb [adb-ip[:port]]
 Native: youtube-engine, spotify, clean-spotify, mpv, clean-mpv, svp,
         nnedi3-shaders, projectm, clean-projectm, monogram
@@ -1572,6 +1594,16 @@ if [[ "$MODE" == "svp" ]]; then
     exit 0
 fi
 
+# Reserve one version for the entire local invocation, including all APKs in "all".
+# The wrapper holds an inter-process lock and commits only after this script exits successfully.
+case "$MODE" in
+    debug|release|release-arm|arm64|arm64-v8a|armv7|armeabi-v7a|x86|x86_64|x86-64|arm64-adb|arm64-v8a-adb|armv7-adb|armeabi-v7a-adb|x86-adb|x86_64-adb|x86-64-adb|all)
+        if [[ -z "${AMBIENT_TV_LOCAL_BUILD_CODE:-}" && -z "${CI:-}" && -z "${ORG_GRADLE_PROJECT_versionCode:-}" ]]; then
+            exec python3 "$ROOT_DIR/scripts/local_build_version.py" "$ROOT_DIR" "$@"
+        fi
+        ;;
+esac
+
 require_project
 
 case "$MODE" in
@@ -1590,6 +1622,9 @@ case "$MODE" in
         ;;
     release)
         build_release
+        ;;
+    release-arm)
+        build_release arm-only
         ;;
     arm64|arm64-v8a)
         build_release_variant "ARM64" "arm64-v8a"

@@ -1053,6 +1053,7 @@ Under **App & data › Diagnostics** (error log for release builds):
 ```bash
 ./build.sh debug          # MPV (if needed) + debug APK
 ./build.sh release        # release APK
+./build.sh release-arm    # arm64-v8a + armeabi-v7a
 ./build.sh universal      # universal release APK (all ABIs)
 ./build.sh arm64          # arm64-v8a
 ./build.sh armv7          # armeabi-v7a
@@ -1092,7 +1093,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: it builds MPV natively 
 Required repository secrets: `AMBIENT_TV_KEYSTORE_BASE64` (base64 of the release keystore), `AMBIENT_TV_KEYSTORE_PASSWORD`, `AMBIENT_TV_KEY_ALIAS`, `AMBIENT_TV_KEY_PASSWORD`.
 
 Versioning lives in `version.properties`:
-- `VERSION_CODE` goes up by one on every local build that produces an APK/AAB (`assemble*`, `bundle*`, `install*`, `package*` — including Android Studio and `./build.sh`). Sync, tests-only, `clean` and CI (`CI` set) leave it unchanged; `-PversionCode=N` overrides. The file is not committed automatically.
+- Local `./build.sh` APK builds reserve one `VERSION_CODE` per invocation and persist it (including both README version markers) only after all requested APKs and release packaging succeed. Direct Gradle/Android Studio artifact builds retain their existing configuration-time increment. Sync, tests-only, `clean` and CI (`CI` set) leave it unchanged; `-PversionCode=N` overrides. The file is not committed automatically.
 - `VERSION_NAME` is used for local builds. Release builds take it from the tag without the leading `v` (`v1.0.0-beta` → `1.0.0-beta`) via `-PversionName` / `ORG_GRADLE_PROJECT_versionName`. APK file names use that value; a pre-release suffix (`beta`, `alpha`, `rc`, …) stays at the end and the current build number is inserted before it (`1.0-beta` → `1.0.270-beta`).
 - On each counted build the version between the `<!-- version:start/end -->` and `<!-- version-badge:start/end -->` markers in both READMEs is rewritten.
 

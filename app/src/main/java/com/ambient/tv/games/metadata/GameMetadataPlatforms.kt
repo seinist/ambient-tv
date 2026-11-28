@@ -106,7 +106,9 @@ internal object GameMetadataPlatforms {
             query.canonicalTitle?.takeIf(String::isNotBlank), query.title.takeIf(String::isNotBlank),
             query.filename.substringAfterLast('/').substringBeforeLast('.').takeIf(String::isNotBlank),
             gameCatalogFilename(query.systemId, query.filename).takeIf(String::isNotBlank),
-        )).map { it.trim().take(256) }.distinct().take(if (catalog.isEmpty()) 4 else 30)
+            gameMetadataSearchName(query.title).takeIf(String::isNotBlank),
+            gameMetadataSearchName(gameCatalogFilename(query.systemId, query.filename)).takeIf(String::isNotBlank),
+        )).map { it.trim().take(256) }.distinct().take(if (catalog.isEmpty()) 6 else 30)
         return names.flatMap { name -> (pinned?.let { listOf(it[0]) } ?: systems).map { system ->
             val imageName = name.map { if (it in "&*/:`<>?\\|\"" || it.isISOControl()) '_' else it }.joinToString("") + ".png"
             fun image(type: String) = HttpUrl.Builder().scheme("https").host("thumbnails.libretro.com")

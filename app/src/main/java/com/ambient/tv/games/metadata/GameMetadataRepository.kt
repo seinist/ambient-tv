@@ -138,7 +138,10 @@ class GameMetadataRepository @Inject constructor(
             if (request.title.isBlank()) emptyList()
             else {
                 val candidates = if (provider == GameMetadataProviderIds.LIBRETRO) {
-                    val titles = library.searchDatTitles(current.systemId, request.title)
+                    val clean = gameMetadataSearchName(request.title)
+                    val titles = library.searchDatTitles(current.systemId, request.title).ifEmpty {
+                        if (clean != request.title) library.searchDatTitles(current.systemId, clean) else emptyList()
+                    }
                     GameMetadataPlatforms.libretroCandidates(request, titles).let { choices ->
                         // Catalog search is local and usable even if the artwork server is offline.
                         // Only fall back to probing guessed image names when the catalog has no hit.
@@ -279,22 +282,54 @@ class GameMetadataRepository @Inject constructor(
         val options = settings.options()
         if (!options.enabled) return@withGame false
         val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
-        val old = library.metadata(current.fileId)
+        var old = library.metadata(current.fileId)
+        var lookupGame = current
+        // Avoid repeating local catalog searches for a completed automatic lookup.
+        // Manual matches still get their dedicated recovery path.
+        val initialProvider = old?.takeIf { it.matchLocked }?.provider ?: GameMetadataPlatforms.automaticProvider(
+            GameMetadataQuery(current.systemId, current.title, current.filename), options.provider, providers.availableProviders())
+        val initialKnown = old?.takeIf { it.provider == initialProvider }
+        val initialQuery = gameMetadataQuery(current, initialKnown,
+            settings.language(), options.region, ticket.crc32, provider = initialProvider)
+        val initialFingerprint = gameMetadataLookupFingerprint(initialProvider, gameMetadataFingerprint(current, initialQuery))
+        if (!force && old?.matchLocked != true) {
+            when (library.lookupStatus(current.fileId, initialProvider, initialFingerprint)) {
+                "not_found", "ambiguous" -> return@withGame false
+                "found" -> if (initialKnown != null &&
+                    gameMetadataMatchesQueryIdentity(initialKnown, initialQuery)) {
+                    ensureStoredArtwork(current, initialKnown, GameArtworkKind.COVER, force = false)
+                    return@withGame true
+                }
+            }
+        }
+        // DAT names are useful even when there is no cover, the provider has no artwork
+        // namespace for this platform, or its server fails. Publish the local title first.
+        val catalog = localCatalogMatches(current, old)
+        catalogDisplayMetadata(current, old, catalog)?.let { named ->
+            currentCoroutineContext().ensureActive()
+            if (!library.saveMetadata(ticket, named)) return@withGame false
+            old = library.metadata(current.fileId)
+            lookupGame = current.copy(metadataTitle = old?.title)
+        }
         val platformQuery = GameMetadataQuery(current.systemId, current.title, current.filename)
-        val provider = old?.provider?.takeIf { old.matchLocked } ?: GameMetadataPlatforms.automaticProvider(
+        val provider = old?.takeIf { it.matchLocked }?.provider ?: GameMetadataPlatforms.automaticProvider(
             platformQuery, options.provider, providers.availableProviders())
         // A manually identified game must not silently switch sources when its key is removed.
         if (old?.matchLocked == true && provider !in providers.availableProviders())
             throw GameMetadataProviderException(GameMetadataFailure.CREDENTIALS)
         val known = old?.takeIf { it.provider == provider }
-        val query = gameMetadataQuery(current, known, settings.language(), options.region,
+        val query = gameMetadataQuery(lookupGame, known, settings.language(), options.region,
             ticket.crc32, provider = provider)
-        val fingerprint = gameMetadataLookupFingerprint(provider, gameMetadataFingerprint(current, query))
+        val fingerprint = gameMetadataLookupFingerprint(provider, gameMetadataFingerprint(lookupGame, query))
         // A manually chosen catalog name may still lack a proven thumbnail namespace.
         // Neither an earlier miss nor the recent text edit can postpone resolving it.
         val unresolvedLibretro = known?.provider == GameMetadataProviderIds.LIBRETRO &&
             (known.providerGameId.isBlank() || "cover" !in known.lockedFields &&
                 current.coverPath?.let { File(it).isFile } != true)
+        // Automatic title-only matches must respect cached missing images.
+        if (!force && known?.matchLocked != true &&
+            library.lookupStatus(current.fileId, provider, fingerprint) in setOf("not_found", "ambiguous"))
+            return@withGame false
         if (!force && !unresolvedLibretro) {
             when (library.lookupStatus(current.fileId, provider, fingerprint)) {
                 "found" -> {
@@ -313,20 +348,6 @@ class GameMetadataRepository @Inject constructor(
         }
         val candidates = try {
             if (provider == GameMetadataProviderIds.LIBRETRO) {
-                val verified = current.verifiedTitle?.takeIf(String::isNotBlank)
-                val catalog = if (verified != null) listOf(verified)
-                    else if (known?.matchLocked == true) emptyList()
-                    else {
-                        val filename = gameCatalogFilename(current.systemId, current.filename)
-                        val hints = listOfNotNull(filename.takeIf(String::isNotBlank),
-                            current.internalTitle?.takeIf(String::isNotBlank)).distinct()
-                        hints.firstNotNullOfOrNull { hint ->
-                            val clean = com.ambient.tv.games.library.gameDisplayTitle(hint)
-                            val titles = library.searchDatTitles(current.systemId, hint) +
-                                if (clean != hint) library.searchDatTitles(current.systemId, clean) else emptyList()
-                            matchingGameCatalogTitles(hint, titles).takeIf { it.isNotEmpty() }
-                        }.orEmpty()
-                    }
                 val lookup = if (catalog.isNotEmpty() && known?.matchLocked != true)
                     query.copy(providerGameId = null) else query
                 GameMetadataPlatforms.libretroCandidates(lookup, catalog)
@@ -362,6 +383,21 @@ class GameMetadataRepository @Inject constructor(
         val status = if (candidates.isNotEmpty() && provider != GameMetadataProviderIds.LIBRETRO) "ambiguous" else "not_found"
         library.saveLookupStatus(ticket, provider, fingerprint, status, System.currentTimeMillis() + MISSING_TTL)
         false
+    }
+
+    /** Exact system-scoped name matches; this never opens a ROM or contacts the network. */
+    private fun localCatalogMatches(game: LibraryGame, previous: GameMetadata?): List<String> {
+        game.verifiedTitle?.takeIf(String::isNotBlank)?.let { return listOf(it) }
+        if (previous?.matchLocked == true) return emptyList()
+        val filename = gameCatalogFilename(game.systemId, game.filename)
+        val hints = listOfNotNull(filename.takeIf(String::isNotBlank),
+            game.internalTitle?.takeIf(String::isNotBlank)).distinct()
+        return hints.firstNotNullOfOrNull { hint ->
+            val queries = listOf(hint, com.ambient.tv.games.library.gameDisplayTitle(hint),
+                gameMetadataCatalogBase(hint), gameMetadataSearchName(hint)).distinct()
+            val titles = queries.flatMap { library.searchDatTitlePrefixes(game.systemId, it) }.distinct()
+            matchingGameCatalogTitles(hint, titles).takeIf { it.isNotEmpty() }
+        }.orEmpty()
     }
 
     data class NameDatabaseResult(val systemIds: Set<String>, val names: Int) {
@@ -427,6 +463,7 @@ class GameMetadataRepository @Inject constructor(
     suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
                              prioritizedFileIds: () -> List<String> = SharedGameArtworkPriority::prioritizedFileIds,
                              systemId: String? = null,
+                             maxParallelism: Int = 1,
                              onProgress: (Int, Int) -> Unit = { _, _ -> }): Unit =
         withContext(Dispatchers.IO) {
             coroutineScope {
@@ -456,33 +493,58 @@ class GameMetadataRepository @Inject constructor(
                         find = { id, after -> library.folderGame(folderId, id, after, systemId) },
                     )
                     var lastPulse = System.nanoTime()
-                    onProgress(0, total)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        if (library.folders().none { it.id == folderId }) break
-                        val game = queue.next() ?: break
-                        currentCoroutineContext().ensureActive()
-                        try {
-                            refresh(game)
-                        } catch (error: IOException) {
-                            // A bad response for one ROM must not strand the rest of a NAS
-                            // library. Connectivity, credentials, quotas and storage errors
-                            // still stop immediately; a missing match is not an error.
-                            if (error !is GameArtworkValidationException &&
-                                (error !is GameMetadataProviderException || error.kind != GameMetadataFailure.INVALID_RESPONSE))
-                                throw error
-                            failed++
-                            if (firstFailure == null) firstFailure = error
-                        }
-                        completed++
-                        if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
+                    // Publish committed covers even while the next network request stalls.
+                    val publisher = launch {
+                        while (true) {
+                            kotlinx.coroutines.delay(750)
                             library.flushMetadataBatch()
-                            onProgress(completed, total)
-                            lastPulse = System.nanoTime()
                         }
                     }
-                    onProgress(completed, total)
-                    firstFailure?.let { throw GameMetadataBatchException(failed, completed, it) }
+                    try {
+                        onProgress(0, total)
+                        // The queue is single-owner under this mutex. Only the public
+                        // Libretro image endpoint gets a second worker; authenticated
+                        // providers retain serial requests and their quota behavior.
+                        val batchLock = Mutex()
+                        val parallelism = if (options.provider == GameMetadataProviderIds.LIBRETRO)
+                            maxParallelism.coerceIn(1, 2) else 1
+                        suspend fun worker() {
+                            while (true) {
+                                currentCoroutineContext().ensureActive()
+                                val game = batchLock.withLock {
+                                    if (library.folders().none { it.id == folderId }) null else queue.next()
+                                } ?: break
+                                currentCoroutineContext().ensureActive()
+                                val failure = try {
+                                    refresh(game)
+                                    null
+                                } catch (error: IOException) {
+                                    // Transport, credentials, rate limits and storage
+                                    // failures still cancel the entire structured batch.
+                                    if (error !is GameArtworkValidationException &&
+                                        (error !is GameMetadataProviderException || error.kind != GameMetadataFailure.INVALID_RESPONSE))
+                                        throw error
+                                    error
+                                }
+                                batchLock.withLock {
+                                    if (failure != null) {
+                                        failed++
+                                        if (firstFailure == null) firstFailure = failure
+                                    }
+                                    completed++
+                                    if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
+                                        library.flushMetadataBatch()
+                                        onProgress(completed, total)
+                                        lastPulse = System.nanoTime()
+                                    }
+                                }
+                            }
+                        }
+                        if (parallelism == 1) worker()
+                        else (0 until parallelism).map { async { worker() } }.awaitAll()
+                        onProgress(completed, total)
+                        firstFailure?.let { throw GameMetadataBatchException(failed, completed, it) }
+                    } finally { publisher.cancel() }
                 } finally { library.endMetadataBatch(); unregister(folderId, job) }
             }
         }

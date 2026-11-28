@@ -38,6 +38,7 @@ data class GameDetailUiState(
     val searchCompleted: Boolean = false,
     val matches: List<GameMetadataCandidate> = emptyList(),
     val providers: List<String> = emptyList(),
+    val systemChoices: List<com.ambient.tv.games.GameSystem> = emptyList(),
 )
 
 /** Pre-metadata renamed games already contain a protected user choice. */
@@ -79,7 +80,9 @@ class GameDetailViewModel @Inject constructor(
 
     private suspend fun reload() {
         val revision = ++detailRevision
-        val game = withContext(Dispatchers.IO) { library.game(fileId) }
+        val (game, systems) = withContext(Dispatchers.IO) {
+            library.game(fileId) to library.gameSystemChoices(fileId)
+        }
         val details = if (game != null) gameMetadataWithExistingTitle(
             metadata.detail(fileId) ?: GameMetadata(), game.customTitle) else GameMetadata()
         // An action's reload and the database revision collector can overlap. Only the
@@ -87,7 +90,7 @@ class GameDetailViewModel @Inject constructor(
         if (revision != detailRevision) return
         val sourceName = files.sources().firstOrNull { it.id == game?.sourceId }?.name.orEmpty()
         mutable.update { it.copy(loading = false, game = game, sourceName = sourceName, metadata = details,
-            providers = metadata.availableProviders()) }
+            providers = metadata.availableProviders(), systemChoices = systems) }
         val image = details.backdropUrl
         if (game != null && game.backdropPath == null && image != null && backdropAttempt != image) {
             backdropAttempt = image
@@ -183,6 +186,21 @@ class GameDetailViewModel @Inject constructor(
     fun refresh() = action(failureMessage = R.string.game_error_search, onDone = { applied ->
         mutable.update { it.copy(refreshEmpty = !applied && it.game != null) }
     }) { metadata.refresh(it, force = true) }
+
+    fun changeSystem(systemId: String?) = action(onDone = { applied ->
+        if (!applied) mutable.update { it.copy(error = context.getString(R.string.game_error_update)) }
+    }) { game ->
+        if (!library.changeGameSystem(game.fileId, systemId)) false
+        else {
+            val updated = withContext(Dispatchers.IO) { library.game(game.fileId) }
+            updated?.let {
+                try { metadata.refresh(it, force = true) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Assignment is committed; artwork can retry. */ }
+            }
+            true
+        }
+    }
 
     fun favorite() = action {
         withContext(Dispatchers.IO) { library.setFavorite(it.fileId, !it.favorite) }

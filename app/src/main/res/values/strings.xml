@@ -2493,4 +2493,6 @@
     <string name="game_library_scanning">Scanning games…</string>
     <string name="game_library_scan_progress">Checked %1$d of %2$d discovered files</string>
     <string name="game_library_scan_cancel">Cancel scan</string>
+    <string name="game_library_change_system">Change system assignment</string>
+    <string name="game_library_change_system_hint">Keep ROMs and personal library choices; identify games for the new system.</string>
 </resources>
