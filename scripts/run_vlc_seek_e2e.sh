@@ -57,13 +57,21 @@ adb shell -T "run-as $PACKAGE sh -c 'cat > files/seek-fixture.mp4'" < "$AUDIT/bu
 adb logcat -c
 # Surface native diagnostics immediately when an assertion fails, not only in the artifact.
 trap 'status=$?; if (( status != 0 )); then adb logcat -d -t 1500 | grep -iE "vlc|AMBIENT|AndroidRuntime" || true; fi' EXIT
-result="$(adb shell am instrument -w -e displayFailure true "$PACKAGE/.SeekAudit")"
-printf '%s\n' "$result"
-grep -Fq 'VLC DISPLAY FAILURE RECOVERY PASSED' <<< "$result"
-grep -Fq 'INSTRUMENTATION_CODE: -1' <<< "$result"
+# Android's pretty instrumentation output prints the stream bundle but omits
+# the final result code when a stream is present. Request raw output so both
+# the explicit test marker and Activity.RESULT_OK remain mandatory.
+run_audit() {
+    local marker="$1" result
+    shift
+    result="$(adb shell am instrument -w -r "$@" "$PACKAGE/.SeekAudit" | tr -d '\r')"
+    printf '%s\n' "$result"
+    if ! grep -Fxq "INSTRUMENTATION_RESULT: stream=$marker" <<< "$result" ||
+       ! grep -Fxq 'INSTRUMENTATION_CODE: -1' <<< "$result"; then
+        echo "Instrumentation did not report successful completion: $marker" >&2
+        return 1
+    fi
+}
+run_audit 'VLC DISPLAY FAILURE RECOVERY PASSED' -e displayFailure true
 # Prove the native display-start failure path actually executed.
 adb logcat -d | grep -F 'AMBIENT_VOUT_START_FAILED' > /dev/null
-result="$(adb shell am instrument -w "$PACKAGE/.SeekAudit")"
-printf '%s\n' "$result"
-grep -Fq 'VLC AFM3 REAL SEEK E2E PASSED' <<< "$result"
-grep -Fq 'INSTRUMENTATION_CODE: -1' <<< "$result"
+run_audit 'VLC AFM3 REAL SEEK E2E PASSED'
