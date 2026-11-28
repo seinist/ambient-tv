@@ -14,7 +14,7 @@ compiler build is not proof of correct gameplay or a performance improvement.
 * `yabause-arm64-jit`: bounded native ARM64 straight-line blocks; integer ALU,
   immediate operations, shifts, comparisons and T flag operations. Native
   differential tests cover emitted opcode encodings including shift/rotate T
-  flags. Non-delay BT/BF branches use their exact cycle charge in the block
+  flags, carry/borrow, overflow, CMP/STR and mixed instruction blocks. Non-delay BT/BF branches use their exact cycle charge in the block
   exit; other terminal operations reuse a validated fetch and invoke the
   original opcode handler (including memory/MMIO, bus waits and delay slots).
   This is intentionally not a claim of full native SH2 instruction coverage.

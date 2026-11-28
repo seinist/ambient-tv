@@ -109,6 +109,8 @@ private:
             const size_t index = guest / GuestPage;
             const uintptr_t canonical = reinterpret_cast<uintptr_t>(pointers[index]);
             auto old = mapped.find(guest);
+            if (!canonical && old == mapped.end())
+                continue;
             bool valid = canonical != 0 && canonical % page == 0;
             // Host pages may be 16 KiB while guest pages are 4 KiB.
             // Every subpage must map consecutively to the same shared backing.
@@ -129,10 +131,33 @@ private:
                 mapped.erase(old);
             }
             if (!valid) continue;
-            void* p = mmap(base + guest, page, PROT_READ | PROT_WRITE,
+            // Coalesce contiguous, newly mapped host pages from the same
+            // allocation. Avoid thousands of mmap syscalls when loading ROM/RAM.
+            uint64_t length = page;
+            const size_t remaining = allocation->second.bytes -
+                                     (canonical - allocation->first);
+            while (guest + length < end && length + page <= remaining &&
+                   mapped.find(guest + length) == mapped.end()) {
+                bool contiguous = true;
+                for (size_t offset = 0; offset < page; offset += GuestPage) {
+                    const auto next = reinterpret_cast<uintptr_t>(
+                        pointers[(guest + length + offset) / GuestPage]);
+                    if (next != canonical + length + offset) {
+                        contiguous = false;
+                        break;
+                    }
+                }
+                if (!contiguous) break;
+                length += page;
+            }
+            void* p = mmap(base + guest, length, PROT_READ | PROT_WRITE,
                            MAP_FIXED | MAP_SHARED, allocation->second.fd,
                            static_cast<off_t>(canonical - allocation->first));
-            if (p != MAP_FAILED) mapped.emplace(guest, canonical);
+            if (p != MAP_FAILED) {
+                for (uint64_t offset = 0; offset < length; offset += page)
+                    mapped.emplace(guest + offset, canonical + offset);
+                guest += length - page;
+            }
             // Otherwise the reservation remains inaccessible: Dynarmic falls back.
         }
     }

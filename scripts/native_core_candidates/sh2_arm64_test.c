@@ -27,6 +27,33 @@ static int reference(uint16_t op, uint32_t* r, uint32_t* sr)
     case 0x600d: r[n] = b & 65535u; return 1;
     case 0x600e: r[n] = (uint32_t)(int32_t)(int8_t)b; return 1;
     case 0x600f: r[n] = (uint32_t)(int32_t)(int16_t)b; return 1;
+    case 0x300e: {
+        uint64_t value = (uint64_t)a + b + (*sr & 1u);
+        r[n] = (uint32_t)value; t = value >> 32; goto flag;
+    }
+    case 0x300a: {
+        uint64_t subtract = (uint64_t)b + (*sr & 1u);
+        r[n] = a - (uint32_t)subtract; t = (uint64_t)a < subtract; goto flag;
+    }
+    case 0x600a: {
+        uint64_t subtract = (uint64_t)b + (*sr & 1u);
+        r[n] = 0u - (uint32_t)subtract; t = subtract != 0; goto flag;
+    }
+    case 0x300f: {
+        int64_t value = (int64_t)(int32_t)a + (int32_t)b;
+        r[n] = (uint32_t)value; t = value < INT32_MIN || value > INT32_MAX; goto flag;
+    }
+    case 0x300b: {
+        int64_t value = (int64_t)(int32_t)a - (int32_t)b;
+        r[n] = (uint32_t)value; t = value < INT32_MIN || value > INT32_MAX; goto flag;
+    }
+    case 0x200c: {
+        uint32_t difference = a ^ b;
+        t = 0;
+        for (unsigned byte=0; byte<4; ++byte)
+            t |= ((difference >> (byte*8)) & 255u) == 0;
+        goto flag;
+    }
     case 0x300c: r[n] = a+b; return 1;
     case 0x3008: r[n] = a-b; return 1;
     case 0x2009: r[n] = a&b; return 1;
@@ -48,6 +75,8 @@ static int reference(uint16_t op, uint32_t* r, uint32_t* sr)
     case 0x8800: t = r[0] == (uint32_t)(int32_t)(int8_t)op; goto flag;
     }
     switch (op & 0xf0ff) {
+    case 0x4024: r[n] = (a << 1) | (*sr & 1u); t = a >> 31; goto flag;
+    case 0x4025: r[n] = (a >> 1) | ((*sr & 1u) << 31); t = a & 1u; goto flag;
     case 0x4000: case 0x4020: r[n] = a << 1; t = a >> 31; goto flag;
     case 0x4001: r[n] = a >> 1; t = a & 1; goto flag;
     case 0x4021: r[n] = (a >> 1) | (a & 0x80000000u); t = a & 1; goto flag;
@@ -126,7 +155,33 @@ int main(void)
             }
         }
     }
+    // Test concatenated blocks, not just independent opcodes: flags and
+    // register outputs must survive across each emitted operation.
+    for (unsigned block=0; block<4096; ++block) {
+        uint32_t expected[16], actual[16];
+        uint32_t want = next(&seed), got = want;
+        for (unsigned i=0;i<16;++i) expected[i]=actual[i]=next(&seed);
+        uint32_t words[AMBIENT_SH2_MAX_WORDS] = {0xd503245fu,0xaa0103e7u};
+        unsigned cursor=2;
+        for (unsigned i=0;i<AMBIENT_SH2_MAX_OPS;) {
+            uint16_t op=(uint16_t)next(&seed);
+            unsigned n=ambient_sh2_emit(op,words+cursor);
+            if (!n) continue;
+            assert(reference(op,expected,&want));
+            cursor+=n-1;
+            ++i;
+        }
+        words[cursor++]=0xd65f03c0u;
+        assert(cursor<=AMBIENT_SH2_MAX_WORDS);
+        assert(mprotect(code,(size_t)page,PROT_READ|PROT_WRITE)==0);
+        memcpy(code,words,cursor*sizeof(uint32_t));
+        __builtin___clear_cache((char*)code,(char*)code+cursor*sizeof(uint32_t));
+        assert(mprotect(code,(size_t)page,PROT_READ|PROT_EXEC)==0);
+        ((void(*)(uint32_t*,uint32_t*))code)(actual,&got);
+        assert(want==got && memcmp(expected,actual,sizeof(actual))==0);
+    }
     munmap(code, (size_t)page);
+    printf("AArch64 SH2: 4096 multi-instruction blocks passed\n");
     printf("AArch64 SH2: %u opcode encodings, %u differential executions passed\n",tested,tested*32);
     return 0;
 }

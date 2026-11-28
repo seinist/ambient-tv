@@ -27,7 +27,7 @@ class CandidateTests(unittest.TestCase):
 #include <assert.h>
 #include "sh2_arm64.h"
 int main(void) {
-    uint32_t out[10];
+    uint32_t out[16];
     assert(ambient_sh2_emit(0x0009, out) == 1);
     assert(ambient_sh2_emit(0xe180, out) == 3 && out[0] == 0x12800fe1u && out[1] == 0xb9000401u);
     assert(ambient_sh2_emit(0x312c, out) == 5 && out[0] == 0xb9400401u &&
@@ -37,7 +37,7 @@ int main(void) {
     assert(ambient_sh2_emit(0x000b, out) == 0); /* RTS */
     assert(ambient_sh2_emit(0x3120, out) == 9 && out[2] == 0x6b02003fu && out[3] == 0x1a9f17e3u);
     assert(ambient_sh2_emit(0xc9ff, out) == 5 && out[1] == 0x52801fe2u);
-    for (unsigned op=0; op<65536; ++op) assert(ambient_sh2_emit(op, out) <= 10);
+    for (unsigned op=0; op<65536; ++op) assert(ambient_sh2_emit(op, out) <= 16);
 }
 """)
             binary = path.with_suffix("")
@@ -74,15 +74,19 @@ int main() {
     assert(first);
     auto* guest = reinterpret_cast<uint8_t*>(*first);
     {
-        MemoryBlock memory(page * 2, 0);
+        MemoryBlock memory(page * 3, 0);
         // File-backed allocation is required for this host regression test.
         { auto& r = registry(); std::lock_guard<std::mutex> lock(r.mutex);
           assert(r.allocations.count(reinterpret_cast<uintptr_t>(memory.data()))); }
         for (size_t i=0; i<page/GuestPage; ++i) {
             pointers[i] = memory.data()+i*GuestPage;
             pointers[page/GuestPage+i] = memory.data()+i*GuestPage;
+            pointers[2*page/GuestPage+i] = memory.data()+page+i*GuestPage;
+            pointers[3*page/GuestPage+i] = memory.data()+2*page+i*GuestPage;
         }
-        arena.sync(pointers, 0, 2*page/GuestPage);
+        arena.sync(pointers, 0, 4*page/GuestPage);
+        guest[3*page+9] = 42;
+        assert(memory[2*page+9] == 42);
         guest[17] = 123;
         assert(memory[17] == 123 && guest[page+17] == 123);
         memory[17] = 77;
@@ -91,6 +95,7 @@ int main() {
         arena.sync(pointers, 0, 1);
         inaccessible(guest+17);
         assert(guest[page+17] == 77);
+        assert(guest[3*page+9] == 42);
         pointers[0] = memory.data();
         arena.sync(pointers, 0, 1);
         assert(guest[17] == 77);
@@ -98,6 +103,7 @@ int main() {
     // Backing destruction revokes both aliases, even before a page table refresh.
     inaccessible(guest+17);
     inaccessible(guest+page+17);
+    inaccessible(guest+3*page+9);
     auto& r = registry();
     std::lock_guard<std::mutex> lock(r.mutex);
     assert(r.allocations.empty());

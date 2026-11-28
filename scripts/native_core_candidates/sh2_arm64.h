@@ -8,10 +8,10 @@
 #include <stddef.h>
 
 #define AMBIENT_SH2_MAX_OPS 16
-#define AMBIENT_SH2_MAX_WORDS (10 * AMBIENT_SH2_MAX_OPS + 3)
+#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 3)
 
 /* Emit a single side-effect-free, one-cycle SH2 instruction into AArch64.
- * x0 points at R[16], x7 at SR; w1..w4 are caller-saved scratch.
+ * x0 points at R[16], x7 at SR; w1..w5 are caller-saved scratch.
  * Only the T status bit is changed by flag-setting instructions.
  * Branches, delay slots and MMIO remain interpreter operations.
  */
@@ -46,6 +46,66 @@ static unsigned ambient_sh2_emit(uint16_t op, uint32_t* code)
         case 0x600e: code[count++] = 0x13001c41u; break; /* SXTB */
         case 0x600f: code[count++] = 0x13003c41u; break; /* SXTH */
         }
+    } else if (key == 0x300e || key == 0x300a || key == 0x600a ||
+               key == 0x300f || key == 0x300b) {
+        // ADDC/SUBC/NEGC use ARM carry/no-borrow, ADDV/SUBV signed overflow.
+        if (key != 0x600a) code[count++] = load_n;
+        code[count++] = load_m;
+        code[count++] = 0xb94000e4u; /* LDR w4,[x7] */
+        if (key == 0x300f || key == 0x300b) {
+            code[count++] = key == 0x300f ? 0x2b020021u : 0x6b020021u;
+            code[count++] = 0x1a9f77e3u; /* CSET w3,VS */
+        } else {
+            code[count++] = 0x12000083u; /* AND w3,w4,#1 */
+            if (key == 0x300e) {
+                code[count++] = 0x7100047fu; /* CMP w3,#1 */
+                code[count++] = 0x3a020021u; /* ADCS */
+                code[count++] = 0x1a9f37e3u; /* carry */
+            } else {
+                code[count++] = 0x6b0303ffu; /* CMP wzr,w3: C=!T */
+                code[count++] = key == 0x600a ? 0x7a0203e1u : 0x7a020021u;
+                code[count++] = 0x1a9f27e3u; /* borrow */
+            }
+        }
+        code[count++] = store_n;
+        code[count++] = 0x121f7884u;
+        code[count++] = 0x2a030084u;
+        code[count++] = 0xb90000e4u;
+        return count+1;
+    } else if (key == 0x200c) {
+        // CMP/STR: any equal byte. Standard zero-byte detection on XOR.
+        code[count++] = load_n;
+        code[count++] = load_m;
+        code[count++] = 0x4a020021u;
+        code[count++] = 0x3200c3e2u;
+        code[count++] = 0x4b020022u;
+        code[count++] = 0x0a210042u;
+        code[count++] = 0x7201c05fu;
+        code[count++] = 0x1a9f07e3u;
+        code[count++] = 0xb94000e4u;
+        code[count++] = 0x121f7884u;
+        code[count++] = 0x2a030084u;
+        code[count++] = 0xb90000e4u;
+        return count+1;
+    } else if ((op & 0xf0ff) == 0x4024 || (op & 0xf0ff) == 0x4025) {
+        code[count++] = load_n;
+        code[count++] = 0xb94000e4u;
+        code[count++] = 0x12000083u; /* old T */
+        if (op & 1) {
+            code[count++] = 0x12000025u;
+            code[count++] = 0x53017c21u;
+            code[count++] = 0x2a037c21u;
+        } else {
+            code[count++] = 0x531f7c25u;
+            code[count++] = 0x531f7821u;
+            code[count++] = 0x2a030021u;
+        }
+        code[count++] = 0x2a0503e3u; /* new T */
+        code[count++] = store_n;
+        code[count++] = 0x121f7884u;
+        code[count++] = 0x2a030084u;
+        code[count++] = 0xb90000e4u;
+        return count+1;
     } else if ((op & 0xf0ff) == 0x4000 || (op & 0xf0ff) == 0x4020 ||
                (op & 0xf0ff) == 0x4001 || (op & 0xf0ff) == 0x4021 ||
                (op & 0xf0ff) == 0x4004 || (op & 0xf0ff) == 0x4005) {
