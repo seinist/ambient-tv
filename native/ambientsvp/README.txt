@@ -1393,3 +1393,47 @@ phase planes for interior pixels, and 4096 adaptive-lambda/signed
 penalty reference comparisons. Fixed the ST2084 c3 coefficient
 (18.6875, not 19.6875) identified by the previous GPU HDR
 statistics regression. Exact-head CI and device tests pending.
+
+
+Reference synthesis family and GPU-resident masks
+-------------------------------------------------
+The optional native synthesis selector supports algorithms
+1, 2, 11, 13, 21, 22 and 23. Configured MPV sessions honor the
+existing algorithm setting and use the upstream 1/256 phase
+quantization, biased integer motion interpolation, UNORM8 mask
+filtering, reference directional warp, phase-dependent SAD blend
+and fixed 8-bit source-filter weights. SDR YUV luma is linearized
+before synthesis and re-encoded afterward; native FP16 HDR and raw
+10-bit YUV retain their existing transfer/representation. Endpoint
+pictures retain the direct source path.
+
+Coverage uses the upstream signed truncation, floor division,
+four-cell area scatter and 3x3 sum/8 coverage transform entirely
+in device-local storage. Selected total luma/chroma costs are
+retained for directional SAD masks with app artifact policies
+0/50/100. Per-phase mask scratch is protected by explicit compute
+barriers. Both raw YUV and encoded RGB resident outputs use the
+same synthesis family.
+
+Algorithm 23 uses a real four-picture MPV lookahead queue and
+optional begin_extended ABI. Two auxiliary adjacent analyses are
+recorded in the same submission, their directional fields and
+scene flags copied to the center pair. All image refs and GPU
+resources survive its exact fence; separate bounded auxiliary
+budget permits up to four center jobs and eight adjacent analyses.
+Invalid/missing adjacent fields or neighbor scene cuts use 21.
+EOF and disabled/failure paths drain buffered originals without
+discarding the lookahead picture. Adjacent fields are recomputed
+for each center pair; no measured performance claim. The separate
+VLC/FEL renderer-side shaders have not migrated to this family.
+
+Added direct Mesa comparisons with pinned VectorField coverage
+and SAD masks across block/pel/overlap/phase policies, isolated
+all-seven synthesis equation probes across 257 phases, configured
+SPIR-V compilation, and actual four-picture native execution
+with fence lifetime assertions. These fixtures have not yet
+completed on the new head. The reference equations and mask
+construction are implemented, but end-to-end bit-exact parity
+still depends on matching upstream field generation/geometry,
+border and chroma reconstruction, scene classification, exact
+source sampling and complete player/device validation.
