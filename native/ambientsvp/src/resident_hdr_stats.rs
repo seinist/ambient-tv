@@ -4,7 +4,7 @@ use super::{Core,Pipeline,Result,err,spirv};
 use ash::vk;
 use std::sync::Arc;
 const BINS:u64=100001;
-const STRIDE:usize=56;
+const STRIDE:usize=64;
 const SHADER:&str=include_str!("resident_hdr_stats.wgsl");
 const UNIFORM:&str="@group(0) @binding(3) var<uniform> params:vec4u;";
 #[repr(C)]
