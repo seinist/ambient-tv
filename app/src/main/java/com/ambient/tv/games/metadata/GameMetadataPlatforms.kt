@@ -42,7 +42,7 @@ internal object GameMetadataPlatforms {
         "gamecube" to platform("Nintendo - GameCube", 13, "Nintendo GameCube"),
         "wii" to platform("Nintendo - Wii", 16, "Nintendo Wii", "Wii"),
         "wiiu" to platform("Nintendo - Wii U", 18, "Nintendo Wii U", "Wii U"),
-        "psp" to platform("Sony - PlayStation Portable", 61, "Sony PSP", "PlayStation Portable"),
+        "psp" to platform("Sony - PlayStation Portable", 61, "Sony PSP", "Sony PlayStation Portable", "PlayStation Portable"),
         "dreamcast" to platform("Sega - Dreamcast", 23, "Sega Dreamcast"),
         "saturn" to platform("Sega - Saturn", 22, "Sega Saturn"),
         "c64" to platform("Commodore - 64", 66, "Commodore 64"),
@@ -81,6 +81,20 @@ internal object GameMetadataPlatforms {
             else -> listOfNotNull(systems[query.systemId])
         }
     }
+
+    fun supports(query: GameMetadataQuery, provider: String): Boolean = forQuery(query).any { platform ->
+        when (provider) {
+            GameMetadataProviderIds.LIBRETRO -> platform.libretro != null
+            GameMetadataProviderIds.SCREENSCRAPER -> platform.screenScraper != null
+            GameMetadataProviderIds.THEGAMESDB -> platform.gamesDbNames.isNotEmpty()
+            else -> false
+        }
+    }
+
+    /** Use another already-configured provider only if the chosen one has no platform mapping. */
+    fun automaticProvider(query: GameMetadataQuery, preferred: String, available: List<String>): String =
+        if (supports(query, preferred)) preferred
+        else available.firstOrNull { supports(query, it) } ?: preferred
 
     fun libretroCandidates(query: GameMetadataQuery, catalogTitles: List<String> = emptyList()): List<GameMetadataCandidate> {
         val systems = forQuery(query).mapNotNull { it.libretro }
