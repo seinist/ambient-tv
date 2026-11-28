@@ -51,7 +51,7 @@ internal object SystemModuleHost {
     // During this migration the host still supplies the pinned Android resource
     // and shared-library graph. A build without those wrappers cannot load this format.
     private fun smartTubeContracts(): Map<SystemModule, SystemModuleRuntime.Contract> =
-        if (BuildConfig.SMARTTUBE_BUNDLED) mapOf(
+        if (BuildConfig.SMARTTUBE_HOST_RESOURCES) mapOf(
             SystemModule.SMARTTUBE to SystemModuleRuntime.Contract(
                 entryClass = "com.ambient.tv.youtube.SmartTubeModuleAdapter",
                 hostBindingSha256 = BuildConfig.SMARTTUBE_ADAPTER_SHA256,
