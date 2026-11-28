@@ -18,16 +18,31 @@ const CODE_MAX:i32=SVP_CODE_MAX;
 const SATD:bool=SVP_SATD;
 const CHROMA:bool=SVP_CHROMA;
 const LAMBDA:u32=SVP_LAMBDA;
-const PNEW:u32=SVP_PNEW;
+const PNEW:i32=SVP_PNEW;
 const SCENE:u32=SVP_SCENE;
+const LSAD:u32=SVP_LSAD;
+const PZERO:i32=SVP_PZERO;
+const PGLOBAL:i32=SVP_PGLOBAL;
+const PNBOUR:i32=SVP_PNBOUR;
+const PREVERSE:i32=SVP_PREVERSE;
+const SAD_GATE:bool=SVP_SAD_GATE;
 var<workgroup> scene_bad:array<u32,64>;
-var<workgroup> scores:array<u32,64>;
-var<workgroup> raws:array<u32,64>;
-var<workgroup> ranks:array<u32,64>;
-var<workgroup> vectors:array<vec2i,64>;
-var<workgroup> seed_score:u32;
-var<workgroup> seed_raw:u32;
-
+// At most 17x17 candidates. Each lane computes an independent metric;
+// lane zero consumes the results in reference raster order.
+const MAX_CANDIDATES:u32=289u;
+var<workgroup> metrics:array<vec4u,289>;
+var<workgroup> candidates:array<vec2i,8>;
+var<workgroup> enabled:array<u32,8>;
+var<workgroup> predictor:vec2i;
+var<workgroup> best_vec:vec2i;
+var<workgroup> best_sad:u32;
+var<workgroup> best_raw:u32;
+var<workgroup> best_cost:u32;
+var<workgroup> block_lambda:u32;
+var<workgroup> freq_x:array<atomic<u32>,129>;
+var<workgroup> freq_y:array<atomic<u32>,129>;
+var<workgroup> global_mode:vec2i;
+var<workgroup> global_sum:array<vec3i,64>;
 fn texel(t:texture_2d<f32>,p:vec2i,hi:vec2i,channel:u32)->i32{
     return i32(round(clamp(textureLoad(t,clamp(p,vec2i(0),hi),0)[channel]*SCALE,0.0,f32(CODE_MAX))));
 }
@@ -176,80 +191,197 @@ fn plane_metric(origin:vec2i,mv:vec2i,plane:u32,reverse:bool,satd:bool)->vec2u{
     }
     return result;
 }
-fn metric(origin:vec2i,mv:vec2i,seed:vec2i,reverse:bool,satd:bool,bound:u32,gate:u32)->vec2u{
-    let d=mv-seed;
-    let motion=LAMBDA*u32((d.x*d.x+d.y*d.y))/256u;
-    if motion>=bound{return vec2u(0xffffffffu);}
+// Both SAD and SATD retain the separate chroma term. Upstream
+// check_predictor applies its penalty to the combined metric; a new
+// candidate applies pnew separately to luma and weighted chroma.
+fn costs(origin:vec2i,mv:vec2i,reverse:bool,satd:bool)->vec4u{
     let y=plane_metric(origin,mv,0u,reverse,satd);
-    if gate!=0xffffffffu && y.y*4u>gate*5u{return vec2u(0xffffffffu);}
-    let yc=y.x+PNEW*y.x/256u;
-    if motion+yc>=bound{return vec2u(0xffffffffu);}
     var uv=0u;
     if CHROMA{
-        uv=4u*(plane_metric(origin,mv,1u,reverse,satd).x+plane_metric(origin,mv,2u,reverse,satd).x);
-        uv+=PNEW*uv/256u;
+        uv=4u*(plane_metric(origin,mv,1u,reverse,satd).x+
+            plane_metric(origin,mv,2u,reverse,satd).x);
     }
-    return vec2u(motion+yc+uv,y.y);
+    return vec4u(y.x,uv,y.y,1u);
 }
-fn choose(lane:u32,mv:vec2i,m:vec2u,rank:u32){
-    if m.x<scores[lane]||(m.x==scores[lane]&&rank<ranks[lane]){
-        scores[lane]=m.x;raws[lane]=m.y;ranks[lane]=rank;vectors[lane]=mv;
+fn penalized(sad:u32,penalty:i32)->u32{
+    return u32(max(0,i32(sad)+((penalty*i32(sad))>>8)));
+}
+fn motion_cost(mv:vec2i)->u32{
+    let d=mv-predictor;
+    let norm=u32(d.x*d.x+d.y*d.y);
+    // Equivalent to (lambda*norm)>>8 when representable. Keep
+    // extreme distances expensive instead of wrapping to a false win.
+    let hi=norm>>8u;let lo=norm&255u;
+    if hi>0u&&block_lambda>0x7fffffffu/hi{return 0x7fffffffu;}
+    let whole=hi*block_lambda;
+    let fraction=lo*(block_lambda>>8u)+(lo*(block_lambda&255u)>>8u);
+    return min(0x7fffffffu-whole,fraction)+whole;
+}
+fn adapt_lambda(sad:u32)->u32{
+    let ratio=f32(LSAD)/f32(LSAD+(sad>>1u));
+    return u32(f32(LAMBDA)*ratio*ratio);
+}
+fn clamp_mv(v:vec2i)->vec2i{return clamp(v,vec2i(-64*PEL),vec2i(64*PEL));}
+fn snapshot_base(n:u32)->u32{return 2u*n+1u;}
+fn global_base(n:u32)->u32{return 4u*n+1u;}
+@compute @workgroup_size(64)
+fn snapshot(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u32){
+    let n=geometry.z*(geometry.w&0xffffu);
+    let offset=g.x*n;
+    for(var i=lane;i<129u;i+=64u){
+        atomicStore(&freq_x[i],0u);atomicStore(&freq_y[i],0u);
     }
-}
-fn reduce(lane:u32){
+    workgroupBarrier();
+    for(var i=lane;i<n;i+=64u){
+        let f=fields[offset+i];
+        fields[snapshot_base(n)+offset+i]=f;
+        let v=clamp(f.xy,vec2i(-64),vec2i(64))+vec2i(64);
+        atomicAdd(&freq_x[u32(v.x)],1u);atomicAdd(&freq_y[u32(v.y)],1u);
+    }
+    workgroupBarrier();
+    if lane==0u{
+        var ix=0u;var iy=0u;
+        for(var i=1u;i<129u;i++){
+            if atomicLoad(&freq_x[i])>atomicLoad(&freq_x[ix]){ix=i;}
+            if atomicLoad(&freq_y[i])>atomicLoad(&freq_y[iy]){iy=i;}
+        }
+        global_mode=vec2i(i32(ix)-64,i32(iy)-64);
+    }
+    workgroupBarrier();
+    var sum=vec3i(0);
+    for(var i=lane;i<n;i+=64u){
+        let v=fields[offset+i].xy;
+        if all(abs(v-global_mode)<vec2i(6)){sum+=vec3i(v,1);}
+    }
+    global_sum[lane]=sum;
     workgroupBarrier();
     for(var stride=32u;stride>0u;stride/=2u){
-        if lane<stride{
-            choose(lane,vectors[lane+stride],vec2u(scores[lane+stride],raws[lane+stride]),ranks[lane+stride]);
-        }
+        if lane<stride{global_sum[lane]+=global_sum[lane+stride];}
         workgroupBarrier();
     }
-}
-fn search(origin:vec2i,seed:vec2i,center:vec2i,reverse:bool,lane:u32,radius:i32,step:i32,satd:bool){
     if lane==0u{
-        let m=metric(origin,center,seed,reverse,satd,0xffffffffu,0xffffffffu);
-        seed_score=m.x;seed_raw=m.y;
+        let total=global_sum[0];
+        // Coarse field is already expressed in this level's pixels,
+        // so do not double a second time as in inter-level promotion.
+        let v=select(global_mode,total.xy/max(total.z,1),total.z>0);
+        fields[global_base(n)+g.x]=vec4i(v*PEL,0,PEL);
     }
-    workgroupBarrier();
-    let bound=seed_score;
-    let gate=select(0xffffffffu,seed_raw,satd);
-    scores[lane]=0xffffffffu;raws[lane]=0xffffffffu;ranks[lane]=0xffffffffu;vectors[lane]=center;
-    if lane==0u{choose(lane,center,vec2u(bound,seed_raw),0u);}
-    let side=2*radius+1;
-    if bound!=0u{
-        for(var n=lane;n<u32(side*side);n+=64u){
-            let offset=vec2i(i32(n)%side-radius,i32(n)/side-radius);
-            if all(offset==vec2i(0)){continue;}
-            let mv=clamp(center+offset*step,vec2i(-64*PEL),vec2i(64*PEL));
-            let m=metric(origin,mv,seed,reverse,satd,min(bound,scores[lane]),gate);
-            choose(lane,mv,m,n+1u);
+}
+fn pick_predictors(origin:vec2i,cell:vec2u,index:u32,reverse:bool,lane:u32){
+    let gh=geometry.w&0xffffu;let gw=geometry.z;let n=gw*gh;
+    let base=select(0u,n,reverse);
+    let seed=fields[snapshot_base(n)+index];
+    if lane==0u{
+        predictor=clamp_mv(seed.xy*PEL);
+        candidates[0]=predictor;enabled[0]=1u;
+        // Reciprocal prediction comes from the immutable opposite
+        // coarse field at the displaced block, never concurrent writes.
+        let other=vec2u(clamp(vec2i(cell)+seed.xy/STEP,vec2i(0),vec2i(i32(gw)-1,i32(gh)-1)));
+        let opposite=fields[snapshot_base(n)+select(n,0u,reverse)+other.x+other.y*gw];
+        candidates[1]=clamp_mv(-opposite.xy*PEL);enabled[1]=select(0u,1u,opposite.z>0);
+        candidates[2]=clamp_mv(fields[global_base(n)+select(0u,1u,reverse)].xy);enabled[2]=1u;
+        candidates[3]=vec2i(0);enabled[3]=1u;
+        // Same-level neighbours in upstream row-major order. All
+        // precede the current x+2*y wave and have finalized pel units.
+        for(var j=0u;j<4u;j++){
+            let d=vec2i(i32(j)-1,-1);
+            let off=select(d,vec2i(-1,0),j==3u);
+            let p=vec2i(cell)+off;
+            enabled[j+4u]=0u;candidates[j+4u]=vec2i(0);
+            if all(p>=vec2i(0))&&p.x<i32(gw)&&p.y<i32(gh){
+                let v=fields[base+u32(p.x)+u32(p.y)*gw];
+                candidates[j+4u]=clamp_mv(v.xy);enabled[j+4u]=1u;
+            }
         }
     }
-    reduce(lane);
+    workgroupBarrier();
+    if lane<8u{
+        metrics[lane]=vec4u(0,0,0,0);
+        if enabled[lane]!=0u{metrics[lane]=costs(origin,candidates[lane],reverse,SATD);}
+    }
+    workgroupBarrier();
+    if lane==0u{
+        let initial=metrics[0];
+        block_lambda=adapt_lambda(initial.x+initial.y);
+        best_vec=predictor;best_sad=initial.x+initial.y;best_raw=initial.z;best_cost=best_sad;
+        for(var j=1u;j<8u;j++){
+            let m=metrics[j];
+            if m.w==0u{continue;}
+            var penalty=PNBOUR;
+            if j==1u{penalty=PREVERSE;}else if j==2u{penalty=PGLOBAL;}else if j==3u{penalty=PZERO;}
+            let sad=m.x+m.y;let cost=penalized(sad,penalty);
+            if cost<best_cost{
+                best_vec=candidates[j];best_sad=sad;best_raw=m.z;best_cost=cost;
+                if j==1u{predictor=best_vec;}
+            }
+        }
+        // Upstream resets the search bound to the selected raw metric
+        // after comparing the weighted predictor candidates.
+        best_cost=best_sad;
+    }
+    workgroupBarrier();
+}
+fn search(origin:vec2i,reverse:bool,lane:u32,radius:i32,step:i32,satd:bool){
+    let center=best_vec;
+    if lane==0u{
+        let m=costs(origin,center,reverse,satd);
+        best_sad=m.x+m.y;best_raw=m.z;best_cost=best_sad;
+    }
+    workgroupBarrier();
+    let side=2*radius+1;
+    let count=u32(side*side);
+    let initial=best_cost;
+    for(var j=lane;j<count;j+=64u){
+        let off=vec2i(i32(j)%side-radius,i32(j)/side-radius);
+        let mv=clamp_mv(center+off*step);
+        var m=vec4u(0);
+        if any(off!=vec2i(0))&&initial>0u&&motion_cost(mv)<initial{
+            m=costs(origin,mv,reverse,satd);
+        }
+        metrics[j]=m;
+    }
+    workgroupBarrier();
+    if lane==0u{
+        for(var j=0u;j<count;j++){
+            let m=metrics[j];if m.w==0u{continue;}
+            let off=vec2i(i32(j)%side-radius,i32(j)/side-radius);
+            let mv=clamp_mv(center+off*step);
+            let motion=motion_cost(mv);
+            if motion>=best_cost{continue;}
+            if SAD_GATE&&satd&&m.z*4u>best_raw*5u{continue;}
+            let y=penalized(m.x,PNEW);
+            if y>=best_cost-motion{continue;}
+            let uv=penalized(m.y,PNEW);
+            let cost=motion+y+uv;
+            if cost<best_cost{
+                best_vec=mv;best_sad=m.x+m.y;best_cost=cost;best_raw=m.z;
+            }
+        }
+    }
+    workgroupBarrier();
 }
 @compute @workgroup_size(64)
 fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u32){
     let gh=geometry.w&0xffffu;
-    let reverse=g.y>=gh;
-    let gy=g.y%gh;
-    let index=g.x+gy*geometry.z+select(0u,geometry.z*gh,reverse);
-    let origin=vec2i(i32(g.x),i32(gy))*STEP;
-    let seed=fields[index].xy*PEL;
-    search(origin,seed,seed,reverse,lane,RADIUS,PEL,SATD);
-    let center=vectors[0];
-    workgroupBarrier();
-    // Fine SAD search in native pel units. No interpolation of the
-    // integer motion vector itself substitutes for matching subpixels.
-    search(origin,seed,center,reverse,lane,PEL,1,false);
+    let wave=(geometry.w>>19u)&4095u;
+    let gy=g.x;
+    if gy>=gh||wave<2u*gy{return;}
+    let gx=wave-2u*gy;
+    if gx>=geometry.z{return;}
+    let reverse=g.y!=0u;
+    let index=gx+gy*geometry.z+select(0u,geometry.z*gh,reverse);
+    let origin=vec2i(i32(gx),i32(gy))*STEP;
+    pick_predictors(origin,vec2u(gx,gy),index,reverse,lane);
+    search(origin,reverse,lane,RADIUS,PEL,SATD);
+    // Fine SAD search uses the exact rounded subpixel phase samples.
+    search(origin,reverse,lane,PEL,1,false);
     if lane==0u{
         let size=min(vec2i(BLOCK),vec2i(geometry.xy)-origin);
         let n=u32(max(size.x*size.y,1));
-        let raw=raws[0];
-        let normalized=(raw*64u/u32(select(1,4,CODE_MAX==1023)))/n;
-        fields[index]=vec4i(vectors[0],i32(normalized),PEL);
+        let normalized=(best_raw*64u/u32(select(1,4,CODE_MAX==1023)))/n;
+        fields[index]=vec4i(best_vec,i32(normalized),PEL);
     }
 }
-
 // Global scene gate on device. Both directional residuals must be
 // considered before synthesizing; no field or image readback.
 @compute @workgroup_size(64)
