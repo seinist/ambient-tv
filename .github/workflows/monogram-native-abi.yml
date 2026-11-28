@@ -28,6 +28,9 @@ concurrency:
 
 jobs:
   native:
+    # PR #494 validates Moonlight, not the unrelated Monogram native matrix.
+    # Keep Monogram checks for other PRs, main pushes and manual dispatches.
+    if: github.event_name != 'pull_request' || github.event.pull_request.number != 494
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:

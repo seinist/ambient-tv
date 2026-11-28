@@ -29,6 +29,7 @@ on:
       - 'scripts/update_external_libraries.py'
       - 'scripts/fetch_moonlight_sources.sh'
       - 'scripts/build_moonlight_opus.sh'
+      - 'scripts/ci_gradle_rate_limit_retry.sh'
       - 'scripts/tests/test_moonlight_fec_pool.py'
       - 'scripts/tests/test_moonlight_enet_packets.py'
       - 'scripts/tests/test_moonlight_udp_burst.py'
@@ -54,6 +55,8 @@ jobs:
     timeout-minutes: 85
     strategy:
       fail-fast: false
+      # Limit simultaneous cold Maven Central dependency resolutions.
+      max-parallel: 2
       matrix:
         include:
           - build: arm64
@@ -137,13 +140,13 @@ jobs:
           grep -q 'Pinned host certificate changed' third_party/moonlight-android/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
       - name: Compile pinned native Moonlight protocol module
         shell: bash
-        run: ./gradlew :moonlight_native:assembleDebug -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
+        run: bash scripts/ci_gradle_rate_limit_retry.sh :moonlight_native:assembleDebug -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
       - name: Verify source-built Opus archive
         shell: bash
         run: test -s third_party/moonlight-android/app/src/main/jni/moonlight-core/opus/ambient-built/${{ matrix.abi }}/libopus.a
       - name: Compile optimized native release for this ABI
         shell: bash
-        run: ./gradlew :moonlight_native:assembleRelease -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
+        run: bash scripts/ci_gradle_rate_limit_retry.sh :moonlight_native:assembleRelease -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
       - name: Check Moonlight JNI alignment
         shell: bash
         run: |
@@ -156,20 +159,20 @@ jobs:
         env:
           SKIP_MPV_NATIVE: "1"
         shell: bash
-        run: ./gradlew :app:compileDebugKotlin -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
+        run: bash scripts/ci_gradle_rate_limit_retry.sh :app:compileDebugKotlin -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
       - name: Run native-enabled Moonlight JVM tests
         if: matrix.abi == 'arm64-v8a'
         env:
           SKIP_MPV_NATIVE: "1"
         shell: bash
-        run: ./gradlew :app:testDebugUnitTest --tests 'com.ambient.tv.moonlight.*' -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace
+        run: bash scripts/ci_gradle_rate_limit_retry.sh :app:testDebugUnitTest --tests 'com.ambient.tv.moonlight.*' -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace
       - name: Build verification-only APK (not for distribution)
         env:
           SKIP_MPV_NATIVE: "1"
         shell: bash
         # ProjectM, SVP and local mpv are unrelated to this audit. The production
         # build's native-media verification must remain enabled for published APKs.
-        run: ./gradlew :app:assembleDebug -x :app:verifyAppNativeMediaInputs -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
+        run: bash scripts/ci_gradle_rate_limit_retry.sh :app:assembleDebug -x :app:verifyAppNativeMediaInputs -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
       - name: Verify packaged ABI and upstream licenses
         env:
           EXPECTED_ABI: ${{ matrix.abi }}
@@ -195,4 +198,4 @@ jobs:
         env:
           SKIP_MPV_NATIVE: "1"
         shell: bash
-        run: ./gradlew :app:minifyReleaseWithR8 -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace
+        run: bash scripts/ci_gradle_rate_limit_retry.sh :app:minifyReleaseWithR8 -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace
