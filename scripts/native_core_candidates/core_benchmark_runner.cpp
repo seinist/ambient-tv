@@ -23,6 +23,8 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <sstream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -31,6 +33,11 @@ static std::map<std::string,std::string> options, defaults;
 static std::map<std::string,std::string> overrides;
 static std::atomic<bool> unsupported{false}, quit{false};
 static std::atomic<uint16_t> buttons{0};
+struct InputFrame {
+    uint16_t mask=0;
+    std::array<int16_t,7> extra{}; // LX, LY, RX, RY, touch X/Y, pressed
+};
+static std::array<std::atomic<int16_t>,7> input_extra{};
 static retro_hw_render_callback hw{};
 static EGLDisplay display = EGL_NO_DISPLAY;
 static EGLContext context = EGL_NO_CONTEXT;
@@ -98,6 +105,23 @@ static bool create_context(retro_hw_render_callback* request) {
 static void log_message(enum retro_log_level, const char* fmt, ...) {
     va_list ap; va_start(ap,fmt); std::vfprintf(stderr,fmt,ap); va_end(ap);
 }
+template<class Definition> static void register_options(const Definition* def) {
+    if(!def)die("Missing core option definitions");
+    for(;def->key;++def) {
+        if(!def->values[0].value)die("Core option has no values");
+        const std::string fallback=def->default_value?def->default_value:def->values[0].value;
+        auto requested=overrides.find(def->key);
+        const std::string selected=requested==overrides.end()?fallback:requested->second;
+        bool valid=false;
+        for(const auto& item:def->values) {
+            if(!item.value)break;
+            if(selected==item.value)valid=true;
+        }
+        if(!valid)die("Unsupported core option value in fixture");
+        defaults[def->key]=fallback;
+        options[def->key]=selected;
+    }
+}
 static bool env(unsigned cmd, void* data) {
     switch (cmd) {
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: *static_cast<const char**>(data)=system_dir.c_str(); return true;
@@ -105,7 +129,18 @@ static bool env(unsigned cmd, void* data) {
     case RETRO_ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY: *static_cast<const char**>(data)=content_dir.c_str(); return true;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE: *static_cast<bool*>(data)=true; return true;
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS: return true;
-    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: *static_cast<unsigned*>(data)=0; return true;
+    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: *static_cast<unsigned*>(data)=2; return true;
+    case RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS: *static_cast<unsigned*>(data)=1; return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+        register_options(static_cast<const retro_core_option_definition*>(data));return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL:
+        register_options(static_cast<const retro_core_options_intl*>(data)->us);return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+        register_options(static_cast<const retro_core_options_v2*>(data)->definitions);return false;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+        register_options(static_cast<const retro_core_options_v2_intl*>(data)->us->definitions);return false;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+        return true; // no UI; values are still available
     case RETRO_ENVIRONMENT_GET_JIT_CAPABLE: {
         const long page=sysconf(_SC_PAGESIZE);
         bool capable=false;
@@ -199,7 +234,16 @@ static void audio(int16_t,int16_t) {audio_frames.fetch_add(1,std::memory_order_r
 static size_t audio_batch(const int16_t*,size_t count) {audio_frames.fetch_add(count,std::memory_order_relaxed);return count;}
 static void poll() {}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
-    if(port || index || device!=RETRO_DEVICE_JOYPAD)return 0;
+    if(port)return 0;
+    device &= RETRO_DEVICE_MASK;
+    if(device==RETRO_DEVICE_ANALOG && index<=RETRO_DEVICE_INDEX_ANALOG_RIGHT && id<=RETRO_DEVICE_ID_ANALOG_Y)
+        return input_extra[index*2+id].load(std::memory_order_relaxed);
+    if(device==RETRO_DEVICE_POINTER && !index) {
+        if(id<=RETRO_DEVICE_ID_POINTER_PRESSED)return input_extra[4+id].load(std::memory_order_relaxed);
+        if(id==RETRO_DEVICE_ID_POINTER_COUNT)return input_extra[6].load(std::memory_order_relaxed);
+        return 0;
+    }
+    if(index || device!=RETRO_DEVICE_JOYPAD)return 0;
     const uint16_t state=buttons.load(std::memory_order_relaxed);
     if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return static_cast<int16_t>(state);
     return id<16 ? ((state>>id)&1u) : 0;
@@ -224,14 +268,30 @@ int main(int argc,char** argv) {
     if(!frames)die("No frames");
     const unsigned warmup=argc==10?static_cast<unsigned>(number(argv[9],frames)):0u;
     if(warmup>=frames)die("No measurement frames");
-    std::vector<uint16_t> inputs;
+    std::vector<InputFrame> inputs;
     std::ifstream in(argv[5]);std::string line;
     while(std::getline(in,line)) {
-        char* end=nullptr; unsigned long n=std::strtoul(line.c_str(),&end,16);
-        if(line.empty() || *end || n>65535 || inputs.size()>=frames)die("Invalid input fixture");
-        inputs.push_back(static_cast<uint16_t>(n));
+        std::istringstream row(line);
+        std::string mask;
+        if(!(row>>mask) || inputs.size()>=frames)die("Invalid input fixture");
+        char* end=nullptr; unsigned long n=std::strtoul(mask.c_str(),&end,16);
+        if(*end || n>65535)die("Invalid joypad mask");
+        InputFrame frame{};
+        frame.mask=static_cast<uint16_t>(n);
+        row>>std::ws;
+        if(!row.eof()) {
+            for(size_t i=0;i<frame.extra.size();++i) {
+                int value;
+                if(!(row>>value) || value < -32767 || value > 32767 || (i==6 && value!=0 && value!=1))
+                    die("Invalid analog/pointer fixture");
+                frame.extra[i]=static_cast<int16_t>(value);
+            }
+            row>>std::ws;
+            if(!row.eof())die("Unexpected input fixture fields");
+        }
+        inputs.push_back(frame);
     }
-    if(inputs.size()!=frames)die("Input fixture must contain exactly one hex mask per frame");
+    if(inputs.size()!=frames)die("Input fixture must contain exactly one record per frame");
     std::ifstream opt(argv[6]);
     if(!opt)die("Cannot read options fixture");
     while(std::getline(opt,line)) {
@@ -302,7 +362,9 @@ int main(int argc,char** argv) {
             initial_duplicate=duplicate_frames;
             initial_audio=audio_frames.load(std::memory_order_relaxed);
         }
-        buttons=inputs[frame];
+        buttons=inputs[frame].mask;
+        for(size_t i=0;i<input_extra.size();++i)
+            input_extra[i].store(inputs[frame].extra[i],std::memory_order_relaxed);
         uint64_t start=now();
         if(manager && (!last_thermal || start-last_thermal>=1000000000ull)) {
             int value=status(manager);

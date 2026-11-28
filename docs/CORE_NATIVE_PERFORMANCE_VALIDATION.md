@@ -144,7 +144,7 @@ Create a local fixture JSON with paths relative to that JSON:
       }
     }
 
-`input.txt` contains exactly 2100 hexadecimal joypad masks, one per line.
+`input.txt` contains exactly 2100 input records, one per line. Each record is a hexadecimal joypad mask, optionally followed by seven space-separated decimal values: left X/Y, right X/Y, pointer X/Y (each -32767 to 32767), and pointer pressed (0 or 1). Omitted fields are zero. The runner accepts legacy, v1 and v2 core option declarations using the English descriptors.
 `options.txt` contains optional key=value pairs matching advertised core
 options (an empty file is valid). Add a matching `runtime` path to
 libc++_shared.so if needed. Each round starts in a new save directory.
