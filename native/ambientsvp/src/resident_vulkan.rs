@@ -828,6 +828,54 @@ pub unsafe extern "C" fn ambient_svp_vk_set_synthesis(s:*const VulkanResident,al
         c.algorithm.store(algorithm,Ordering::Release);0
     })).unwrap_or(-1)
 }
+/// Player settings shared by all transports, without depending on
+/// the player's own options representation or Vulkan header version.
+#[repr(C)]
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub struct ResidentOptions{
+    pub preset:u32,pub block:u32,pub overlap:u32,pub pel:u32,
+    pub search:u32,pub artifacts:u32,pub scene:u32,pub algorithm:u32,
+}
+impl ResidentOptions{
+    fn resolve(self,width:u32,height:u32)->Option<(ResidentTuning,ResidentSearchWeights,u32)>{
+        if self.preset>4||self.overlap>4||self.search>3||self.artifacts>3||self.scene>3{return None;}
+        let preset=if matches!(self.preset,0|4){1}else{self.preset};
+        let block=if self.block!=0{self.block}else if preset==1{32}else{16};
+        if !matches!(block,8|16|32)||width<block||height<block{return None;}
+        let mut overlap=if self.overlap!=0{self.overlap-1}else if preset==1{0}else{2};
+        if block==8&&overlap==1{overlap=2;}
+        let overlap=match overlap{1=>block/8,2=>block/4,3=>block/2,_=>0};
+        let pel=if self.pel!=0{self.pel}else if preset==3{2}else{1};
+        if !matches!(pel,1|2|4){return None;}
+        let radius=match self.search{1=>1,2=>2,3=>4,_=>(pel*2).min(4)};
+        let t=ResidentTuning{block,overlap,pel,radius,satd:1,chroma:1,lambda:block*block*4/(pel*pel),
+            pnew:50,scene:match self.scene{1=>30,3=>70,_=>50},artifacts:self.artifacts};
+        if !t.valid(){return None;}
+        let step=t.step();
+        let covered=|x:u32|((x-overlap)/step)*step+overlap;
+        let mut levels=0;
+        while levels<16&&(covered(width)>>levels)>=block&&(covered(height)>>levels)>=block{levels+=1;}
+        let w=ResidentSearchWeights{filter:0,lambda:block*block*10000/32,lsad:block*block*250,
+            plevel_q16:98304,levels,level:0,pnew:50,pzero:100,pglobal:50,pnbour:50,preverse:0,sad_gate:0};
+        let algo=if self.algorithm!=0{self.algorithm}else if preset==3{23}else{13};
+        if !w.valid()||!matches!(algo,1|2|11|13|21|22|23){return None;}
+        Some((t,w,algo))
+    }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_create_quality(instance:vk::Instance,physical:vk::PhysicalDevice,device:vk::Device,
+    get_proc:Option<vk::PFN_vkGetInstanceProcAddr>,width:u32,height:u32,mode:u32,
+    options:*const ResidentOptions)->*mut VulkanResident{
+    if options.is_null(){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||{
+        let Some((t,w,algo))=unsafe{*options}.resolve(width,height)else{return ptr::null_mut();};
+        let p=unsafe{ambient_svp_vk_create_weighted(instance,physical,device,get_proc,width,height,mode,&t,&w)};
+        if !p.is_null()&&unsafe{ambient_svp_vk_set_synthesis(p,algo)}!=0{
+            unsafe{ambient_svp_vk_destroy(p)};return ptr::null_mut();
+        }
+        p
+    })).unwrap_or(ptr::null_mut())
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_destroy(s:*mut VulkanResident){
     if !s.is_null(){let _=catch_unwind(AssertUnwindSafe(||unsafe{drop(Box::from_raw(s))}));}
