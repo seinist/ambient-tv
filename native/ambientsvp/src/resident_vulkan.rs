@@ -1958,6 +1958,8 @@ mod gpu_tests{
                         HdrWindow{rect:[w/3,h/3,w,h],count:2,percentages:[50,100,0,0,0,0,0,0,0,0,0,0,0,0,0]},
                     ];
                     let mut stats=[HdrResult::default();3];
+                    let mut legacy_quantized=[0u32;3];
+                    let mut legacy_mean=[0u32;3];
                     let scene_p=[1u32,5,10,25,50,75,90,95,99];
                     let scene=if mode==3&&!tuned{ambient_svp_hdr_scene_create(0,1,w,h,&scene_p)}else{ptr::null_mut()};
                     if mode==3{
@@ -1994,8 +1996,11 @@ mod gpu_tests{
                                 assert_eq!(n,if j==0{u64::from(w)*u64::from(h)}else{10});
                                 // Independent Decimal ST 2084 fixture for FP16 0x3802;
                                 // allow adjacent half-float rounding in the synthesis.
-                                assert!(f.frame.maxscl.iter().all(|&x|(927..=937).contains(&x)));
-                                assert!((927..=937).contains(&((f.frame.linear_sum+n*5000)/(n*10000))));
+                                assert!(f.frame.maxscl.iter().all(|&x|[927,932,936].contains(&x)));
+                                legacy_quantized[j]=f.frame.maxscl[0];
+                                legacy_mean[j]=((f.frame.linear_sum+n*5000)/(n*10000)) as u32;
+                                assert_eq!(legacy_mean[j],legacy_quantized[j]);
+                                assert_eq!(f.frame.bins[legacy_quantized[j] as usize],n as u32);
                             }
                         }else if tuned{
                             let mut shifts=[[0i32;2];3];
@@ -2046,6 +2051,12 @@ mod gpu_tests{
                             "high-depth output mode {mode}, phase {phase}: {px:?}");
                     }
                     observed[i]=u16::from_ne_bytes([data[0],data[1]]);
+                    if mode==3&&tuned&&i==1{
+                        // Exact comparison against Decimal reference generated from
+                        // the actual output half-float code, not shader self-comparison.
+                        let expected=match observed[i]{0x3801=>927,0x3802=>932,0x3803=>936,_=>panic!("unexpected PQ fixture code")};
+                        assert_eq!(legacy_quantized,[expected;3]);assert_eq!(legacy_mean,[expected;3]);
+                    }
                     d.unmap_memory(readback_memory);
                 }
                 assert!(observed[1]>observed[0],"10-bit codes collapsed");
