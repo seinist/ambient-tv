@@ -611,7 +611,15 @@ static int ambient_sh2_validate(AmbientSh2Block* block,SH2_struct* context,
         block->validated_scope=0;return 1;
     }
     const uint64_t epoch=__atomic_load_n(&ambient_sh2_bulk_epoch,__ATOMIC_RELAXED);
-    const int reuse=scope && block->validated_scope==scope && block->validated_epoch==epoch;
+    int reuse=scope && block->validated_scope==scope && block->validated_epoch==epoch;
+#ifdef AMBIENT_SH2_IMMUTABLE_BIOS
+    /* The production BIOS is read-only to emulated bus accesses; the T2
+     * loader and reset/deinit hooks track its actual changes. Retain its
+     * page generations across scheduler slices. Writable RAM remains
+     * exact-checked at every new execution scope. */
+    if(scope && fetch==FetchBios && block->validated_scope && block->validated_epoch==epoch)
+        reuse=1;
+#endif
     for(unsigned j=0;j<block->span_count;++j) {
         const u32 pc=block->spans[j].pc;
         const unsigned count=block->spans[j].count,first=block->spans[j].first;
@@ -1018,19 +1026,23 @@ static inline int ambient_sh2_try_block(SH2_struct* context,u32 budget,
  * Never patch RX pages. Chained entry uses the exact same validation as an
  * ordinary cache hit and writes back architectural state before helpers.
  */
-static int ambient_sh2_try(SH2_struct* context,u32 budget)
+static int ambient_sh2_try_in_scope(SH2_struct* context,u32 budget,uint64_t* execution_scope)
 {
     AmbientSh2Block* current=NULL;
     const unsigned cpu=context->isslave?1:0;
-    uint64_t scope=ambient_sh2_new_scope(cpu);
-    if(!ambient_sh2_try_block_scoped(context,budget,NULL,&current,scope))return 0;
-    if(current->native_loop&&!yabsys.sh2_cache_enabled)return 1;
+    uint64_t scope=*execution_scope;
+    if(!scope)scope=ambient_sh2_new_scope(cpu);
+    if(!ambient_sh2_try_block_scoped(context,budget,NULL,&current,scope)) {
+        *execution_scope=0;return 0;
+    }
+    if(current->has_terminal)scope=ambient_sh2_new_scope(cpu);
+    if(current->native_loop&&!yabsys.sh2_cache_enabled) {
+        *execution_scope=scope;return 1;
+    }
     for(unsigned chain=1;chain<16 && ambient_sh2_eligible(context) &&
         context->cycles<budget;++chain) {
         const uint32_t pc=context->regs.PC;
-        /* Mapped bus/control helpers can perform untracked writes or invoke
-         * other devices. They terminate the pure validation scope. */
-        if(current->has_terminal)scope=ambient_sh2_new_scope(cpu);
+        /* A terminal helper has already opened a fresh validation scope. */
         AmbientSh2Block* target=NULL;
         for(unsigned j=0;j<AMBIENT_SH2_EDGES;++j) {
             const unsigned i=(current->last_edge+j)&(AMBIENT_SH2_EDGES-1);
@@ -1050,9 +1062,15 @@ static int ambient_sh2_try(SH2_struct* context,u32 budget)
         AmbientSh2Block* completed=NULL;
         if(!ambient_sh2_try_block_scoped(context,budget,target,&completed,scope))break;
         current=completed;
+        if(current->has_terminal)scope=ambient_sh2_new_scope(cpu);
         if(current->native_loop&&!yabsys.sh2_cache_enabled)break;
     }
-    return 1;
+    *execution_scope=scope;return 1;
+}
+static inline int ambient_sh2_try(SH2_struct* context,u32 budget)
+{
+    uint64_t scope=0;
+    return ambient_sh2_try_in_scope(context,budget,&scope);
 }
 #endif
 #endif

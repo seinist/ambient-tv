@@ -21,16 +21,21 @@ static const void* ambient_sh2_source_view(SH2_struct* context,fetchfunc fetch,u
     return base && count<=(size-offset)/2 ? base+offset : NULL;
 }
 #define AMBIENT_SH2_SOURCE_VIEW ambient_sh2_source_view
+#define AMBIENT_SH2_IMMUTABLE_BIOS 1
 #include "ambient_sh2_arm64.h"
 
 """ + marker +
                             "\n   ambient_sh2_clear();")
-    source = source.replace(loop, loop.replace("         const u32",
-                            "         if (ambient_sh2_try(context, cycles)) continue;\n         const u32"))
+    # Only the regular SH2 loop owns a persistent pure execution scope.
+    # Returning to the scheduler or invoking any non-translated opcode
+    # discards it; mapped helpers open a new scope inside the dispatcher.
+    source = source.replace(loop, "      uint64_t ambient_scope = 0;\n" +
+                            loop.replace("         const u32",
+                            "         if (ambient_sh2_try_in_scope(context, cycles, &ambient_scope)) continue;\n         const u32"))
     dispatch = "         ((opcodefunc *)context->opcodes)[context->instruction](context);"
     if source.count(dispatch) < 1:
         raise ValueError("Yabause SH2 dispatch changed")
-    start = source.index("         if (ambient_sh2_try(context, cycles)) continue;")
+    start = source.index("         if (ambient_sh2_try_in_scope(context, cycles, &ambient_scope)) continue;")
     end = source.index(dispatch, start)
     source = source[:end] + (
         "         if (!ambient_sh2_eligible(context) ||\n"

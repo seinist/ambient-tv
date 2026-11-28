@@ -252,6 +252,28 @@ static void test_direct_native_pair(void) {
     ambient_sh2_clear();
     puts("SH2 direct ARM64 tail-linked block pair: target state, budget and stale-successor guards passed");
 }
+static void test_persistent_execution_scope(void) {
+    u16 program[32];
+    for(unsigned i=0;i<30;++i)program[i]=0x7101;
+    program[30]=0xafe0;program[31]=0x0009;
+    const u32 base=0x06000100u;
+    SH2_struct got;
+    setup_program(&got,program,32,base);
+    AmbientSh2Block* executed=NULL;
+    for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+        if(ambient_sh2_try_block(&got,10000,NULL,&executed))abort();
+    uint64_t scope=0;
+    if(!ambient_sh2_try_in_scope(&got,10000,&scope)||!scope)abort();
+    const uint64_t previous=scope;
+    if(!ambient_sh2_try_in_scope(&got,10000,&scope)||scope!=previous)abort();
+    /* The same pure scope still sees a physical page mutation. */
+    const u32 before=got.cycles;
+    program[0]=0xe180;
+    ambient_sh2_note_t2_write(0,base&0x7ffffu,2);
+    if(ambient_sh2_try_in_scope(&got,10000,&scope)||scope||got.cycles!=before)abort();
+    ambient_sh2_clear();
+    puts("SH2 persistent pure scheduler scope and physical-page invalidation passed");
+}
 static void test_dynamic_native_prediction(void) {
     u16 program[96];
     for(unsigned i=0;i<96;++i)program[i]=0x7301;
@@ -397,6 +419,7 @@ int main(void) {
     test_scoped_page_invalidation();
     test_resident_cache_traces();
     test_direct_native_pair();
+    test_persistent_execution_scope();
     test_dynamic_native_prediction();
     test_conditional_native_loops();
     test_native_loop_budget();

@@ -203,3 +203,12 @@ completion-driven Dolphin shader waits and validates texture upload dimensions
 before transitions, reduces the Panda3DS shader cache on low-memory Android,
 and bounds/flushes PPSSPP audio with bit-exact NEON conversion. ARMSX2 checks
 compressed-row upload sizes and invalid input before allocation.
+
+SH2 pure execution scopes now survive successive native dispatcher calls
+within one scheduler slice; bus/control helpers and singleton fallback end
+the scope. Reset, savestate and DMA notifications advance a shared bulk epoch.
+The tracked read-only BIOS can reuse page validation across slices; writable
+RAM retains exact entry validation at scheduler boundaries. ARM64 indirect
+branches may directly invoke a validated, matching predicted successor, and
+BT/BF loops account for taken and not-taken guest cycles independently.
+Code slots share per-CPU W^X pages, reducing 16 KiB mapping overhead.
