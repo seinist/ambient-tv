@@ -1546,7 +1546,11 @@ private fun AmbientTvApp(
             navigate = { route -> complete {
                 val scheduled = scheduledGame?.takeIf { it.plan?.targetId == game.fileId && it.plan?.restart == fresh }
                 scheduledGame = null
-                if (scheduled != null && com.ambient.tv.livetv.scheduledPlaybackIdentity(scheduleContext, "games", game.fileId) != scheduled.plan?.sourceIdentity) return@complete
+                if (scheduled != null) {
+                    val current = com.ambient.tv.livetv.LiveTvReminderStore(scheduleContext).find(scheduled.id)
+                    if (current?.let { it.plan == scheduled.plan && it.startEpochSeconds == scheduled.startEpochSeconds } != true ||
+                        com.ambient.tv.livetv.scheduledPlaybackIdentity(scheduleContext, "games", game.fileId) != scheduled.plan?.sourceIdentity) return@complete
+                }
                 navController.navigate(route) { launchSingleTop = true }
                 scheduled?.let { com.ambient.tv.livetv.ScheduledPlaybackRuntime.awaitStart(it) }
             } })
@@ -2360,6 +2364,7 @@ private fun AmbientTvApp(
         val plan = expected.plan ?: return@LaunchedEffect
         if (!plan.game) BackgroundPlaybackSession.snapshot.collect { snapshot ->
             if (snapshot.playing && snapshot.metadata?.mediaId == plan.targetId &&
+                snapshot.metadata?.sourceAccessIdentity == playbackAvailability.mediaIdentity(plan.targetId) &&
                 snapshot.metadata?.route?.startsWith("player/") == true) {
                 com.ambient.tv.livetv.ScheduledPlaybackRuntime.confirm(scheduleContext, expected)
             }
