@@ -1022,6 +1022,26 @@ PATCHES = {
       "Source/Core/DolphinLibretro/Input.cpp",
       "#endif\n\n  for (int i = 0; i < port_max; ++i)\n  {\n    UpdateAccelerometer(i);",
       "#endif\n\n  if (ambient_input_bitmasks && input_cb)\n  {\n    for (int i = 0; i < 8; ++i)\n      ambient_joypad[i].store(i < port_max ? static_cast<uint16_t>(input_cb(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK)) : -1,\n                             std::memory_order_relaxed);\n  }\n  else\n    AmbientInvalidateJoypads();\n\n  for (int i = 0; i < port_max; ++i)\n  {\n    UpdateAccelerometer(i);"
+    ],
+    [
+      "Source/Core/VideoCommon/VideoConfig.cpp",
+      "#include <optional>",
+      "#include <optional>\n#ifdef __ANDROID__\n#include <sched.h>\n#endif"
+    ],
+    [
+      "Source/Core/VideoCommon/VideoConfig.cpp",
+      "static u32 GetNumAutoShaderCompilerThreads()\n{",
+      "static int AmbientEffectiveShaderCores()\n{\n  int cores = std::max(1, static_cast<int>(cpu_info.num_cores));\n#ifdef __ANDROID__\n  cpu_set_t available;\n  CPU_ZERO(&available);\n  if (sched_getaffinity(0, sizeof(available), &available) == 0)\n  {\n    const int count = CPU_COUNT(&available);\n    if (count > 0)\n      cores = std::min(cores, count);\n  }\n#endif\n  return cores;\n}\n\nstatic u32 GetNumAutoShaderCompilerThreads()\n{"
+    ],
+    [
+      "Source/Core/VideoCommon/VideoConfig.cpp",
+      "std::clamp(cpu_info.num_cores - 3, 1, 4)",
+      "std::clamp(AmbientEffectiveShaderCores() - 3, 1, 4)"
+    ],
+    [
+      "Source/Core/VideoCommon/VideoConfig.cpp",
+      "std::max(cpu_info.num_cores - 2, 1)",
+      "std::max(AmbientEffectiveShaderCores() - 2, 1)"
     ]
   ],
   "flycast": [
@@ -1095,6 +1115,16 @@ PATCHES = {
       "libretro/libretro.cpp",
       "      std::lock_guard<std::mutex> lock(output_audio_buffer_mutex);\n      if (output_audio_buffer.data && output_audio_buffer.size > 0)\n         audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\n      output_audio_buffer.size = 0;",
       "      {\n         std::lock_guard<std::mutex> lock(output_audio_buffer_mutex);\n         if (!output_audio_buffer.data || output_audio_buffer.size <= 0)\n            return;\n         auto filled = output_audio_buffer;\n         output_audio_buffer = ambient_upload_buffer;\n         ambient_upload_buffer = filled;\n         output_audio_buffer.size = 0;\n      }\n      // Do not block the emulation thread while the frontend consumes audio.\n      audio_batch_cb(ambient_upload_buffer.data, ambient_upload_buffer.size / 2);\n      ambient_upload_buffer.size = 0;"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "#include <atomic>",
+      "#include <atomic>\n#ifdef __ANDROID__\n#include <sched.h>\n#endif"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "\tnumComputeThreads_ = std::min(32, numRealCores * numLogicalCoresPerCpu);\n\t// Double it for the IO blocking threads.\n\tconst int numIOThreads = std::min(32, std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_) * 2);",
+      "\tconst int configured = std::max(1, std::min(32, std::max(1, numRealCores) *\n\t    std::min(32, std::max(1, numLogicalCoresPerCpu))));\n\tnumComputeThreads_ = configured;\n#ifdef __ANDROID__\n\t// Respect the current Android cpuset, not merely the installed CPUs.\n\t// Reserve capacity for the emulation/render threads and keep independent\n\t// IO workers so blocking storage cannot starve the compute pool.\n\tcpu_set_t available;\n\tCPU_ZERO(&available);\n\tint effective = configured;\n\tif (sched_getaffinity(0, sizeof(available), &available) == 0) {\n\t\tconst int count = CPU_COUNT(&available);\n\t\tif (count > 0) effective = std::min(configured, count);\n\t}\n\tnumComputeThreads_ = std::max(1, effective - (effective >= 4 ? 2 : 1));\n\tconst int numIOThreads = std::min(16, std::max(MIN_IO_BLOCKING_THREADS, effective));\n#else\n\tconst int numIOThreads = std::min(32, std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_) * 2);\n#endif"
     ]
   ],
   "prosystem": [
