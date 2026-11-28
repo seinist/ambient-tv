@@ -216,7 +216,7 @@ impl Drop for Batch{
 }
 impl Batch{
     fn record(owner:Arc<DeviceOwner>,resident:*mut VulkanResident,a:*mut Job,b:*mut Job,
-        width:u32,height:u32,phases:&[f32],cached:Option<BatchCommands>,
+        past:*mut Job,next:*mut Job,width:u32,height:u32,phases:&[f32],cached:Option<BatchCommands>,
         preflight:Option<DisplayImage>,mut recycled:Vec<RecycledBuffer>,high:bool)->Result<Self>{
         let commands=if let Some(cached)=cached{cached.reset()?;cached}
             else{BatchCommands::new(owner.clone())?};
@@ -236,7 +236,8 @@ impl Batch{
                 .dst_access_mask(vk::AccessFlags::SHADER_WRITE)).collect::<Vec<_>>();
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TOP_OF_PIPE,vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::DependencyFlags::empty(),&[],&[],&barriers);
-            s.pair=ambient_svp_vk_begin_ahb(resident,cmd,s.owner.queue,a,b);
+            if !past.is_null()&&!next.is_null(){s.pair=begin_ahb_extended(resident,cmd,s.owner.queue,past,a,b,next);}
+            if s.pair.is_null(){s.pair=ambient_svp_vk_begin_ahb(resident,cmd,s.owner.queue,a,b);}
             if s.pair.is_null(){return Err("resident pair rejected".into());}
             for (&phase,img) in phases.iter().zip(&s.images){
                 if ambient_svp_vk_render(s.pair,phase,3,img.view)!=0{return Err("resident synthesis rejected".into());}
@@ -298,7 +299,8 @@ fn discard_output(out:&mut DisplayOutput){
 }
 pub struct Stream{
     owner:Arc<DeviceOwner>,importer:*mut Importer,resident:*mut VulkanResident,
-    width:u32,height:u32,mode:u32,previous:*mut Job,retired:Vec<*mut Job>,batches:Vec<Batch>,
+    width:u32,height:u32,mode:u32,previous:*mut Job,older:*mut Job,lookahead:*mut Job,extended:bool,
+    retired:Vec<*mut Job>,batches:Vec<Batch>,
     idle_commands:Vec<BatchCommands>,preflight:Option<DisplayImage>,output_pool:Arc<Mutex<OutputPool>>,
 }
 impl Stream{
@@ -311,13 +313,16 @@ impl Stream{
         let importer=unsafe{ambient_svp_ahb_importer_create(owner.instance.handle(),owner.physical,owner.d().handle(),
             get,owner.queue,owner.family,pointers.as_ptr(),pointers.len() as u32,1)};
         if importer.is_null(){return Err("Android importer rejected device".into());}
+        let extended=quality.is_some_and(|q|q.algorithm==23||q.algorithm==0&&q.preset==3);
+        if extended{unsafe{(&*importer).enable_extended_budget();}}
         let format=if mode==0{0}else{3};
         let resident=unsafe{if let Some(q)=quality{
             ambient_svp_vk_create_quality(owner.instance.handle(),owner.physical,owner.d().handle(),get,width,height,format,&q)
         }else{ambient_svp_vk_create_format(owner.instance.handle(),owner.physical,owner.d().handle(),get,width,height,format)}};
         if resident.is_null(){unsafe{ambient_svp_ahb_importer_destroy(importer)};return Err("resident device rejected geometry".into());}
         // Preflight real compositor-format output before consuming frames.
-        let mut s=Self{owner,importer,resident,width,height,mode,previous:ptr::null_mut(),retired:Vec::new(),
+        let mut s=Self{owner,importer,resident,width,height,mode,previous:ptr::null_mut(),older:ptr::null_mut(),
+            lookahead:ptr::null_mut(),extended,retired:Vec::new(),
             batches:Vec::with_capacity(MAX_BATCHES),idle_commands:Vec::with_capacity(MAX_BATCHES),preflight:None,
             output_pool:Arc::new(Mutex::new(OutputPool::default()))};
         match DisplayImage::new(s.owner.clone(),width,height,None,mode!=0){
@@ -338,7 +343,9 @@ impl Stream{
         self.retired.retain(|&p|unsafe{ambient_svp_ahb_release(p,vk::Fence::null())}!=1);
     }
     fn reset(&mut self){
-        if !self.previous.is_null(){self.retired.push(std::mem::replace(&mut self.previous,ptr::null_mut()));}
+        for slot in [&mut self.previous,&mut self.older,&mut self.lookahead]{
+            if !slot.is_null(){self.retired.push(std::mem::replace(slot,ptr::null_mut()));}
+        }
         self.reap();
     }
     fn dispose(&mut self){
@@ -346,7 +353,7 @@ impl Stream{
         unsafe{ambient_svp_vk_destroy(self.resident);ambient_svp_ahb_importer_destroy(self.importer);}
         self.resident=ptr::null_mut();self.importer=ptr::null_mut();
     }
-    fn render(&mut self,a:*mut Job,b:*mut Job,phases:&[f32],out:&mut[DisplayOutput])->Result<()>{
+    fn render(&mut self,a:*mut Job,b:*mut Job,past:*mut Job,next:*mut Job,phases:&[f32],out:&mut[DisplayOutput])->Result<()>{
         if phases.is_empty() || phases.len()>MAX_PHASES || phases.iter().any(|p|!p.is_finite()||!(0.0..=1.0).contains(p)){
             return Err("invalid compositor phases".into());
         }
@@ -364,7 +371,7 @@ impl Stream{
                 if !busy&&b.ready(){recycled.push(pool.buffers.swap_remove(i));}else{i+=1;}
             }
         }
-        let batch=Batch::record(self.owner.clone(),self.resident,a,b,self.width,self.height,phases,
+        let batch=Batch::record(self.owner.clone(),self.resident,a,b,past,next,self.width,self.height,phases,
             self.idle_commands.pop(),self.preflight.take(),recycled,self.mode!=0)?;
         let result=batch.outputs(out);
         self.batches.push(batch);
@@ -405,7 +412,8 @@ pub unsafe extern "C" fn ambient_svp_android_stream_push(stream:*mut Stream,buff
     catch_unwind(AssertUnwindSafe(||{
         let s=unsafe{&mut *stream};
         s.reap();
-        if (width,height)!=(s.width,s.height)||s.previous.is_null()!=(count==0){
+        let priming=s.previous.is_null()||s.extended&&s.lookahead.is_null();
+        if (width,height)!=(s.width,s.height)||priming!=(count==0){
             unsafe{release(context,-1)};return -4;
         }
         let out=unsafe{std::slice::from_raw_parts_mut(out,count as usize)};
@@ -425,9 +433,17 @@ pub unsafe extern "C" fn ambient_svp_android_stream_push(stream:*mut Stream,buff
             // will be returned safely when this conversion retires.
             s.retired.push(next);return -5;
         }
+        if s.extended{
+            if s.previous.is_null(){s.previous=next;return 0;}
+            if s.lookahead.is_null(){s.lookahead=next;return 0;}
+            let phases=unsafe{std::slice::from_raw_parts(phases,count as usize)};
+            if s.render(s.previous,s.lookahead,s.older,next,phases,out).is_err(){s.retired.push(next);return -4;}
+            if !s.older.is_null(){s.retired.push(s.older);}
+            s.older=s.previous;s.previous=s.lookahead;s.lookahead=next;return 0;
+        }
         if count!=0{
             let phases=unsafe{std::slice::from_raw_parts(phases,count as usize)};
-            if s.render(s.previous,next,phases,out).is_err(){s.retired.push(next);return -4;}
+            if s.render(s.previous,next,ptr::null_mut(),ptr::null_mut(),phases,out).is_err(){s.retired.push(next);return -4;}
             s.retired.push(s.previous);
         }
         s.previous=next;0
@@ -469,10 +485,10 @@ pub unsafe extern "C" fn ambient_svp_android_stream_drain(stream:*mut Stream,pha
     if stream.is_null()||phases.is_null()||out.is_null()||count==0||count as usize>MAX_PHASES{return -4;}
     catch_unwind(AssertUnwindSafe(||{
         let s=unsafe{&mut *stream};s.reap();
-        if s.previous.is_null(){return -4;}
+        if s.previous.is_null()||s.extended{return -4;}
         let out=unsafe{std::slice::from_raw_parts_mut(out,count as usize)};out.fill(DisplayOutput::default());
         let phases=unsafe{std::slice::from_raw_parts(phases,count as usize)};
-        if s.render(s.previous,s.previous,phases,out).is_err(){return -4;}
+        if s.render(s.previous,s.previous,ptr::null_mut(),ptr::null_mut(),phases,out).is_err(){return -4;}
         s.reset();0
     })).unwrap_or(-4)
 }
