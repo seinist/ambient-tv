@@ -173,6 +173,17 @@ int ambient_svp_hdr_scene_validate(uint64_t,uint64_t,const AmbientSvpHdrSceneRes
  * Finish only after successful complete output; destroy aborts unpublished data. */
 typedef struct TwoPass AmbientSvpHdrPass;
 AmbientSvpHdrPass *ambient_svp_hdr_pass_open(uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t);
+typedef struct {
+    uint32_t count,percentages[15],maxscl[3],average,percentiles[15],fraction;
+} AmbientSvpHdrLegacyWindow;
+typedef struct {
+    uint64_t first,end;
+    uint32_t count;
+    AmbientSvpHdrLegacyWindow windows[3];
+} AmbientSvpHdrLegacyScene;
+AmbientSvpHdrPass *ambient_svp_hdr_pass_open_version(uint32_t,uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t);
+int ambient_svp_vk_hdr_stats_scene_legacy(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],uint32_t);
+int ambient_svp_hdr_pass_lookup_legacy(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
 int ambient_svp_hdr_pass_interval(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
 int ambient_svp_hdr_pass_capture(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
 int ambient_svp_hdr_pass_lookup(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
