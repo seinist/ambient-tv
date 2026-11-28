@@ -58,14 +58,14 @@ pub(super) struct StatsJob{
     device:ash::Device,pool:vk::DescriptorPool,
     hist:Buffer,summary:Buffer,windows:Vec<HdrWindow>,
     pipelines:Arc<StatsPipelines>,set:vk::DescriptorSet,
-    tracking:bool,width:u32,height:u32,step:u32,
+    tracking:bool,affine:bool,width:u32,height:u32,step:u32,
 }
 impl Drop for StatsJob{
     fn drop(&mut self){unsafe{self.device.destroy_descriptor_pool(self.pool,None);}}
 }
 impl StatsJob{
     pub(super) fn new(core:&Core,view:vk::ImageView,field:vk::Buffer,windows:&[HdrWindow],
-        tracking:Option<(&[HdrTrack],f32)>)->Result<Self>{
+        tracking:Option<(&[HdrTrack],f32,bool)>)->Result<Self>{
         if !core.stats_supported || !(1..=3).contains(&windows.len()) ||
             windows[0].rect!=[0,0,core.width,core.height] ||
             windows.iter().any(|w|w.rect[0]>=w.rect[2]||w.rect[1]>=w.rect[3]||
@@ -75,7 +75,7 @@ impl StatsJob{
             return Err("unsupported HDR statistics geometry or percentile list".into());
         }
         let valid_rect=|r:[u32;4]|r[0]<r[2]&&r[1]<r[3]&&r[2]<=core.width&&r[3]<=core.height;
-        if let Some((tracks,phase))=tracking{
+        if let Some((tracks,phase,_))=tracking{
             if tracks.len()!=windows.len()||!phase.is_finite()||!(0.0..=1.0).contains(&phase)||
                 tracks.iter().skip(1).any(|t|!valid_rect(t.a)||!valid_rect(t.b)||
                     t.ellipse[0]>=core.width||t.ellipse[1]>=core.height){return Err("invalid HDR tracking geometry".into());}
@@ -90,14 +90,14 @@ impl StatsJob{
         let summary=Buffer::new(core,(STRIDE*4*windows.len()) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
         let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,windows:windows.to_vec(),
-            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
+            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
         let mut config=vec![0u32;STRIDE*windows.len()];
         for (i,w) in windows.iter().enumerate(){
             let row=&mut config[i*STRIDE..(i+1)*STRIDE];
             row[..4].copy_from_slice(&w.rect);row[4]=w.count;row[5..20].copy_from_slice(&w.percentages);
             if let Some((tracks,phase))=tracking{if i>0{
                 let t=tracks[i];row[43]=phase.to_bits();row[44..48].copy_from_slice(&t.a);
-                row[48..52].copy_from_slice(&t.b);row[52..54].copy_from_slice(&t.ellipse);row[54]=1;
+                row[48..52].copy_from_slice(&t.b);row[52..54].copy_from_slice(&t.ellipse);row[54]=1;row[55]=u32::from(s.affine);
             }}
         }
         unsafe{
@@ -150,6 +150,23 @@ impl StatsJob{
                 vk::DependencyFlags::empty(),&after,&[],&[]);
         }
     }
+    pub(super) fn rectangles(&self,out:&mut[[u32;4]])->Result<()>{
+        if !self.affine||out.len()!=self.windows.len(){return Err("HDR affine rectangle contract".into());}
+        let mut data=vec![0u32;STRIDE*out.len()];
+        unsafe{
+            let mapped=self.summary.map()?;
+            std::ptr::copy_nonoverlapping(mapped,data.as_mut_ptr(),data.len());
+            self.device.unmap_memory(self.summary.memory);
+        }
+        for (i,r) in out.iter_mut().enumerate(){
+            let row=&data[i*STRIDE..(i+1)*STRIDE];
+            r.copy_from_slice(&row[..4]);
+            if r[0]>=r[2]||r[1]>=r[3]||r[2]>self.width||r[3]>self.height||
+                i==0&&*r!=[0,0,self.width,self.height]||
+                (r[2]-r[0])*(r[3]-r[1])!=row[39]{return Err("invalid affine rectangle".into());}
+        }
+        Ok(())
+    }
     pub(super) fn gradients(&self,out:&mut[[f32;4]])->Result<()>{
         if !self.tracking||out.len()!=self.windows.len(){return Err("HDR affine read contract".into());}
         let mut data=vec![0u32;STRIDE*out.len()];
@@ -184,12 +201,13 @@ impl StatsJob{
             if shift.iter().any(|&v|!(-16..=16).contains(&v))||(!self.tracking||i==0)&&shift!=[0,0]{return Err("invalid GPU HDR shift".into());}
             for k in 0..4{
                 let expected=i64::from(w.rect[k])+i64::from(shift[k%2]);
-                if expected<0||expected>i64::from(if k%2==0{self.width}else{self.height})||expected!=i64::from(row[k]){
+                if expected<0||expected>i64::from(if k%2==0{self.width}else{self.height})||(!self.affine||i==0)&&expected!=i64::from(row[k]){
                     return Err("invalid GPU HDR tracked rectangle".into());
                 }
             }
             if let Some(s)=shifts.as_deref_mut(){s[i]=shift;}
-            let pixels=(w.rect[2]-w.rect[0])*(w.rect[3]-w.rect[1]);
+            if row[0]>=row[2]||row[1]>=row[3]||row[2]>self.width||row[3]>self.height{return Err("invalid measured HDR rectangle".into());}
+            let pixels=(row[2]-row[0])*(row[3]-row[1]);
             if row[39]!=pixels||row[40]>pixels||row[40]==0||row[20..39].iter().any(|&x|x>100000){
                 return Err("invalid GPU HDR statistics".into());
             }
