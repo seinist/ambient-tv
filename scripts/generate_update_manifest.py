@@ -46,9 +46,8 @@ def generate(paths, aapt2, apksigner, expected_abis, packaging="full"):
         raise ValueError("Preview APKs cannot enter the stable update channel")
     if not paths:
         raise ValueError("No APKs supplied")
-    if packaging == "modular":
-        for path in paths:
-            verify_packaging(path, aapt2, packaging)
+    for path in paths:
+        verify_packaging(path, aapt2, packaging)
     inspected = [inspect_apk(path, aapt2, apksigner) for path in paths]
     identities = {identity for identity, _ in inspected}
     if len(identities) != 1:
@@ -71,15 +70,15 @@ def verify_packaging(path, aapt2, expected):
     xml = subprocess.run([str(aapt2), "dump", "xmltree", "--file", "AndroidManifest.xml", str(path)],
                          check=True, capture_output=True, text=True).stdout
     # aapt2 reports the element and its attributes on separate lines.
-    blocks = re.split(r"(?m)^\\s*E: ", xml)
+    blocks = re.split(r"(?m)^\s*E: ", xml)
     markers = []
     for block in blocks:
-        if block.startswith("meta-data ") and re.search(r'android:name[^\\n]*="com\\.ambient\\.tv\\.MODULE_PACKAGING"', block):
-            match = re.search(r'android:value[^\\n]*="([^"]+)"', block)
+        if block.startswith("meta-data ") and re.search(r'android:name[^\n]*="com\.ambient\.tv\.MODULE_PACKAGING"', block):
+            match = re.search(r'android:value[^\n]*="([^"]+)"', block)
             if not match:
                 raise ValueError("Invalid APK packaging marker")
             markers.append(match[1])
-    if markers != [expected]:
+    if markers != [expected] and not (expected == "full" and not markers):
         raise ValueError(f"APK packaging mismatch: {path}")
 
 
