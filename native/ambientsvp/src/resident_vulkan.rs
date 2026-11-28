@@ -471,6 +471,7 @@ pub struct VulkanPair{
     command:vk::CommandBuffer,
     a:VulkanPicture,b:VulkanPicture,
     phases:usize,
+    extended:Vec<VulkanPair>,
     rgb_outputs:[vk::ImageView;MAX_PHASES],
     hdr_jobs:[Option<StatsJob>;MAX_PHASES],
     fence:vk::Fence,
@@ -497,7 +498,7 @@ impl VulkanPair{
         core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
-            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,
+            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),
             rgb_outputs:[vk::ImageView::null();MAX_PHASES],hdr_jobs:std::array::from_fn(|_|None),fence:vk::Fence::null(),
             #[cfg(target_os="android")]
             ahb_inputs:None};
@@ -513,7 +514,7 @@ impl VulkanPair{
         let d=&c.device;
         unsafe{
             p.field=d.create_buffer(&vk::BufferCreateInfo::default().size(c.field_size)
-                .usage(vk::BufferUsageFlags::STORAGE_BUFFER).sharing_mode(vk::SharingMode::EXCLUSIVE),None).map_err(err)?;
+                .usage(vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_SRC|vk::BufferUsageFlags::TRANSFER_DST).sharing_mode(vk::SharingMode::EXCLUSIVE),None).map_err(err)?;
             let req=d.get_buffer_memory_requirements(p.field);
             let memory_type=(0..c.memory.memory_type_count).find(|&i|
                 req.memory_type_bits&(1u32<<i)!=0 &&
@@ -541,6 +542,8 @@ impl VulkanPair{
     // of a discarded command buffer. The next pair rewrites every used set.
     fn recycle(&mut self){
         if self.core.lost.load(Ordering::Acquire){return;}
+        for aux in &mut self.extended{aux.recycle();}
+        self.extended.clear();
         let mut idle=self.core.idle.lock().unwrap_or_else(|e|e.into_inner());
         if idle.len()>=MAX_IN_FLIGHT as usize{return;}
         idle.push(PairResources{
@@ -641,7 +644,7 @@ impl VulkanPair{
         }
         // Algorithm 23 requires adjacent source-pair fields; the
         // reference selects 21 when extended vectors are unavailable.
-        (if algo==23{21}else{algo})<<8
+        (if algo==23&&self.extended.len()!=2{21}else{algo})<<8
     }
     unsafe fn render(&mut self,phase:f32,matrix:u32,output:vk::ImageView)->Result<()>{
         if self.core.mode>=4 || self.fence!=vk::Fence::null() || self.phases>=MAX_PHASES || !phase.is_finite()
@@ -700,7 +703,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     // Keep the first two directional fields and scene word ABI stable;
     // append immutable coarse snapshots and two global predictors.
     let n=u64::from(gw)*u64::from(gh);
-    let field_size=n*32+if tuning.is_some(){n*96+48}else{0};
+    let field_size=n*32+if tuning.is_some(){n*128+48}else{0};
     if width>limits.max_image_dimension2_d || height>limits.max_image_dimension2_d
         || limits.max_per_stage_descriptor_sampled_images<6 || limits.max_per_stage_descriptor_storage_images<raw_planes(mode) as u32
         || limits.max_per_stage_descriptor_storage_buffers<1 || limits.max_push_constants_size<16
@@ -829,6 +832,47 @@ pub unsafe extern "C" fn ambient_svp_vk_begin(s:*const VulkanResident,command:vk
 /// Same queue/device and geometry are checked. The caller must record and
 /// submit on that queue after the converter submissions. Each job remains
 /// pinned until the pair fence retires (or an unsubmitted pair is canceled).
+/// Four consecutive source pictures, all transitioned and retained by
+/// the caller until the shared submission fence retires. Compute actual
+/// neighbouring pairs before the current phase and copy only their fields.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_begin_extended(s:*const VulkanResident,command:vk::CommandBuffer,
+    previous:*const VulkanPicture,a:*const VulkanPicture,b:*const VulkanPicture,next:*const VulkanPicture)->*mut VulkanPair{
+    if s.is_null()||previous.is_null()||a.is_null()||b.is_null()||next.is_null(){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||{
+        let core=unsafe{(*s).0.clone()};
+        if core.tuning.is_none()||core.algorithm.load(Ordering::Acquire)!=23{return ptr::null_mut();}
+        let (p,a,b,n)=unsafe{(*previous,*a,*b,*next)};
+        // Allocate all three pairs BEFORE recording. Failure leaves the
+        // caller's command buffer untouched and permits the two-frame path.
+        let Ok(mut center)=VulkanPair::new(core.clone(),command,a,b)else{return ptr::null_mut();};
+        let Ok(left)=VulkanPair::new(core.clone(),command,p,a)else{return ptr::null_mut();};
+        let Ok(right)=VulkanPair::new(core.clone(),command,b,n)else{return ptr::null_mut();};
+        unsafe{
+            center.analyse();left.analyse();right.analyse();
+            let d=&core.device;
+            let before=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ|vk::AccessFlags::TRANSFER_WRITE)];
+            d.cmd_pipeline_barrier(command,vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::TRANSFER,vk::DependencyFlags::empty(),&before,&[],&[]);
+            let n=u64::from(core.gw)*u64::from(core.gh);
+            // Upstream's previous forward/backward naming is opposite
+            // the resident source-to-destination naming. The previous
+            // pair's B->A and next pair's A->B are the extended vectors.
+            d.cmd_copy_buffer(command,left.field,center.field,
+                &[vk::BufferCopy::default().src_offset(n*16).dst_offset((8*n+3)*16).size(n*16)]);
+            d.cmd_copy_buffer(command,right.field,center.field,
+                &[vk::BufferCopy::default().src_offset(0).dst_offset((9*n+3)*16).size(n*16)]);
+            let after=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)];
+            d.cmd_pipeline_barrier(command,vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&after,&[],&[]);
+        }
+        center.extended=vec![left,right];
+        Box::into_raw(Box::new(center))
+    })).unwrap_or(ptr::null_mut())
+}
+
 #[cfg(target_os="android")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_begin_ahb(s:*const VulkanResident,command:vk::CommandBuffer,
