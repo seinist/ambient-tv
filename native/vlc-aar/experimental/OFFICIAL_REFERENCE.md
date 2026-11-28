@@ -107,3 +107,17 @@ Omit --require-bl-upscale to validate typical full-resolution BL FEL. With it pr
 The 4ce1b66 GPU job 140723093282 (https://github.com/seinist/ambient-tv/actions/runs/46063310857/job/140723093282) executed the actual original FATE MKV and MP4 at PTS zero. Both had BL 3840x2160, EL 1920x1080, original flags BL=0/EL=1, active FEL, and 8,294,400 exact Y plus 4,147,200 exact UV samples each (0 LSB). The downloaded SHA-256 values are now pinned in CI. The two containers may contain the same underlying image; this is not two independent commercial titles. All four odd visible geometry cases also passed. Dolby's public profile table (https://ott.dolby.com/OnDelKits/Dolby_Vision_Online_Delivery_Kit/v1/Documentation/Specs/Visio_Profiles/help_files/topics/c_dovi_profiles.html) describes 4:1 pixel-count UHD BL:EL; Dolby patent US10462491B2 (https://patents.google.com/patent/US10462491B2/en) explicitly sets BL resampling to zero for UHD BD and describes mutually exclusive resampling flags. Therefore the local commercial UHD audit should use `--uhd-bluray --require-fel`, NOT `--require-bl-upscale`. Both-flags fixtures are intentionally experimental stress tests, not compliant disc streams. The stricter UHD audit requires the actual original flags and geometry, and rejects contradictory command-line requirements.
 
 A publicly posted FFprobe dump attributed to the commercial UHD release of Minions: The Rise of Gru (2022) reports actual decoder parameters (https://github.com/quietvoid/dovi_tool/issues/242). The numerical mapping, pivots, NLQ and matrix parameters from that dump are transcribed into export_reported_uhd_metadata.c and checked with the GPU/independent CPU reference on generated decoded frames. This tests the reported commercial coefficient set, not the movie's original pixels, not independently authenticated source provenance, and not the original RPU bytes. The separately reported commercial UHD Jumanji example (https://github.com/quietvoid/dovi_tool/issues/162) likewise reports BL=0/EL=1, but has a reported neutral EL: flags alone cannot prove a nonzero picture residual. No copyrighted commercial footage is distributed. Original commercial-picture validation still requires authorized access to a clip; local mode supports this without modifying the source or uploading frames.
+
+### Independent full-frame HDR10+ GPU reference
+
+The mandatory host GPU job generates independent double-precision pixel
+vectors using `generate_hdr10plus_frame_reference.py`. The C test parses
+the generated ST 2094-40 wire payloads, dispatches the production spatial
+prepass, downloads every RGB channel and checks maximum and RMS error.
+The cases cover legacy three-window weighted/layered overlap, moving rotated
+ellipses and clipping, paired nonuniform peak grids, saturation, P010 full
+and limited range, flipped odd-sized rasters, v1 distribution metadata,
+degree-16 curves, SDR/PQ/HLG targets, final neutral HLG encoding and scene
+cache replay. These are authored-target synthetic reference fixtures for the
+documented renderer model; they are not certified independent HDR10+
+conformance vectors or a substitute for real Android WSI tests.
