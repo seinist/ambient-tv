@@ -3031,13 +3031,29 @@ mod gpu_tests{
                     &vk::ClearColorValue{float32:[0.5,0.5,0.5,1.0]},&[range()]);}
             }
             d.end_command_buffer(cmd).unwrap();
+            // Exercise the identical held submission once with ready input.
+            // Mesa may compile shaders lazily inside queue_submit; this cost
+            // is not evidence that the ABI waits for a producer semaphore.
+            let producer_commands=[cmd];
+            let producer=vk::SubmitInfo::default().command_buffers(&producer_commands).signal_semaphores(&hold);
+            d.queue_submit(queue,&[producer],fence).unwrap();
+            d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
+            let handles=held.each_ref().map(|img|img.image);
+            let mut warm=ptr::null_mut();
+            assert_eq!(ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,1,0.5,&mut warm),0);
+            assert!(!warm.is_null());
+            d.wait_semaphores(&vk::SemaphoreWaitInfo::default().semaphores(&[done]).values(&[1]),fixture_wait).unwrap();
+            assert_eq!(ambient_svp_vk_retire_held(warm,1),1);
+            assert_eq!(d.get_semaphore_counter_value(done).unwrap(),1);
+            // The producer now waits on an unsignalled gate; all binary
+            // holds from warm-up have been consumed and are reusable.
+            d.reset_fences(&[fence]).unwrap();
             let gate_wait=[gate];let gate_value=[1u64];let gate_stage=[vk::PipelineStageFlags::ALL_COMMANDS];
-            let hold_values=[0u64;3];let producer_commands=[cmd];
+            let hold_values=[0u64;3];
             let mut gate_info=vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&gate_value).signal_semaphore_values(&hold_values);
             let producer=vk::SubmitInfo::default().push_next(&mut gate_info).wait_semaphores(&gate_wait)
-                .wait_dst_stage_mask(&gate_stage).command_buffers(&producer_commands).signal_semaphores(&hold);
+                .wait_dst_stage_mask(&gate_stage).signal_semaphores(&hold);
             d.queue_submit(queue,&[producer],fence).unwrap();
-            let handles=held.each_ref().map(|img|img.image);
             let mut job=ptr::null_mut();
             // The producer gate is opened by a watchdog even if a future
             // regression blocks the submit call, turning a hang into a failure.
@@ -3049,7 +3065,7 @@ mod gpu_tests{
                     unsafe{dev.signal_semaphore(&vk::SemaphoreSignalInfo::default().semaphore(gate).value(1))}.unwrap();
                     early
                 });
-                let rc=ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,1,0.5,&mut job);
+                let rc=ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,2,0.5,&mut job);
                 let pending=if job.is_null(){-1}else{ambient_svp_vk_retire_held(job,0)};
                 let counter=d.get_semaphore_counter_value(done).unwrap();
                 let _=release.send(());
@@ -3057,7 +3073,7 @@ mod gpu_tests{
                 assert_eq!(rc,0);
                 assert!(!job.is_null());
                 assert_eq!(pending,0);
-                assert_eq!(counter,0);
+                assert_eq!(counter,1,"consumer signalled before producer gate opened");
             });
             d.wait_for_fences(&[fence],true,fixture_wait).unwrap();
             d.reset_fences(&[fence]).unwrap();
@@ -3070,7 +3086,7 @@ mod gpu_tests{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
                 vk::DependencyFlags::empty(),&host,&[],&[]);
             d.end_command_buffer(cmd).unwrap();
-            let values=[1u64];let sems=[done];let stages=[vk::PipelineStageFlags::TRANSFER];let commands=[cmd];
+            let values=[2u64];let sems=[done];let stages=[vk::PipelineStageFlags::TRANSFER];let commands=[cmd];
             let mut timeline=vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values);
             let submit=vk::SubmitInfo::default().push_next(&mut timeline).wait_semaphores(&sems).wait_dst_stage_mask(&stages).command_buffers(&commands);
             d.queue_submit(queue,&[submit],fence).unwrap();
@@ -3082,7 +3098,7 @@ mod gpu_tests{
             }
             d.unmap_memory(readback_memory);
             assert_eq!(ambient_svp_vk_retire_held(job,1),1);
-            assert_eq!(d.get_semaphore_counter_value(done).unwrap(),1);
+            assert_eq!(d.get_semaphore_counter_value(done).unwrap(),2);
             ambient_svp_vk_destroy(engine);
             for sem in hold{d.destroy_semaphore(sem,None);}d.destroy_semaphore(done,None);d.destroy_semaphore(gate,None);
             for img in held{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}

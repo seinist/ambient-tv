@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.annotation.ChecksSdkIntAtLeast
 import androidx.core.content.ContextCompat
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.connectivity.activeConnectivityFileSources
 
 internal fun requiresLocalNetworkPermission(deviceSdk: Int, targetSdk: Int): Boolean =
     deviceSdk >= 37 && targetSdk >= 37
@@ -28,5 +29,5 @@ object LocalNetworkAccess {
             (preferences.embyEnabled && preferences.isEmbyConfigured) ||
             (preferences.tvheadendEnabled && preferences.isTvheadendConfigured) ||
             preferences.spotifyEnabled ||
-            (preferences.filesEnabled && preferences.fileSources.any { it.network })
+            preferences.activeConnectivityFileSources().any { it.network }
 }
