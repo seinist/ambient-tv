@@ -59,6 +59,16 @@ class SystemModuleChannelTest {
         assertEquals(optimized, SystemModuleChannel.select(partial, SystemModule.MONOGRAM, "arm64-v8a", 1, 37, "optimized-a57"))
     }
 
+    @Test fun authenticatedHostFingerprintAllowsProfileFallback() {
+        val compatible = build().copy(hostBindingSha256 = "a".repeat(64))
+        val incompatible = build(profile = "optimized").copy(hostBindingSha256 = "b".repeat(64))
+        val verified = authenticate(manifest(compatible, incompatible))
+        assertEquals(compatible, SystemModuleChannel.select(verified, SystemModule.MONOGRAM,
+            "arm64-v8a", 1, 37, "optimized", compatible = { it.hostBindingSha256 == "a".repeat(64) }))
+        assertNull(SystemModuleChannel.select(verified, SystemModule.MONOGRAM,
+            "arm64-v8a", 1, 37, compatible = { false }))
+    }
+
     @Test fun hostApiSdkAbiAndVersionFloorMustMatch() {
         val verified = authenticate(manifest(build(version = 3, hostApi = 2, minSdk = 35)))
         assertNull(SystemModuleChannel.select(verified, SystemModule.MONOGRAM, "arm64-v8a", 1, 37))

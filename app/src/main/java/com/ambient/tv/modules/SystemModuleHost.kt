@@ -180,20 +180,25 @@ internal object SystemModuleHost {
 
     val downloadsEnabled: Boolean get() = BuildConfig.CORES_PUBLIC_KEY.isNotBlank()
 
+    @Synchronized
     fun installLatest(module: SystemModule): SystemModuleBuild? {
         require(module in supported && downloadsEnabled)
         val transport = SystemModuleTransport()
-        val tag = transport.latestTag(module) ?: return null
-        return install(module, tag)
+        // Only a signed catalog with no compatible candidate permits continuing.
+        // Trust, network and payload validation errors must stop the search.
+        return transport.releaseTags(module).firstNotNullOfOrNull { tag -> install(module, tag, transport) }
     }
 
     @Synchronized
-    fun install(module: SystemModule, tag: String): SystemModuleBuild? {
+    fun install(module: SystemModule, tag: String): SystemModuleBuild? =
+        install(module, tag, SystemModuleTransport())
+
+    private fun install(module: SystemModule, tag: String, transport: SystemModuleTransport): SystemModuleBuild? {
         require(module in supported && downloadsEnabled)
         val old = session.store.selectedMetadata(module)
-        val result = SystemModuleTransport().install(session.store, module, tag, validateCandidate = {
+        val result = transport.install(session.store, module, tag, validateCandidate = {
             session.runtime.validateCandidate(module, it)
-        })?.build
+        }, compatible = { session.runtime.matchesHost(module, it) })?.build
         if (result != null && (result != old || SystemModuleAvailability.state(module).runtime == ModuleRuntimeState.FAILED))
             markChanged(module, old, result)
         return result

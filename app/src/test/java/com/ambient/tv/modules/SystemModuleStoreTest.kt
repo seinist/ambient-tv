@@ -46,6 +46,7 @@ class SystemModuleStoreTest {
         received: ByteArray = signedArchive,
         onOpen: () -> Unit = {},
         validateCandidate: (SystemModuleStore.Package) -> Unit = {},
+        compatible: (SystemModuleBuild) -> Boolean = { true },
     ): SystemModuleStore.Package? {
         val digest = MessageDigest.getInstance("SHA-256").digest(signedArchive)
             .joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -59,7 +60,7 @@ class SystemModuleStoreTest {
             update(bytes)
             sign()
         }
-        return store.install(module, tag, bytes, signature, validateCandidate = validateCandidate) { onOpen(); received.inputStream() }
+        return store.install(module, tag, bytes, signature, validateCandidate = validateCandidate, compatible = compatible) { onOpen(); received.inputStream() }
     }
 
     private fun reject(block: () -> Unit) {
@@ -187,6 +188,27 @@ class SystemModuleStoreTest {
         assertTrue(installed.delete())
         java.nio.file.Files.createSymbolicLink(installed.toPath(), outside.toPath())
         reject { manager.current(module) }
+    }
+
+    @Test fun incompatibleSignedMetadataDoesNotOpenArchiveOrAdvanceFloor() {
+        val manager = store()
+        val one = zip("lib/libone.so")
+        val two = zip("lib/libtwo.so")
+        install(manager, 1, one)
+        assertNull(install(manager, 9, two, onOpen = { fail("Incompatible download opened") },
+            compatible = { false }))
+        assertEquals(1L, manager.current(module)?.build?.version)
+        assertEquals(2L, install(manager, 2, two)?.build?.version)
+        assertNull(install(manager, 1, one, onOpen = { fail("Downgrade download opened") },
+            compatible = { fail("Downgrade reached compatibility probe"); true }))
+    }
+
+    @Test fun invalidSignatureNeverReachesCompatibilityProbe() {
+        reject {
+            store().install(module, tag, byteArrayOf(1), byteArrayOf(2), compatible = {
+                fail("Unauthenticated metadata reached host probe"); true
+            }) { error("unreachable") }
+        }
     }
 
     @Test fun incompatibleCandidateDoesNotPublishOrAdvanceVersionFloor() {

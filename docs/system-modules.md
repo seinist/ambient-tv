@@ -428,6 +428,15 @@ from PR #494 here. Tests cover patch drift, idempotency, provenance changes
 and the native package layout. This is preparation, not activated Moonlight
 modularization, and it must be validated against the final Moonlight branch.
 
+### Compatible release discovery
+
+Release discovery walks the bounded GitHub release history lazily. Each candidate
+catalog must authenticate before ABI, SDK, profile, version-floor and exact host
+binding/native fingerprint selection. A signed incompatible catalog is skipped
+without downloading its ZIP or changing the installed selection. Invalid metadata,
+network errors and archive/preflight failures stop the search; they never trigger
+an automatic downgrade. The persisted version floor remains authoritative.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

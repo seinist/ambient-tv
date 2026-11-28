@@ -144,6 +144,7 @@ object SystemModuleChannel {
         sdk: Int,
         preferredProfile: String = "baseline",
         minimumVersion: Long = 1,
+        compatible: (SystemModuleBuild) -> Boolean = { true },
     ): SystemModuleBuild? {
         require(processAbi in abis && processAbi != "any")
         require(hostApi > 0 && minimumVersion > 0 && preferredProfile in profiles)
@@ -158,8 +159,8 @@ object SystemModuleChannel {
             else -> listOf("baseline")
         }
         for (profile in order) {
-            candidates.singleOrNull { it.abi == processAbi && it.profile == profile }?.let { return it }
+            candidates.singleOrNull { it.abi == processAbi && it.profile == profile && compatible(it) }?.let { return it }
         }
-        return candidates.singleOrNull { it.abi == "any" && it.profile == "baseline" }
+        return candidates.singleOrNull { it.abi == "any" && it.profile == "baseline" && compatible(it) }
     }
 }

@@ -25,17 +25,19 @@ internal class SystemModuleTransport {
         tag: String,
         profile: String = "baseline",
         validateCandidate: (SystemModuleStore.Package) -> Unit = {},
+        compatible: (SystemModuleBuild) -> Boolean = { true },
     ): SystemModuleStore.Package? {
         require(Regex("modules-[A-Za-z0-9][A-Za-z0-9._-]{0,100}").matches(tag))
         val manifest = readMetadata(releaseUrl(tag, "manifest.json"), SystemModuleChannel.MAX_MANIFEST_BYTES)
         val signature = readMetadata(releaseUrl(tag, "manifest.json.sig"), 256)
-        return store.install(module, tag, manifest, signature, profile, validateCandidate) { build ->
+        return store.install(module, tag, manifest, signature, profile, validateCandidate, compatible) { build ->
             open(releaseUrl(tag, build.asset), build.size, exactSize = true)
         }
     }
 
-    /** Discover a named release; the selected manifest is authenticated by install(). */
-    fun latestTag(module: SystemModule): String? {
+    /** Lazy, bounded discovery. Every candidate must still be authenticated by install(). */
+    fun releaseTags(module: SystemModule): Sequence<String> = sequence {
+        val seen = mutableSetOf<String>()
         for (page in 1..10) {
             val url = HttpUrl.Builder().scheme("https").host("api.github.com")
                 .addPathSegments("repos/seinist/ambient-tv/releases")
@@ -64,9 +66,9 @@ internal class SystemModuleTransport {
                 val tag = item.optString("tag_name")
                 if (!item.optBoolean("draft") && !item.optBoolean("prerelease") &&
                     tag.startsWith("modules-${module.id}-") &&
-                    Regex("modules-[A-Za-z0-9][A-Za-z0-9._-]{0,100}").matches(tag)) return tag
+                    Regex("modules-[A-Za-z0-9][A-Za-z0-9._-]{0,100}").matches(tag) && seen.add(tag)) yield(tag)
             }
-            if (releases.length() < 100) return null
+            if (releases.length() < 100) return@sequence
         }
         throw IOException("Module release history exceeds search limit")
     }

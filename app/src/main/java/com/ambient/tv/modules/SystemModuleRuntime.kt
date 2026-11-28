@@ -122,6 +122,22 @@ internal class SystemModuleRuntime(
         }
     }
 
+    /** Compare authenticated metadata before downloading an archive. A mismatch
+     * is an incompatible release, not evidence that the signed payload is corrupt.
+     * I/O failures remain errors rather than silently selecting an older release.
+     */
+    fun matchesHost(module: SystemModule, build: SystemModuleBuild): Boolean {
+        val contract = contractFor(module, build)
+        if (build.module != module.id || build.hostBindingSha256 != contract.hostBindingSha256 ||
+            !contract.hostLibraries.containsAll(build.hostNativeSha256.keys)) return false
+        if (contract.entryClass != null && build.hostNativeSha256.isNotEmpty()) return false
+        val bundled = hostLoader as? BaseDexClassLoader
+        return build.hostNativeSha256.all { (name, hash) ->
+            val location = bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so"))
+            location != null && hostLibraryHash(location) == hash
+        }
+    }
+
     /** Validate without initializing classes or invoking the linker. */
     fun validateCandidate(module: SystemModule, pkg: SystemModuleStore.Package) {
         val contract = contractFor(module, pkg.build)

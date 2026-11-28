@@ -53,12 +53,13 @@ internal class SystemModuleStore(
         signature: ByteArray,
         profile: String = "baseline",
         validateCandidate: (Package) -> Unit = {},
+        compatible: (SystemModuleBuild) -> Boolean = { true },
         openArchive: (SystemModuleBuild) -> InputStream,
     ): Package? = locked(module) { directory ->
         val state = readState(directory)
         val manifest = SystemModuleChannel.authenticate(manifestBytes, signature, publicKey, tag)
         val build = SystemModuleChannel.select(
-            manifest, module, processAbi, hostApi, sdk, profile, maxOf(1, state.highWater),
+            manifest, module, processAbi, hostApi, sdk, profile, maxOf(1, state.highWater), compatible,
         ) ?: return@locked null
         var currentVerified = false
         state.current?.let {
