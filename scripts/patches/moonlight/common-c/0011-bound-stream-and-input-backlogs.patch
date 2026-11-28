@@ -1,0 +1,86 @@
+diff --git a/src/InputStream.c b/src/InputStream.c
+--- a/src/InputStream.c
++++ b/src/InputStream.c
+@@ -336,7 +336,9 @@
+     }
+ 
+     uint64_t lastMousePacketTime = 0;
+-    uint64_t lastPenPacketTime = 0;
++    uint64_t lastPenPacketTime = 0;
++    unsigned int queuedSinceFlush = 0;
++    uint64_t batchStartMs = 0;
+ 
+     while (!PltIsThreadInterrupted(&inputSendThread)) {
+         err = LbqWaitForQueueElement(&packetQueue, (void**)&holder);
+@@ -593,7 +595,7 @@
+                 memcpy(splitPacket.packet.unicode.text, &holder->packet.unicode.text[i], codePointLength);
+ 
+                 // Encrypt and send the split packet
+-                if (!sendInputPacket(&splitPacket, i + 1 < totalLength)) {
++                if (!sendInputPacket(&splitPacket, i + codePointLength < totalLength)) {
+                     freePacketHolder(holder);
+                     return;
+                 }
+@@ -605,11 +607,16 @@
+             continue;
+         }
+ 
+-        // Encrypt and send the input packet
+-        if (!sendInputPacket(holder, LbqGetItemCount(&packetQueue) > 0)) {
+-            freePacketHolder(holder);
+-            return;
+-        }
++        // Bound batching under sustained input load without reordering input.
++        uint64_t now = PltGetMillis();
++        if (queuedSinceFlush == 0) batchStartMs = now;
++        bool moreData = LbqGetItemCount(&packetQueue) > 0;
++        if (++queuedSinceFlush >= 8 || now - batchStartMs >= 1) moreData = false;
++        if (!sendInputPacket(holder, moreData)) {
++            freePacketHolder(holder);
++            return;
++        }
++        if (!moreData) queuedSinceFlush = 0;
+ 
+         freePacketHolder(holder);
+     }
+diff --git a/src/AudioStream.c b/src/AudioStream.c
+--- a/src/AudioStream.c
++++ b/src/AudioStream.c
+@@ -173,8 +173,18 @@
+     pthread_mutex_unlock(&audioPoolLock);
+ }
+ 
+-static bool queuePacketToLbq(PQUEUED_AUDIO_PACKET* packet) {
+-    int err;
++static bool queuePacketToLbq(PQUEUED_AUDIO_PACKET* packet) {
++    int err;
++
++    // Preserve the FEC/reorder queue, but bound post-FEC decoder backlog by
++    // duration. As on existing overflow, discard stale audio to catch up.
++    if (AudioPacketDuration > 0) {
++        int maxQueued = 60 / AudioPacketDuration;
++        if (maxQueued < 2) maxQueued = 2;
++        if (LbqGetItemCount(&packetQueue) >= maxQueued) {
++            freePacketList(LbqFlushQueueItems(&packetQueue));
++        }
++    }
+ 
+     do {
+         err = LbqOfferQueueItem(&packetQueue, *packet, &(*packet)->header.lentry);
+diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
+--- a/src/VideoDepacketizer.c
++++ b/src/VideoDepacketizer.c
+@@ -86,7 +86,12 @@
+ 
+ // Init
+ void initializeVideoDepacketizer(int pktSize) {
+-    LbqInitializeLinkedBlockingQueue(&decodeUnitQueue, 15);
++    // Bound undecoded video to roughly 100 ms, allowing short bursts.
++    // Existing overflow recovery requests an IDR rather than dropping references.
++    int queueLimit = StreamConfig.fps / 10;
++    if (queueLimit < 3) queueLimit = 3;
++    if (queueLimit > 15) queueLimit = 15;
++    LbqInitializeLinkedBlockingQueue(&decodeUnitQueue, queueLimit);
+ 
+     nextFrameNumber = 1;
+     startFrameNumber = 0;
