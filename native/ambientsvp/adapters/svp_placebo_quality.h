@@ -21,7 +21,7 @@ struct svp_placebo_hdr {
 struct svp_placebo_pending {
     AmbientSvpVkHeld *job;
     AmbientSvpHdrPass *capture;
-    uint64_t index,stats_token;
+    uint64_t index,stats_token,capture_end;
     unsigned count;
     pl_tex textures[5];
     VkSemaphore holds[5];
@@ -56,6 +56,8 @@ struct svp_placebo_quality {
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
         const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
     int (*retire_capture)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
+    int (*retire_capture_group)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t,uint64_t);
+    uint64_t capture_end;
     bool capture_failed,device_lost;
     int (*submit_stats)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
@@ -106,7 +108,8 @@ static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality 
     // Destruction may explicitly discard it, but backpressure cannot.
     if(p->stats_token){if(wait!=1)return false;p->stats_token=0;}
     unsigned mode=wait==2&&!s->retire_status?0:wait;
-    int rc=p->capture&&!s->capture_failed?s->retire_capture(p->job,mode,p->capture,p->index):
+    int rc=p->capture&&!s->capture_failed?(p->capture_end&&s->retire_capture_group?
+        s->retire_capture_group(p->job,mode,p->capture,p->index,p->capture_end):s->retire_capture(p->job,mode,p->capture,p->index)):
         s->retire_status?s->retire_status(p->job,mode):s->retire(p->job,mode);
     if(rc!=1&&rc!=2&&rc!=3)return false;
     if(rc==3)s->device_lost=true;
@@ -195,6 +198,7 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
         s->set_source_ids=dlsym(s->lib,"ambient_svp_vk_set_held_source_ids");
         s->submit_capture=dlsym(s->lib,"ambient_svp_vk_submit_held_capture");
         s->retire_capture=dlsym(s->lib,"ambient_svp_vk_retire_held_capture");
+        s->retire_capture_group=dlsym(s->lib,"ambient_svp_vk_retire_held_capture_group");
         if(!s->retire_capture)s->submit_capture=NULL;
         s->submit_stats=dlsym(s->lib,"ambient_svp_vk_submit_held_stats");
         s->collect_stats=dlsym(s->lib,"ambient_svp_vk_collect_held_stats");
@@ -204,6 +208,7 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
     }
     if(hdr&&(!s->render_hdr||!hdr->count||hdr->count>3))return false;
     if(pass&&(!s->render_pass||!hdr||hdr->count<1||hdr->count>3))return false;
+    if(capture&&s->capture_end&&(!s->submit_capture||!s->retire_capture_group))return false;
     const int w=a->params.w,h=a->params.h;
     if(!s->engine||w!=s->w||h!=s->h||memcmp(&s->options,options,sizeof(*options))){
         // Incompatible quality/geometry must not consume old stats as
@@ -297,6 +302,7 @@ cleanup:
     if(job){
         struct svp_placebo_pending *p=&s->pending[s->pending_count++];
         p->job=job;p->count=count;p->capture=capture?pass:NULL;p->index=index;
+        p->capture_end=capture?s->capture_end:0;
         p->stats_token=deferred_token?*deferred_token:0;
         memcpy(p->textures,tex,count*sizeof(*tex));
         memcpy(p->holds,holds,count*sizeof(*holds));

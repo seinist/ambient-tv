@@ -1150,6 +1150,35 @@ fn two_pass_cache_identity_completeness_and_replay(){
 }
 
 #[cfg(test)]
+#[test]
+fn dynamic_scene_plan_preserves_required_boundaries_and_discovered_cuts(){
+    let root=std::env::temp_dir().join(format!("ambient-dynamic-scene-{}",std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let plan=root.join("plan");let cache=root.join("cache");
+    let _=std::fs::remove_file(&cache);
+    let key="d".repeat(64);
+    std::fs::write(&plan,format!("AMBIENTSVP_SCENE_PLAN_2\n{key}\n4\n6\n")).unwrap();
+    assert!(TwoPass::open_version(1,0,&plan,&cache,&key,"fixture",2,1).is_err());
+    let mut p=TwoPass::open(1,&plan,&cache,&key,"fixture",2,1).unwrap();
+    assert!(p.dynamic());
+    for i in 0..6{
+        let end=if i<2{2}else if i<4{4}else{6};
+        p.discover_cut(i,end,i<2).unwrap();
+        let value=100+i as u32;
+        let mut bins=vec![0;BINS as usize];bins[value as usize]=2;
+        p.capture(i,SceneFrame{width:2,height:1,maxscl:[value;3],bins,average:0.1,fraction:1.0,linear_sum:u64::from(value)*20_000}).unwrap();
+    }
+    assert_eq!(p.ends,vec![2,4,6]);p.finish().unwrap();
+    let mut replay=TwoPass::open(2,&plan,&cache,&key,"fixture",2,1).unwrap();
+    assert_eq!(replay.interval(0).unwrap(),(0,2));assert_eq!(replay.interval(2).unwrap(),(2,4));
+    for i in 0..6{assert_eq!(replay.lookup(i).unwrap().end,(i/2+1)*2);}
+    replay.finish().unwrap();
+    std::fs::write(&plan,format!("AMBIENTSVP_SCENE_PLAN_2\n{key}\n3\n6\n")).unwrap();
+    assert!(TwoPass::open(2,&plan,&cache,&key,"fixture",2,1).is_err());
+    let _=std::fs::remove_dir_all(root);
+}
+
+#[cfg(test)]
 mod legacy_scene_cache_tests{
     use super::*;
     fn frame(values:&[u32],indices:&[u32])->SceneWindowFrame{

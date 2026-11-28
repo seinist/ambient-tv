@@ -49,6 +49,7 @@ struct ambient_svp_hdr_display {
     void *progress_lib;
     void (*mark_output)(void);
     unsigned scene_version;
+    bool scene_dynamic;
     struct ambient_svp_hdr_phase phases[SVP_PLACEBO_PENDING];
     uint64_t phase_ids[4],phase_group;
     bool phase_group_valid;
@@ -72,7 +73,8 @@ static inline void ambient_svp_hdr_scene_close(pl_gpu gpu,struct ambient_svp_hdr
     if(s->scene_pass)s->scene_destroy(s->scene_pass);
     if(s->scene_lib)dlclose(s->scene_lib);
     ambient_svp_scene_config_release(s->scene);
-    s->scene=NULL;s->scene_pass=NULL;s->scene_lib=NULL;s->scene_finished=false;
+    s->scene=NULL;s->scene_pass=NULL;s->scene_lib=NULL;s->scene_finished=false;s->scene_dynamic=false;
+    s->quality.capture_end=0;
     s->scene_interval=NULL;s->scene_lookup=NULL;s->scene_lookup_legacy=NULL;
     s->scene_finish=NULL;s->scene_destroy=NULL;
 }
@@ -108,6 +110,8 @@ static inline bool ambient_svp_hdr_scene_open(pl_gpu gpu,struct ambient_svp_hdr_
         s->scene_destroy=dlsym(s->scene_lib,"ambient_svp_hdr_pass_destroy");
         if(!open||!s->scene_lookup_legacy||!s->scene_interval||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)goto fail;
         s->scene_pass=open(s->scene->mode,version,s->scene->plan,s->scene->cache,s->scene->key,profile,w,h);
+        int (*dynamic)(const AmbientSvpHdrPass *)=dlsym(s->scene_lib,"ambient_svp_hdr_pass_is_dynamic");
+        s->scene_dynamic=s->scene_pass&&dynamic&&dynamic(s->scene_pass)==1;
         if(!s->scene_pass)goto fail;
     }
     return !s->scene||(s->scene_version==version&&s->scene_pass&&!s->scene_finished&&!atomic_load(&s->scene->aborted));
@@ -551,6 +555,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     int w=a->texture->params.w,h=a->texture->params.h;
     bool scene=pair->scene!=NULL,repeat_group=pair->a_id==pair->b_id;
     if(!ambient_svp_hdr_scene_open(gpu,s,pair,w,h,a->has_hdrplus?a->hdrplus.version:2)||s->quality.capture_failed)goto original;
+    s->quality.capture_end=scene&&s->scene_dynamic&&s->scene->mode==1?pair->scene_pair_end:0;
     if(scene){
         uint64_t boundary;
         if(s->scene_interval(s->scene_pass,pair->scene_index,&boundary)!=1||

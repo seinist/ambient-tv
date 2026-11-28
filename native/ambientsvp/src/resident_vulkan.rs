@@ -333,7 +333,7 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     let phase=bitcast<f32>(params.x);
     // Dynamic capture holds the preceding source through a GPU-detected
     // cut, exactly matching the known-boundary replay path.
-    if (params.y&8192u)!=0u&&fields[2u*grid.x*grid.y].x!=0{
+    if (params.y&8192u)!=0u&&(phase==0.0||fields[2u*grid.x*grid.y].x!=0){
         let p=vec2f(id.xy);
         let value=sample_warp(Warp(p,p,0.0),visible);
         textureStore(dst,vec2i(id.xy),vec4f(select(rgb(value),value,(params.y&64u)!=0u),1.0));

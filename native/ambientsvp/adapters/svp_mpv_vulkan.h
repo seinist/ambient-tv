@@ -69,7 +69,10 @@ struct svp_vk_mpv {
     int (*hdr_read_rectangles)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
     AmbientSvpHdrPass *scene_pass;
     unsigned scene_mode,scene_version;
-    bool capture_failed;
+    bool capture_failed,scene_dynamic;
+    int (*scene_is_dynamic)(const AmbientSvpHdrPass *);
+    int (*scene_enable_dynamic)(AmbientSvpVkPair *);
+    int (*scene_capture_group)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t,uint64_t);
     int (*scene_stats_legacy)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,const uint32_t (*)[3],float,uint32_t);
     int (*scene_verify_geometry)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
     int (*scene_lookup_legacy)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrLegacyScene *);
@@ -748,7 +751,8 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
         if(ready==VK_TIMEOUT)break;
         bool ok=ready==VK_SUCCESS&&first->sealed;
         for(unsigned i=0;ok&&i<first->capture_count;i++)
-            ok=s->scene_capture(s->scene_pass,first->pair,i,first->capture_tick+i)==1;
+            ok=(s->scene_dynamic?s->scene_capture_group(s->scene_pass,first->pair,i,first->capture_tick+i,first->capture_tick+first->capture_count):
+                s->scene_capture(s->scene_pass,first->pair,i,first->capture_tick+i))==1;
         first->capture_count=0;
         if(!ok){s->capture_failed=true;svp_vk_scene_abort(s);break;}
     }
@@ -946,6 +950,9 @@ static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_ima
     s->scene_stats=dlsym(lib,"ambient_svp_vk_hdr_stats_scene");
     s->scene_interval=dlsym(lib,"ambient_svp_hdr_pass_interval");
     s->scene_capture=dlsym(lib,"ambient_svp_hdr_pass_capture");
+    s->scene_is_dynamic=dlsym(lib,"ambient_svp_hdr_pass_is_dynamic");
+    s->scene_enable_dynamic=dlsym(lib,"ambient_svp_vk_enable_dynamic_scene");
+    s->scene_capture_group=dlsym(lib,"ambient_svp_hdr_pass_capture_group");
     s->scene_lookup=dlsym(lib,"ambient_svp_hdr_pass_lookup_v1");
     s->scene_finish=dlsym(lib,"ambient_svp_hdr_pass_finish");
     s->scene_destroy=dlsym(lib,"ambient_svp_hdr_pass_destroy");
@@ -960,6 +967,8 @@ static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_ima
         (long long)llround(img->pts*1000000.0),q->preset,q->block,q->overlap,q->pel,q->search,q->artifacts,q->scene,q->algorithm);
     if(n<=0||(size_t)n>=sizeof(profile))return false;
     s->scene_pass=open(mode,s->scene_version,plan,cache,key,profile,s->width,s->height);
+    s->scene_dynamic=s->scene_pass&&s->scene_is_dynamic&&s->scene_is_dynamic(s->scene_pass)==1;
+    if(s->scene_dynamic&&(!s->scene_enable_dynamic||!s->scene_capture_group)){svp_vk_scene_abort(s);return false;}
     s->capture_failed=false;
     s->scene_mode=s->scene_pass?mode:0;return s->scene_pass!=NULL;
 }
@@ -1238,6 +1247,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     }
     if(!j->pair)j->pair=s->begin(s->engine,cmd,&src[0],&src[1]);
     if (!j->pair) goto fail;
+    if(s->scene_pass&&s->scene_dynamic&&s->scene_enable_dynamic(j->pair)!=0)goto fail;
     for (unsigned i=0;i<count;i++) {
         int rc=s->mode>=4?s->render_raw(j->pair,phases[i],dst[i],s->mode==4?2:3):
             s->render(j->pair,phases[i],svp_vk_matrix(a),dst[i][0]);
