@@ -1010,6 +1010,61 @@ PATCHES = {
       "src/video_core/renderer_opengl/gl_shader_util.cpp",
       "    ASSERT_MSG(result == GL_TRUE, \"Shader not linked\");\n\n    for (GLuint shader : shaders)",
       "    ASSERT_MSG(result == GL_TRUE, \"Shader not linked\");\n#ifdef __ANDROID__\n    if (result == GL_TRUE && !cache_path.empty())\n        AmbientStoreProgram(program_id, cache_path, key);\n#endif\n\n    for (GLuint shader : shaders)"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.cpp",
+      "GLuint LoadShader(const char* source, GLenum type) {",
+      "static GLuint CreateShaderSource(const char* source, GLenum type) {\n    GLuint shader_id = glCreateShader(type);\n    glShaderSource(shader_id, 1, &source, nullptr);\n    return shader_id;\n}\n\nstatic void CompileShader(GLuint shader_id, const char* source, GLenum type) {"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.cpp",
+      "    GLuint shader_id = glCreateShader(type);\n    glShaderSource(shader_id, 1, &source, nullptr);\n    LOG_DEBUG(Render_OpenGL, \"Compiling {} shader...\", debug_type);",
+      "    LOG_DEBUG(Render_OpenGL, \"Compiling {} shader...\", debug_type);"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.cpp",
+      "    return shader_id;\n}\n\n#ifdef __ANDROID__",
+      "}\n\nGLuint LoadShader(const char* source, GLenum type) {\n    GLuint shader_id = CreateShaderSource(source, type);\n    CompileShader(shader_id, source, type);\n    return shader_id;\n}\n\n#ifdef __ANDROID__"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.cpp",
+      "GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {",
+      "static GLuint LoadProgramInternal(bool separable_program, const std::vector<GLuint>& shaders,\n                                  bool compile_sources) {"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.cpp",
+      "    for (GLuint shader : shaders) {\n        if (shader != 0) {\n            glAttachShader(program_id, shader);",
+      "    for (GLuint shader : shaders) {\n        if (shader != 0) {\n            if (compile_sources) {\n                GLint type = 0, length = 0;\n                glGetShaderiv(shader, GL_SHADER_TYPE, &type);\n                glGetShaderiv(shader, GL_SHADER_SOURCE_LENGTH, &length);\n                std::vector<char> source(length > 0 ? length : 1, '\\0');\n                glGetShaderSource(shader, static_cast<GLsizei>(source.size()), nullptr, source.data());\n                CompileShader(shader, source.data(), static_cast<GLenum>(type));\n            }\n            glAttachShader(program_id, shader);"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.cpp",
+      "    glProgramBinary(program, header[3], binary.data(), static_cast<GLsizei>(binary.size()));",
+      "    GLint formats_count = 0;\n    glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats_count);\n    if (formats_count <= 0 || formats_count > 256)\n        return false;\n    std::vector<GLint> formats(static_cast<size_t>(formats_count));\n    glGetIntegerv(GL_PROGRAM_BINARY_FORMATS, formats.data());\n    bool supported = false;\n    for (GLint format : formats)\n        supported |= static_cast<uint32_t>(format) == header[3];\n    if (!supported)\n        return false;\n    glProgramBinary(program, header[3], binary.data(), static_cast<GLsizei>(binary.size()));"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.cpp",
+      "} // namespace GLShader",
+      "GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {\n    return LoadProgramInternal(separable_program, shaders, false);\n}\n\nGLuint LoadProgramFromSources(bool separable_program,\n                              const std::vector<std::pair<GLenum, const char*>>& sources) {\n    std::vector<GLuint> shaders;\n    shaders.reserve(sources.size());\n    for (const auto& source : sources)\n        if (source.second)\n            shaders.push_back(CreateShaderSource(source.second, source.first));\n    // Shader objects carry exact source and type but have not been compiled.\n    // On a validated binary cache hit, neither shader compile nor link runs.\n    GLuint program = LoadProgramInternal(separable_program, shaders, true);\n    for (GLuint shader : shaders)\n        glDeleteShader(shader);\n    return program;\n}\n\n} // namespace GLShader"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.h",
+      "#include <vector>",
+      "#include <vector>\n#include <utility>"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_util.h",
+      "GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders);",
+      "GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders);\nGLuint LoadProgramFromSources(bool separable_program,\n                              const std::vector<std::pair<GLenum, const char*>>& sources);"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_resource_manager.h",
+      "        OGLShader vert, frag;\n        vert.Create(vert_shader, GL_VERTEX_SHADER);\n        frag.Create(frag_shader, GL_FRAGMENT_SHADER);\n        Create(false, {vert.handle, frag.handle});",
+      "        if (handle != 0)\n            return;\n        handle = GLShader::LoadProgramFromSources(false, {{GL_VERTEX_SHADER, vert_shader},\n                                                         {GL_FRAGMENT_SHADER, frag_shader}});"
+    ],
+    [
+      "src/video_core/renderer_opengl/gl_shader_manager.cpp",
+      "            OGLShader shader;\n            shader.Create(source, type);\n            OGLProgram& program = boost::get<OGLProgram>(shader_or_program);\n            program.Create(true, {shader.handle});",
+      "            OGLProgram& program = boost::get<OGLProgram>(shader_or_program);\n            if (program.handle == 0)\n                program.handle = GLShader::LoadProgramFromSources(true, {{type, source}});"
     ]
   ],
   "dolphin": [
