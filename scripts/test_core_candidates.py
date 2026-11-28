@@ -68,6 +68,10 @@ int main() {
     using namespace AmbientFastmem;
     const size_t page = host_page();
     assert(page);
+    assert(split_ram_access(true,true,0xfff,4));
+    assert(!split_ram_access(true,false,0xfff,4));
+    assert(!split_ram_access(false,true,0xfff,4));
+    assert(!split_ram_access(true,true,0xffffffffu,4));
     std::vector<uint8_t*> pointers(AddressSpace / GuestPage, nullptr);
     Arena arena;
     auto first = arena.ensure(pointers);

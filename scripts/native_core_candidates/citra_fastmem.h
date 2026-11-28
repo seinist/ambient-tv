@@ -17,6 +17,11 @@
 namespace AmbientFastmem {
 constexpr size_t GuestPage = 4096;
 constexpr uint64_t AddressSpace = uint64_t{1} << 32;
+// Cross-page RAM accesses must not wrap or split into device callbacks.
+inline bool split_ram_access(bool first_ram,bool last_ram,uint32_t address,size_t bytes) {
+    return first_ram && last_ram && bytes && bytes <= GuestPage &&
+           uint64_t(address)+bytes <= AddressSpace;
+}
 struct Allocation { size_t bytes; int fd; };
 class Arena;
 struct Registry {
@@ -75,10 +80,10 @@ public:
 
     template<class Pointers>
     void sync(const Pointers& pointers, uint32_t first, uint32_t count) {
-        if (!base || !count) return;
+        if (!count) return;
         auto& r = registry();
         std::lock_guard<std::mutex> lock(r.mutex);
-        sync_locked(pointers, first, count, r);
+        if(base)sync_locked(pointers, first, count, r);
     }
 
     // Before backing storage is freed or reallocated, revoke all its aliases,

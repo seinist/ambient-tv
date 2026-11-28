@@ -74,11 +74,23 @@ def prepare_fastmem(root, dependency):
         raise ValueError("Dynarmic fastmem boundary changed")
     file.write_text(source.replace(marker,
         "    EmitDetectMisalignedVAddr<bitsize>(code, ctx, Xaddr, fallback);\n" + marker))
-    # Legacy memory callbacks also used a potentially out-of-range memcpy on
-    # cross-page accesses. Split only those accesses into little-endian bytes.
+    # Only ordinary/cached RAM can be safely split across guest pages.
+    # Preserve the original typed MMIO dispatch for accesses starting at
+    # an MMIO page. Reject mixed RAM/device or unmapped spans atomically.
     replace(root, "src/core/memory.cpp", "T Read(const VAddr vaddr) {",
             """T Read(const VAddr vaddr) {
-    if (sizeof(T) > 1 && (vaddr & PAGE_MASK) > PAGE_SIZE - sizeof(T)) {
+    if (sizeof(T) > 1 && (vaddr & PAGE_MASK) > PAGE_SIZE - sizeof(T) &&
+        current_page_table->attributes[vaddr >> PAGE_BITS] != PageType::Special) {
+        const auto ram = [](PageType p) {
+            return p == PageType::Memory || p == PageType::RasterizerCachedMemory;
+        };
+        std::lock_guard<std::recursive_mutex> lock(HLE::g_hle_lock);
+        const auto first = current_page_table->attributes[vaddr >> PAGE_BITS];
+        const auto last = current_page_table->attributes[(vaddr + static_cast<u32>(sizeof(T)-1)) >> PAGE_BITS];
+        if (!AmbientFastmem::split_ram_access(ram(first), ram(last), vaddr, sizeof(T))) {
+            LOG_ERROR(HW_Memory, "Unsupported cross-page Read{} @ {:08X}", sizeof(T)*8, vaddr);
+            return T{};
+        }
         T value{};
         auto* bytes = reinterpret_cast<u8*>(&value);
         for (size_t i = 0; i < sizeof(T); ++i)
@@ -87,7 +99,18 @@ def prepare_fastmem(root, dependency):
     }""")
     replace(root, "src/core/memory.cpp", "void Write(const VAddr vaddr, const T data) {",
             """void Write(const VAddr vaddr, const T data) {
-    if (sizeof(T) > 1 && (vaddr & PAGE_MASK) > PAGE_SIZE - sizeof(T)) {
+    if (sizeof(T) > 1 && (vaddr & PAGE_MASK) > PAGE_SIZE - sizeof(T) &&
+        current_page_table->attributes[vaddr >> PAGE_BITS] != PageType::Special) {
+        const auto ram = [](PageType p) {
+            return p == PageType::Memory || p == PageType::RasterizerCachedMemory;
+        };
+        std::lock_guard<std::recursive_mutex> lock(HLE::g_hle_lock);
+        const auto first = current_page_table->attributes[vaddr >> PAGE_BITS];
+        const auto last = current_page_table->attributes[(vaddr + static_cast<u32>(sizeof(T)-1)) >> PAGE_BITS];
+        if (!AmbientFastmem::split_ram_access(ram(first), ram(last), vaddr, sizeof(T))) {
+            LOG_ERROR(HW_Memory, "Unsupported cross-page Write{} @ {:08X}", sizeof(T)*8, vaddr);
+            return;
+        }
         const auto* bytes = reinterpret_cast<const u8*>(&data);
         for (size_t i = 0; i < sizeof(T); ++i)
             Write<u8>(vaddr + static_cast<u32>(i), bytes[i]);
@@ -173,7 +196,8 @@ elseif (ARCHITECTURE_x86_64)""")
             source = source.replace("#include <memory>", "#include <memory>\n#include <optional>\n#include <variant>")
         file.write_text(source)
     path = folder + "arm_dynarmic.cpp"
-    replace(root, path, "#include <dynarmic/interface/A32/context.h>", "#include <array>")
+    replace(root, path, "#include <dynarmic/interface/A32/context.h>",
+            '#include <array>\n#include <mutex>\n#include "core/hle/hle.h"')
     replace(root, folder + "arm_dynarmic.h", "    Memory::PageTable* current_page_table = nullptr;",
             "    Memory::PageTable* current_page_table = nullptr;\n    std::map<Memory::PageTable*, uint64_t> jit_generations;")
     replace(root, path, "    if (iter != jits.end()) {\n        jit = iter->second.get();",
@@ -249,6 +273,7 @@ private:
     for bits in (8, 16, 32, 64):
         methods.append(f"""    bool MemoryWriteExclusive{bits}(VAddr addr, std::uint{bits}_t value,
                                       std::uint{bits}_t expected) override {{
+        std::lock_guard<std::recursive_mutex> lock(HLE::g_hle_lock);
         if ((addr & (sizeof(value) - 1)) != 0 ||
             !Memory::GetCurrentPageTable() ||
             !Memory::GetCurrentPageTable()->pointers[addr >> Memory::PAGE_BITS])
