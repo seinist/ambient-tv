@@ -305,6 +305,7 @@ jobs:
       VLC_EXPERIMENTAL_AHB: '1'
       VLC_VULKAN_ABIS: ${{ matrix.abi }}
       VLC_SEEK_AUDIT_ABI: ${{ matrix.abi }}
+      VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
       VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
     steps:
       - uses: actions/checkout@v5
@@ -358,11 +359,48 @@ jobs:
       - uses: actions/upload-artifact@v5
         with:
           name: vlc-ahb-experimental-${{ matrix.label }}
-          path: native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
           if-no-files-found: error
           retention-days: 7
+      - name: Retain verified native libraries if packaging fails
+        if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-native-link-only-${{ matrix.label }}-not-aar
+          path: |
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/${{ matrix.abi }}/libvlc.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/${{ matrix.abi }}/libvlcjni.so
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  seek-x86_64-integration:
+    needs: linked-arm64-aar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      VLC_SEEK_AUDIT_ABI: x86_64
+      VLC_EXPERIMENTAL_AHB: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v5
+        with:
+          name: vlc-ahb-experimental-x86_64
+          path: native/vlc-aar/build/experimental
+      - uses: actions/download-artifact@v5
+        with:
+          name: vlc-seek-audit-x86_64
+          path: native/vlc-aar/seek-audit/build
       - name: Execute AFM3 real seek integration on Android emulator
-        if: matrix.abi == 'x86_64'
         timeout-minutes: 40
         run: |
           set -euo pipefail
@@ -445,24 +483,12 @@ jobs:
           done
           [[ "$booted" == 1 ]] || { echo "Android emulator did not boot after two attempts" >&2; exit 1; }
           timeout 20 adb shell input keyevent 82
-          timeout 180 bash scripts/run_vlc_seek_e2e.sh --run-prepared
+          timeout 240 bash scripts/run_vlc_seek_e2e.sh --run-prepared
       - name: Retain Android emulator diagnostics
-        if: ${{ always() && matrix.abi == 'x86_64' }}
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: vlc-seek-emulator-diagnostics
           path: ${{ runner.temp }}/vlc-seek-logs/
           if-no-files-found: warn
-          retention-days: 7
-      - name: Retain verified native libraries if packaging fails
-        if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
-        uses: actions/upload-artifact@v5
-        with:
-          name: vlc-ahb-native-link-only-${{ matrix.label }}-not-aar
-          path: |
-            native/vlc-aar/build/experimental/native-link-receipt.txt
-            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/${{ matrix.abi }}/libvlc.so
-            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/${{ matrix.abi }}/libvlcjni.so
-          include-hidden-files: true
-          if-no-files-found: error
           retention-days: 7

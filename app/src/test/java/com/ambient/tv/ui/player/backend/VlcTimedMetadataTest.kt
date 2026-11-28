@@ -123,7 +123,10 @@ class VlcTimedMetadataTest {
         val current = latest.copy(seekEpoch = 4, seekRequestId = 43)
         inbox.offer(session, current)
         assertEquals(listOf(current), inbox.events.value)
-        inbox.clearForSeek(1000000, 43)
+        val retry = inbox.clearForSeek(1000000, 43)
+        assertEquals(listOf(current), inbox.events.value)
+        inbox.rejectSeek(retry)
+        assertEquals(listOf(current), inbox.events.value)
         inbox.offer(session, current.copy(seekEpoch = 5))
         assertEquals(43L, inbox.events.value.single().seekRequestId)
     }

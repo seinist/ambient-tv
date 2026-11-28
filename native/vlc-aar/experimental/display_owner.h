@@ -67,8 +67,11 @@ VkResult ambient_ahb_prepare(struct ambient_ahb_owner *, const struct ambient_ah
  * including its error path. No later rendering may reference that texture. */
 bool ambient_ahb_finish(struct ambient_ahb_owner *, struct ambient_ahb_output);
 void ambient_ahb_poll(struct ambient_ahb_owner *);
-/* On false, ownership is uncertain: caller must not free native resources
- * through this owner. The experimental path must be disabled and torn down. */
+/* After flushing libplacebo: bounded proof of queue retirement or explicit
+ * device loss. On false retain the entire renderer/device until process exit. */
+bool ambient_ahb_retire(struct ambient_ahb_owner *);
+/* Only destroy after retirement. False means caller must quarantine the
+ * entire libplacebo context as well as this owner; never destroy its device. */
 bool ambient_ahb_close(struct ambient_ahb_owner *);
 
 #ifdef __cplusplus

@@ -6,6 +6,8 @@
 #include <array>
 #include <optional>
 #include <new>
+#include <chrono>
+#include <thread>
 
 using namespace ambient::vlc_ahb;
 namespace {
@@ -21,7 +23,6 @@ struct Commands {
     PFN_vkBeginCommandBuffer begin{};
     PFN_vkEndCommandBuffer end{};
     PFN_vkCmdPipelineBarrier barrier{};
-    PFN_vkQueueWaitIdle idle{};
     PFN_vkCreatePipelineCache create_pipeline_cache{};
     PFN_vkDestroyPipelineCache destroy_pipeline_cache{};
 };
@@ -60,6 +61,9 @@ struct ambient_ahb_owner {
     Pool pool;
     std::array<Slot, slot_count> slots;
     bool failed{};
+    bool retired{};
+    bool device_lost{};
+    VkFence retirement_fence{};
 
     bool init() {
         auto get = reinterpret_cast<PFN_vkGetDeviceProcAddr>(c.get_proc(c.instance, "vkGetDeviceProcAddr"));
@@ -108,7 +112,7 @@ struct ambient_ahb_owner {
         D(commands, create_pool, CreateCommandPool); D(commands, destroy_pool, DestroyCommandPool);
         D(commands, allocate, AllocateCommandBuffers); D(commands, reset, ResetCommandBuffer);
         D(commands, begin, BeginCommandBuffer); D(commands, end, EndCommandBuffer);
-        D(commands, barrier, CmdPipelineBarrier); D(commands, idle, QueueWaitIdle);
+        D(commands, barrier, CmdPipelineBarrier);
         D(commands, create_pipeline_cache, CreatePipelineCache);
         D(commands, destroy_pipeline_cache, DestroyPipelineCache);
 #undef I
@@ -165,7 +169,7 @@ struct ambient_ahb_owner {
         // No queue work was submitted, so the original producer fence can
         // be returned. Device loss is terminal even before submission.
         cancel(s);
-        if (result == VK_ERROR_DEVICE_LOST) failed = true;
+        if (result == VK_ERROR_DEVICE_LOST) failed = device_lost = true;
         return result;
     }
 
@@ -179,6 +183,7 @@ struct ambient_ahb_owner {
                     // The owner is now terminally failed. Retain every
                     // other outstanding lease for drain instead of making
                     // further driver calls on a possibly lost device.
+                    if (status == VK_ERROR_DEVICE_LOST) device_lost = true;
                     quarantine(s);
                     return;
                 }
@@ -190,6 +195,7 @@ struct ambient_ahb_owner {
             if (status == VK_NOT_READY) continue;
             if (status != VK_SUCCESS || !s.converted ||
                 !s.submission->retire_after_consumer(true) || !pool.reclaimed(s.ticket)) {
+                if (status == VK_ERROR_DEVICE_LOST) device_lost = true;
                 quarantine(s);
                 return;
             }
@@ -202,7 +208,7 @@ struct ambient_ahb_owner {
     VkResult prepare(const ambient_ahb_input &in, ambient_ahb_output &out) {
         out = {};
         // Own the picture before any error path, including backpressure.
-        if (failed) {
+        if (failed || retired) {
             in.release_picture(in.picture, in.acquire_fd);
             return VK_ERROR_DEVICE_LOST;
         }
@@ -254,6 +260,14 @@ struct ambient_ahb_owner {
         if (s.texture && (s.width != in.width || s.height != in.height || s.format != format)) {
             // The held wrapper may still own image views; destroy it before
             // changing the target. GPU work for this slot is already retired.
+            // Do not wait on libplacebo from the frame path while other slots
+            // have outstanding work. The next frame can retry the resize.
+            for (size_t i = 0; i < slot_count; ++i) {
+                if (i != ticket.index && pool.state(i) != State::Free) {
+                    cancel(s);
+                    return VK_NOT_READY;
+                }
+            }
             clear_texture(s);
         }
         VkResult result = s.cache->prepare_retired(in.buffer, in.width, in.height, format, c.descriptor_count,
@@ -288,6 +302,7 @@ struct ambient_ahb_owner {
         }
         if (result != VK_SUCCESS) {
             if (s.submission->uncertain()) {
+                if (result == VK_ERROR_DEVICE_LOST) device_lost = true;
                 pool.submitted(ticket);
                 quarantine(s);
             } else return cancel_before_submit(s, result);
@@ -321,6 +336,7 @@ struct ambient_ahb_owner {
         }
         if (reclaim_result != VK_SUCCESS ||
             !c.hold_and_flush(c.opaque, s.texture, s.reclaimed)) {
+            if (reclaim_result == VK_ERROR_DEVICE_LOST) device_lost = true;
             quarantine(s); return false;
         }
         // hold_and_flush enqueues the signal BEFORE this wait on the same queue.
@@ -335,28 +351,62 @@ struct ambient_ahb_owner {
             result = sync.submit(queue, 1, &info, s.reclaim_fence);
         }
         if (result != VK_SUCCESS || !pool.begin_reclaim(s.ticket)) {
+            if (result == VK_ERROR_DEVICE_LOST) device_lost = true;
             quarantine(s); return false;
         }
         return true;
     }
 
+    // A terminal fence covers all earlier submissions on the single shared
+    // graphics queue, including libplacebo work flushed by the caller.
+    // Never use vkQueueWaitIdle on an uncertain semaphore dependency.
+    bool retire() {
+        if (retired) return true;
+        if (device_lost || !queue) { retired = true; return true; }
+        if (!retirement_fence) {
+            VkFenceCreateInfo info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+            VkResult result = sync.create_fence(c.device, &info, nullptr, &retirement_fence);
+            if (result == VK_SUCCESS) {
+                QueueLock lock(c);
+                result = sync.submit(queue, 0, nullptr, retirement_fence);
+            }
+            if (result == VK_ERROR_DEVICE_LOST) {
+                device_lost = retired = true;
+                return true;
+            }
+            if (result != VK_SUCCESS) { failed = true; return false; }
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        do {
+            VkResult result = sync.fence_status(c.device, retirement_fence);
+            if (result == VK_SUCCESS) { retired = true; return true; }
+            if (result == VK_ERROR_DEVICE_LOST) {
+                device_lost = retired = true;
+                return true;
+            }
+            if (result != VK_NOT_READY) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() < deadline);
+        // Keep the fence, owner, decoder leases and device alive on timeout.
+        failed = true;
+        return false;
+    }
+
     bool drain() {
-        if (!queue) return true;
-        VkResult result;
-        { QueueLock lock(c); result = commands.idle(queue); }
-        if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) return false;
-        const bool lost = result == VK_ERROR_DEVICE_LOST;
+        if (!retire()) return false;
         for (auto &s : slots) {
             // Destroy the wrapper and its deferred dependencies before the
             // conversion semaphore it may still reference on a failed hold.
             clear_texture(s);
-            if (s.submission && !(lost ? s.submission->drain_after_device_lost() :
-                                        s.submission->drain_after_idle(true))) return false;
+            if (s.submission && !(device_lost ? s.submission->drain_after_device_lost() :
+                                                s.submission->drain_after_idle(true))) return false;
             clear_reclaim(s);
             s.submission.reset();
             s.lease.reset();
             s.cache.reset();
         }
+        if (retirement_fence) sync.destroy_fence(c.device, retirement_fence, nullptr);
+        retirement_fence = VK_NULL_HANDLE;
         return true;
     }
     ~ambient_ahb_owner() {
@@ -391,6 +441,9 @@ extern "C" bool ambient_ahb_finish(ambient_ahb_owner *owner, ambient_ahb_output 
 }
 extern "C" void ambient_ahb_poll(ambient_ahb_owner *owner) {
     if (owner) owner->poll();
+}
+extern "C" bool ambient_ahb_retire(ambient_ahb_owner *owner) {
+    return !owner || owner->retire();
 }
 extern "C" bool ambient_ahb_close(ambient_ahb_owner *owner) {
     if (!owner) return true;

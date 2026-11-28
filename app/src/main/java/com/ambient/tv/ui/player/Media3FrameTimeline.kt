@@ -17,13 +17,21 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
 
     init { require(capacity > 0) }
 
+    private fun remember(ptsUs: Long) {
+        if (ptsUs < 0L) return
+        for (i in 0 until count) if (frames[i] == ptsUs) return
+        frames[cursor] = ptsUs
+        cursor = (cursor + 1) % capacity
+        count = minOf(count + 1, capacity)
+    }
+
+    /** A real, non-decode-only output timestamp is useful even if rendering
+     * dropped it. It is not proof that the picture was displayed. */
+    @Synchronized fun decoded(ptsUs: Long) { remember(ptsUs) }
+
     @Synchronized fun presented(ptsUs: Long) {
         if (ptsUs < 0L) return
-        if (lastPresented != ptsUs) {
-            frames[cursor] = ptsUs
-            cursor = (cursor + 1) % capacity
-            count = minOf(count + 1, capacity)
-        }
+        remember(ptsUs)
         lastPresented = ptsUs
         if (pending == ptsUs) pending = -1L
     }

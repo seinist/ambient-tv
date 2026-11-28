@@ -1,7 +1,7 @@
 diff --git a/src/input/decoder.c b/src/input/decoder.c
 --- a/src/input/decoder.c
 +++ b/src/input/decoder.c
-@@ -800,35 +800,48 @@
+@@ -800,35 +800,49 @@
      };
      vlc_fifo_Unlock(p_owner->p_fifo);
  
@@ -35,6 +35,7 @@ diff --git a/src/input/decoder.c b/src/input/decoder.c
          assert(vout_state == INPUT_RESOURCE_VOUT_NOTCHANGED ||
                 vout_state == INPUT_RESOURCE_VOUT_STOPPED);
  
++        msg_Warn(p_dec, "AMBIENT_VOUT_START_FAILED: retiring failed video output");
 +        /* The resource has already been returned or destroyed; never pass
 +         * this stale pointer back to CreateVoutIfNeeded on decoder reload. */
 +        vlc_fifo_Lock(p_owner->p_fifo);

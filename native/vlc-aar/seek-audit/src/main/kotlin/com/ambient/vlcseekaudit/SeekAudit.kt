@@ -17,7 +17,11 @@ import java.util.concurrent.TimeUnit
 
 /** Actual LibVLC JNI → player queue → MP4 demux → native worker → production Android receiver. */
 class SeekAudit : Instrumentation() {
-    override fun onCreate(arguments: Bundle?) { start() }
+    private var displayFailure = false
+    override fun onCreate(arguments: Bundle?) {
+        displayFailure = arguments?.getString("displayFailure") == "true"
+        start()
+    }
     private fun waitFor(label: String, condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 15000
         while (SystemClock.elapsedRealtime() < deadline) {
@@ -26,10 +30,33 @@ class SeekAudit : Instrumentation() {
         }
         error("Timed out: $label")
     }
+    private fun auditFailedDisplay(file: File) {
+        // Force a real vout-display module selection failure, not a synthetic
+        // mock. The shell checks the native failure-path marker in logcat.
+        val lib = LibVLC(targetContext, arrayListOf("--window=wdummy", "--vout=none", "--codec=avcodec", "--avcodec-hw=none", "--no-audio", "--verbose=2"))
+        try {
+            val player = MediaPlayer(lib)
+            try {
+                repeat(3) {
+                    val media = Media(lib, Uri.fromFile(file))
+                    try { player.media = media } finally { media.release() }
+                    player.play()
+                    SystemClock.sleep(1200)
+                    player.stop()
+                }
+            } finally { player.release() }
+        } finally { lib.release() }
+    }
+
     override fun onStart() {
         try {
             val file = File(targetContext.filesDir, "seek-fixture.mp4")
             check(file.length() > 0) { "Missing generated fragmented MP4" }
+            if (displayFailure) {
+                auditFailedDisplay(file)
+                finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "VLC DISPLAY FAILURE RECOVERY PASSED\n") })
+                return
+            }
             val inbox = VlcTimedMetadataInbox()
             val session = inbox.beginSession()
             val received = LinkedBlockingQueue<VlcTimedMetadataPacket.Message.Epoch>()

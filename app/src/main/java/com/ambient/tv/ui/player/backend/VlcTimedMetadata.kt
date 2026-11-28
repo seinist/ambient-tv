@@ -98,6 +98,9 @@ internal class VlcTimedMetadataInbox {
 
     @Synchronized fun clearForSeek(targetUs: Long? = null, requestId: Long = 0L): SeekFence {
         val fence = SeekFence(generation, epoch, discardedThroughEpoch, requestedTargetUs, requestedId, ++fenceSerial)
+        // A retry of the same tagged native request must not erase a
+        // barrier or events that arrived while its playback clock settles.
+        if (requestId != 0L && requestId == requestedId && targetUs == requestedTargetUs) return fence
         requestedTargetUs = targetUs
         requestedId = requestId
         // The native worker may already be sending one packet from the retired epoch.

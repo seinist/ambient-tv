@@ -202,8 +202,9 @@ object Media3AudioProcessing {
                         val consumed = super.processOutputBuffer(positionUs, elapsedRealtimeUs, codec, buffer,
                             bufferIndex, bufferFlags, sampleCount, bufferPresentationTimeUs,
                             isDecodeOnlyBuffer, isLastBuffer, format)
-                        frameTimeline.pending(if (!consumed && !isDecodeOnlyBuffer)
-                            bufferPresentationTimeUs - getOutputStreamOffsetUs() else -1L)
+                        val ptsUs = bufferPresentationTimeUs - getOutputStreamOffsetUs()
+                        if (consumed && !isDecodeOnlyBuffer) frameTimeline.decoded(ptsUs)
+                        frameTimeline.pending(if (!consumed && !isDecodeOnlyBuffer) ptsUs else -1L)
                         return consumed
                     }
 

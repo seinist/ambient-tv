@@ -25,11 +25,22 @@ if [[ "$mode" != --run-prepared ]]; then
 fi
 test -s "$APK" && test -s "$AUDIT/build/seek-fixture.mp4"
 # Keep the AAR's ELF bytes intact in the APK (AGP may otherwise strip them).
-python3 - "$AAR" "$APK" "$ABI" <<'PY'
-import sys, zipfile
+python3 - "$AAR" "$APK" "$ABI" "$RECEIPT" <<'PY'
+import hashlib, sys, zipfile
+from pathlib import Path
+expected = {}
+active = False
+for line in Path(sys.argv[4]).read_text().splitlines():
+    if line.startswith("abi="):
+        active = line == "abi=" + sys.argv[3]
+    elif active and "  " in line:
+        digest, name = line.split("  ", 1)
+        expected[name] = digest
 with zipfile.ZipFile(sys.argv[1]) as a, zipfile.ZipFile(sys.argv[2]) as p:
     for name in ("libvlc.so","libvlcjni.so"):
-        assert a.read("jni/"+sys.argv[3]+"/"+name)==p.read("lib/"+sys.argv[3]+"/"+name), name
+        linked = a.read("jni/"+sys.argv[3]+"/"+name)
+        assert hashlib.sha256(linked).hexdigest() == expected[name], name + " receipt"
+        assert linked == p.read("lib/"+sys.argv[3]+"/"+name), name + " APK"
 PY
 [[ "$mode" == --prepare-only ]] && exit 0
 adb get-state
@@ -38,6 +49,13 @@ PACKAGE=com.ambient.vlcseekaudit
 adb install -r "$APK"
 adb shell run-as "$PACKAGE" mkdir -p files
 adb shell -T "run-as $PACKAGE sh -c 'cat > files/seek-fixture.mp4'" < "$AUDIT/build/seek-fixture.mp4"
+adb logcat -c
+result="$(adb shell am instrument -w -e displayFailure true "$PACKAGE/.SeekAudit")"
+printf '%s\n' "$result"
+grep -Fq 'VLC DISPLAY FAILURE RECOVERY PASSED' <<< "$result"
+grep -Fq 'INSTRUMENTATION_CODE: -1' <<< "$result"
+# Prove the native display-start failure path actually executed.
+adb logcat -d | grep -F 'AMBIENT_VOUT_START_FAILED' > /dev/null
 result="$(adb shell am instrument -w "$PACKAGE/.SeekAudit")"
 printf '%s\n' "$result"
 grep -Fq 'VLC AFM3 REAL SEEK E2E PASSED' <<< "$result"

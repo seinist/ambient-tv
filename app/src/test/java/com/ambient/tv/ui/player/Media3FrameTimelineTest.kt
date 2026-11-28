@@ -16,6 +16,17 @@ class Media3FrameTimelineTest {
         assertEquals(95_000L, history.neighbor(20_000, true))
     }
 
+    @Test fun droppedDecodedFrameIsKnownButDoesNotBecomeDisplayAnchor() {
+        val history = Media3FrameTimeline()
+        history.presented(20_000)
+        history.decoded(37_000)
+        history.presented(95_000)
+        history.decoded(130_000)
+        assertEquals(95_000L, history.anchor(100_000))
+        assertEquals(37_000L, history.neighbor(95_000, false))
+        assertEquals(130_000L, history.neighbor(95_000, true))
+    }
+
     @Test fun clearedOrDistantHistoryDoesNotSupplyAFalseNeighbor() {
         val history = Media3FrameTimeline()
         history.presented(100_000)

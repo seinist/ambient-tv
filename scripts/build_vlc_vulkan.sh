@@ -15,6 +15,8 @@ fi
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
     (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch
+        bash scripts/prepare_svp_sources.sh --hash vlc
+        sha256sum native/vlc-aar/build.gradle.kts native/vlc-aar/settings.gradle.kts gradle/wrapper/gradle-wrapper.properties
         if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
             sha256sum scripts/prepare_vlc_ahb_experimental.sh
             find native/vlc-aar/experimental -type f -print0 | sort -z | xargs -0 sha256sum
@@ -29,16 +31,20 @@ if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
     rm -f -- "$VLC_NATIVE_LINK_RECEIPT"
 fi
 if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
-    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-ahb-experimental}"
+    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-ahb-experimental-${SOURCE_HASH:0:16}}"
     # Never reuse a legacy build tree; installation is separately controlled.
     if [[ -d "$JNI/vlc/.git" && ! -f "$JNI/vlc/.ambient-ahb-experimental" ]]; then
         echo "Refusing to use unmarked VLC tree for AHB experiment" >&2
         exit 1
     fi
 else
-    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni}"
+    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-${SOURCE_HASH:0:16}}"
     [[ ! -f "$JNI/vlc/.ambient-ahb-experimental" ]] ||
         { echo "Refusing experimental tree for production VLC" >&2; exit 1; }
+fi
+if [[ -f "$JNI/.ambient-source-hash" && "$(<"$JNI/.ambient-source-hash")" != "$SOURCE_HASH" ]]; then
+    echo "VLC build root contains a different source series; use a fresh VLC_BUILD_ROOT" >&2
+    exit 1
 fi
 export ANDROID_NDK="${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/30.0.16248370}"
 export MAKEFLAGS="-j${NATIVE_JOBS:-8}"
@@ -56,6 +62,7 @@ if [[ ! -d "$JNI/vlc/.git" ]]; then
 fi
 [[ "$(git -C "$JNI" rev-parse HEAD)" == "$JNI_REF" ]] || { echo "Expected libvlcjni $JNI_REF" >&2; exit 1; }
 [[ "$(git -C "$JNI/vlc" rev-parse HEAD)" == "$VLC_REF" ]] || { echo "Expected VLC $VLC_REF" >&2; exit 1; }
+printf '%s\n' "$SOURCE_HASH" > "$JNI/.ambient-source-hash"
 # Keep JNI return types in sync with this revision's Java wrapper.
 for patch in "$ROOT"/native/vlc-aar/jni-patches/*.patch; do
     if git -C "$JNI" apply --check "$patch" 2>/dev/null; then
@@ -72,36 +79,17 @@ for patch in "$JNI"/libvlc/patches/*.patch; do
         git -C "$JNI/vlc" apply --reverse --check "$patch"
     fi
 done
-# ffmpeg-9.0.2.patch supplies compatibility fixes for the pinned n9.0.2 release
-# and puts the v308, v408 and v410 decoders back into that contrib FFmpeg.
-# A tree that already carries an older copy of one of these patches matches
-# neither direction. Restore the paths that copy owns, then apply the current file.
+# Never reset a single file to recover a conflicting patch: multiple patches
+# can own the same file. A source-keyed checkout is rebuilt as a whole;
+# an explicitly supplied incompatible checkout fails without losing changes.
 apply_vlc_patch() {
-    local patch=$1 line path
+    local patch=$1
     if git -C "$JNI/vlc" apply --check "$patch" 2>/dev/null; then
         git -C "$JNI/vlc" apply "$patch"
-        return
+    elif ! git -C "$JNI/vlc" apply --reverse --check "$patch" 2>/dev/null; then
+        echo "VLC patch series conflict: $patch; use a fresh VLC_BUILD_ROOT" >&2
+        return 1
     fi
-    if git -C "$JNI/vlc" apply --reverse --check "$patch" 2>/dev/null; then
-        return
-    fi
-    while IFS= read -r line; do
-        path=${line#+++ b/}
-        [[ "$path" == "/dev/null" ]] && continue
-        if git -C "$JNI/vlc" ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-            git -C "$JNI/vlc" checkout -- "$path"
-        elif [[ -e "$JNI/vlc/$path" ]]; then
-            rm -f "$JNI/vlc/$path"
-        fi
-    done < <(grep -E '^\+\+\+ b/' "$patch")
-    # The first FFmpeg 9 patch guarded these two files. The current patch leaves
-    # them untouched, so an older apply would keep the three fourccs compiled out.
-    if [[ "$(basename "$patch")" == ffmpeg-9.0.2.patch ]]; then
-        git -C "$JNI/vlc" checkout -- \
-            modules/codec/avcodec/fourcc.c \
-            modules/codec/avcodec/avcommon_compat.h
-    fi
-    git -C "$JNI/vlc" apply "$patch"
 }
 for patch in "$ROOT"/native/vlc-aar/patches/*.patch; do
     apply_vlc_patch "$patch"
