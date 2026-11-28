@@ -266,7 +266,15 @@ static inline bool ambient_hdrplus_parse(const uint8_t *data, size_t size, struc
         const struct ambient_hdrplus_window *w=&m.windows[i];
         // Legacy v0/2016 values are allowed but separately identified.
         if(w->fraction!=0.f)m.version0_recommended_fraction=false;
-        if((m.version==1&&i>0&&w->fraction!=0.f) ||
+        float peak=w->maxscl[0];
+        for(unsigned c=1;c<3;c++)if(w->maxscl[c]>peak)peak=w->maxscl[c];
+        bool population_ok=w->average<=peak;
+        const bool reserved=ambient_hdrplus_reserved_markers(w,m.version);
+        for(unsigned j=0;j<w->histogram_count;j++){
+            if(reserved&&(j==1||j==2))continue;
+            if(w->histogram[j].percentile>peak)population_ok=false;
+        }
+        if(!population_ok||(m.version==1&&i>0&&w->fraction!=0.f) ||
             !ambient_hdrplus_distribution_ordered(w,m.version) ||
             (w->tone_mapping&&!ambient_hdrplus_curve_monotone(w)))
             m.metadata_constraints_ok=false;
