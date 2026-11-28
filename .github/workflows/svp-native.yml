@@ -80,6 +80,8 @@ jobs:
             second="$(find "$tmp/$player" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum)"
             [[ "$first" == "$second" ]]
           done
+      - name: Check independent HDR10+ numeric reference
+        run: python3 native/ambientsvp/tests/hdr10plus_reference.py -v
       - name: Prepare Rust
         run: rustup toolchain install stable --profile minimal
       - name: Test native CPU fallback
