@@ -36,6 +36,14 @@ compiler build is not proof of correct gameplay or a performance improvement.
 * Both are artifact-only until the CI and device acceptance gates pass. Public
   channels do not silently select these binaries.
 
+## Additional renderer / recompiler candidates
+
+* NooDS: ARM NEON pixel doubling for integer 2x screen scaling, with scalar
+  tails and unchanged layouts; cross-compile and pixel-equivalence tests.
+* Panda3DS: reuse exact-match native shader callbacks for consecutive draws
+  with the same entrypoint; update only the instruction callback on an
+  entrypoint change. Collision, accuracy-mode and eviction tests remain.
+
 ## Reproducible benchmark execution
 
 Build the runner with the project's NDK, or download its corresponding ABI

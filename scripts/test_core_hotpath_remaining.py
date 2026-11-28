@@ -744,6 +744,46 @@ int main() {
             subprocess.run([str(binary)], check=True)
 
 
+    def test_noods_pixel_doubling_neon_and_scalar_tails(self):
+        compiler = shutil.which("c++")
+        clang = shutil.which("clang")
+        self.assertIsNotNone(compiler)
+        self.assertIsNotNone(clang)
+        _, code = replacement("noods", "for (int cx = 0; cx < scaleX; ++cx)")
+        source = r"""
+#include <stdint.h>
+#include <stddef.h>
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+static void* memcpy(void* d,const void* s,size_t n){return __builtin_memcpy(d,s,n);}
+void expand(const uint32_t* srcRow,uint32_t* dstRow,int sw,int scaleX) {
+    uint32_t* newRow=dstRow;
+""" + code + "\n}\n"
+        test = r"""
+#include <cassert>
+int main() {
+    uint32_t source[65], output[65*3+2];
+    for (unsigned i=0;i<65;++i) source[i]=0x12345678u*i;
+    for(int w=1;w<=65;++w) for(int scale=1;scale<=3;++scale) {
+        for(auto& pixel:output)pixel=0xdeadbeefu;
+        expand(source,output+1,w,scale);
+        assert(output[0]==0xdeadbeefu && output[w*scale+1]==0xdeadbeefu);
+        for(int i=0;i<w*scale;++i)assert(output[i+1]==source[i/scale]);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"scale.cpp"
+            path.write_text(source)
+            subprocess.run([clang,"--target=aarch64-none-elf","-ffreestanding","-O3","-std=c++11",
+                            "-c",str(path),"-o",str(path.with_suffix(".o"))],check=True)
+            path.write_text(source+test)
+            binary=path.with_suffix("")
+            subprocess.run([compiler,"-std=c++11","-O2","-fsanitize=undefined",
+                            str(path),"-o",str(binary)],check=True)
+            subprocess.run([str(binary)],check=True)
+
     def test_panda_shader_cache_collision_accuracy_and_eviction(self):
         compiler = shutil.which("c++")
         self.assertIsNotNone(compiler)
@@ -776,15 +816,15 @@ struct PICAShader {
 #pragma once
 #include "PICA/shader.hpp"
 struct ShaderEmitter {
-    inline static unsigned compiled=0, alive=0;
+    inline static unsigned compiled=0, alive=0, entryLookups=0, prologueLookups=0;
     using InstructionCallback=unsigned;
     using PrologueCallback=void(*)(PICAShader&,unsigned);
     bool accurate; unsigned value=0;
     ShaderEmitter(bool a):accurate(a){++alive;}
     ~ShaderEmitter(){--alive;}
     void compile(const PICAShader& shader){++compiled; value=shader.loadedShader[0]+shader.operandDescriptors[0]+(accurate?10000:0);}
-    InstructionCallback getInstructionCallback(u32 pc){return value+pc;}
-    PrologueCallback getPrologueCallback(){return [](PICAShader& s,unsigned v){s.result=v;};}
+    InstructionCallback getInstructionCallback(u32 pc){++entryLookups;return value+pc;}
+    PrologueCallback getPrologueCallback(){++prologueLookups;return [](PICAShader& s,unsigned v){s.result=v;};}
 };
 """)
             (root/"shader_rec.cpp").write_text(implementation)
@@ -796,8 +836,11 @@ int main() {
     ShaderJIT jit;
     shader.loadedShader[0]=1;
     jit.prepare(shader); jit.run(shader); assert(shader.result==1 && ShaderEmitter::compiled==1);
+    jit.prepare(shader); jit.run(shader); assert(shader.result==1);
+    assert(ShaderEmitter::entryLookups==1 && ShaderEmitter::prologueLookups==1);
     shader.entrypoint=3;
     jit.prepare(shader); jit.run(shader); assert(shader.result==4 && ShaderEmitter::compiled==1);
+    assert(ShaderEmitter::entryLookups==2 && ShaderEmitter::prologueLookups==1);
     shader.loadedShader[0]=2;
     jit.prepare(shader); jit.run(shader); assert(shader.result==5 && ShaderEmitter::compiled==2);
     shader.operandDescriptors[0]=5;
