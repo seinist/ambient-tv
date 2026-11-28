@@ -395,7 +395,7 @@ class GameMetadataRepository @Inject constructor(
         return hints.firstNotNullOfOrNull { hint ->
             val queries = listOf(hint, com.ambient.tv.games.library.gameDisplayTitle(hint),
                 gameMetadataCatalogBase(hint), gameMetadataSearchName(hint)).distinct()
-            val titles = queries.flatMap { library.searchDatTitles(game.systemId, it) }.distinct()
+            val titles = queries.flatMap { library.searchDatTitlePrefixes(game.systemId, it) }.distinct()
             matchingGameCatalogTitles(hint, titles).takeIf { it.isNotEmpty() }
         }.orEmpty()
     }

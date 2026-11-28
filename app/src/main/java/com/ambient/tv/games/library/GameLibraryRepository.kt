@@ -134,7 +134,7 @@ internal fun cachedGameMatchesFolder(
         else GameSystems.acceptsFile(system, filename)
 }
 
-private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 8) {
+private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 9) {
     init { setWriteAheadLoggingEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
@@ -152,6 +152,7 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
         db.execSQL("""CREATE TABLE game_dat_entries (
             system_id TEXT NOT NULL, crc32 TEXT NOT NULL, title TEXT NOT NULL, search_title TEXT NOT NULL,
             PRIMARY KEY(system_id, crc32))""")
+        db.execSQL("CREATE INDEX game_dat_search ON game_dat_entries(system_id,search_title)")
         db.execSQL("""CREATE TABLE game_dat_versions (
             system_id TEXT NOT NULL PRIMARY KEY, revision INTEGER NOT NULL)""")
         GameLibraryQueryIndex.create(db)
@@ -203,6 +204,8 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
                 }
             }
         }
+        if (oldVersion < 9)
+            db.execSQL("CREATE INDEX IF NOT EXISTS game_dat_search ON game_dat_entries(system_id,search_title)")
     }
 }
 
@@ -500,6 +503,18 @@ class GameLibraryRepository @Inject constructor(
             WHERE system_id=? AND instr(search_title,?)>0
             ORDER BY CASE WHEN search_title=? THEN 0 ELSE 1 END,title COLLATE NOCASE
             LIMIT ?""", arrayOf(systemId, key, key, limit.coerceAtMost(100).toString())).use { rows ->
+            buildList { while (rows.moveToNext()) add(rows.getString(0)) }
+        }
+    }
+
+    /** Automatic matching only needs exact/prefix candidates, not an entire DAT substring scan. */
+    internal fun searchDatTitlePrefixes(systemId: String, query: String, limit: Int = 100): List<String> {
+        val key = gameDatSearchKey(query.take(256))
+        if (key.isEmpty() || limit <= 0) return emptyList()
+        return db.readableDatabase.rawQuery("""SELECT DISTINCT title,search_title FROM game_dat_entries
+            WHERE system_id=? AND search_title>=? AND search_title<?
+            ORDER BY CASE WHEN search_title=? THEN 0 ELSE 1 END,title COLLATE NOCASE
+            LIMIT ?""", arrayOf(systemId, key, key + '\uFFFF', key, limit.coerceAtMost(100).toString())).use { rows ->
             buildList { while (rows.moveToNext()) add(rows.getString(0)) }
         }
     }
@@ -1415,6 +1430,17 @@ class GameLibraryRepository @Inject constructor(
             val scanContext = kotlinx.coroutines.currentCoroutineContext()
             val previewGeneration = System.nanoTime()
             val published = hashSetOf<String>()
+            var pendingPreviewChange = false
+            var lastPreviewPulse = 0L
+            fun flushPreview(force: Boolean = false) = synchronized(queryLock) {
+                val now = System.nanoTime()
+                if (pendingPreviewChange && (force || lastPreviewPulse == 0L ||
+                        now - lastPreviewPulse >= 250_000_000L)) {
+                    pendingPreviewChange = false
+                    lastPreviewPulse = now
+                    changed()
+                }
+            }
             // New files may be published before the complete snapshot. Existing files are
             // never removed or overwritten until successful validation of the whole scan.
             fun publishAdditions(batch: List<IndexedGame>) = synchronized(queryLock) {
@@ -1447,7 +1473,10 @@ class GameLibraryRepository @Inject constructor(
                     if (ids.isNotEmpty()) refreshQueryFiles(ids, configuration)
                     writable.setTransactionSuccessful()
                 } finally { writable.endTransaction() }
-                if (ids.isNotEmpty()) changed()
+                if (ids.isNotEmpty()) {
+                    pendingPreviewChange = true
+                    flushPreview()
+                }
             }
             // Disc grouping and ISO signatures need the complete verified snapshot.
             // Cartridge files with a compatible extension are safe to publish from listings.
@@ -1465,15 +1494,15 @@ class GameLibraryRepository @Inject constructor(
 
             // Bounded channel avoids 200k open file handles, 200k suspended coroutines, and
             // keeping a second copy of the entire directory catalog in device RAM.
-            val results = kotlinx.coroutines.coroutineScope {
+            val results = try { kotlinx.coroutines.coroutineScope {
                 val queue = kotlinx.coroutines.channels.Channel<FileEntry>(96)
                 val lister = launch(Dispatchers.IO) {
                     try {
+                        val entries = ArrayList<FileEntry>()
                         access.gameScanSession(source).use { session ->
                             val pending = ArrayDeque<Pair<String, Int>>()
                             val visited = hashSetOf<String>()
                             pending.add(folder.path to 0)
-                            val entries = ArrayList<FileEntry>()
                             val previews = ArrayList<IndexedGame>(128)
                             while (pending.isNotEmpty()) {
                                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -1516,10 +1545,11 @@ class GameLibraryRepository @Inject constructor(
                                 }
                                 onProgress(0, discovered.get())
                             }
-                            // The existing 200k bound also bounds the listing snapshot.
-                            // Header workers must not delay discovering the remaining files.
-                            for (entry in entries) queue.send(entry)
                         }
+                        flushPreview(force = true)
+                        // The existing 200k limit bounds discovery. Release the listing
+                        // connection before slow header workers drain the queue.
+                        for (entry in entries) queue.send(entry)
                     } finally {
                         queue.close()
                     }
@@ -1642,7 +1672,7 @@ class GameLibraryRepository @Inject constructor(
                 }
                 lister.join()
                 workers.awaitAll()
-            }
+            } } finally { flushPreview(force = true) }
 
             val selected = results.flatMapTo(ArrayList<IndexedGame>()) { it.first }
             val references = results.flatMap { it.second.entries }

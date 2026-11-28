@@ -121,8 +121,10 @@ class GameLibraryViewModel @Inject constructor(
     private fun updateScan(transform: (GameLibraryUiState) -> GameLibraryUiState) {
         // Only scan-related transforms use this path. The shared state never contains
         // browse results. Atomic updates prevent concurrent workers losing progress.
+        val wasScanning = work.progress.value.scanning
         work.progress.update(transform)
         applyScanProgress(forceFeedback = true)
+        if (wasScanning && !work.progress.value.scanning) refreshRevision.update { it + 1 }
     }
     private fun showScanError(error: Throwable, fallback: Int) {
         libraryReadError = null

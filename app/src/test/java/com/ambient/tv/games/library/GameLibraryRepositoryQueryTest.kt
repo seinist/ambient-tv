@@ -201,7 +201,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(listOf("other"), library.games(GameLibraryQuery(section = "gba")).map { it.fileId })
         assertTrue(library.games(GameLibraryQuery(section = "favorites")).isEmpty())
         raw().use { db ->
-            assertEquals(8, db.version)
+            assertEquals(9, db.version)
             db.rawQuery("SELECT revision FROM game_dat_versions WHERE system_id='snes'", null).use {
                 assertTrue(it.moveToFirst()); assertEquals(7L, it.getLong(0))
             }
@@ -216,7 +216,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(listOf("Verified DAT name"), library.searchDatTitles("snes", "verified_datname"))
         assertTrue(library.searchDatTitles("gba", "verified").isEmpty())
         raw().use { db ->
-            assertEquals(8, db.version)
+            assertEquals(9, db.version)
             db.rawQuery("SELECT search_title FROM game_dat_entries", null).use { rows ->
                 assertTrue(rows.moveToFirst())
                 assertEquals("verifieddatname", rows.getString(0))
@@ -238,6 +238,8 @@ class GameLibraryRepositoryQueryTest {
             library.searchDatTitles("snes", "SUPER MARIOWORLD", 2))
         assertEquals(3, library.searchDatTitles("snes", "super_mario-world").size)
         assertEquals(listOf("Pokémon (World)"), library.searchDatTitles("snes", "pokemon"))
+        assertEquals(listOf("Pokémon (World)"), library.searchDatTitlePrefixes("snes", "pokemon"))
+        assertTrue(library.searchDatTitlePrefixes("snes", "world").isEmpty())
         assertTrue(library.searchDatTitles("gba", "Mario").isEmpty())
         assertTrue(library.searchDatTitles("snes", "_%").isEmpty())
         assertTrue(library.searchDatTitles("snes", "Mario", 0).isEmpty())
@@ -337,7 +339,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("Super Mario World (USA)", oldLibrary.game("automatic")!!.verifiedTitle)
         assertEquals("INTERNAL NAME", oldLibrary.game("automatic")!!.title)
         raw().use { db ->
-            assertEquals(8, db.version)
+            assertEquals(9, db.version)
             // Reproduce the persisted display policy from the release before this repair.
             GameLibraryQueryIndex.signature(db, gameQueryDigest(listOf("3",
                 prefs.getString("game_library_folders", "[]").orEmpty(),
@@ -1012,7 +1014,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("Online title", library.game("one")!!.title)
         assertEquals(1995, library.game("one")!!.metadataYear)
         assertEquals("Full description", library.metadata("one")!!.summary)
-        raw().use { assertEquals(8, it.version) }
+        raw().use { assertEquals(9, it.version) }
     }
 
     @Test fun metadataLocksAndCanonicalIdentitySurviveTitleAndFavoriteEdits() {
@@ -1119,7 +1121,7 @@ class GameLibraryRepositoryQueryTest {
         val revision = library.revisions.value
         assertEquals(0, library.backfillCoverGeometry { error("An already checked cover must not be reopened") })
         assertEquals(revision, library.revisions.value)
-        raw().use { assertEquals(8, it.version) }
+        raw().use { assertEquals(9, it.version) }
     }
 
     private fun pendingGeometry(fileId: String) = raw().use { db ->
