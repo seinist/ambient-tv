@@ -208,6 +208,7 @@ private fun RommGameInformation(
             TvActionButton(stringResource(R.string.game_detail_play), onClick = onPlay,
                 icon = Icons.Filled.PlayArrow,
                 modifier = Modifier.focusRequester(primaryFocus).browseFocusTarget("game-play"))
+            com.ambient.tv.livetv.GameScheduleAction(game, romm = true, enabled = !busy)
             if (game.lastPlayed > 0L) TvActionButton(stringResource(R.string.game_reset), onClick = onPlayFresh,
                 icon = Icons.Filled.RestartAlt)
             TvActionButton(stringResource(if (game.favorite) R.string.radio_remove_favorite else R.string.radio_add_favorite),
