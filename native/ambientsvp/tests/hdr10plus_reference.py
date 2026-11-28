@@ -8,6 +8,7 @@ not an accredited conformance suite.
 from decimal import Decimal as D, localcontext, ROUND_HALF_UP
 from fractions import Fraction
 import struct
+import random
 import unittest
 
 def quant(value, scale):
@@ -85,6 +86,43 @@ class Reference(unittest.TestCase):
         self.assertEqual(distribution(values,[1,5,10,25,50,75,90,95,99],1),[100,0,255,100,200,300,400,400,400])
         self.assertEqual(sum(selected(x,y,(0,0,8,8),(0,0),(4,2),0) for y in range(8) for x in range(8)),10)
         self.assertEqual(sum(selected(x,y,(0,0,8,8),(0,0),(4,2),90) for y in range(8) for x in range(8)),10)
+
+    def test_portable_gpu_integer_arithmetic(self):
+        # Independent arbitrary-precision oracle versus the two-word
+        # operations used by the GPU implementation.
+        mask=(1<<32)-1
+        rng=random.Random(209440)
+        def wide_mul(a,b):
+            a0,a1=a&65535,a>>16
+            b0,b1=b&65535,b>>16
+            w0=a0*b0
+            t=a1*b0+(w0>>16)
+            mid=a0*b1+(t&65535)
+            return ((a1*b1+(t>>16)+(mid>>16))<<32)|(((mid<<16)|(w0&65535))&mask)
+        def wide_div(n,d):
+            rem,q=n>>32,0
+            for i in range(31,-1,-1):
+                rem=(rem<<1)|((n>>i)&1)
+                if rem>=d:
+                    rem-=d
+                    q|=1<<i
+            return q+(rem>=(d+1)//2)
+        def weight(eps):
+            if eps<=3921568:
+                return 4000000000
+            if eps<19607844:
+                return (705032704-eps*255)&mask
+            return 0
+        for _ in range(10000):
+            a,b=rng.randrange(1<<32),rng.randrange(1<<32)
+            self.assertEqual(wide_mul(a,b),a*b)
+            d=rng.randrange(1,3840*2160+1)
+            n=rng.randrange(d*1000000000+1)
+            self.assertEqual(wide_div(n,d),(n+d//2)//d)
+            eps=rng.randrange(1000000001)
+            self.assertEqual(weight(eps),max(0,min(4000000000,5000000000-eps*255)))
+        for eps in (0,3921567,3921568,3921569,19607842,19607843,19607844,1000000000):
+            self.assertEqual(weight(eps),max(0,min(4000000000,5000000000-eps*255)))
 
     def test_proxy_and_fbp(self):
         a = [(Fraction(1,2),)*3]*50
