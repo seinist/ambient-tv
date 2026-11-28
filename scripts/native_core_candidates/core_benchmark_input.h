@@ -14,6 +14,7 @@
 struct BenchmarkInput {
     using Key=std::tuple<unsigned,unsigned,unsigned,unsigned>;
     uint16_t mask=0;
+    std::array<uint16_t,8> joypads{};
     std::array<int16_t,7> extra{};
     std::vector<std::pair<Key,int16_t>> values;
     unsigned ports=1;
@@ -28,15 +29,7 @@ struct BenchmarkInput {
         if(port>=ports)return 0;
         device &= RETRO_DEVICE_MASK;
         if(device==RETRO_DEVICE_JOYPAD && !index) {
-            uint16_t result=port==0?mask:0;
-            if(auto* value=find(port,device,0,RETRO_DEVICE_ID_JOYPAD_MASK))
-                result=static_cast<uint16_t>(*value);
-            for(unsigned bit=0;bit<16;++bit) {
-                if(auto* value=find(port,device,0,bit)) {
-                    const uint16_t bitmask=uint16_t(1u<<bit);
-                    result=*value?uint16_t(result|bitmask):uint16_t(result&~bitmask);
-                }
-            }
+            const uint16_t result=joypads[port];
             if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return static_cast<int16_t>(result);
             return id<16?((result>>id)&1u):0;
         }
@@ -102,6 +95,18 @@ struct BenchmarkInput {
             for(size_t i=1;i<frame.values.size();++i)
                 if(frame.values[i-1].first==frame.values[i].first)
                     throw std::invalid_argument("Duplicate extended input");
+        }
+        frame.joypads[0]=frame.mask;
+        for(unsigned port=0;port<frame.ports;++port) {
+            auto& result=frame.joypads[port];
+            if(auto* value=frame.find(port,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK))
+                result=static_cast<uint16_t>(*value);
+            for(unsigned bit=0;bit<16;++bit) {
+                if(auto* value=frame.find(port,RETRO_DEVICE_JOYPAD,0,bit)) {
+                    const uint16_t bitmask=uint16_t(1u<<bit);
+                    result=*value?uint16_t(result|bitmask):uint16_t(result&~bitmask);
+                }
+            }
         }
         return frame;
     }

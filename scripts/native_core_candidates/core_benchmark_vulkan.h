@@ -22,6 +22,36 @@ static inline VkImageMemoryBarrier benchmark_ownership_barrier(
     return barrier;
 }
 
+// Raw color payload of the supported Vulkan formats. Packed formats mask
+// alpha/unused bits; vector formats hash the first three components only.
+struct BenchmarkPixelLayout {
+    uint32_t bytes=0, color_bytes=0, color_mask=0;
+};
+static inline BenchmarkPixelLayout benchmark_pixel_layout(VkFormat format) {
+    switch(format) {
+    case VK_FORMAT_R8G8B8_UNORM: case VK_FORMAT_R8G8B8_SRGB:
+    case VK_FORMAT_B8G8R8_UNORM: case VK_FORMAT_B8G8R8_SRGB: return {3,3,0};
+    case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
+    case VK_FORMAT_A8B8G8R8_UNORM_PACK32: case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        return {4,3,0};
+    case VK_FORMAT_R5G6B5_UNORM_PACK16: case VK_FORMAT_B5G6R5_UNORM_PACK16:
+        return {2,2,0};
+    case VK_FORMAT_R5G5B5A1_UNORM_PACK16: case VK_FORMAT_B5G5R5A1_UNORM_PACK16:
+        return {2,0,0xfffeu};
+    case VK_FORMAT_A1R5G5B5_UNORM_PACK16: return {2,0,0x7fffu};
+    case VK_FORMAT_R4G4B4A4_UNORM_PACK16: case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
+        return {2,0,0xfff0u};
+    case VK_FORMAT_A2R10G10B10_UNORM_PACK32: case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+        return {4,0,0x3fffffffu};
+    case VK_FORMAT_R16G16B16_UNORM: case VK_FORMAT_R16G16B16_SFLOAT: return {6,6,0};
+    case VK_FORMAT_R16G16B16A16_UNORM: case VK_FORMAT_R16G16B16A16_SFLOAT:
+        return {8,6,0};
+    case VK_FORMAT_R32G32B32_SFLOAT: return {12,12,0};
+    case VK_FORMAT_R32G32B32A32_SFLOAT: return {16,12,0};
+    default:return {};
+    }
+}
 // Headless, single-slot, synchronous GPU benchmark. No presentation.
 class BenchmarkVulkan {
     retro_hw_render_context_negotiation_interface_vulkan negotiation{};
@@ -38,6 +68,7 @@ class BenchmarkVulkan {
     VkDeviceSize readback_capacity=0;
     bool readback_coherent=false;
     VkFormat frame_format=VK_FORMAT_UNDEFINED;
+    VkComponentMapping frame_components{};
     VkImage frame_image=VK_NULL_HANDLE;
     VkImageLayout frame_layout=VK_IMAGE_LAYOUT_UNDEFINED;
     VkImageSubresourceRange frame_range{};
@@ -77,6 +108,7 @@ class BenchmarkVulkan {
         }
         s.frame_image=image->create_info.image;
         s.frame_format=image->create_info.format;
+        s.frame_components=image->create_info.components;
         s.frame_layout=image->image_layout;
         s.frame_range=image->create_info.subresourceRange;
         s.frame_family=family;
@@ -231,13 +263,15 @@ public:
     }
     // Optional correctness readback; no staging allocation or copy in timing mode.
     bool frame(bool valid,uint32_t width=0,uint32_t height=0,
-               std::vector<uint8_t>* pixels=nullptr,VkFormat* pixel_format=nullptr) {
+               std::vector<uint8_t>* pixels=nullptr,VkFormat* pixel_format=nullptr,
+               VkComponentMapping* pixel_components=nullptr) {
         std::vector<VkSemaphore> frame_waits;
         std::vector<VkCommandBuffer> frame_commands;
         VkSemaphore frame_signal=VK_NULL_HANDLE;
         VkImage image=VK_NULL_HANDLE;
         VkImageLayout layout=VK_IMAGE_LAYOUT_UNDEFINED;
         VkFormat format=VK_FORMAT_UNDEFINED;
+        VkComponentMapping components{};
         VkImageSubresourceRange range{};
         uint32_t family=VK_QUEUE_FAMILY_IGNORED;
         {
@@ -245,7 +279,7 @@ public:
             if(!created || failed || (valid && !image_set))return false;
             waits.swap(frame_waits);commands.swap(frame_commands);
             frame_signal=signal;signal=VK_NULL_HANDLE;
-            if(valid){image=frame_image;layout=frame_layout;format=frame_format;range=frame_range;family=frame_family;}
+            if(valid){image=frame_image;layout=frame_layout;format=frame_format;components=frame_components;range=frame_range;family=frame_family;}
             image_set=false;frame_image=VK_NULL_HANDLE;frame_family=VK_QUEUE_FAMILY_IGNORED;
         }
         // Never hold the callback state mutex while waiting on the queue lock.
@@ -254,16 +288,17 @@ public:
         const bool wait_image=valid && frame_commands.empty();
         const bool transfer=valid && family!=VK_QUEUE_FAMILY_IGNORED && family!=iface.queue_index;
         const bool capture=valid && pixels;
+        const auto pixel_layout=benchmark_pixel_layout(format);
+        const VkDeviceSize capture_bytes=VkDeviceSize(width)*height*pixel_layout.bytes;
         if(transfer && (!wait_image || frame_waits.empty())) {failed=true;return false;}
         if(capture) {
             // The Libretro Vulkan interface requires TRANSFER_SRC usage.
             // Restrict strict readback to explicitly supported packed formats.
             if(!image || !width || !height || width>8192 || height>8192 ||
-               (format!=VK_FORMAT_R8G8B8A8_UNORM && format!=VK_FORMAT_R8G8B8A8_SRGB &&
-                format!=VK_FORMAT_B8G8R8A8_UNORM && format!=VK_FORMAT_B8G8R8A8_SRGB) ||
+               !pixel_layout.bytes || capture_bytes>256ull*1024*1024 ||
                (layout!=VK_IMAGE_LAYOUT_GENERAL && layout!=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) ||
                range.aspectMask!=VK_IMAGE_ASPECT_COLOR_BIT || range.levelCount!=1 || range.layerCount!=1 ||
-               !ensure_readback(VkDeviceSize(width)*height*4)) {failed=true;return false;}
+               !ensure_readback(capture_bytes)) {failed=true;return false;}
         }
         if(transfer || capture) {
             VkCommandBufferBeginInfo begin{};begin.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -325,9 +360,10 @@ public:
                 ok=vkInvalidateMappedMemoryRanges(context.device,1,&mapped)==VK_SUCCESS;
             }
             if(ok) {
-                pixels->resize(size_t(width)*height*4);
+                pixels->resize(static_cast<size_t>(capture_bytes));
                 std::memcpy(pixels->data(),readback_map,pixels->size());
                 if(pixel_format)*pixel_format=format;
+                if(pixel_components)*pixel_components=components;
             }
         }
         if(!ok)failed=true;

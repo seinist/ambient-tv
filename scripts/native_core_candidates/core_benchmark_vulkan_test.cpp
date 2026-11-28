@@ -4,6 +4,11 @@
 #include <cstdio>
 
 int main() {
+    assert(benchmark_pixel_layout(VK_FORMAT_R5G6B5_UNORM_PACK16).bytes==2);
+    assert(benchmark_pixel_layout(VK_FORMAT_A2B10G10R10_UNORM_PACK32).color_mask==0x3fffffffu);
+    assert(benchmark_pixel_layout(VK_FORMAT_R16G16B16A16_SFLOAT).color_bytes==6);
+    assert(benchmark_pixel_layout(VK_FORMAT_R32G32B32A32_SFLOAT).bytes==16);
+    assert(benchmark_pixel_layout(VK_FORMAT_D32_SFLOAT).bytes==0);
     BenchmarkVulkan backend;
     assert(backend.init());
     auto* api=reinterpret_cast<const retro_hw_render_interface_vulkan*>(backend.interface());

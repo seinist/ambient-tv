@@ -297,8 +297,9 @@ static void read_gles_pixels(unsigned w,unsigned h) {
 }
 static void video(const void* data,unsigned w,unsigned h,size_t pitch) {
     VkFormat vk_format=VK_FORMAT_UNDEFINED;
+    VkComponentMapping components{};
     const bool hw_frame=data==RETRO_HW_FRAME_BUFFER_VALID;
-    if(vulkan && !vk.frame(hw_frame,w,h,verify_output?&hardware_pixels:nullptr,&vk_format))
+    if(vulkan && !vk.frame(hw_frame,w,h,verify_output?&hardware_pixels:nullptr,&vk_format,&components))
         die("Vulkan frame submission/readback failed");
     if(verify_output && hardware) {
         hash_value(video_hash,w,4);hash_value(video_hash,h,4);
@@ -307,11 +308,21 @@ static void video(const void* data,unsigned w,unsigned h,size_t pitch) {
         if(hw_frame) {
             if(!vulkan)read_gles_pixels(w,h);
             hash_value(video_hash,static_cast<uint32_t>(vk_format),4);
-            const bool bgra=vk_format==VK_FORMAT_B8G8R8A8_UNORM || vk_format==VK_FORMAT_B8G8R8A8_SRGB;
-            for(size_t i=0;i<hardware_pixels.size();i+=4) {
-                hash_value(video_hash,hardware_pixels[i+(bgra?2:0)],1);
-                hash_value(video_hash,hardware_pixels[i+1],1);
-                hash_value(video_hash,hardware_pixels[i+(bgra?0:2)],1);
+            const auto layout=vulkan?benchmark_pixel_layout(vk_format):BenchmarkPixelLayout{4,3,0};
+            if(!layout.bytes || hardware_pixels.size()%layout.bytes)die("Invalid GPU pixel layout");
+            if(vulkan) {
+                for(auto component:{components.r,components.g,components.b,components.a})
+                    hash_value(video_hash,static_cast<uint32_t>(component),4);
+            }
+            for(size_t i=0;i<hardware_pixels.size();i+=layout.bytes) {
+                if(layout.color_mask) {
+                    uint32_t packed=0;
+                    std::memcpy(&packed,hardware_pixels.data()+i,layout.bytes);
+                    hash_value(video_hash,packed&layout.color_mask,layout.bytes);
+                } else {
+                    for(uint32_t byte=0;byte<layout.color_bytes;++byte)
+                        hash_value(video_hash,hardware_pixels[i+byte],1);
+                }
             }
         }
     }

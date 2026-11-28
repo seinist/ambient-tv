@@ -290,7 +290,10 @@ software pixels (excluding padding and unused color bits) and audio samples.
 GLES correctness replay reads the frontend pbuffer, preserving pixel pack and
 framebuffer bindings. Vulkan correctness replay copies the supplied image to a
 host-visible staging buffer, preserving image layout and queue ownership; it
-supports RGBA/BGRA 8-bit UNORM and sRGB views and rejects unsupported formats.
+supports RGB/RGBA/BGR/BGRA 8-bit UNORM/sRGB, common packed 4/5/6/10-bit formats,
+and 16/32-bit RGB/RGBA color payloads (including floating point). The hash
+also binds the view format and component mapping. Unsupported or oversized
+readbacks fail explicitly; the staging budget is capped at 256 MiB.
 `"require_video_hash": true` explicitly rejects missing video proof.
 The diagnostic FNV-1a fingerprints are not cryptographic or a universal
 visual-quality metric. Asynchronous or nondeterministic fixtures may fail strict
