@@ -10,7 +10,7 @@ const STRIDE:u32=56u;
 @group(0) @binding(3) var<storage,read> motion:array<vec4i>;
 fn pq(v:vec3f)->vec3f{
     let p=pow(clamp(v,vec3f(0.0),vec3f(1.0)),vec3f(1.0/78.84375));
-    return pow(max(p-vec3f(0.8359375),vec3f(0.0))/max(vec3f(18.8515625)-19.6875*p,vec3f(0.000001)),vec3f(1.0/0.1593017578125));
+    return pow(max(p-vec3f(0.8359375),vec3f(0.0))/max(vec3f(18.8515625)-18.6875*p,vec3f(0.000001)),vec3f(1.0/0.1593017578125));
 }
 // Window tracking stays on the resident motion field. For each endpoint
 // use only blocks whose forward/reverse displacement agrees at the
