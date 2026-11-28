@@ -446,6 +446,13 @@ android {
         buildConfigField("String", "LIBRETRODROID_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_COMMIT")))
         buildConfigField("String", "RCHEEVOS_VERSION", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_VERSION")))
         buildConfigField("String", "RCHEEVOS_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_COMMIT")))
+        buildConfigField("String", "SHADER_MODULE_BINDING_SHA256", quotedBuildConfigString(
+            MessageDigest.getInstance("SHA-256").digest(rootProject.file("scripts/native_libretro_vulkan/librashader.h").readBytes())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+        ))
+        buildConfigField("boolean", "SHADER_RUNTIME_BUNDLED", (!modularPreview &&
+            providers.gradleProperty("LIBRASHADER_NATIVE").orElse(providers.environmentVariable("LIBRASHADER_NATIVE"))
+                .orElse("0").get() == "1").toString())
         buildConfigField("String", "LIBRASHADER_VERSION", quotedBuildConfigString(externalVersion("LIBRASHADER_VERSION")))
         buildConfigField("String", "LIBRASHADER_REF", quotedBuildConfigString(externalVersion("LIBRASHADER_COMMIT")))
     }
@@ -545,7 +552,7 @@ android {
             val includeNativeSlang = providers.gradleProperty("LIBRASHADER_NATIVE")
                 .orElse(providers.environmentVariable("LIBRASHADER_NATIVE"))
                 .orElse("0").get() == "1"
-            if (!includeNativeSlang) excludes += "**/liblibrashader_capi.so"
+            if (!includeNativeSlang || modularPreview) excludes += "**/liblibrashader_capi.so"
 
             // AGP's llvm-strip rejects these prebuilt ELFs and would keep their debug info.
             // The release strip below still runs llvm-strip --strip-unneeded on every .so.
