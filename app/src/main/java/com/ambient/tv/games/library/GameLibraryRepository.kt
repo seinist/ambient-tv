@@ -21,6 +21,7 @@ import com.ambient.tv.games.metadata.GameArtworkFile
 import com.ambient.tv.games.metadata.GameArtworkFiles
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameMetadata
+import com.ambient.tv.games.metadata.GameNameDatabases
 import com.ambient.tv.games.metadata.GameMetadataProviderIds
 import com.ambient.tv.games.metadata.GameMetadataStorage
 import com.ambient.tv.games.metadata.GameMetadataTicket
@@ -440,7 +441,7 @@ class GameLibraryRepository @Inject constructor(
                     )
                     // Reuse checksums already collected for these files before asking their
                     // source for anything. Manual title/metadata locks remain untouched.
-                    writable.execSQL(
+                    if (GameNameDatabases.usesChecksums(systemId)) writable.execSQL(
                         """UPDATE game_entries SET verified_title=COALESCE(
                             (SELECT title FROM game_dat_entries d WHERE d.system_id=game_entries.system_id
                                 AND d.crc32=game_entries.archive_crc),
@@ -1380,7 +1381,7 @@ class GameLibraryRepository @Inject constructor(
                                     } else {
                                         val probed = runCatching {
                                             reader().open(entry.path).use {
-                                                GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = datVersions.keys)
+                                                GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = datVersions.keys.filter(GameNameDatabases::usesChecksums).toSet())
                                             }
                                         }
                                         // Network/decoder errors must NOT silently delete a
@@ -1411,10 +1412,11 @@ class GameLibraryRepository @Inject constructor(
                                         cachedProbe && (last.archiveCrc != null || version == 0L) ->
                                             GameRomChecksums.Result(last.archiveCrc, last.datCrc)
                                         archive != null -> GameRomChecksums.Result(archive.crc32, archive.datCrc32)
-                                        version > 0L -> datChecksums(reader(), entry, system.id)
+                                        version > 0L && GameNameDatabases.usesChecksums(system.id) -> datChecksums(reader(), entry, system.id)
                                         else -> GameRomChecksums.Result(null)
                                     }
                                     val verified = when {
+                                        !GameNameDatabases.usesChecksums(system.id) -> last?.verifiedTitle?.takeIf { unchanged }
                                         version == 0L -> null
                                         cachedProbe && last.datVersion == version -> last.verifiedTitle
                                         else -> checksums.crc32?.let { datNameFromCrc(system.id, it) }
