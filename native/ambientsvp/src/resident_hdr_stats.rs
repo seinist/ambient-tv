@@ -94,16 +94,17 @@ impl StatsJob{
             if slot.is_none(){*slot=Some(Arc::new(StatsPipelines::new(core)?));}
             slot.as_ref().unwrap().clone()
         };
-        if scene&&windows.len()!=1{return Err("scene statistics require version 1 global window".into());}
+        if scene&&windows.len()>1&&ellipses.is_none(){return Err("local scene windows require ellipse geometry".into());}
+        if scene&&tracking.is_some_and(|t|t.1!=0.0){return Err("scene capture requires fixed per-output geometry".into());}
         let proxy_count=if scene{u64::from(core.width.div_ceil(5))*u64::from(core.height.div_ceil(5))}else{0};
         let hist=Buffer::new(core,(BINS*windows.len() as u64+proxy_count)*4,
             vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
-        let scene_hist=if scene{Some(Buffer::new(core,BINS*4,vk::BufferUsageFlags::TRANSFER_DST,
+        let scene_hist=if scene{Some(Buffer::new(core,BINS*4*windows.len() as u64,vk::BufferUsageFlags::TRANSFER_DST,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?)}else{None};
         let summary=Buffer::new(core,(STRIDE*4*windows.len()) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
         let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
-            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
+            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some()&&!scene,affine:tracking.is_some_and(|t|t.2),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
         let mut config=vec![0u32;STRIDE*windows.len()];
         for (i,w) in windows.iter().enumerate(){
             let row=&mut config[i*STRIDE..(i+1)*STRIDE];
@@ -169,7 +170,7 @@ impl StatsJob{
                     .dst_access_mask(vk::AccessFlags::TRANSFER_READ)];
                 d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER,
                     vk::DependencyFlags::empty(),&transfer,&[],&[]);
-                d.cmd_copy_buffer(cmd,self.hist.buffer,hist.buffer,&[vk::BufferCopy::default().size(BINS*4)]);
+                d.cmd_copy_buffer(cmd,self.hist.buffer,hist.buffer,&[vk::BufferCopy::default().size(BINS*4*self.windows.len() as u64)]);
                 let host=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ)];
                 d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
                     vk::DependencyFlags::empty(),&host,&[],&[]);
@@ -180,27 +181,37 @@ impl StatsJob{
         }
     }
     pub(super) fn scene_frame(&self)->Result<SceneFrame>{
+        if self.windows.len()!=1{return Err("expected one global scene window".into());}
+        Ok(self.scene_frames()?.remove(0).frame)
+    }
+    pub(super) fn scene_frames(&self)->Result<Vec<SceneWindowFrame>>{
         let hist=self.scene_hist.as_ref().ok_or("scene capture not recorded")?;
-        let mut row=[0u32;STRIDE];
-        let mut bins=vec![0u32;BINS as usize];
+        let mut rows=vec![0u32;STRIDE*self.windows.len()];
+        let mut bins=vec![0u32;BINS as usize*self.windows.len()];
         unsafe{
             let mapped=self.summary.map()?;
-            std::ptr::copy_nonoverlapping(mapped,row.as_mut_ptr(),row.len());
+            std::ptr::copy_nonoverlapping(mapped,rows.as_mut_ptr(),rows.len());
             self.device.unmap_memory(self.summary.memory);
             let mapped=hist.map()?;
             std::ptr::copy_nonoverlapping(mapped,bins.as_mut_ptr(),bins.len());
             self.device.unmap_memory(hist.memory);
         }
-        let average=f32::from_bits(row[61]);let fraction=f32::from_bits(row[62]);
+        let mut output=Vec::with_capacity(self.windows.len());
+        for (i,w) in self.windows.iter().enumerate(){
+        let row=&rows[i*STRIDE..(i+1)*STRIDE];
+        let bins=bins[i*BINS as usize..(i+1)*BINS as usize].to_vec();
+        let average=if i==0{f32::from_bits(row[61])}else{0.0};let fraction=if i==0{f32::from_bits(row[62])}else{0.0};
         let linear_sum=u64::from(row[56])|(u64::from(row[57])<<32);
-        if row[63]!=self.width.div_ceil(5)*self.height.div_ceil(5)||
+        if (i==0&&row[63]!=self.width.div_ceil(5)*self.height.div_ceil(5))||
             !average.is_finite()||!(0.0..=1.0).contains(&average)||
             !fraction.is_finite()||!(0.0..=1.0).contains(&fraction)||
-            row[39]!=self.width*self.height||bins.iter().map(|&v|u64::from(v)).sum::<u64>()!=u64::from(row[39])||
+            row[39]==0||row[39]>self.width*self.height||i==0&&row[39]!=self.width*self.height||bins.iter().map(|&v|u64::from(v)).sum::<u64>()!=u64::from(row[39])||
             row[20..23].iter().any(|&v|v>100000)||linear_sum>u64::from(row[39])*1_000_000_000{
             return Err("invalid scene frame statistics".into());
         }
-        Ok(SceneFrame{width:self.width,height:self.height,maxscl:[row[20],row[21],row[22]],bins,average,fraction,linear_sum})
+        output.push(SceneWindowFrame{count:w.count,percentages:w.percentages,frame:SceneFrame{width:self.width,height:self.height,maxscl:[row[20],row[21],row[22]],bins,average,fraction,linear_sum}});
+        }
+        Ok(output)
     }
     pub(super) fn ellipses(&self,out:&mut[[u32;3]])->Result<()>{
         if !self.affine||out.len()!=self.windows.len(){return Err("HDR ellipse read contract".into());}
@@ -336,6 +347,7 @@ fn bright_scene_selects_latest_highest_average_and_weighted_band(){
     assert_eq!(BrightScene::default().finish(),None);
 }
 
+pub(super) struct SceneWindowFrame{pub count:u32,pub percentages:[u32;15],pub frame:SceneFrame}
 pub(super) struct SceneFrame{
     pub width:u32,pub height:u32,pub maxscl:[u32;3],
     pub bins:Vec<u32>,pub average:f32,pub fraction:f32,pub linear_sum:u64,
