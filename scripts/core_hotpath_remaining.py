@@ -1264,7 +1264,7 @@ PATCHES = {
     [
       "Common/Thread/ThreadManager.cpp",
       "\tnumComputeThreads_ = std::min(32, numRealCores * numLogicalCoresPerCpu);\n\t// Double it for the IO blocking threads.\n\tconst int numIOThreads = std::min(32, std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_) * 2);",
-      "\tconst int configured = std::max(1, std::min(32, std::min(32, std::max(1, numRealCores)) *\n\t    std::min(32, std::max(1, numLogicalCoresPerCpu))));\n\tnumComputeThreads_ = configured;\n#ifdef __ANDROID__\n\t// Keep stable worker indices for pinned tasks; adapt the width of\n\t// future parallel loops to the frontend's current Android cpuset.\n\t// Allocate stable capacity; only dispatch width follows the current affinity.\n\tbudgetRefreshFrames_ = 0;\n\tRefreshComputeBudget();\n\tconst int numIOThreads = std::min(16, std::max(MIN_IO_BLOCKING_THREADS, configured));\n#else\n\tconst int numIOThreads = std::min(32, std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_) * 2);\n\tactiveComputeThreads_.store(numComputeThreads_, std::memory_order_relaxed);\n#endif"
+      "\tconst int configured = std::max(1, std::min(32, std::min(32, std::max(1, numRealCores)) *\n\t    std::min(32, std::max(1, numLogicalCoresPerCpu))));\n\tnumComputeThreads_ = configured;\n#ifdef __ANDROID__\n\t// Keep stable worker indices for pinned tasks; adapt the width of\n\t// future parallel loops to the frontend's current Android cpuset.\n\t// Allocate stable capacity; only dispatch width follows the current affinity.\n\tbudgetRefreshFrames_ = 0;\n\tRefreshComputeBudget();\n\tconst int numIOThreads = std::min(16, std::max(MIN_IO_BLOCKING_THREADS, configured));\n#else\n\tconst int numIOThreads = std::min(32, std::max(MIN_IO_BLOCKING_THREADS, numComputeThreads_) * 2);\n\tglobal_->activeComputeThreads.store(numComputeThreads_, std::memory_order_relaxed);\n#endif"
     ],
     [
       "libretro/libretro.cpp",
@@ -1304,12 +1304,12 @@ PATCHES = {
     [
       "Common/Thread/ThreadManager.h",
       "\tint numComputeThreads_ = 0;",
-      "\tint numComputeThreads_ = 0;\n\tstd::atomic<int> activeComputeThreads_{1};\n\tuint32_t budgetRefreshFrames_ = 0;"
+      "\tint numComputeThreads_ = 0;\n\tuint32_t budgetRefreshFrames_ = 0;"
     ],
     [
       "Common/Thread/ThreadManager.cpp",
       "void ThreadManager::Init(int numRealCores, int numLogicalCoresPerCpu) {",
-      "[[maybe_unused]] static int ambient_compute_width(int capacity, int available) {\n\tavailable = std::max(1, available);\n\treturn std::max(1, std::min(capacity, available - (available >= 4 ? 2 : 1)));\n}\n\nvoid ThreadManager::RefreshComputeBudget() {\n#ifdef __ANDROID__\n\tif (budgetRefreshFrames_++ % 60 != 0)\n\t\treturn;\n\tcpu_set_t available;\n\tCPU_ZERO(&available);\n\tint count = 0;\n\tif (sched_getaffinity(0, sizeof(available), &available) == 0)\n\t\tcount = CPU_COUNT(&available);\n\tif (count > 0)\n\t\tactiveComputeThreads_.store(ambient_compute_width(numComputeThreads_, count), std::memory_order_relaxed);\n\telse\n\t\tactiveComputeThreads_.store(ambient_compute_width(numComputeThreads_, numComputeThreads_), std::memory_order_relaxed);\n#endif\n}\n\nvoid ThreadManager::Init(int numRealCores, int numLogicalCoresPerCpu) {"
+      "[[maybe_unused]] static int ambient_compute_width(int capacity, int available) {\n\tavailable = std::max(1, available);\n\treturn std::max(1, std::min(capacity, available - (available >= 4 ? 2 : 1)));\n}\n\nvoid ThreadManager::RefreshComputeBudget() {\n#ifdef __ANDROID__\n\tif (budgetRefreshFrames_++ % 60 != 0)\n\t\treturn;\n\tcpu_set_t available;\n\tCPU_ZERO(&available);\n\tint count = 0;\n\tif (sched_getaffinity(0, sizeof(available), &available) == 0)\n\t\tcount = CPU_COUNT(&available);\n\tconst int width = ambient_compute_width(numComputeThreads_, count > 0 ? count : numComputeThreads_);\n\tint previous;\n\t{\n\t\t// Synchronize the width change with workers claiming global tasks.\n\t\tstd::lock_guard<std::mutex> lock(global_->mutex);\n\t\tprevious = global_->activeComputeThreads.exchange(width, std::memory_order_acq_rel);\n\t}\n\tif (width > previous && global_->compute_queue_size.load() > 0) {\n\t\t// Newly eligible workers may be asleep with queued work pending.\n\t\tfor (int i = previous; i < width && i < static_cast<int>(global_->threads_.size()); ++i) {\n\t\t\tauto *thread = global_->threads_[i];\n\t\t\tstd::lock_guard<std::mutex> lock(thread->mutex);\n\t\t\tthread->cond.notify_one();\n\t\t}\n\t}\n#endif\n}\n\nvoid ThreadManager::Init(int numRealCores, int numLogicalCoresPerCpu) {"
     ],
     [
       "Common/Thread/ThreadManager.cpp",
@@ -1318,8 +1318,18 @@ PATCHES = {
     ],
     [
       "Common/Thread/ThreadManager.cpp",
+      "\tconst auto global_queue_size = [isCompute, &global]() -> int {\n\t\treturn isCompute ? global->compute_queue_size.load() : global->io_queue_size.load();\n\t};",
+      "\tconst auto global_queue_size = [isCompute, &global, thread]() -> int {\n\t\tif (isCompute && thread->index >= global->activeComputeThreads.load(std::memory_order_acquire))\n\t\t\treturn 0; // inactive compute workers still process their pinned private tasks\n\t\treturn isCompute ? global->compute_queue_size.load() : global->io_queue_size.load();\n\t};"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
+      "\t\t\tfor (size_t p = 0; p < TASK_PRIORITY_COUNT; ++p) {\n\t\t\t\tif (!queue[p].empty()) {",
+      "\t\t\tfor (size_t p = 0; p < TASK_PRIORITY_COUNT && (!isCompute ||\n\t\t\t     thread->index < global->activeComputeThreads.load(std::memory_order_relaxed)); ++p) {\n\t\t\t\tif (!queue[p].empty()) {"
+    ],
+    [
+      "Common/Thread/ThreadManager.cpp",
       "\tstd::atomic<int> roundRobin;",
-      "\tstd::atomic<uint32_t> roundRobin;"
+      "\tstd::atomic<uint32_t> roundRobin;\n\tstd::atomic<int> activeComputeThreads{1};"
     ],
     [
       "Common/Thread/ThreadManager.cpp",
@@ -1334,7 +1344,7 @@ PATCHES = {
     [
       "Common/Thread/ThreadManager.cpp",
       "int ThreadManager::GetNumLooperThreads() const {\n\treturn numComputeThreads_;\n}",
-      "int ThreadManager::GetNumLooperThreads() const {\n\treturn activeComputeThreads_.load(std::memory_order_relaxed);\n}"
+      "int ThreadManager::GetNumLooperThreads() const {\n\treturn global_->activeComputeThreads.load(std::memory_order_acquire);\n}"
     ],
     [
       "libretro/libretro.cpp",

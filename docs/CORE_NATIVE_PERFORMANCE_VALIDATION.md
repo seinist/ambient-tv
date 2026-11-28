@@ -310,3 +310,9 @@ rule change for an unrelated core no longer invalidates all binaries; shared
 verification changes still invalidate every affected build. PicoDrive and
 SwanStation require linked CPU/frontend/render evidence even for interpreter
 fallback architectures; SH2 and fastmem contracts remain conditional on ABI.
+
+PPSSPP's allocated compute capacity is now independent of the current active
+width. Idle compute workers outside that width do not claim new global work;
+pinned/private tasks still run, and growing the width wakes newly eligible
+workers when global work is queued. Width changes and global claims use the
+same mutex, without cancelling running tasks or changing stable worker IDs.

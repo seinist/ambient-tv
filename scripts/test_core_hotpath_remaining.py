@@ -47,6 +47,18 @@ int main() {
                             str(path),"-o",str(path.with_suffix(""))],check=True)
             subprocess.run([str(path.with_suffix(""))],check=True)
 
+    def test_ppsspp_worker_budget_gates_global_work_but_not_private_work(self):
+        # The production patch must guard both the pre-lock queue test and
+        # the claim under the global mutex, with a wakeup when width increases.
+        _, queue = replacement("ppsspp", "const auto global_queue_size")
+        _, claim = replacement("ppsspp", "if (!queue[p].empty())")
+        _, refresh = replacement("ppsspp", "void ThreadManager::Init(int numRealCores")
+        self.assertIn("thread->index >= global->activeComputeThreads.load", queue)
+        self.assertIn("thread->index < global->activeComputeThreads.load", claim)
+        self.assertIn("global_->mutex", refresh)
+        self.assertIn("thread->cond.notify_one()", refresh)
+        self.assertIn("width > previous", refresh)
+
     def test_picodrive_hash_folds_mirrored_pc_bits(self):
         compiler=shutil.which("cc")
         self.assertIsNotNone(compiler)
