@@ -55,6 +55,10 @@ insert("video/out/gpu/hwdec.c",
        "SVP explicit lazy guard")
 p = source / "video/out/hwdec/hwdec_vulkan.c"
 suffix = '\n#if HAVE_ANDROID_MEDIA_NDK && LIBAVUTIL_VERSION_MAJOR == 61\n#include "svp_mpv_mediacodec.h"\n#endif\n'
+# An explicit exported marker is compiled only with the actual driver.
+marker = '\n#if HAVE_ANDROID_MEDIA_NDK && LIBAVUTIL_VERSION_MAJOR == 61\n__attribute__((visibility("default"))) const int ambient_mpv_svp_resident = 1;\n#endif\n'
+if marker not in p.read_text():
+    p.write_text(p.read_text() + marker)
 if suffix not in p.read_text():
     p.write_text(p.read_text() + suffix)
 insert("video/decode/vd_lavc.c", "#include <float.h>",

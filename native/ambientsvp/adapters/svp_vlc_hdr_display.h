@@ -12,7 +12,9 @@
 #include "hdr10plus_vlc_bridge.h"
 #include <libplacebo/shaders/custom.h>
 #include <libplacebo/shaders/colorspace.h>
+#define AMBIENT_SVP_VLC_OWNED_PL264 1
 #include "svp_placebo_quality.h"
+#undef AMBIENT_SVP_VLC_OWNED_PL264
 #include "svp_hdr_curve.h"
 #include <stdio.h>
 struct ambient_svp_hdr_source {

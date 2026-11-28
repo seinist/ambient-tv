@@ -206,7 +206,16 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
     // hold_ex submits on GRAPHICS. Restrict to a common compute-capable
     // family to avoid relying on undocumented external ownership barriers.
     if(!vk||!vk->get_proc_addr||!vk->lock_queue||!vk->unlock_queue||!vk->queue_compute.count||
+        !vk->queue_graphics.count||
+#if defined(AMBIENT_SVP_VLC_OWNED_PL264)
+#if PL_API_VER != 264
+#error Revalidate the VLC owned queue contract before upgrading libplacebo
+#endif
+        // VLC creates its own device via pl_vulkan_create; v5.264.1
+        // add_qinfo initializes VkDeviceQueueCreateInfo.flags to zero.
+#else
         vk->queue_compute.flags||vk->queue_graphics.flags||
+#endif
         vk->queue_compute.index!=vk->queue_graphics.index)return false;
     if(!s->lib){
         s->lib=dlopen("libambientsvp.so",RTLD_NOW|RTLD_LOCAL);
