@@ -6,7 +6,8 @@ from pathlib import Path
 import re
 from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, compile_source
 from core_link_evidence import target_commands
-from core_hotpath_patches import prepare_hotpaths, SUPPORTED as HOTPATH_CORES
+from core_hotpath_patches import prepare_hotpaths, replace_once, SUPPORTED as HOTPATH_CORES
+from core_hotpath_remaining import prepare_remaining
 import subprocess
 import struct
 import sys
@@ -28,6 +29,7 @@ PROFILES = {
     "pgo-use": (("-O3", "-fprofile-instr-use=ambient.profdata", "-Werror=profile-instr-out-of-date"), ("-fprofile-instr-use=ambient.profdata",)),
 }
 PUBLIC_EXPERIMENTS = {"optimized", "optimized-a57"}
+PGO_PROFILES = {"pgo-generate", "pgo-use"}
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86_64", "x86"}
 REQUIRED_EXPORTS = {
     "retro_init", "retro_deinit", "retro_api_version", "retro_get_system_info",
@@ -218,7 +220,7 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
             recipe["args"] = " ".join(filter(None, (recipe.get("args", ""), entry["abi_args"][abi])))
         matrix.append({**recipe, "abi": abi, "profile": variant,
                        "cflags": " ".join(cflags), "ldflags": " ".join(ldflags),
-                       "makevars": "use_sh2drc=1" if (variant == "picodrive-sh2" or (variant in PUBLIC_EXPERIMENTS and core == "picodrive" and abi == "arm64-v8a")) else "",
+                       "makevars": "use_sh2drc=1" if (variant == "picodrive-sh2" or (variant in PUBLIC_EXPERIMENTS | PGO_PROFILES and core == "picodrive" and abi == "arm64-v8a")) else "",
                        "artifact": ("core" if variant == "baseline" else "candidate-" + variant)
                                    + "-" + core + "-" + abi})
     if not matrix or len(matrix) > 256:
@@ -498,7 +500,7 @@ def prepare_ndk(root, core, profile):
     if core == "mupen64plus_next_gles3" and "-flto=thin" in PROFILES[profile][0]:
         prepare_mupen_offsets(root)
         return
-    if profile != "snes9x2010-threaded" and not (profile in PUBLIC_EXPERIMENTS and core == "snes9x2010"):
+    if profile != "snes9x2010-threaded" and not (profile in PUBLIC_EXPERIMENTS | PGO_PROFILES and core == "snes9x2010"):
         return
     if core != "snes9x2010":
         raise ValueError("Threaded renderer recipe requires Snes9x2010")
@@ -582,6 +584,10 @@ def main():
     elif args.action == "prepare-hotpaths":
         if args.profile in {"core-hotpaths", "citra-arm64-jit", "yabause-arm64-jit", "picodrive-sh2", "snes9x2010-threaded"} or (args.profile in PUBLIC_EXPERIMENTS | {"pgo-generate", "pgo-use"} and args.core in HOTPATH_CORES):
             prepare_hotpaths(args.root, args.core)
+        elif args.core == "noods":
+            # Compatibility fixes are shared by every profile; optimization
+            # remains opt-in. The full hotpath recipe already includes these.
+            prepare_remaining(args.root, "noods", replace_once, compatibility_only=True)
     elif args.action == "prepare-ndk":
         prepare_ndk(args.root, args.core, args.profile)
     elif args.action == "ndk-flags":

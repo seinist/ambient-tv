@@ -1386,9 +1386,16 @@ PATCHES = {
 }
 
 
-def prepare_remaining(root, core, replace_once):
+def noods_compatibility_patch(relative, old):
+    return (relative in {"src/memfile.h", "src/libretro/savestate.cpp"} or
+            (relative == "src/libretro/libretro.cpp" and "HACK: Usually around 6MB" in old))
+
+
+def prepare_remaining(root, core, replace_once, compatibility_only=False):
     pending = {}
     for relative, old, new in PATCHES[core]:
+        if compatibility_only and not (core == "noods" and noods_compatibility_patch(relative, old)):
+            continue
         path = root / relative
         source = pending[path] if path in pending else path.read_bytes().decode("utf-8")
         pending[path] = replace_once(source, old, new, f"{core}: {relative}")

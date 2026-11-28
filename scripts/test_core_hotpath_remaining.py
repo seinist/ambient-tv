@@ -17,6 +17,15 @@ def replacement(core, needle):
 
 
 class RemainingCoreHotpathTests(unittest.TestCase):
+    def test_noods_compatibility_subset(self):
+        from core_hotpath_remaining import noods_compatibility_patch
+        selected = [(path, old, new) for path, old, new in PATCHES["noods"]
+                    if noods_compatibility_patch(path, old)]
+        self.assertTrue(any("32 : 8" in new for _, _, new in selected))
+        self.assertTrue(any("finishDirectRead" in new for _, _, new in selected))
+        self.assertFalse(any(path.startswith("src/spu") for path, _, _ in selected))
+        self.assertFalse(any("ambientJoypadMask" in new for _, _, new in selected))
+
     def test_ppsspp_adaptive_compute_width(self):
         compiler = shutil.which("c++")
         self.assertIsNotNone(compiler)

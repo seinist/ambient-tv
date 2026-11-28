@@ -53,7 +53,7 @@ def policy_fingerprint(job, root):
         selected.add("prepare_cmake")
     if core == "mupen64plus_next_gles3" and "-flto=thin" in job["cflags"].split():
         selected.add("prepare_mupen_offsets")
-    if core == "snes9x2010" and profile in {"snes9x2010-threaded", "optimized", "optimized-a57"}:
+    if core == "snes9x2010" and profile in {"snes9x2010-threaded", "optimized", "optimized-a57", "pgo-generate", "pgo-use"}:
         selected.add("prepare_snes_threading")
     helpers = [n for n in nodes if named(n) in selected]
     if {named(n) for n in helpers} != selected:
@@ -117,7 +117,7 @@ def fingerprint(job, ndk, root=ROOT):
              if p not in {"core_build_policy.py", "core_acceleration_audit.py"}}
     files["core_build_policy.py"] = policy_fingerprint(job, root)
     files["core_acceleration_audit.py"] = acceleration_fingerprint(job, root)
-    if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57", "citra-arm64-jit",
+    if job["core"] == "noods" or job["profile"] in {"core-hotpaths", "optimized", "optimized-a57", "citra-arm64-jit",
                           "yabause-arm64-jit", "picodrive-sh2", "snes9x2010-threaded",
                           "pgo-generate", "pgo-use"}:
         files["hotpath"] = hotpath_fingerprint(job["core"], root)

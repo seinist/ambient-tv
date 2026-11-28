@@ -239,7 +239,7 @@ def requirements(core, abi, profile):
                   "frontend": ("libretro.c", ())}
         if arm64:
             result["arm64_emitter"] = ("mednafen/ss/a64emit.c", ())
-            if profile in {"core-hotpaths", "optimized", "optimized-a57"}:
+            if profile in {"core-hotpaths", "optimized", "optimized-a57", "pgo-generate", "pgo-use"}:
                 for name in ("scsp_dsp_jit", "scu_dsp_jit"):
                     result[name] = (result[name][0], (("WANT_JIT", "1"),))
         return result
@@ -332,7 +332,7 @@ def requirements(core, abi, profile):
                 "stereo_audio": ("sound/Stereo_Buffer.cpp", ())}
     if core == "snes9x2010":
         result = {"rgb565_renderer": ("libretro/libretro.c", (("FRONTEND_SUPPORTS_RGB565", "1"),))}
-        if profile in {"snes9x2010-threaded", "optimized", "optimized-a57"}:
+        if profile in {"snes9x2010-threaded", "optimized", "optimized-a57", "pgo-generate", "pgo-use"}:
             result["threaded_ppu"] = ("src/ppu.c", (("HAVE_THREADS", "1"),))
             result["threaded_frontend"] = ("libretro/libretro.c", (("HAVE_THREADS", "1"),))
             result["eventcount"] = ("rthreads/retro_eventcount.c", ())
@@ -400,7 +400,7 @@ def requirements(core, abi, profile):
         result = {"frontend": ("platform/libretro/libretro.c", ()),
                   "frame_loop": ("pico/pico.c", ()),
                   "renderer": ("pico/draw.c", ())}
-        if abi == "armeabi-v7a" or profile == "picodrive-sh2" or (abi == "arm64-v8a" and profile in {"optimized", "optimized-a57"}):
+        if abi == "armeabi-v7a" or profile == "picodrive-sh2" or (abi == "arm64-v8a" and profile in {"optimized", "optimized-a57", "pgo-generate", "pgo-use"}):
             result["sh2_dynarec"] = ("cpu/sh2/compiler.c", (("DRC_SH2", "1"),))
         return result
     return {}

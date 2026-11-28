@@ -32,6 +32,17 @@ class CoreBuildPolicyTest(unittest.TestCase):
                                    "-DAMBIENT_SH2_ARM64_JIT=1"]],
                                  "yabause/src/sh2int.c", (("AMBIENT_SH2_ARM64_JIT", "1"),)))
 
+    def test_pgo_acceleration_matches_optimized(self):
+        for profile in ("pgo-generate", "pgo-use"):
+            for core in ("picodrive", "snes9x2010", "mednafen_saturn"):
+                job = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,
+                           cores=core, abis="arm64-v8a", profile=profile)["include"][0]
+                optimized = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,
+                                 cores=core, abis="arm64-v8a", profile="optimized")["include"][0]
+                self.assertEqual(job["makevars"], optimized["makevars"])
+                self.assertEqual(requirements(core, "arm64-v8a", profile),
+                                 requirements(core, "arm64-v8a", "optimized"))
+
     def test_pgo_is_artifact_only_and_requires_one_explicit_target(self):
         for profile in ("pgo-generate", "pgo-use"):
             jobs = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,
