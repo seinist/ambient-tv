@@ -6,7 +6,7 @@
 @group(0) @binding(2) var<storage,read_write> words:array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> params:vec4u;
 const BINS:u32=100001u;
-const STRIDE:u32=64u;
+const STRIDE:u32=72u;
 @group(0) @binding(3) var<storage,read> motion:array<vec4i>;
 fn pq(v:vec3f)->vec3f{
     let p=pow(clamp(v,vec3f(0.0),vec3f(1.0)),vec3f(1.0/78.84375));
@@ -150,7 +150,26 @@ fn collect(@builtin(global_invocation_id) id:vec3u){
         let o=w*STRIDE;
         let lo=vec2u(atomicLoad(&words[o]),atomicLoad(&words[o+1u]));
         let hi=vec2u(atomicLoad(&words[o+2u]),atomicLoad(&words[o+3u]));
-        if all(id.xy>=lo)&&all(id.xy<hi){
+        var inside=true;
+        if atomicLoad(&words[o+67u])==1u{
+            let center=vec2f(f32(atomicLoad(&words[o+52u])),f32(atomicLoad(&words[o+53u])))+
+                vec2f(f32(bitcast<i32>(atomicLoad(&words[o+41u]))),f32(bitcast<i32>(atomicLoad(&words[o+42u]))));
+            let angle=f32(atomicLoad(&words[o+66u]))*0.017453292519943295;
+            let u=f32(atomicLoad(&words[o+64u]));let v=f32(atomicLoad(&words[o+65u]));
+            let delta=vec2f(id.xy)-center;
+            let t=bitcast<f32>(atomicLoad(&words[o+43u]));
+            let weight=2.0*t*(1.0-t);
+            let gx=vec2f(bitcast<f32>(atomicLoad(&words[o+56u])),bitcast<f32>(atomicLoad(&words[o+57u])));
+            let gy=vec2f(bitcast<f32>(atomicLoad(&words[o+58u])),bitcast<f32>(atomicLoad(&words[o+59u])));
+            let a=vec2f(1.0,0.0)+weight*gx;
+            let b=vec2f(0.0,1.0)+weight*gy;
+            let det=a.x*b.y-a.y*b.x;
+            let original=vec2f(b.y*delta.x-b.x*delta.y,-a.y*delta.x+a.x*delta.y)/max(det,0.00001);
+            let q=vec2f(dot(original,vec2f(cos(angle),sin(angle)))/u,
+                dot(original,vec2f(-sin(angle),cos(angle)))/v);
+            inside=dot(q,q)<=1.0;
+        }
+        if inside&&all(id.xy>=lo)&&all(id.xy<hi){
             atomicMax(&words[o+20u],c.x);
             atomicMax(&words[o+21u],c.y);
             atomicMax(&words[o+22u],c.z);
