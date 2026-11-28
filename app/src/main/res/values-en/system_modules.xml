@@ -31,4 +31,5 @@
     <string name="update_variant_choice">Update channel: %1$s</string>
     <string name="update_variant_preview">Preview builds do not use stable app updates.</string>
     <string name="module_settings_incompatible_selection">The downloaded version does not match this app. Update the module. A bundled library is used when available.</string>
+    <string name="module_settings_unchanged">Selection is already current. No restart required.</string>
 </resources>

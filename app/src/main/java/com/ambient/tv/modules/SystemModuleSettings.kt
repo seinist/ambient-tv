@@ -65,7 +65,11 @@ private fun ModuleDialog(dismiss: () -> Unit) {
             try {
                 val result = withContext(Dispatchers.IO) { block(module) }
                 installed = withContext(Dispatchers.IO) { SystemModuleHost.selected(module) }
-                notice = if (!result) R.string.module_settings_no_candidate else R.string.module_settings_restart
+                notice = when {
+                    !result -> R.string.module_settings_no_candidate
+                    SystemModuleAvailability.state(module).restartRequired -> R.string.module_settings_restart
+                    else -> R.string.module_settings_unchanged
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

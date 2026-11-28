@@ -768,6 +768,13 @@ the unique numeric release ID, rather than the published-release tag lookup.
 Ambiguous, missing, published or changing identities fail closed. Discovery
 is bounded to ten pages; exceeding that limit requires review.
 
+Installation preserves a compatible authenticated previous package when the
+current selection no longer matches the host binding. Corrupt or incompatible
+fallbacks are not retained as rollback candidates when a replacement is
+published. The high-water mark remains unchanged by rollback. A successful
+no-op update no longer tells the user to restart unless the runtime actually
+requires a restart.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

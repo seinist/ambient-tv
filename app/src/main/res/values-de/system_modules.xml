@@ -31,4 +31,5 @@
     <string name="update_variant_choice">Update-Kanal: %1$s</string>
     <string name="update_variant_preview">Die Vorschau verwendet keine stabilen App-Updates.</string>
     <string name="module_settings_incompatible_selection">Die heruntergeladene Version passt nicht zur installierten App. Aktualisiere das Modul. Eine integrierte Bibliothek wird verwendet, falls vorhanden.</string>
+    <string name="module_settings_unchanged">Die Auswahl ist bereits aktuell. Kein Neustart erforderlich.</string>
 </resources>
