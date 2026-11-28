@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -124,6 +125,33 @@ class CoreUpdateTest(unittest.TestCase):
                 preflight.assert_called_once_with(candidate, NEW)
             with mock.patch.object(updater, "preflight_jit_core", side_effect=ValueError("changed anchor")):
                 self.assertFalse(updater.core_candidate_compatible(candidate, NEW))
+
+    def test_missing_native_jit_patcher_retains_pin_without_blocking_others(self):
+        for name, module in (("citra2018", "core_citra_arm64"), ("yabause", "core_yabause_arm64")):
+            core = {"core": name, "repo": "https://github.com/a/b", "commit": "a"*40}
+            with self.subTest(core=name), mock.patch.dict(sys.modules, {module: None}), mock.patch(
+                    "subprocess.check_output") as checkout:
+                self.assertFalse(updater.core_candidate_compatible(core, NEW))
+                checkout.assert_not_called()
+
+    def test_jit_preflight_loads_only_requested_patcher_and_skips_unavailable_hotpaths(self):
+        for name, module, other in (("citra2018", "core_citra_arm64", "core_yabause_arm64"),
+                                    ("yabause", "core_yabause_arm64", "core_citra_arm64")):
+            core = {"core": name, "repo": "https://github.com/a/b", "commit": "a"*40}
+            fake = types.ModuleType(module)
+            fake.prepare = mock.Mock()
+            with self.subTest(core=name), mock.patch.dict(sys.modules, {module: fake, other: None}), mock.patch(
+                    "subprocess.check_output", side_effect=["", "", "", "", NEW]), mock.patch(
+                    "core_hotpath_patches.SUPPORTED", set()), mock.patch(
+                    "core_hotpath_patches.prepare_hotpaths") as hotpaths, mock.patch(
+                    "core_build_policy.prepare_cmake") as cmake:
+                self.assertTrue(updater.core_candidate_compatible(core, NEW))
+                fake.prepare.assert_called_once()
+                hotpaths.assert_not_called()
+                if name == "citra2018":
+                    cmake.assert_called_once_with(mock.ANY, name, "citra-arm64-jit")
+                else:
+                    cmake.assert_not_called()
 
     def test_selected_core_updates_only_its_source_group(self):
         before = json.loads(self.cores.read_text())
