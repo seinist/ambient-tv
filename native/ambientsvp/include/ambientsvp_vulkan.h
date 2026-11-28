@@ -173,10 +173,15 @@ int ambient_svp_hdr_scene_validate(uint64_t,uint64_t,const AmbientSvpHdrSceneRes
  * Finish only after successful complete output; destroy aborts unpublished data. */
 typedef struct TwoPass AmbientSvpHdrPass;
 AmbientSvpHdrPass *ambient_svp_hdr_pass_open(uint32_t,const char *,const char *,const char *,const char *,uint32_t,uint32_t);
+int ambient_svp_hdr_pass_interval(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
 int ambient_svp_hdr_pass_capture(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
 int ambient_svp_hdr_pass_lookup(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
 int ambient_svp_hdr_pass_finish(AmbientSvpHdrPass *);
 void ambient_svp_hdr_pass_destroy(AmbientSvpHdrPass *);
+int ambient_svp_vk_render_held_pass(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+    const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,
+    const AmbientSvpHdrTrack *,const uint32_t (*)[3],AmbientSvpHdrResult *,
+    uint32_t (*)[4],uint32_t (*)[3],int32_t (*)[2],uint32_t,AmbientSvpHdrPass *,uint64_t);
 /* After SUCCESSFUL submission of that command buffer, register its
  * unsignaled-at-submit fence. Caller must not destroy/reset the fence
  * until release returns 1. No more recording after sealing. */
