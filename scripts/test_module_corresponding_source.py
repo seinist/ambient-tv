@@ -145,6 +145,18 @@ class CorrespondingSourceTest(unittest.TestCase):
             self.assertEqual(len(list(output.rglob("LICENSE"))), len(identities))
             self.assertFalse(list(output.rglob("*.class")))
             self.assertFalse(list(output.rglob("*.jar")))
+            observed = {path.relative_to(output).as_posix(): sources.digest(path)
+                        for path, _ in sources.source_files(output) if path.name != "maven-inventory.json"}
+            sources.validate_maven_inventory(rows, observed)
+            first = next(iter(observed))
+            with self.assertRaisesRegex(ValueError, "changed Maven"):
+                sources.validate_maven_inventory(rows, {**observed, first: "0" * 64})
+            with self.assertRaises(ValueError):
+                sources.validate_maven_inventory(rows, {key: value for key, value in observed.items() if key != first})
+            with self.assertRaises(ValueError):
+                sources.validate_maven_inventory(rows[:-1], observed)
+            with self.assertRaises(ValueError):
+                sources.validate_maven_inventory(rows, {**observed, "unknown/source": "a" * 64})
 
     def test_missing_smarttube_maven_sources_stop_collection(self):
         with tempfile.TemporaryDirectory() as temp:

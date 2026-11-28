@@ -124,6 +124,12 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     if module in CARGO_MANIFESTS and len(cargo_roots) != 1:
         raise ValueError("Missing or ambiguous resolved Cargo source root")
     cargo_root = cargo_roots[0] if cargo_roots else None
+    maven_roots = [name for name in expected if name.rsplit("/", 1)[-1] == "resolved-smarttube-maven-source"]
+    if module == "smarttube" and len(maven_roots) != 1:
+        raise ValueError("Missing or ambiguous resolved SmartTube Maven source root")
+    maven_root = maven_roots[0] if maven_roots else None
+    maven_inventory = None
+    maven_files = {}
     cargo_inventory = None
     cargo_files = {}
     cargo_checksums = {}
@@ -195,6 +201,14 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
                         cargo_files[relative] = member_digest
                     else:
                         raise ValueError("Unexpected vendored Cargo member")
+                if root == maven_root:
+                    if relative == "maven-inventory.json":
+                        if not 0 < member.size <= 16 * 1024**2:
+                            raise ValueError("Invalid Maven source inventory size")
+                        maven_inventory = json.load(archive.extractfile(member))
+                    else:
+                        member_digest = hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest()
+                        maven_files[relative] = member_digest
                 if module == "smarttube" and root.endswith("/resolved-j2v8-provenance") and name == f"upstream/{root}/j2v8-provenance.json":
                     if j2v8 is not None or not 0 < member.size <= MAX_INVENTORY_BYTES:
                         raise ValueError("Invalid J2V8 provenance member")
@@ -227,6 +241,7 @@ def validate_source_archive(path, descriptor, notice_hashes=None):
     if module in CARGO_MANIFESTS:
         validate_cargo_inventory(module, cargo_inventory, cargo_files, original_locks, cargo_checksums, cargo_locks)
     if module == "smarttube":
+        validate_maven_inventory(maven_inventory, maven_files)
         from package_system_modules import ABIS
         if not isinstance(j2v8, dict) or j2v8.get("schema") != 1 or j2v8.get("nativeSourceCorrespondence") != "unverified":
             raise ValueError("Missing or invalid J2V8 provenance")
@@ -406,6 +421,48 @@ SMARTTUBE_MAVEN_REQUIRED = {
 }
 
 
+def validate_maven_inventory(inventory, files):
+    if not isinstance(inventory, list) or not 1 <= len(inventory) <= 128:
+        raise ValueError("Missing or invalid Maven source inventory")
+    seen = set()
+    declared = {}
+    for row in inventory:
+        if not isinstance(row, dict) or set(row) != {"coordinate", "binarySha256", "sourceSha256",
+                                                    "sources", "binaryNotices", "files"}:
+            raise ValueError("Invalid Maven source inventory row")
+        coordinate = row["coordinate"]
+        if not isinstance(coordinate, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+", coordinate):
+            raise ValueError("Invalid Maven coordinate")
+        group, artifact, version = coordinate.split(":")
+        if any(part in (".", "..") for part in (group, artifact, version)):
+            raise ValueError("Unsafe Maven coordinate")
+        identity = f"{group}:{artifact}"
+        if identity in seen or (identity not in SMARTTUBE_MAVEN_REQUIRED and group not in {"net.minidev", "org.ow2.asm"}):
+            raise ValueError("Unexpected or duplicate Maven coordinate")
+        seen.add(identity)
+        if any(not isinstance(row[key], str) or not re.fullmatch(r"[a-f0-9]{64}", row[key])
+               for key in ("binarySha256", "sourceSha256")):
+            raise ValueError("Invalid Maven artifact fingerprints")
+        entries = row["files"]
+        if not isinstance(entries, dict) or not 1 <= len(entries) <= 65536:
+            raise ValueError("Missing Maven source file inventory")
+        counts = {"sources": 0, "binaryNotices": 0}
+        for name, value in entries.items():
+            if not safe_archive_name(name) or not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value):
+                raise ValueError("Invalid Maven source file fingerprint")
+            folder, sep, relative = name.partition("/")
+            if not sep or folder not in {"sources", "binary-notices"} or not relative:
+                raise ValueError("Unexpected Maven source file")
+            if folder == "binary-notices" and not NOTICE.match(relative.rsplit("/", 1)[-1]):
+                raise ValueError("Unexpected Maven binary notice")
+            counts["sources" if folder == "sources" else "binaryNotices"] += 1
+            declared[f"{group}/{artifact}/{version}/{name}"] = value
+        if not counts["sources"] or any(type(row[key]) is not int or row[key] != count for key, count in counts.items()):
+            raise ValueError("Maven source counts differ from inventory")
+    if not SMARTTUBE_MAVEN_REQUIRED <= seen or declared != files:
+        raise ValueError("Missing, extra or changed Maven source file")
+
+
 def collect_smarttube_maven_sources(inputs, destination):
     """Expand exact resolved source jars and copy embedded binary notices.
 
@@ -433,6 +490,7 @@ def collect_smarttube_maven_sources(inputs, destination):
         target = destination / group / artifact / version
         target.mkdir(parents=True)
         counts = {"sources": 0, "binaryNotices": 0}
+        fingerprints = {}
         for jar, folder, notices_only in ((source, "sources", False), (binary, "binary-notices", True)):
             with zipfile.ZipFile(jar) as archive:
                 names = set()
@@ -456,13 +514,17 @@ def collect_smarttube_maven_sources(inputs, destination):
                     dest = target / folder / name
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(data)
+                    fingerprints[f"{folder}/{name}"] = hashlib.sha256(data).hexdigest()
                     counts["binaryNotices" if notices_only else "sources"] += 1
         if not counts["sources"]:
             raise ValueError("Empty Maven source artifact")
         inventory.append({"coordinate": f"{identity}:{version}", "binarySha256": digest(binary),
-                          "sourceSha256": digest(source), **counts})
+                          "sourceSha256": digest(source), "files": fingerprints, **counts})
     if not SMARTTUBE_MAVEN_REQUIRED <= seen:
         raise ValueError("Incomplete SmartTube Maven source inventory")
+    observed = {path.relative_to(destination).as_posix(): digest(path)
+                for path, _ in source_files(destination)}
+    validate_maven_inventory(inventory, observed)
     (destination / "maven-inventory.json").write_text(json.dumps(inventory, sort_keys=True) + "\n")
     return destination
 

@@ -811,6 +811,12 @@ than applying normal build-output exclusions. Git revisions are pinned in
 the lockfile; independent Git-source reconstruction and offline compilation
 are still separate validation steps.
 
+SmartTube Maven source inventory is checked independently in the final
+corresponding-source archive, including exact coordinate coverage, source
+and binary-notice counts and per-file SHA-256 fingerprints. Missing, extra
+or changed entries stop signing. Original artifact digests remain provenance
+evidence; this is not an independent reconstruction of the Maven binaries.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.
