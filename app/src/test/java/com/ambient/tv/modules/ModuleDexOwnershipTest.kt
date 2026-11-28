@@ -30,4 +30,22 @@ class ModuleDexOwnershipTest {
         assertFalse(owner.accepts(complete - "com.sun.jna.Native"))
         assertFalse(owner.accepts(complete + "com.ambient.tv.data.telegram.MonogramModuleFactory"))
     }
+    @Test fun smartTubeOwnsUpstreamCodeButNotHostResourcesOrSharedDependencies() {
+        val ownership = ModuleDexOwnership.SMARTTUBE
+        val required = setOf(
+            "com.ambient.tv.youtube.SmartTubeModuleAdapter",
+            "com.liskovsoft.youtubeapi.service.YouTubeServiceManager",
+            "com.liskovsoft.sharedutils.prefs.GlobalPreferences",
+            "com.liskovsoft.youtubeapi.lounge.LoungeService",
+            "com.eclipsesource.v8.V8",
+        )
+        assertTrue(ownership.accepts(required))
+        assertTrue(ownership.owns("com.liskovsoft.googlecommon.service.oauth.YouTubeAccount"))
+        assertFalse(ownership.owns("com.liskovsoft.youtubeapi.R"))
+        assertFalse(ownership.owns("com.liskovsoft.youtubeapi.R\$raw"))
+        assertFalse(ownership.owns("okhttp3.OkHttpClient"))
+        assertFalse(ownership.owns("com.ambient.tv.youtube.SmartTubeEngine"))
+        assertFalse(ownership.accepts(required + "com.liskovsoft.youtubeapi.R"))
+        assertFalse(ownership.accepts(required - "com.eclipsesource.v8.V8"))
+    }
 }
