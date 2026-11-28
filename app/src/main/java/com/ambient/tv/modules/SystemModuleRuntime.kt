@@ -68,13 +68,23 @@ internal class SystemModuleRuntime(
 
     /** Call on a background worker; all initialization is serialized. */
     @Synchronized
-    fun load(module: SystemModule): Loaded {
-        active[module]?.let { return it }
+    fun load(module: SystemModule, selected: SystemModuleStore.Package): Loaded {
+        if (selected.build.module != module.id || !store.isHostCompatible(selected.build) ||
+            !matchesHost(module, selected.build))
+            throw SystemModuleTrustException("Selected module is incompatible with installed host")
+        active[module]?.let {
+            if (it.build != selected.build)
+                throw SystemModuleTrustException("Loaded module differs from selected package; restart required")
+            return it
+        }
         if (loading) throw SystemModuleTrustException("Recursive module runtime activation")
         if (module in failed) throw SystemModuleTrustException("Module activation failed; restart required")
         loading = true
         try {
-            val order = SystemModuleDependencies.order(module, store::current)
+            // The caller holds a process lease, so the exact authenticated
+            // archive remains available even if another process replaces its
+            // selection. Never re-read the root pointer after host validation.
+            val order = SystemModuleDependencies.orderSelected(module, selected, store::current)
             // Prepare the complete graph before executing any new code.
             val prepared = linkedMapOf<SystemModule, SystemModuleMaterializer.Materialized>()
             val reserved = nativeOwners.toMutableMap()

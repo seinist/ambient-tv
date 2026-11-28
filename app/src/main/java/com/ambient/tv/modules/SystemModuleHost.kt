@@ -192,12 +192,14 @@ internal object SystemModuleHost {
     }
 
     /** These functions are blocking; callers must dispatch to a worker. */
-    fun selected(module: SystemModule): SystemModuleBuild? {
+    fun selected(module: SystemModule): SystemModuleBuild? = selectedPackage(module)?.build
+
+    private fun selectedPackage(module: SystemModule): SystemModuleStore.Package? {
         return try {
-            val build = if (app == null || BuildConfig.CORES_PUBLIC_KEY.isBlank()) null
-                else session.store.currentForSelection(module)?.build
-            SystemModuleAvailability.observeSelection(module, build?.version)
-            build
+            val pkg = if (app == null || BuildConfig.CORES_PUBLIC_KEY.isBlank()) null
+                else session.store.currentForSelection(module)
+            SystemModuleAvailability.observeSelection(module, pkg?.build?.version)
+            pkg
         } catch (e: Exception) {
             SystemModuleAvailability.reportFailure(module)
             throw e
@@ -272,13 +274,13 @@ internal object SystemModuleHost {
     fun loadSelected(module: SystemModule): SystemModuleRuntime.Loaded? {
         return processSelections.getOrPut(module) {
             runCatching {
-                val candidate = selected(module)
-                if (candidate == null) null
-                else if (!session.store.isHostCompatible(candidate) || !session.runtime.matchesHost(module, candidate)) {
-                    SystemModuleAvailability.reportIncompatibleSelection(module, candidate.version)
+                val pkg = selectedPackage(module)
+                if (pkg == null) null
+                else if (!session.store.isHostCompatible(pkg.build) || !session.runtime.matchesHost(module, pkg.build)) {
+                    SystemModuleAvailability.reportIncompatibleSelection(module, pkg.build.version)
                     if (SystemModuleAvailability.bundled(module)) null
                     else throw SystemModuleTrustException("Downloaded module is incompatible with installed APK")
-                } else session.runtime.load(module)
+                } else session.runtime.load(module, pkg)
             }
         }.onFailure { SystemModuleAvailability.reportFailure(module) }.getOrThrow()
     }

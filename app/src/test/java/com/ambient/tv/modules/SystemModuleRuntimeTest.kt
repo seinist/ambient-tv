@@ -160,6 +160,19 @@ class SystemModuleRuntimeTest {
         } }
     }
 
+    @Test fun rootPackageIsNotResolvedAgainAfterHostCompatibilityCheck() {
+        val selected = packageFile(version = 1, dependencies = listOf(SystemModuleDependency("shaders", 2)))
+        val newer = packageFile(version = 3)
+        val dependency = packageFile(SystemModule.SHADERS, 2)
+        val order = SystemModuleDependencies.orderSelected(SystemModule.MONOGRAM, selected) { module ->
+            if (module == SystemModule.MONOGRAM) {
+                fail("Root selection was read again")
+                newer
+            } else dependency
+        }
+        assertEquals(listOf(dependency, selected), order)
+    }
+
     @Test fun crossModuleDependenciesRequireExplicitHostPermission() {
         val pkg = packageFile(dependencies = listOf(SystemModuleDependency("shaders", 2)))
         assertFalse(SystemModuleRuntime.dependenciesAllowed(SystemModuleRuntime.Contract(assetOnly = true), pkg.build))

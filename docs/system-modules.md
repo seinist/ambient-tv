@@ -686,6 +686,15 @@ incompatibility; Modular reports the unavailable engine and retains the
 selection for recovery. Corruption still fails closed, and runtime loading
 and rollback retain strict compatibility checks.
 
+Runtime activation pins the exact authenticated root package selected by the
+host compatibility check. Another process can publish or remove a selection,
+but cannot redirect that activation to a different archive; the process lease
+prevents reclamation. Dependencies still require exact signed versions and
+host contract validation. Observing a changed installed version while an engine
+is usable marks a restart as required without changing the running engine.
+ProjectM does not attempt a bundled native load when the Modular APK has no
+selected package.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

@@ -2,6 +2,13 @@ package com.ambient.tv.modules
 
 /** Resolves the exact signed dependency graph before any executable is loaded. */
 internal object SystemModuleDependencies {
+    fun orderSelected(
+        root: SystemModule,
+        selected: SystemModuleStore.Package,
+        resolve: (SystemModule) -> SystemModuleStore.Package?,
+    ): List<SystemModuleStore.Package> =
+        order(root) { module -> if (module == root) selected else resolve(module) }
+
     fun order(
         root: SystemModule,
         resolve: (SystemModule) -> SystemModuleStore.Package?,

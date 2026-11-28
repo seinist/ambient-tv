@@ -64,6 +64,8 @@ object ProjectMAvailability {
         val result = runCatching {
             val loaded = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.PROJECTM)
             external = loaded != null
+            if (loaded == null && !com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.PROJECTM))
+                return@runCatching ProjectMRuntimeStatus(false, error = "module not installed")
             selectedPath = loaded?.nativeDirectory?.resolve("libambientprojectm.so")?.absolutePath ?: "libambientprojectm.so"
             if (loaded == null) probeProjectMRuntime(
                 abiSupported = com.ambient.tv.ui.player.backend.NativeArmRuntime.isSupportedDevice,

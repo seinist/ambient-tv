@@ -71,6 +71,11 @@ internal class ModuleAvailabilityRegistry(private val bundled: (SystemModule) ->
 
     fun observeSelection(module: SystemModule, version: Long?) = change(module) { previous ->
         if (previous.restartRequired) previous.copy(installedVersion = version)
+        else if (previous.usable && previous.installedVersion != version) previous.copy(
+            installedVersion = version,
+            restartRequired = true,
+            incompatibleSelection = false,
+        )
         else previous.copy(
             installedVersion = version,
             runtime = when (previous.runtime) {

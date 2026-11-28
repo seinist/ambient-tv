@@ -67,6 +67,21 @@ class SystemModuleAvailabilityTest {
         assertEquals(ModuleRuntimeState.FAILED, modular.state(module).runtime)
     }
 
+    @Test fun observedCrossProcessSelectionChangeRequiresRestartWithoutHotSwap() {
+        val registry = ModuleAvailabilityRegistry { false }
+        registry.observeSelection(module, 1)
+        registry.reportProbe(module, external = true, success = true)
+        registry.observeSelection(module, 1)
+        assertFalse(registry.state(module).restartRequired)
+        registry.observeSelection(module, 2)
+        assertTrue(registry.state(module).restartRequired)
+        assertEquals(ModuleRuntimeState.ACTIVE_EXTERNAL, registry.state(module).runtime)
+        assertEquals(2L, registry.state(module).installedVersion)
+        registry.observeSelection(module, null)
+        assertTrue(registry.state(module).usable)
+        assertTrue(registry.state(module).restartRequired)
+    }
+
     @Test fun bundledEngineRemainsUsableWhileNewSelectionAwaitsRestart() {
         val registry = ModuleAvailabilityRegistry { true }
         registry.reportProbe(module, external = false, success = true)
