@@ -26,6 +26,7 @@ internal fun <T> boundedNativeOperation(timeoutMs: Long, operation: () -> T): T 
  * A later player must never inherit an output whose native retirement is unknown. */
 internal object VlcNativeRetirement {
     private val retained = mutableListOf<Pair<MediaPlayer, LibVLC>>()
+    private val retainedUnopened = mutableListOf<LibVLC>()
     private const val NATIVE_LIMIT_MS = 15_000L
     @Volatile private var poisoned = false
     val isQuarantined: Boolean get() = poisoned
@@ -61,6 +62,29 @@ internal object VlcNativeRetirement {
 
     fun verify(player: MediaPlayer, library: LibVLC) {
         try { ensureAvailable() } catch (e: Throwable) { quarantine(player, library, e) }
+    }
+
+    /** A MediaPlayer constructor failed. Retain the actual new library on
+     * uncertainty and register its cleanup before another backend can open. */
+    fun releaseUnopenedLibrary(library: LibVLC) {
+        val ownership = nativeAudioReleases.beginRelease()
+        fun failed(cause: Throwable) {
+            synchronized(this) {
+                if (retainedUnopened.none { it === library }) retainedUnopened.add(library)
+                poison(cause)
+            }
+            ownership.completeExceptionally(NativeOutputReleaseUncertain(cause))
+        }
+        try {
+            kotlin.concurrent.thread(name = "vlc-create-failure-release", isDaemon = true) {
+                try {
+                    ensureAvailable()
+                    boundedNativeOperation(NATIVE_LIMIT_MS) { library.release() }
+                    ensureAvailable()
+                    ownership.complete(Unit)
+                } catch (e: Throwable) { failed(e) }
+            }
+        } catch (e: Throwable) { failed(e) }
     }
 
     fun stop(player: MediaPlayer, library: LibVLC) {

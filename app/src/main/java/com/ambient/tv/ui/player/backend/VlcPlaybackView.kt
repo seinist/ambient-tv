@@ -345,7 +345,12 @@ class VlcPlaybackController(
     private var libVlc = createLibVlc()
     /** A DV-surface swap retires a player asynchronously; its LibVLC must outlive it. */
     private val libVlcRelease = VlcLibraryReleaseGate<LibVLC> { it.release() }
-    var player = MediaPlayer(libVlc)
+    private fun createPlayerWithNewLibrary(library: LibVLC): MediaPlayer =
+        try { MediaPlayer(library) } catch (failure: Throwable) {
+            VlcNativeRetirement.releaseUnopenedLibrary(library)
+            throw failure
+        }
+    var player = createPlayerWithNewLibrary(libVlc)
         private set
     private val timedMetadataInbox = VlcTimedMetadataInbox()
     private var timedMetadataReceiver: VlcTimedMetadataReceiver? = null
@@ -1428,15 +1433,7 @@ class VlcPlaybackController(
                     }
                     val replacement = runCatching {
                         val library = createLibVlc()
-                        try { library to MediaPlayer(library) }
-                        catch (failure: Throwable) {
-                            // No new player owns output yet. Keep native destruction
-                            // off the UI thread, and fail closed on uncertainty.
-                            kotlin.concurrent.thread(name = "vlc-create-failure-release", isDaemon = true) {
-                                runCatching { VlcNativeRetirement.releaseLibrary(retiringPlayer, library) { library.release() } }
-                            }
-                            throw failure
-                        }
+                        library to createPlayerWithNewLibrary(library)
                     }.getOrElse { failure ->
                         restartStopFailed = true
                         Timber.e(failure, "VLC replacement creation failed")
