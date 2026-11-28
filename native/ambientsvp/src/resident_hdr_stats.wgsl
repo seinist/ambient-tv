@@ -248,3 +248,61 @@ fn summarize(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lan
         }
     }
 }
+
+// Section 10.4: spatial area average in linear BT.2020. Resizing uses
+// ceil(width/5), ceil(height/5) and equal-area footprints even at edges.
+// Store only proxy luminance, not source pixels, in the extra histogram tail.
+@compute @workgroup_size(8,8)
+fn bright_proxy(@builtin(global_invocation_id) id:vec3u){
+    let size=(params.xy+vec2u(4u))/5u;
+    if any(id.xy>=size){return;}
+    let lo=vec2f(id.xy)*vec2f(params.xy)/vec2f(size);
+    let hi=vec2f(id.xy+vec2u(1u))*vec2f(params.xy)/vec2f(size);
+    var total=0.0;
+    for(var y=u32(floor(lo.y));y<min(u32(ceil(hi.y)),params.y);y++){
+        for(var x=u32(floor(lo.x));x<min(u32(ceil(hi.x)),params.x);x++){
+            let coverage=max(0.0,min(hi.x,f32(x+1u))-max(lo.x,f32(x)))*
+                         max(0.0,min(hi.y,f32(y+1u))-max(lo.y,f32(y)));
+            let rgb=pq(textureLoad(source,vec2i(i32(x),i32(y)),0).rgb);
+            total+=coverage*dot(rgb,vec3f(0.2627,0.678,0.0593));
+        }
+    }
+    let luminance=clamp(total/((hi.x-lo.x)*(hi.y-lo.y)),0.0,1.0);
+    atomicStore(&hist[params.z*BINS+id.y*size.x+id.x],bitcast<u32>(luminance));
+}
+var<workgroup> proxy_sums:array<f32,64>;
+var<workgroup> proxy_peaks:array<f32,64>;
+var<workgroup> proxy_peak:f32;
+@compute @workgroup_size(64)
+fn bright_reduce(@builtin(local_invocation_index) lane:u32){
+    let size=(params.xy+vec2u(4u))/5u;
+    let n=size.x*size.y;
+    let base=params.z*BINS;
+    var sum=0.0;var peak=0.0;
+    for(var i=lane;i<n;i+=64u){
+        let v=bitcast<f32>(atomicLoad(&hist[base+i]));
+        sum+=v;peak=max(peak,v);
+    }
+    proxy_sums[lane]=sum;proxy_peaks[lane]=peak;
+    workgroupBarrier();
+    if lane==0u{
+        var all=0.0;var highest=0.0;
+        for(var j=0u;j<64u;j++){all+=proxy_sums[j];highest=max(highest,proxy_peaks[j]);}
+        proxy_peak=highest;
+        atomicStore(&words[61u],bitcast<u32>(clamp(all/f32(n),0.0,1.0)));
+    }
+    workgroupBarrier();
+    var weight=0.0;
+    for(var i=lane;i<n;i+=64u){
+        let v=bitcast<f32>(atomicLoad(&hist[base+i]));
+        weight+=clamp((5.0-255.0*(proxy_peak-v))/4.0,0.0,1.0);
+    }
+    proxy_sums[lane]=weight;
+    workgroupBarrier();
+    if lane==0u{
+        var all=0.0;
+        for(var j=0u;j<64u;j++){all+=proxy_sums[j];}
+        atomicStore(&words[62u],bitcast<u32>(clamp(all/f32(n),0.0,1.0)));
+        atomicStore(&words[63u],n);
+    }
+}
