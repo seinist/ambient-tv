@@ -9,7 +9,7 @@
 
 #include "sh2_regcache.h"
 #define AMBIENT_SH2_MAX_OPS 32
-#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 14 + AMBIENT_SH2_REGCACHE_EXTRA)
+#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 30 + AMBIENT_SH2_REGCACHE_EXTRA)
 
 /* Emit a single side-effect-free, one-cycle SH2 instruction into AArch64.
  * x0 points at R[16], x7 at SR; w1..w5 are caller-saved scratch.
@@ -439,7 +439,8 @@ struct AmbientSh2Block {
     struct { u32 pc,version; uint16_t first,count,page; } spans[AMBIENT_SH2_MAX_OPS+1];
     uint16_t terminal;
     unsigned has_terminal, dynamic_exit, native_loop, native_link, conditional_loop;
-    u32 fallthrough_pc;
+    u32 fallthrough_pc, last_dynamic_pc;
+    unsigned last_dynamic_valid;
     AmbientMemOp memory;
     AmbientComplexMem complex_memory;
     opcodefunc terminal_handler;
@@ -720,9 +721,30 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
                         if(result>>31){next_pc=block->fallthrough_pc;cycle_discount=2;}
                     } else
                         ((void (*)(u32*,u32*,u32))block->code)(context->regs.R,&context->regs.SR.all,repeat);
-                } else if(block->dynamic_exit)
-                    next_pc=((u32 (*)(u32*,u32*))block->code)(context->regs.R,&context->regs.SR.all);
-                else if(block->native_link) {
+                } else if(block->dynamic_exit) {
+                    AmbientSh2Block* successor=NULL;
+                    const u32 predicted=block->last_dynamic_pc;
+                    if(scope && !yabsys.sh2_cache_enabled && block->last_dynamic_valid) {
+                        AmbientSh2Block* candidate=ambient_sh2_lookup(cpu,predicted,0);
+                        if(candidate && candidate!=block && candidate->native_link && candidate->code &&
+                           candidate->cycles<=budget-context->cycles-block->cycles) {
+                            const fetchfunc next_fetch=((fetchfunc*)context->fetchlist)[(predicted>>20)&255u];
+                            if(ambient_sh2_validate(candidate,context,next_fetch,scope))successor=candidate;
+                        }
+                    }
+                    /* Native code computes the real target, compares against the
+                     * validated prediction, and invokes the successor directly
+                     * only on an exact match. Return high bit-word = followed. */
+                    const uint64_t result=((uint64_t (*)(u32*,u32*,u32,void*))block->code)(
+                        context->regs.R,&context->regs.SR.all,predicted,successor?successor->code:NULL);
+                    if(result>>32) {
+                        context->cycles+=block->cycles;
+                        block=successor;next_pc=block->next_pc;
+                    } else {
+                        next_pc=(u32)result;
+                        block->last_dynamic_pc=next_pc;block->last_dynamic_valid=1;
+                    }
+                } else if(block->native_link) {
                     AmbientSh2Block* successor=NULL;
                     /* Validate BOTH pure blocks before the host tail branch.
                      * Their generated code cannot touch the bus, refill cache
@@ -948,7 +970,32 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
         optimized[words++]=0xaa1f03e2u; /* MOV x2,xzr */
         optimized[words++]=0xd61f0200u; /* BR x16 */
     } else words=2+ambient_sh2_regcache(code+2,words-2,optimized+2);
-    if(block->dynamic_exit)optimized[words++]=0x2a0603e0u; /* MOV w0,w6, after all writebacks */
+    if(block->dynamic_exit) {
+        /* Preserve the prediction and link target in callee-saved registers,
+         * and the caller LR across BLR. Guest registers are already committed
+         * before the compare; the successor receives the normal pure ABI. */
+        memmove(optimized+6,optimized+2,(words-2)*sizeof(uint32_t));
+        optimized[2]=0xa9be53f3u; /* STP x19,x20,[sp,#-32]! */
+        optimized[3]=0xf9000bfeu; /* STR x30,[sp,#16] */
+        optimized[4]=0x2a0203f3u; /* MOV w19,w2 */
+        optimized[5]=0xaa0303f4u; /* MOV x20,x3 */
+        words+=4;
+        const uint32_t tail[]={
+            0x6b1300dfu, /* CMP w6,w19 */
+            0x54000101u, /* B.NE mismatch */
+            0xb40000f4u, /* CBZ x20,mismatch */
+            0xaa1403f0u, /* MOV x16,x20 */
+            0xaa0703e1u, /* MOV x1,x7 */
+            0xaa1f03e2u, /* MOV x2,xzr */
+            0xd63f0200u, /* BLR x16 */
+            0xd2c00020u, /* MOVZ x0,#1,LSL #32 */
+            0x14000002u, /* B restore */
+            0x2a0603e0u, /* mismatch: MOV w0,w6 */
+            0xf9400bfeu, /* restore: LDR x30,[sp,#16] */
+            0xa8c253f3u  /* LDP x19,x20,[sp],#32 */
+        };
+        memcpy(optimized+words,tail,sizeof(tail));words+=sizeof(tail)/sizeof(tail[0]);
+    }
     optimized[words++]=0xd65f03c0u;
     void* mapped=ambient_sh2_install_code(cpu,block,optimized,words);
     if(!mapped){ambient_sh2_disabled[cpu]=1;return 0;}

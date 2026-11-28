@@ -252,6 +252,47 @@ static void test_direct_native_pair(void) {
     ambient_sh2_clear();
     puts("SH2 direct ARM64 tail-linked block pair: target state, budget and stale-successor guards passed");
 }
+static void test_dynamic_native_prediction(void) {
+    u16 program[96];
+    for(unsigned i=0;i<96;++i)program[i]=0x7301;
+    program[0]=0x7201;program[1]=0x412b;program[2]=0x0009;
+    const u32 base=0x06000100u,target=base+64;
+    SH2_struct prepared,got,want;
+    setup_program(&prepared,program,96,base);
+    prepared.regs.R[1]=target;
+    AmbientSh2Block* executed=NULL;
+    for(unsigned block=0;block<2;++block) {
+        prepared.regs.PC=base+64*block;
+        for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+            if(ambient_sh2_try_block(&prepared,100,NULL,&executed))abort();
+    }
+    AmbientSh2Block* first=ambient_sh2_lookup(0,base,0);
+    AmbientSh2Block* second=ambient_sh2_lookup(0,target,0);
+    if(!first||!second||!first->dynamic_exit||!second->native_link)abort();
+    prepared.regs.PC=base;
+    got=prepared;
+    if(!ambient_sh2_try_block_scoped(&got,4,NULL,&executed,ambient_sh2_new_scope(0))||
+       executed!=first||got.regs.PC!=target||got.cycles!=4)abort();
+    got=want=prepared;
+    reference_step(&want);reference_step(&want);
+    for(unsigned i=0;i<32;++i)reference_step(&want);
+    if(!ambient_sh2_try_block_scoped(&got,36,NULL,&executed,ambient_sh2_new_scope(0))||
+       executed!=second||got.cycles!=want.cycles||got.instruction!=want.instruction||
+       memcmp(&got.regs,&want.regs,sizeof(got.regs)))abort();
+    /* A different runtime target must never follow the predicted block. */
+    got=want=prepared;got.regs.R[1]=want.regs.R[1]=target+2;
+    reference_step(&want);reference_step(&want);
+    if(!ambient_sh2_try_block_scoped(&got,36,NULL,&executed,ambient_sh2_new_scope(0))||
+       executed!=first||got.cycles!=want.cycles||memcmp(&got.regs,&want.regs,sizeof(got.regs)))abort();
+    /* Rewarm prediction, then mutate the target instruction. */
+    got=prepared;
+    if(!ambient_sh2_try_block_scoped(&got,4,NULL,&executed,ambient_sh2_new_scope(0)))abort();
+    program[32]=0xe180;got=prepared;
+    if(!ambient_sh2_try_block_scoped(&got,36,NULL,&executed,ambient_sh2_new_scope(0))||
+       executed!=first||got.cycles!=4||got.regs.PC!=target)abort();
+    ambient_sh2_clear();
+    puts("SH2 native indirect prediction: actual-target match, wrong-target exit and stale successor passed");
+}
 static void test_conditional_native_loops(void) {
     const u32 base=0x06000100u;
     for(unsigned bt=0;bt<2;++bt) {
@@ -356,6 +397,7 @@ int main(void) {
     test_scoped_page_invalidation();
     test_resident_cache_traces();
     test_direct_native_pair();
+    test_dynamic_native_prediction();
     test_conditional_native_loops();
     test_native_loop_budget();
     benchmark_native_trace();
