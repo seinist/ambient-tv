@@ -205,7 +205,7 @@ internal object HdrScenePlanner {
             val known = HashMap<String,String>()
             while (extractor.sampleTrackIndex >= 0) {
                 currentCoroutineContext().ensureActive()
-                if (samples.size >= MAX_FRAMES || extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_ENCRYPTED != 0) return null
+                if (samples.size >= MAX_FRAMES || (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0) return null
                 buffer.clear()
                 val count = extractor.readSampleData(buffer,0)
                 if (count <= 0 || count >= MAX_SAMPLE || extractor.sampleTrackIndex != video.single()) return null
@@ -250,8 +250,23 @@ internal class HdrSceneSession(
     fun advance(): Boolean {
         if (mode != 1 || !valid() || !cache.isFile || cache.length() !in 1L..32_000_000L) return false
         val matching = runCatching {
-            cache.inputStream().bufferedReader().use {
-                it.readLine() == "AMBIENTSVP_SCENE_CACHE_1" && it.readLine() == key
+            // The native writer publishes atomically. Quickly reject an
+            // empty/truncated/wrong-source cache before requesting replay;
+            // the native second pass validates every interval and profile.
+            val header = cache.inputStream().bufferedReader().use {
+                it.readLine() == "AMBIENTSVP_SCENE_CACHE_1" && it.readLine() == key &&
+                    !it.readLine().isNullOrBlank() && !it.readLine().isNullOrBlank()
+            }
+            if (!header) false else java.io.RandomAccessFile(cache,"r").use { f ->
+                val size = minOf(f.length(),4096L).toInt()
+                val tail = ByteArray(size)
+                f.seek(f.length()-size);f.readFully(tail)
+                val line = tail.toString(Charsets.UTF_8).trimEnd().substringAfterLast('\n')
+                val fields = line.trim().split(Regex("\\s+"))
+                val first = if (plan.ends.size == 1) 0L else plan.ends[plan.ends.lastIndex-1]
+                fields.size == 17 && fields[0].toLongOrNull() == first &&
+                    fields[1].toLongOrNull() == plan.ends.last() &&
+                    fields.last().toIntOrNull()?.let { it in 1..1000 } == true
             }
         }.getOrDefault(false)
         if (!matching) return false
