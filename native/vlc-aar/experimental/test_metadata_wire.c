@@ -23,6 +23,10 @@ int main(void)
     for(unsigned i=0;i<8;i++)assert(read(fd[0],ack+i,1)==1);
     assert(ambient_metadata_ack_valid(ack,7));
     assert(!ambient_metadata_ack_valid(ack,8));
+    ack[3]='2';
+    assert(ambient_metadata_ack_result(ack,7)==AMBIENT_ACK_REJECTED);
+    assert(!ambient_metadata_ack_valid(ack,7));
+    assert(ambient_metadata_ack_result(ack,8)==AMBIENT_ACK_RETRY);
     ack[0]=0;assert(!ambient_metadata_ack_valid(ack,7));
     ambient_metadata_header(out,2,0,0,0,8,1234000,43);
     assert(out[31]==8&&out[47]==43&&!memcmp(out+32,golden+32,8));

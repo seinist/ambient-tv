@@ -846,7 +846,7 @@ diff --git a/modules/codec/omxil/mediacodec_ndk.c b/modules/codec/omxil/mediacod
  
      return 0;
  }
-@@ -354,6 +360,18 @@
+@@ -354,6 +360,19 @@
  
          p_out->buf.i_ts = p_sys->info.presentationTimeUs;
          p_out->b_eos = p_sys->info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM;
@@ -857,7 +857,8 @@ diff --git a/modules/codec/omxil/mediacodec_ndk.c b/modules/codec/omxil/mediacod
 +                void *payload = NULL;
 +                size_t size = 0;
 +                if (AMediaFormat_getBuffer(format, "hdr10-plus-info", &payload, &size))
-+                    p_out->buf.hdrplus_status = ambient_hdrplus_parse(payload, size, &p_out->buf.hdrplus) ?
++                    p_out->buf.hdrplus_status = (ambient_hdrplus_parse(payload, size, &p_out->buf.hdrplus) &&
++                        p_out->buf.hdrplus.metadata_constraints_ok) ?
 +                        AMBIENT_HDRPLUS_VALID : AMBIENT_HDRPLUS_UNSUPPORTED;
 +                AMediaFormat_delete(format);
 +            }

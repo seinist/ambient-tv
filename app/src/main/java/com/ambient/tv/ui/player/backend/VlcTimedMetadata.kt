@@ -31,11 +31,12 @@ internal object VlcTimedMetadataPacket {
         data class Epoch(val epoch: Long, val seekTargetUs: Long? = null, val seekRequestId: Long = 0) : Message
     }
 
-    // Acknowledge only after the receiver has applied the epoch barrier.
-    fun acknowledgeEpoch(output: OutputStream, epoch: Long) {
+    // AFA1 confirms application; AFA2 explicitly rejects a stale event.
+    // The producer must never retry a terminal rejection.
+    fun acknowledgeEpoch(output: OutputStream, epoch: Long, accepted: Boolean = true) {
         require(epoch in 0L..0xffffffffL)
         val data = DataOutputStream(output)
-        data.writeInt(0x41464131) // AFA1
+        data.writeInt(if (accepted) 0x41464131 else 0x41464132)
         data.writeInt(epoch.toInt())
         data.flush()
     }

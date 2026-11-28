@@ -72,6 +72,12 @@ class VlcTimedMetadataTest {
         assertEquals(0x41464131, data.readInt())
         assertEquals(0xfedcba98L, data.readInt().toLong() and 0xffffffffL)
         assertEquals(-1, data.read())
+        val rejected = ByteArrayOutputStream()
+        VlcTimedMetadataPacket.acknowledgeEpoch(rejected, 7L, accepted = false)
+        val rejection = java.io.DataInputStream(rejected.toByteArray().inputStream())
+        assertEquals(0x41464132, rejection.readInt())
+        assertEquals(7, rejection.readInt())
+        assertEquals(-1, rejection.read())
         assertTrue(runCatching { VlcTimedMetadataPacket.acknowledgeEpoch(out, -1) }.isFailure)
         assertTrue(runCatching { VlcTimedMetadataPacket.acknowledgeEpoch(out, 0x100000000L) }.isFailure)
     }

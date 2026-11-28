@@ -41,15 +41,15 @@ internal class VlcTimedMetadataReceiver private constructor(
                         val event = VlcTimedMetadataPacket.read(it.inputStream)
                         if (!closed.get()) {
                             val accepted = onEvent(event)
-                            if (accepted && !closed.get()) {
+                            if (!closed.get()) {
                                 val epoch = when (event) {
                                     is VlcTimedMetadataPacket.Message.Epoch -> event.epoch
                                     is VlcTimedMetadataPacket.Message.Event -> event.event.seekEpoch
                                 }
                                 // One connection carries one event. ACK only after handing it
                                 // to the inbox (or recognizing an accepted duplicate).
-                                // A stale/rejected epoch must not be acknowledged as applied.
-                                VlcTimedMetadataPacket.acknowledgeEpoch(it.outputStream, epoch)
+                                // A rejected epoch receives a distinct terminal response.
+                                VlcTimedMetadataPacket.acknowledgeEpoch(it.outputStream, epoch, accepted)
                             }
                         }
                     }

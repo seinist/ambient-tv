@@ -28,9 +28,17 @@ static inline void ambient_metadata_header_v4(uint8_t p[AMBIENT_METADATA_V4_HEAD
     p[3]='4';
     ambient_metadata_be(p+48,packet,8);
 }
-static inline bool ambient_metadata_ack_valid(const uint8_t p[8],uint32_t epoch)
+enum ambient_metadata_ack { AMBIENT_ACK_RETRY, AMBIENT_ACK_ACCEPTED, AMBIENT_ACK_REJECTED };
+static inline enum ambient_metadata_ack ambient_metadata_ack_result(const uint8_t p[8],uint32_t epoch)
 {
     uint8_t expected[8];
     memcpy(expected,"AFA1",4);ambient_metadata_be(expected+4,epoch,4);
-    return memcmp(p,expected,8)==0;
+    if (!memcmp(p,expected,8)) return AMBIENT_ACK_ACCEPTED;
+    expected[3]='2';
+    if (!memcmp(p,expected,8)) return AMBIENT_ACK_REJECTED;
+    return AMBIENT_ACK_RETRY;
+}
+static inline bool ambient_metadata_ack_valid(const uint8_t p[8],uint32_t epoch)
+{
+    return ambient_metadata_ack_result(p,epoch)==AMBIENT_ACK_ACCEPTED;
 }
