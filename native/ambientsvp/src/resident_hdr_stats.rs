@@ -104,7 +104,7 @@ impl StatsJob{
             if let Some((tracks,phase,_))=tracking{if i>0{
                 let t=tracks[i];row[43]=phase.to_bits();row[44..48].copy_from_slice(&t.a);
                 row[48..52].copy_from_slice(&t.b);row[52..54].copy_from_slice(&t.ellipse);row[54]=1;row[55]=u32::from(s.affine);
-                if let Some(e)=ellipses{row[64..67].copy_from_slice(&e[i]);row[67]=1;}
+                if let Some(e)=ellipses{row[64..67].copy_from_slice(&e[i]);row[67]=1;row[68..71].copy_from_slice(&e[i]);}
             }}
         }
         unsafe{
@@ -156,6 +156,23 @@ impl StatsJob{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::HOST,
                 vk::DependencyFlags::empty(),&after,&[],&[]);
         }
+    }
+    pub(super) fn ellipses(&self,out:&mut[[u32;3]])->Result<()>{
+        if !self.affine||out.len()!=self.windows.len(){return Err("HDR ellipse read contract".into());}
+        let mut data=vec![0u32;STRIDE*out.len()];
+        unsafe{
+            let mapped=self.summary.map()?;
+            std::ptr::copy_nonoverlapping(mapped,data.as_mut_ptr(),data.len());
+            self.device.unmap_memory(self.summary.memory);
+        }
+        for (i,e) in out.iter_mut().enumerate(){
+            let row=&data[i*STRIDE..(i+1)*STRIDE];
+            *e=[0;3];
+            if i==0{continue;}
+            if row[67]!=1||row[68]==0||row[68]>65535||row[69]==0||row[69]>row[68]||row[70]>180{return Err("invalid measured ellipse".into());}
+            e.copy_from_slice(&row[68..71]);
+        }
+        Ok(())
     }
     pub(super) fn rectangles(&self,out:&mut[[u32;4]])->Result<()>{
         if !self.affine||out.len()!=self.windows.len(){return Err("HDR affine rectangle contract".into());}
