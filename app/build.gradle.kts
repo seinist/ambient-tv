@@ -424,6 +424,9 @@ android {
         resources {
             // Signed JVM crypto jars contain metadata that Android does not load as code.
             excludes += setOf("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/versions/**")
+            // dnsjava's multi-release desktop JDK resolver provider is absent on Android.
+            // Do not exclude other service descriptors: SLF4J and other providers need them.
+            excludes += "META-INF/services/java.net.spi.InetAddressResolverProvider"
             merges += setOf("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/LICENSE.md", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/NOTICE.md")
         }
         jniLibs {
@@ -590,9 +593,10 @@ dependencies {
     implementation(libs.zxing.core)
     // WireGuard X25519 (the platform JCA has it only from API 33); also required by smbj/jcifs-ng.
     implementation(libs.bouncycastle.prov)
-    // SFTP file sources. bcpkix uses the published 1.85 release; bcprov retains its 1.85.2 patch.
+    // SFTP file sources. Bouncy Castle provider, PKIX and utility modules share one release.
     implementation(libs.sshj)
     implementation(libs.bouncycastle.pkix)
+    implementation(libs.bouncycastle.util)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -623,6 +627,8 @@ dependencies {
     // SmartTube network engine "Cronet": the Play Services provider, no bundled native library.
     implementation(libs.androidx.media3.datasource.cronet)
     implementation(libs.play.services.cronet)
+    // Use the canonical API AAR explicitly; retain the Play Services provider.
+    implementation(libs.chromium.cronet)
     implementation(libs.androidx.media3.session)
 
     implementation(libs.retrofit.core)
@@ -961,7 +967,8 @@ configurations.configureEach {
         incoming.afterResolve {
             val forbidden = resolutionResult.allComponents.mapNotNull { it.moduleVersion }
                 .filter {
-                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-common")) ||
+                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-bundled", "cronet-common", "cronet-shared",
+                        "cronet-api", "cronet-fallback", "httpengine-native-provider")) ||
                         (it.group == "com.google.net.cronet" && it.name == "cronet-okhttp")
                 }
             check(forbidden.isEmpty()) {

@@ -6,7 +6,7 @@ Ambient TV keeps external media engines pinned so normal builds are reproducible
 
 ```bash
 ./build.sh deps-check          # read-only: all catalog pins
-./build.sh deps-update         # update eligible Maven pins, without building
+./build.sh deps-update         # update eligible Maven pins, compile/test, rollback on failure
 ./build.sh deps-check media3   # check one shared version key
 ./build.sh deps-update media3  # update Media3 alone
 ```
@@ -18,7 +18,7 @@ discovered automatically. Modules with a shared version must all advertise the
 candidate and publish its Maven POM before the pin advances; BOM-managed
 dependencies follow their BOM. A POM check is not a full Gradle resolution or ABI test. Ordinary APK builds never
 change these pins. No native engine downloads, source pins, assets or Cargo
-lockfiles are changed by these commands.
+lockfiles are changed by these commands. Validation may fetch pinned upstream sources and build test outputs; it never publishes an APK.
 
 Stable numeric releases (including Final, GA and RELEASE qualifiers) are the
 default; snapshots and unknown qualifiers are ignored. Versions are sorted numerically, including alpha, beta, milestone and
@@ -30,12 +30,10 @@ MEDIA3_CHANNEL=prerelease ./build.sh deps-check media3
 MAVEN_ALLOW_MAJOR=1 ./build.sh deps-update okhttp
 ```
 
-The same options are available with `update-deps`. Media3 stays on the stable
+The same options are available with `deps-update` and `build-deps` (`update-deps` is a legacy alias). Media3 stays on the stable
 channel unless an explicit prerelease channel is selected. Major-version
 upgrades are reported for manual review by default (the date-based Compose BOM
-is exempt); libVLC stays on its current major even with the major opt-in. The
-AGP/Kotlin/KSP/Hilt matrix, Chromium Cronet alignment, Bouncy Castle, Monogram's
-JNA ABI and explicitly coupled SmartTube compatibility pins remain check-only.
+and Chromium release numbering are exempt); libVLC stays on its current major even with the major opt-in. The toolchain, Bouncy Castle, Cronet, JNA and SmartTube pins participate in validated updates.
 Missing metadata is reported as UNAVAILABLE rather than guessing a version.
 Network/parse errors abort before writing the catalog. Review the diff and run
 the build and playback tests after any update.
@@ -126,7 +124,7 @@ review the diff and push to main to trigger incremental signed core builds.
 Yabause and YabaSanshiro have separate branch pins. LibretroDroid itself
 remains managed by `libs-check libretro` and `libs-update libretro`.
 
-Use `deps-check` / `deps-update` for Maven dependencies; the previous
+Use `deps-check` / `deps-update` / `build-deps` for Maven dependencies; the previous
 `check-deps` / `update-deps` spellings remain aliases. The old
 `libs-check cores` / `libs-update cores` spellings also remain aliases for
 the dedicated core updater.

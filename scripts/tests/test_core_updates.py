@@ -56,9 +56,12 @@ class CoreUpdateTest(unittest.TestCase):
             (["libs-check"], ["update_external_libraries.py", "--check"]),
             (["libs-update", "libretro"], ["update_external_libraries.py", "--apply", "--only", "libretro"]),
             (["deps-check", "media3"], ["update_maven_dependencies.py", "--check", "media3"]),
-            (["deps-update"], ["update_maven_dependencies.py", "--apply"]),
-            (["update-deps", "media3"], ["update_maven_dependencies.py", "--apply", "media3"]),
+            (["deps-update"], ["update_maven_dependencies.py", "--apply", "--validate"]),
+            (["update-deps", "media3"], ["update_maven_dependencies.py", "--apply", "--validate", "media3"]),
             (["libs-check", "cores"], ["update_cores.py", "--check"]),
+            (["build-deps"], ["update_maven_dependencies.py", "--apply", "--validate"]),
+            (["check-deps"], ["update_maven_dependencies.py", "--check"]),
+            (["libs-update", "cores"], ["update_cores.py", "--apply"]),
         ]
         for argv, expected in cases:
             with self.subTest(argv=argv):
