@@ -21,7 +21,7 @@ diff --git a/src/InputStream.c b/src/InputStream.c
                      freePacketHolder(holder);
                      return;
                  }
-@@ -605,11 +607,16 @@
+@@ -605,11 +607,18 @@
              continue;
          }
  
@@ -33,7 +33,9 @@ diff --git a/src/InputStream.c b/src/InputStream.c
 +        // Bound batching under sustained input load without reordering input.
 +        uint64_t now = PltGetMillis();
 +        if (queuedSinceFlush == 0) batchStartMs = now;
-+        bool moreData = LbqGetItemCount(&packetQueue) > 0;
++        PltLockMutex(&packetQueue.mutex);
++        bool moreData = packetQueue.currentSize > 0;
++        PltUnlockMutex(&packetQueue.mutex);
 +        if (++queuedSinceFlush >= 8 || now - batchStartMs >= 1) moreData = false;
 +        if (!sendInputPacket(holder, moreData)) {
 +            freePacketHolder(holder);
@@ -46,7 +48,7 @@ diff --git a/src/InputStream.c b/src/InputStream.c
 diff --git a/src/AudioStream.c b/src/AudioStream.c
 --- a/src/AudioStream.c
 +++ b/src/AudioStream.c
-@@ -173,8 +173,18 @@
+@@ -173,8 +173,21 @@
      pthread_mutex_unlock(&audioPoolLock);
  }
  
@@ -60,7 +62,10 @@ diff --git a/src/AudioStream.c b/src/AudioStream.c
 +    if (AudioPacketDuration > 0) {
 +        int maxQueued = 60 / AudioPacketDuration;
 +        if (maxQueued < 2) maxQueued = 2;
-+        if (LbqGetItemCount(&packetQueue) >= maxQueued) {
++        PltLockMutex(&packetQueue.mutex);
++        bool overBudget = packetQueue.currentSize >= maxQueued;
++        PltUnlockMutex(&packetQueue.mutex);
++        if (overBudget) {
 +            freePacketList(LbqFlushQueueItems(&packetQueue));
 +        }
 +    }
