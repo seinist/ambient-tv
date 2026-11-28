@@ -19,5 +19,9 @@ class SmartTubeModuleAdapter : SystemModuleEntrypoint {
             "com.liskovsoft.youtubeapi.lounge.LoungeService",
             "com.eclipsesource.v8.V8",
         )) check(Class.forName(name, false, loader).classLoader === loader)
+        // Exercise the real child-owned Android library load, not just class lookup.
+        Class.forName("com.eclipsesource.v8.LibraryLoader", true, loader)
+            .getDeclaredMethod("loadLibrary", String::class.java).apply { isAccessible = true }
+            .invoke(null, null as String?)
     }
 }
