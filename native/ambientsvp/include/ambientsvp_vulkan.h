@@ -87,6 +87,12 @@ AmbientSvpVkPair *ambient_svp_vk_begin_extended(const AmbientSvpVk *,VkCommandBu
     const AmbientSvpVkPicture *b,const AmbientSvpVkPicture *next);
 AmbientSvpVk *ambient_svp_vk_create_quality(VkInstance,VkPhysicalDevice,VkDevice,
     PFN_vkGetInstanceProcAddr,uint32_t,uint32_t,uint32_t,const AmbientSvpQuality *);
+/* Held canonical RGBA16F images: [A,B,out] or [A,B,past,next,out].
+ * Wait on count binary semaphores, signal a caller-owned timeline value.
+ * Caller serializes the queue and holds images through the call.
+ * No host pixel transfer; completes synchronously. */
+int ambient_svp_vk_render_held(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
+    const VkSemaphore *,VkSemaphore,uint64_t,float);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
 /* Record motion analysis into an already-recording command buffer
  * outside a render pass; no submit. Pair retains its private resources.
