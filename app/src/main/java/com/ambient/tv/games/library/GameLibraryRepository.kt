@@ -1424,7 +1424,8 @@ class GameLibraryRepository @Inject constructor(
                                     val verified = when {
                                         !GameNameDatabases.usesChecksums(system.id) -> last?.verifiedTitle?.takeIf { unchanged }
                                         version == 0L -> null
-                                        cachedProbe && last.datVersion == version -> last.verifiedTitle
+                                        cachedProbe && last.datVersion == version &&
+                                            checksums.crc32 == last.archiveCrc && checksums.datCrc32 == last.datCrc -> last.verifiedTitle
                                         else -> checksums.crc32?.let { datNameFromCrc(system.id, it) }
                                             ?: checksums.datCrc32?.let { datNameFromCrc(system.id, it) }
                                     }
@@ -1558,8 +1559,8 @@ class GameLibraryRepository @Inject constructor(
         const val PROBE_VERSION = 3
     }
 
-    // Invalidate only DS and PSP probes so existing libraries recover new titles and alternate CRCs.
-    private fun probeVersion(systemId: String): Int = if (systemId in setOf("nds", "psp")) PROBE_VERSION + 1 else PROBE_VERSION
+    // Invalidate only DS, 3DS and PSP probes so existing libraries recover new titles and alternate CRCs.
+    private fun probeVersion(systemId: String): Int = if (systemId in setOf("nds", "n3ds", "psp")) PROBE_VERSION + 1 else PROBE_VERSION
 
     private fun extractTitle(entry: FileEntry, session: GameScanFileSession, system: String): String? {
         if (entry.size <= 0 || system !in setOf("gb", "gba", "nds", "snes", "megadrive",
