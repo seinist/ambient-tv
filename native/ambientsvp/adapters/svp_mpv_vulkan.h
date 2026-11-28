@@ -570,7 +570,8 @@ static bool svp_vk_eligible(struct mp_image *img)
 {
     if (!img || img->imgfmt!=IMGFMT_VULKAN || !img->hwctx
         || img->w<32 || img->h<32 || (img->w|img->h)&1
-        || (uint64_t)img->w*img->h>1920u*1080u
+        || img->w>3840 || img->h>2160
+        || ((uint64_t)img->w*img->h>1920u*1080u && !svp_vk_hdr10plus(img))
         || img->params.crop.x0 || img->params.crop.y0
         || (img->params.crop.x1 && img->params.crop.x1!=img->w)
         || (img->params.crop.y1 && img->params.crop.y1!=img->h)
