@@ -309,6 +309,7 @@ class MoonlightStreamEngine @Inject constructor(
                 }
                 return@launch
             }
+            if (connection != null) MoonBridge.releaseStoppedSessionRefs()
             finishStopped(session)
             } finally { watchdog.cancel() }
         }

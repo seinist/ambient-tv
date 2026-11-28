@@ -1,0 +1,57 @@
+diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
+--- a/src/VideoDepacketizer.c
++++ b/src/VideoDepacketizer.c
+@@ -6,6 +6,8 @@
+ static PLENTRY nalChainHead;
+ static PLENTRY nalChainTail;
+ static int nalChainDataLength;
++static bool frameAssemblyFailed;
++#define AMBIENT_MAX_FRAME_BYTES (4 * 1024 * 1024 + 12 * 64 * 1024)
+ 
+ static unsigned int nextFrameNumber;
+ static unsigned int startFrameNumber;
+@@ -614,6 +616,12 @@
+ static void queueFragment(PLENTRY_INTERNAL* existingEntry, char* data, int offset, int length) {
+     PLENTRY_INTERNAL entry;
+ 
++    // Keep ownership with the caller on rejection. No partially assembled frame is submitted.
++    if (frameAssemblyFailed) return;
++    if (data == NULL || offset < 0 || length <= 0 || length > AMBIENT_MAX_FRAME_BYTES - nalChainDataLength) {
++        frameAssemblyFailed = true;
++        return;
++    }
+     if (existingEntry == NULL || *existingEntry == NULL) {
+         entry = (PLENTRY_INTERNAL)malloc(sizeof(*entry) + length);
+     }
+@@ -621,6 +629,7 @@
+         entry = *existingEntry;
+     }
+ 
++    if (entry == NULL) { frameAssemblyFailed = true; return; }
+     if (entry != NULL) {
+         entry->entry.next = NULL;
+         entry->entry.length = length;
+@@ -1011,6 +1020,7 @@
+         frameHeaderSize = 0;
+     }
+ 
++    if (firstPacket) frameAssemblyFailed = false;
+     if (NegotiatedVideoFormat & (VIDEO_FORMAT_MASK_H264 | VIDEO_FORMAT_MASK_H265)) {
+         if (firstPacket && isIdrFrameStart(&currentPos)) {
+             // SPS and PPS prefix is padded between NALs, so we must decode it with the slow path
+@@ -1077,6 +1087,15 @@
+         queueFragment(existingEntry, currentPos.data, currentPos.offset, currentPos.length);
+     }
+ 
++    if (frameAssemblyFailed) {
++        // Drop the whole frame and ignore continuations until the next SOF.
++        decodingFrame = false;
++        nextFrameNumber = frameIndex + 1;
++        dropFrameState();
++        LiRequestIdrFrame();
++        return;
++    }
++
+     if (lastPacket) {
+         // Move on to the next frame
+         decodingFrame = false;

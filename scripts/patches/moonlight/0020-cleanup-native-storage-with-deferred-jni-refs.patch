@@ -1,0 +1,84 @@
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -174,14 +174,22 @@
+     if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
++// Cleanup is serialized by common-c's joined renderer threads and native slot.
++ // If attachment fails, retain at most the three existing global refs until
++ // the Java-owned stop worker can delete them. No allocation is needed.
++static void releaseFrameRef(JNIEnv* env) {
++    DecodedFrameCapacity = 0;
++    if (env != NULL && DecodedFrameBuffer != NULL) {
++        (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
++        DecodedFrameBuffer = NULL;
++    }
++}
++
+ void BridgeDrCleanup(void) {
+     JNIEnv* env = GetThreadEnv();
++    releaseFrameRef(env);
+     if (env == NULL) return;
+ 
+-    if (DecodedFrameBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedFrameBuffer);
+-    DecodedFrameBuffer = NULL;
+-    DecodedFrameCapacity = 0;
+-
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeDrCleanupMethod);
+     if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+@@ -464,26 +472,37 @@
+     if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
+-void BridgeArCleanup() {
+-    JNIEnv* env = GetThreadEnv();
++static void releaseAudioRefs(JNIEnv* env) {
+     if (env == NULL) return;
+-
+-    opus_multistream_decoder_destroy(Decoder);
+-
+     if (DecodedAudioBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
+     DecodedAudioBuffer = NULL;
+     if (DecodedDirectAudioBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedDirectAudioBuffer);
+     DecodedDirectAudioBuffer = NULL;
++}
++
++void BridgeArCleanup() {
++    JNIEnv* env = GetThreadEnv();
++    if (Decoder != NULL) opus_multistream_decoder_destroy(Decoder);
++    Decoder = NULL;
++    releaseAudioRefs(env);
+     free(DecodedAudioScratch);
+     DecodedAudioScratch = NULL;
+     free(DecodedStereoScratch);
+     DecodedStereoScratch = NULL;
+     DecodedAudioSamples = 0;
++    if (env == NULL) return;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArCleanupMethod);
+     if ((*env)->ExceptionCheck(env)) recordCallbackFailure(env);
+ }
+ 
++// Called only after connection.stop() joins native workers, never mid-stream.
++JNIEXPORT void JNICALL Java_com_limelight_nvstream_jni_MoonBridge_releaseStoppedSessionRefs(JNIEnv* env, jclass clazz) {
++    (void)clazz;
++    releaseFrameRef(env);
++    releaseAudioRefs(env);
++}
++
+ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
+     JNIEnv* env = GetThreadEnv();
+     if (env == NULL) return;
+diff --git a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+--- a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
++++ b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+@@ -233,6 +233,7 @@
+     public static native boolean copyActivePictureData(java.nio.ByteBuffer target, int length);
+     public static native boolean copyActivePictureArray(byte[] target, int length);
+     public static native boolean consumeCallbackFailure();
++    public static native void releaseStoppedSessionRefs();
+ 
+     public static boolean bridgeDrSupportsDirectPicture() {
+         return videoRenderer != null && videoRenderer.supportsDirectPicture();
