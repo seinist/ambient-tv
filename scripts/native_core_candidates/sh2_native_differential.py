@@ -87,8 +87,46 @@ static void test_linked_traces(void) {
     ambient_sh2_clear();
     puts("SH2 fused BRA/BSR traces, register state, chained exits and stale-source invalidation passed");
 }
+static void test_resident_cache_traces(void) {
+    u16 program[64];
+    for(unsigned i=0;i<64;++i)program[i]=0x7101;
+    program[2]=0xa004;program[3]=0x7103;
+    SH2_struct got,want;
+    const u32 base=0x06000100u;
+    setup_program(&got,program,64,base);
+    yabsys.sh2_cache_enabled=1;got.onchip.cache.enable=1;
+    for(unsigned i=0;i<64;++i) {
+        const u32 addr=base+2*i;
+        const unsigned entry=(addr&0x3f0u)>>4,off=addr&15u,way=entry&3;
+        cache_line* line=&got.onchip.cache.way[way][entry];
+        line->v=1;line->tag=addr&0x1ffffc00u;
+        line->data[off]=program[i]>>8;line->data[off+1]=program[i]&255;
+    }
+    /* Deliberately different backing RAM: translated code must come from
+       the resident cache, not the current contents of physical RAM. */
+    program[0]=0xe180;
+    AmbientSh2Block* executed=NULL;
+    for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+        if(ambient_sh2_try_block(&got,100,NULL,&executed))abort();
+    if(got.fetch_count||got.refills||got.cycles)abort();
+    AmbientSh2Block* trace=&ambient_sh2_cache[0][ambient_sh2_slot(base)];
+    if(!trace->code||trace->count!=AMBIENT_SH2_MAX_OPS)abort();
+    want=got;
+    while(want.cycles<trace->cycles)reference_step(&want);
+    if(!ambient_sh2_try_block(&got,100,NULL,&executed) ||
+       got.cycles!=want.cycles || got.fetch_count!=want.fetch_count || got.refills ||
+       memcmp(&got.regs,&want.regs,sizeof(got.regs)) ||
+       memcmp(&got.onchip.cache,&want.onchip.cache,sizeof(cache_enty)))abort();
+    got.regs.PC=base;got.cycles=got.fetch_count=0;
+    const unsigned entry=((base+16)&0x3f0u)>>4;
+    got.onchip.cache.way[entry&3][entry].v=0;
+    if(ambient_sh2_try_block(&got,100,NULL,&executed)||got.cycles||got.fetch_count||got.refills)abort();
+    ambient_sh2_clear();yabsys.sh2_cache_enabled=0;
+    puts("SH2 cache-resident fused traces: exact fetch order, LRU, stale RAM and miss guards passed");
+}
 int main(void) {
     test_linked_traces();
+    test_resident_cache_traces();
     unsigned legal=0, illegal=0, delayed=0;
     u32 seed=0x6a09e667u;
     const uint16_t slots[]={0xe180,0x9101,0xd102,0x6122,0x2122,0x3124,0x400e,0x312d};
@@ -158,8 +196,14 @@ def run(upstream: Path):
         raise ValueError("Pinned decoder not found")
     decoder=decode.group().replace("&SH2undecoded","NULL")
     prelude=PRELUDE.split("static void SH2delay(")[0]
+    prelude=prelude.replace("struct SH2_struct {", """
+typedef struct {u32 tag;int v;u8 data[16];} cache_line;
+typedef struct {u32 enable,lru[64];cache_line way[4][64];} cache_enty;
+struct SH2_struct {""")
     prelude=prelude.replace("    u32 cycles,seed,stall,count;", """    u32 cycles,seed,stall,count,slot;
     unsigned isslave, isIdle, isSleeping, delay, breakpointEnabled, backtraceEnabled;
+    struct { cache_enty cache; } onchip;
+    u32 fetch_count,refills;
     enum SHMODELTYPE model;
     struct { unsigned enabled; } stepOverOut,trackInfLoop;
     void* fetchlist[256];
@@ -171,6 +215,19 @@ static struct { int sh2_cache_enabled; } yabsys;
 static u32 FetchBios(SH2_struct* sh,u32 addr){
     if(sh->program) {
         const u32 index=(addr-sh->program_base)>>1;
+        if(yabsys.sh2_cache_enabled && sh->onchip.cache.enable) {
+            ++sh->fetch_count;
+            const unsigned entry=(addr&0x3f0u)>>4,off=addr&15u;
+            const u32 tag=addr&0x1ffffc00u;
+            for(unsigned way=0;way<4;++way) {
+                cache_line* line=&sh->onchip.cache.way[way][entry];
+                if(line->v && line->tag==tag) {
+                    sh->onchip.cache.lru[entry]=sh->onchip.cache.lru[entry]*5+way+1;
+                    return (line->data[off]<<8)|line->data[off+1];
+                }
+            }
+            ++sh->refills;sh->cycles+=4;
+        }
         return index<sh->program_length?sh->program[index]:0x0009;
     }
     event(sh,16,addr,sh->slot);return sh->slot;

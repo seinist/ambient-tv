@@ -38,8 +38,11 @@ compiler build is not proof of correct gameplay or a performance improvement.
   PR before the slot. The native code falls through directly without host
   dispatch. Every non-contiguous source address is checked before execution.
   Registers are committed at mapped-bus/helper and dynamic-exit boundaries. Cache-enabled SH2 execution uses the same native single-op dispatcher with
-  exact cache/data-array fetches, including delay slots; speculative traces
-  stay disabled there. Illegal opcodes, debugging and executable mapping
+  exact cache/data-array fetches, including delay slots. Cache-enabled traces
+  compile from already resident, cache-use lines only; side-effect-free tag
+  peeks verify every instruction before entry. The real fetches are replayed
+  in guest order to retain exact LRU state without speculative refills.
+  Cache misses, cache-through and data-array regions retain single-op execution. Illegal opcodes, debugging and executable mapping
   failure retain upstream fallbacks.
   Pure ALU traces now span up to 32 guest instructions and retain up to ten
   frequently accessed GPRs, SR and system registers in caller-saved AArch64

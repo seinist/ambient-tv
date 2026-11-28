@@ -389,7 +389,7 @@ static void ambient_sh2_delay_native(SH2_struct* sh, u32 addr)
     return;
 #endif
     /* A cache-enabled SH2 must still fetch exactly once through the
-     * emulated cache or data array. Do not speculatively fetch a trace. */
+     * emulated cache or data array. */
     if(yabsys.sh2_cache_enabled && (addr&0xc0000000u)==0xc0000000u)
         sh->instruction=DataArrayReadWord(sh,addr);
     else
@@ -455,6 +455,30 @@ static int ambient_sh2_safe_fetch(SH2_struct* context,fetchfunc fetch,u32 addr)
         ((fetchfunc*)context->fetchlist)[(addr>>20)&255u]==fetch;
 }
 
+/* Peek only already resident cache lines. No refill, LRU mutation,
+ * cache-through timing, MMIO or data-array read during compilation/validation.
+ * Mirrors the pinned cache_memory_read_w tag/entry/way precedence.
+ */
+static int ambient_sh2_peek(SH2_struct* context,fetchfunc fetch,u32 addr,u16* op)
+{
+    if(!ambient_sh2_safe_fetch(context,fetch,addr))return 0;
+    if(!yabsys.sh2_cache_enabled) {
+        *op=(u16)fetch(context,addr);return 1;
+    }
+    const cache_enty* ca=&context->onchip.cache;
+    if(!ca->enable || (addr&0xe0000000u))return 0;
+    const unsigned entry=(addr&0x3f0u)>>4, offset=addr&15u;
+    const u32 tag=addr&0x1ffffc00u;
+    for(unsigned way=0;way<4;++way) {
+        const cache_line* line=&ca->way[way][entry];
+        if(line->v && line->tag==tag) {
+            *op=(u16)(((u16)line->data[offset]<<8)|line->data[offset+1]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static unsigned ambient_sh2_slot(uint32_t pc)
 {
     return (pc>>1 ^ pc>>9)&(AMBIENT_SH2_SLOTS-1);
@@ -463,7 +487,7 @@ static unsigned ambient_sh2_slot(uint32_t pc)
 static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
                                  AmbientSh2Block* linked, AmbientSh2Block** executed)
 {
-    if (!ambient_sh2_eligible(context) || yabsys.sh2_cache_enabled || context->cycles >= budget ||
+    if (!ambient_sh2_eligible(context) || context->cycles >= budget ||
         budget - context->cycles < 4)
         return 0;
     const uint32_t pc = context->regs.PC;
@@ -472,6 +496,8 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     const fetchfunc fetch = ((fetchfunc*)context->fetchlist)[(pc >> 20) & 255];
     /* Only side-effect-free fetch regions. Never prefetch cartridges or MMIO. */
     if (fetch != FetchBios && fetch != FetchLWram && fetch != FetchHWram) return 0;
+    u16 first;
+    if(yabsys.sh2_cache_enabled && !ambient_sh2_peek(context,fetch,pc,&first))return 0;
     const unsigned cpu = context->isslave ? 1 : 0;
     if (ambient_sh2_disabled[cpu]) return 0;
     AmbientSh2Block* block = linked ? linked : &ambient_sh2_cache[cpu][ambient_sh2_slot(pc)];
@@ -486,20 +512,28 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
          * a stale translation: verify every source instruction before entry. */
         for (i = 0; i < block->count; ++i) {
             uint32_t addr = block->pcs[i];
-            if (!ambient_sh2_safe_fetch(context,fetch,addr) ||
-                (uint16_t)fetch(context, addr) != block->ops[i]) break;
+            u16 current;
+            if (!ambient_sh2_peek(context,fetch,addr,&current) || current!=block->ops[i]) break;
         }
         const uint32_t terminal_pc = block->next_pc;
+        u16 terminal_op;
         if (i == block->count && (!block->has_terminal ||
-            (ambient_sh2_safe_fetch(context,fetch,terminal_pc) &&
-             (uint16_t)fetch(context, terminal_pc) == block->terminal))) {
+            (ambient_sh2_peek(context,fetch,terminal_pc,&terminal_op) &&
+             terminal_op == block->terminal))) {
             if (block->code) {
+                /* All sources were resident, pure ALU instructions cannot
+                 * evict them. Replay the real fetches in guest order to
+                 * preserve LRU exactly; hits add no bus wait cycles. */
+                if(yabsys.sh2_cache_enabled)
+                    for(unsigned j=0;j<block->count;++j)
+                        (void)fetch(context,block->pcs[j]);
                 ((void (*)(u32*, u32*))block->code)(context->regs.R, &context->regs.SR.all);
                 context->instruction = block->ops[block->count-1];
                 context->regs.PC = block->next_pc;
                 context->cycles += block->cycles;
             }
             if (block->has_terminal) {
+                if(yabsys.sh2_cache_enabled)(void)fetch(context,terminal_pc);
                 context->instruction = block->terminal;
                 unsigned cost = ambient_sh2_branch(block->terminal, &context->regs.PC,
                                                    context->regs.SR.all);
@@ -524,7 +558,8 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     }
     if (block->hits < AMBIENT_SH2_HOT && ++block->hits < AMBIENT_SH2_HOT) return 0;
     if (block->count == 1) {
-        if ((uint16_t)fetch(context, pc) == block->ops[0]) return 0;
+        u16 current;
+        if (!ambient_sh2_peek(context,fetch,pc,&current) || current == block->ops[0]) return 0;
         block->count = 0;
     }
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
@@ -534,8 +569,8 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
     code[words++] = 0xd503245fu; /* BTI c, harmless hint on older ARM64 */
     code[words++] = 0xaa0103e7u; /* MOV x7,x1: SR pointer survives scratch register writes */
     while (count < AMBIENT_SH2_MAX_OPS) {
-        if (!ambient_sh2_safe_fetch(context,fetch,addr)) break;
-        uint16_t op = (uint16_t)fetch(context, addr);
+        u16 op;
+        if (!ambient_sh2_peek(context,fetch,addr,&op)) break;
         unsigned cost;
         /* Statically known BRA/BSR targets can be fused into a native trace
          * when the delay instruction is pure emitted code. Host execution
@@ -548,8 +583,9 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
            addr<=UINT32_MAX-2 && ambient_sh2_safe_fetch(context,fetch,addr+2)) {
             const int disp=(op&0x800u)?(int)(op&0xfffu)-4096:(int)(op&0xfffu);
             const u32 target=addr+4+(u32)(disp*2);
-            if(ambient_sh2_safe_fetch(context,fetch,target)) {
-                const uint16_t slot=(uint16_t)fetch(context,addr+2);
+            u16 slot,target_op;
+            if(ambient_sh2_peek(context,fetch,target,&target_op) &&
+               ambient_sh2_peek(context,fetch,addr+2,&slot)) {
                 uint32_t slot_code[16];
                 unsigned slot_cycles;
                 const unsigned n=ambient_sh2_emit_extended(slot,slot_code,ambient_sh2_layout,&slot_cycles);
@@ -599,8 +635,13 @@ static int ambient_sh2_try_block(SH2_struct* context, u32 budget,
         return 0;
     }
     if (!block->has_terminal && count < 4u) {
-        block->ops[0] = (uint16_t)fetch(context, pc);
-        block->count = 1;
+        u16 current;
+        if(ambient_sh2_peek(context,fetch,pc,&current)) {
+            block->ops[0]=current;
+            /* A cache miss at a later address is transient, not a negative
+             * compilation result. Revisit after normal execution refills it. */
+            block->count=yabsys.sh2_cache_enabled?0:1;
+        } else block->count=0;
         block->has_terminal = 0;
         return 0;
     }
