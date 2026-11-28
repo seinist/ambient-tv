@@ -1369,7 +1369,7 @@ class GameLibraryRepository @Inject constructor(
                                     last.modified == entry.modified && entry.modified != 0L
                                 val needsArchiveChecksum = needsArchiveDatChecksum(entry.name, last,
                                     last?.let { datVersions[it.systemId] } ?: 0L)
-                                val cachedProbe = unchanged && last.probeVersion == PROBE_VERSION &&
+                                val cachedProbe = unchanged && last.probeVersion == probeVersion(last.systemId) &&
                                     (folder.systemId == "auto" || folder.systemId == last.systemId) && !needsArchiveChecksum
                                 val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
                                     if (ext == "rar") {
@@ -1422,7 +1422,7 @@ class GameLibraryRepository @Inject constructor(
                                     }
                                     indexed += IndexedGame(entry, system.id, internal,
                                         last?.favorite ?: false, last?.lastPlayed ?: 0L,
-                                        last?.customTitle, verified, PROBE_VERSION, version,
+                                        last?.customTitle, verified, probeVersion(system.id), version,
                                         checksums.crc32, checksums.datCrc32)
                                 }
                                 val count = processed.incrementAndGet()
@@ -1549,6 +1549,9 @@ class GameLibraryRepository @Inject constructor(
     private companion object {
         const val PROBE_VERSION = 3
     }
+
+    // Invalidate only DS probes so existing libraries recover new titles and alternate CRCs.
+    private fun probeVersion(systemId: String): Int = if (systemId == "nds") PROBE_VERSION + 1 else PROBE_VERSION
 
     private fun extractTitle(entry: FileEntry, session: GameScanFileSession, system: String): String? {
         if (entry.size <= 0 || system !in setOf("gb", "gba", "nds", "snes", "megadrive",
