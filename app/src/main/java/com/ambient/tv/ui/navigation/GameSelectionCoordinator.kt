@@ -95,6 +95,7 @@ internal class GameSelectionCoordinator(
         val experiment: GameCoreExperiment? = null,
         var game: LibraryGame? = null,
         var completing: Boolean = false,
+        val allowInitialWake: Boolean = false,
     )
 
     private var active: Request? = null
@@ -116,22 +117,22 @@ internal class GameSelectionCoordinator(
 
     fun sourceChanged() { active?.let(::current) }
 
-    fun select(fileId: String, behavior: String, fresh: Boolean = false, experiment: GameCoreExperiment? = null) {
+    fun select(fileId: String, behavior: String, fresh: Boolean = false, experiment: GameCoreExperiment? = null, allowInitialWake: Boolean = false) {
         val currentSource = source(fileId)
         val normalizedBehavior = MediaSelectionPreferences.normalize(behavior)
         if (active?.let { it.fileId == fileId && it.origin == origin() && it.source == currentSource &&
-                it.behavior == normalizedBehavior && it.fresh == fresh && it.experiment == experiment } == true) return
+                it.behavior == normalizedBehavior && it.fresh == fresh && it.experiment == experiment && it.allowInitialWake == allowInitialWake } == true) return
         // Only a new intent retires other media; repeated OK must keep its own launch gate.
         onNewSelection()
         cancel()
-        val request = Request(fileId, origin(), currentSource, normalizedBehavior, fresh, experiment)
+        val request = Request(fileId, origin(), currentSource, normalizedBehavior, fresh, experiment, allowInitialWake = allowInitialWake)
         active = request
         mutable.value = GameSelectionUiState(GameSelectionPhase.RESOLVING)
         job = scope.launch {
             try {
                 val game = refresh(request) ?: return@launch
                 when (request.behavior) {
-                    MediaSelectionPreferences.PLAY -> prepare(request, allowWake = false, selected = game)
+                    MediaSelectionPreferences.PLAY -> prepare(request, allowWake = request.allowInitialWake, selected = game)
                     MediaSelectionPreferences.ASK -> show(request, GameSelectionPhase.OPTIONS)
                     else -> finish(request) { openDetails(game) }
                 }
@@ -145,6 +146,8 @@ internal class GameSelectionCoordinator(
 
     /** Starts over: the automatic state is kept only as the undo state, like a reset in the game. */
     fun playFresh(fileId: String) = select(fileId, MediaSelectionPreferences.PLAY, fresh = true)
+    /** A scheduled start explicitly authorizes wake for this game, not for other sources. */
+    fun playScheduled(fileId: String, fresh: Boolean) = select(fileId, MediaSelectionPreferences.PLAY, fresh = fresh, allowInitialWake = true)
     fun details(fileId: String) = select(fileId, MediaSelectionPreferences.DETAILS)
 
     /** Options, a failed attempt and a wake offer all keep the same selected game. */

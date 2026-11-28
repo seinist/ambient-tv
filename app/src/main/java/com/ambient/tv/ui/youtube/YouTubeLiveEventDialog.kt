@@ -20,6 +20,8 @@ internal fun YouTubeLiveEventDialog(
     onWait: () -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
+    reminded: Boolean = false,
+    onToggleReminder: (() -> Unit)? = null,
 ) {
     val event = state.liveEvent ?: return
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -37,6 +39,9 @@ internal fun YouTubeLiveEventDialog(
             title = stringResource(R.string.youtube_live_event_title),
             captureInitialFocus = false,
             footer = {
+                if (onToggleReminder != null && event.scheduledStartMs != null) {
+                    TvActionButton(stringResource(if (reminded) R.string.reminder_remove else R.string.reminder_add), onToggleReminder)
+                }
                 TvActionButton(
                     text = stringResource(if (state.waitingForLive) R.string.youtube_live_stop_waiting else R.string.youtube_live_wait),
                     onClick = onWait,

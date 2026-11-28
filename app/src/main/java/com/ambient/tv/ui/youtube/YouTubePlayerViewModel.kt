@@ -46,6 +46,22 @@ data class YouTubePlayerState(
 @HiltViewModel
 class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context, private val savedStateHandle: SavedStateHandle, private val engine: SmartTubeEngine, private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability, private val availability: com.ambient.tv.data.browse.SourceAvailability, private val preferences: com.ambient.tv.data.local.AppPreferences, private val browseContext: YouTubeBrowsePlaybackContext) : ViewModel() {
     internal fun ownsCompanionMedia(media: com.ambient.tv.companion.CompanionMedia?) = media?.kind == "youtube" && media.id == videoId && media.trailer == isTrailer
+    private val programmeReminderStore = com.ambient.tv.livetv.LiveTvReminderStore(context)
+    val programmeReminders = programmeReminderStore.reminders
+    fun isProgrammeReminded(reminders: List<com.ambient.tv.livetv.LiveTvReminder>): Boolean =
+        reminders.any { it.youtube && it.eventId == videoId }
+
+    fun toggleProgrammeReminder(): Boolean {
+        val event = _uiState.value.liveEvent ?: return false
+        val start = event.scheduledStartMs ?: return false
+        if (isTrailer) return false
+        return programmeReminderStore.toggle(com.ambient.tv.livetv.LiveTvReminder(
+            sourceId = "youtube", channelUuid = "", channelName = "SmartTube",
+            eventId = videoId, title = event.title, startEpochSeconds = start / 1000, youtube = true,
+            imageUrl = com.ambient.tv.youtube.youtubeThumbnailUrl(videoId),
+        ))
+    }
+
     private var videoId = requireNotNull(savedStateHandle.get<String>("videoId"))
     val isTrailer: Boolean = savedStateHandle.get<Boolean>("trailer") == true
     private val browseSession: Long? = savedStateHandle.get<Long>("browseSession")?.takeIf { it >= 0L }
@@ -194,6 +210,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 imageUrl = playback.imageUrl, backgroundUrl = playback.backgroundUrl,
                 durationMs = playback.durationMs, isLive = playback.isLive,
             ))) return@launch
+            if (!isTrailer && programmeReminderStore.find("youtube:$videoId") != null) programmeReminderStore.remove("youtube:$videoId")
             trailerLifetime?.loaded(playback.videoId)
             val chapterStart = YouTubeStartRequest.take(videoId)
             val rewindSeconds = savedResumeRequest.takeSeconds(preferences.resumeRewindSeconds,

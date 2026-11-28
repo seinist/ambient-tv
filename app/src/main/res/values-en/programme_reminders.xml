@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="programme_reminder_play">Play now</string>
+    <string name="programme_reminder_snooze">Remind in 5 minutes</string>
+    <string name="programme_reminder_manage">Manage reminders</string>
+    <string name="programme_reminder_empty">No reminders</string>
+    <string name="programme_reminder_status_due">Reminder due</string>
+    <string name="programme_reminder_smarttube">SmartTube reminders</string>
+    <string name="programme_reminder_scheduled_hint">Scheduled start reached; availability is checked when playback is requested.</string>
+    <string name="programme_reminder_home">Show reminders on Home</string>
+    <string name="programme_reminder_row">Scheduled</string>
+    <string name="programme_reminder_ready">Ready to play</string>
+    <string name="programme_reminder_auto_play">Play automatically</string>
+    <string name="programme_reminder_auto_play_hint">Starts when availability is confirmed while the app is open. If multiple reminders are due, asks first.</string>
+    <string name="schedule_playback">Schedule</string>
+    <string name="schedule_edit">Edit schedule</string>
+    <string name="schedule_save">Save schedule</string>
+    <string name="schedule_today">Today</string>
+    <string name="schedule_tomorrow">Tomorrow</string>
+    <string name="schedule_date">Date</string>
+    <string name="schedule_hour">Hour</string>
+    <string name="schedule_minute">Minute</string>
+    <string name="schedule_restart">Start from beginning</string>
+    <string name="schedule_weekly">Repeat weekly</string>
+    <string name="schedule_duration">Planned play time</string>
+    <string name="schedule_end">Estimated end: %1$s</string>
+    <string name="schedule_conflict">Overlaps another schedule. Automatic starts will not run concurrently.</string>
+    <string name="schedule_future">Choose a future time.</string>
+    <string name="schedule_failed">Schedule not saved. Source or account changed, or storage is full.</string>
+    <string name="schedule_remind_end">Remind at the end of the game session</string>
+    <string name="schedule_session_end_title">Planned game time finished: %1$s</string>
+</resources>

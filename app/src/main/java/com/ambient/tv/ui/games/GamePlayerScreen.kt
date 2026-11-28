@@ -1215,6 +1215,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 retroView.enablePausedPresentationOnDemand()
                 lastInitializationPollMs = now
                 model.firstFrameRendered(session)
+                com.ambient.tv.livetv.ScheduledPlaybackRuntime.gameStarted(context, session.game.fileId)
                 refreshStateSupport()
                 // Read the nominal core cadence, never the frame counter or display Hz.
                 displayFormat = GameDisplayFormat(

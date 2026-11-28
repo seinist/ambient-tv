@@ -575,6 +575,20 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
+    /** Probe a bookmarked premiere without constructing a player, relay or decoder. */
+    suspend fun probeProgrammeReminder(videoId: String): YouTubeLiveEvent? = io {
+        val media = service("getMediaItemService")
+        val candidate = loadPlayableFormatInfo(media, videoId, forceRefresh = true)
+        val info = candidate.info
+        if (info.callBool("isLiveOffline") == true) {
+            YouTubeLiveEvent(info.callString("getTitle").orEmpty(),
+                youtubeScheduledStartMs(info.callString("getScheduledStartTime"), info.callString("getStartTimestamp")))
+        } else {
+            check(formatInfoScore(candidate) > 0) { "No playable format yet" }
+            null
+        }
+    }
+
     suspend fun playback(
         videoId: String, isTrailer: Boolean = false, started: Long = System.nanoTime(), forceRefresh: Boolean = false,
     ): YouTubePlayback {

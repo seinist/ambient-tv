@@ -58,6 +58,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -500,6 +502,7 @@ fun TvheadendScreen(
             reminded = reminders.any { it.sourceId == state.source.id && it.eventId == event.eventId },
             canRemind = event.startEpochSeconds > System.currentTimeMillis() / 1000L,
             onToggleReminder = { viewModel.toggleReminder(event) },
+            canWait = !state.connectionRequired && channel != null,
         )
     }
 
@@ -1169,10 +1172,35 @@ private fun EventDialog(
     reminded: Boolean = false,
     canRemind: Boolean = false,
     onToggleReminder: () -> Unit = {},
+    canWait: Boolean = false,
     connectionRequired: Boolean = false,
     retrying: Boolean = false,
     onRetry: () -> Unit = {},
 ) {
+    var now by remember(event.eventId) { mutableLongStateOf(System.currentTimeMillis()) }
+    var waiting by remember(event.eventId) { mutableStateOf(false) }
+    var resumed by remember { mutableStateOf(false) }
+    val latestWatch by rememberUpdatedState(onWatch)
+    androidx.lifecycle.compose.LifecycleResumeEffect(event.eventId) {
+        resumed = true
+        onPauseOrDispose { resumed = false }
+    }
+    LaunchedEffect(event.eventId, event.startEpochSeconds, resumed) {
+        if (!resumed) return@LaunchedEffect
+        while (System.currentTimeMillis() / 1000 < event.startEpochSeconds) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+        now = System.currentTimeMillis()
+    }
+    LaunchedEffect(waiting, resumed, canWait, event.startEpochSeconds, event.stopEpochSeconds) {
+        if (!waiting || !resumed || !canWait) return@LaunchedEffect
+        delay((event.startEpochSeconds * 1000 - System.currentTimeMillis()).coerceAtLeast(0L))
+        if (event.isLive(System.currentTimeMillis() / 1000)) latestWatch()
+        waiting = false
+    }
+    val future = event.startEpochSeconds * 1000 > now
+    val watchAvailable = canWatch || (canWait && event.isLive(now / 1000))
     val playing = livePlaybackIndicator("channel", event.channelUuid)
     val openCurrent = com.ambient.tv.companion.LocalOpenActivePlayback.current
     val initialFocus = remember(event.eventId) { FocusRequester() }
@@ -1196,22 +1224,29 @@ private fun EventDialog(
         footer = {
             if (connectionRequired) TvActionButton(text = stringResource(R.string.home_retry), onClick = onRetry,
                 loading = retrying, enabled = !retrying, modifier = Modifier.focusRequester(initialFocus))
-            if (canWatch) TvActionButton(text = stringResource(if (playing != null) R.string.playback_open else R.string.tvh_watch), onClick = { if (playing != null) openCurrent(playing) else onWatch() }, selected = true, modifier = Modifier.focusRequester(initialFocus))
+            if (watchAvailable) TvActionButton(text = stringResource(if (playing != null) R.string.playback_open else R.string.tvh_watch), onClick = { if (playing != null) openCurrent(playing) else onWatch() }, selected = true, modifier = Modifier.focusRequester(initialFocus))
             if (timer == null && canRecord) {
-                TvActionButton(text = stringResource(R.string.tvh_record), onClick = { pending = R.string.tvh_record; onRecord() }, enabled = !busy, loading = busy && pending == R.string.tvh_record, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
+                TvActionButton(text = stringResource(R.string.tvh_record), onClick = { pending = R.string.tvh_record; onRecord() }, enabled = !busy, loading = busy && pending == R.string.tvh_record, modifier = if (!watchAvailable && !busy) Modifier.focusRequester(initialFocus) else Modifier)
                 if (canRecordSeries && !event.seriesLink.isNullOrBlank()) TvActionButton(text = stringResource(R.string.tvh_record_series), onClick = { pending = R.string.tvh_record_series; onRecordSeries() }, enabled = !busy, loading = busy && pending == R.string.tvh_record_series)
             } else if (timer != null && canRecord && timer.canDelete) {
-                TvActionButton(text = stringResource(if (timer.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
+                TvActionButton(text = stringResource(if (timer.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!watchAvailable && !busy) Modifier.focusRequester(initialFocus) else Modifier)
             }
-            if (canRemind) TvActionButton(text = stringResource(if (reminded) R.string.reminder_remove else R.string.reminder_add), onClick = onToggleReminder,
+            if (canRemind || reminded) TvActionButton(text = stringResource(if (reminded) R.string.reminder_remove else R.string.reminder_add), onClick = onToggleReminder,
                 selected = reminded)
+            if ((canWait && future) || waiting) TvActionButton(
+                text = stringResource(if (waiting) R.string.youtube_live_stop_waiting else R.string.youtube_live_wait),
+                onClick = { waiting = !waiting }, selected = waiting,
+            )
             // Back takes the first focus whenever no record/cancel button above can (also for a timer that cannot be deleted).
             val recordActionFocusable = !busy && canRecord && (timer == null || timer.canDelete)
-            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!connectionRequired && !canWatch && !recordActionFocusable) Modifier.focusRequester(initialFocus) else Modifier)
+            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!connectionRequired && !watchAvailable && !recordActionFocusable) Modifier.focusRequester(initialFocus) else Modifier)
         },
     ) {
         if (connectionRequired) Text(stringResource(R.string.offline_browse_saved_body), style = MaterialTheme.typography.bodyMedium)
         com.ambient.tv.companion.PlaybackStatusSection(playing)
+        com.ambient.tv.youtube.youtubeLiveCountdown(event.startEpochSeconds * 1000, now)?.let {
+            Text(stringResource(R.string.youtube_live_countdown, it), style = MaterialTheme.typography.titleSmall)
+        }
         art?.let { LiveTvArtBox(it, event.title, imageHeaders, Modifier.fillMaxWidth().height(200.dp)) }
         event.subtitle?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.titleSmall) }
         (event.description ?: event.summary)?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }

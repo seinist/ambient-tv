@@ -166,6 +166,7 @@ fun YouTubePlayerScreen(
     viewModel: YouTubePlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val programmeReminders by viewModel.programmeReminders.collectAsState()
     val advance = onPlayNext ?: viewModel::playNext
     com.ambient.tv.ui.player.RegisterPlayerItemNavigation(viewModel, advance)
     val isTrailer = viewModel.isTrailer
@@ -213,7 +214,11 @@ fun YouTubePlayerScreen(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 val error = state.error
                 if (state.liveEvent != null) {
-                    YouTubeLiveEventDialog(state, viewModel::toggleWaiting, viewModel::retry, onBack)
+                    YouTubeLiveEventDialog(state, viewModel::toggleWaiting, viewModel::retry, onBack,
+                        reminded = viewModel.isProgrammeReminded(programmeReminders),
+                        onToggleReminder = if (isTrailer) null else ({
+                            if (viewModel.toggleProgrammeReminder()) onBack()
+                        }))
                 } else if (error != null) {
                     LaunchedEffect(error) {
                         val snapshot = BackgroundPlaybackSession.snapshot.value

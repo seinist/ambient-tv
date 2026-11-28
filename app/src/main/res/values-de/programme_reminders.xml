@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="programme_reminder_play">Jetzt abspielen</string>
+    <string name="programme_reminder_snooze">In 5 Minuten erinnern</string>
+    <string name="programme_reminder_manage">Vormerkungen verwalten</string>
+    <string name="programme_reminder_empty">Keine Vormerkungen</string>
+    <string name="programme_reminder_status_due">Erinnerung fällig</string>
+    <string name="programme_reminder_smarttube">SmartTube-Erinnerungen</string>
+    <string name="programme_reminder_scheduled_hint">Geplanter Start erreicht; die Verfügbarkeit wird beim Abspielen geprüft.</string>
+    <string name="programme_reminder_home">Vormerkungen auf Home anzeigen</string>
+    <string name="programme_reminder_row">Geplant</string>
+    <string name="programme_reminder_ready">Jetzt verfügbar</string>
+    <string name="programme_reminder_auto_play">Automatisch abspielen</string>
+    <string name="programme_reminder_auto_play_hint">Startet bei bestätigter Verfügbarkeit, sofern die App geöffnet ist. Bei mehreren fälligen Vormerkungen wird nachgefragt.</string>
+    <string name="schedule_playback">Planen</string>
+    <string name="schedule_edit">Planung bearbeiten</string>
+    <string name="schedule_save">Planung speichern</string>
+    <string name="schedule_today">Heute</string>
+    <string name="schedule_tomorrow">Morgen</string>
+    <string name="schedule_date">Datum</string>
+    <string name="schedule_hour">Stunde</string>
+    <string name="schedule_minute">Minute</string>
+    <string name="schedule_restart">Von Anfang starten</string>
+    <string name="schedule_weekly">Wöchentlich wiederholen</string>
+    <string name="schedule_duration">Geplante Spieldauer</string>
+    <string name="schedule_end">Voraussichtliches Ende: %1$s</string>
+    <string name="schedule_conflict">Überschneidung mit einer anderen Planung. Automatische Starts werden nicht parallel ausgeführt.</string>
+    <string name="schedule_future">Bitte einen zukünftigen Zeitpunkt wählen.</string>
+    <string name="schedule_failed">Planung nicht gespeichert. Quelle oder Konto wurde geändert oder der Speicher ist voll.</string>
+    <string name="schedule_remind_end">An Ende der Spielsession erinnern</string>
+    <string name="schedule_session_end_title">Geplante Spielzeit beendet: %1$s</string>
+</resources>

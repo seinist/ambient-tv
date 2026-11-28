@@ -1352,6 +1352,7 @@ private fun AmbientTvApp(
     onUiLanguageSaved: () -> Unit,
     onCompanionSettingsApplied: suspend () -> Unit,
 ) {
+    val scheduleContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val clockSettings by remember(appPreferences) { appPreferences.observeClockSettings() }
         .collectAsState(initial = appPreferences.clockSettings)
     val homeBackground by remember(appPreferences) { appPreferences.observeHomeBackground() }
@@ -1537,11 +1538,22 @@ private fun AmbientTvApp(
     }
     val spotifyTakeover by spotifyRepository.playbackTakeover.collectAsState()
     val mediaSelectionScope = rememberCoroutineScope()
+    var scheduledGame by remember { mutableStateOf<com.ambient.tv.livetv.LiveTvReminder?>(null) }
     val launchGameOnTarget = rememberUpdatedState<(
         com.ambient.tv.games.library.LibraryGame, Boolean, (() -> Unit) -> Unit,
     ) -> Unit> { game, fresh, complete ->
         playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId, fresh), title = game.title,
-            navigate = { route -> complete { navController.navigate(route) { launchSingleTop = true } } })
+            navigate = { route -> complete {
+                val scheduled = scheduledGame?.takeIf { it.plan?.targetId == game.fileId && it.plan?.restart == fresh }
+                scheduledGame = null
+                if (scheduled != null) {
+                    val current = com.ambient.tv.livetv.LiveTvReminderStore(scheduleContext).find(scheduled.id)
+                    if (current?.let { it.plan == scheduled.plan && it.startEpochSeconds == scheduled.startEpochSeconds } != true ||
+                        com.ambient.tv.livetv.scheduledPlaybackIdentity(scheduleContext, "games", game.fileId) != scheduled.plan?.sourceIdentity) return@complete
+                }
+                navController.navigate(route) { launchSingleTop = true }
+                scheduled?.let { com.ambient.tv.livetv.ScheduledPlaybackRuntime.awaitStart(it) }
+            } })
     }
     val gameSelections = remember(mediaSelectionScope, navController, gameLibraryRepository, appPreferences, tokenStore, browseSelectionIntents) {
         GameSelectionCoordinator(
@@ -1567,6 +1579,9 @@ private fun AmbientTvApp(
         )
     }
     val gameSelectionState by gameSelections.state.collectAsState()
+    LaunchedEffect(gameSelectionState, scheduledGame) {
+        if (gameSelectionState == null) scheduledGame = null
+    }
     /** A RomM game opens the shared game player; its data are mirrored with the server there. */
     fun playRomm(fileId: String, systemId: String, title: String, fresh: Boolean) {
         browseSelectionIntents.begin()
@@ -2319,6 +2334,54 @@ private fun AmbientTvApp(
             }
         }
         com.ambient.tv.launcher.LauncherIntents.consumed(route)
+    }
+    val scheduledLaunch by com.ambient.tv.livetv.LiveTvReminderPrompt.plannedLaunch.collectAsState()
+    LaunchedEffect(scheduledLaunch) {
+        val reminder = scheduledLaunch ?: return@LaunchedEffect
+        val plan = reminder.plan ?: return@LaunchedEffect
+        val store = com.ambient.tv.livetv.LiveTvReminderStore(scheduleContext)
+        try {
+            val current = store.find(reminder.id)
+            if (current == null || current.plan != plan || current.startEpochSeconds != reminder.startEpochSeconds ||
+                com.ambient.tv.livetv.scheduledPlaybackIdentity(scheduleContext, plan.provider, plan.targetId) != plan.sourceIdentity) return@LaunchedEffect
+            if (plan.provider == "games") {
+                scheduledGame = reminder
+                gameSelections.playScheduled(plan.targetId, plan.restart)
+            } else {
+                requestLocalPlayback(plan.route(), reminder.title) { route ->
+                    if (store.find(reminder.id)?.let { it.plan == plan && it.startEpochSeconds == reminder.startEpochSeconds } == true &&
+                        com.ambient.tv.livetv.scheduledPlaybackIdentity(scheduleContext, plan.provider, plan.targetId) == plan.sourceIdentity) {
+                        navController.navigate(route) { launchSingleTop = true }
+                        com.ambient.tv.livetv.ScheduledPlaybackRuntime.awaitStart(reminder)
+                    }
+                }
+            }
+        } finally {
+            if (com.ambient.tv.livetv.LiveTvReminderPrompt.plannedLaunch.value == reminder)
+                com.ambient.tv.livetv.LiveTvReminderPrompt.plannedLaunch.value = null
+        }
+    }
+    val awaitingSchedule by com.ambient.tv.livetv.ScheduledPlaybackRuntime.awaiting.collectAsState()
+    LaunchedEffect(awaitingSchedule) {
+        val expected = awaitingSchedule ?: return@LaunchedEffect
+        val plan = expected.plan ?: return@LaunchedEffect
+        if (!plan.game) BackgroundPlaybackSession.snapshot.collect { snapshot ->
+            if (snapshot.playing && snapshot.metadata?.mediaId == plan.targetId &&
+                snapshot.metadata?.sourceAccessIdentity == playbackAvailability.mediaIdentity(plan.targetId) &&
+                snapshot.metadata?.route?.startsWith("player/") == true) {
+                com.ambient.tv.livetv.ScheduledPlaybackRuntime.confirm(scheduleContext, expected)
+            }
+        }
+    }
+    LaunchedEffect(currentBackStackEntry?.id, awaitingSchedule) {
+        val expected = awaitingSchedule ?: return@LaunchedEffect
+        val plan = expected.plan ?: return@LaunchedEffect
+        val entry = navController.currentBackStackEntry
+        val matches = if (plan.game) entry?.destination?.route == Destinations.GAME_PLAYER &&
+            entry.arguments?.getString("fileId") == plan.targetId
+        else entry?.destination?.route == Destinations.PLAYER &&
+            entry.arguments?.getString("ratingKey") == plan.targetId
+        if (!matches) com.ambient.tv.livetv.ScheduledPlaybackRuntime.cancel(expected)
     }
     // System/voice search: open the search page; it runs and consumes the query.
     val externalSearch by com.ambient.tv.search.ExternalSearch.requests.collectAsState()
@@ -3100,8 +3163,11 @@ private fun AmbientTvApp(
                                 onAddSystem = { navController.navigate(Destinations.INITIAL_SETUP) { launchSingleTop = true } },
                                 onBack = ::focusSidebar,
                                 onItemClick = { ratingKey ->
+                                    val reminderId = com.ambient.tv.ui.home.homeProgrammeReminderId(ratingKey)
                                     val trailerParts = ratingKey.removePrefix("trailer-title:").split(':')
-                                    if (ratingKey.startsWith("trailer-title:") && trailerParts.size == 2) {
+                                    if (reminderId != null) {
+                                        com.ambient.tv.livetv.LiveTvReminderPrompt.select(reminderId)
+                                    } else if (ratingKey.startsWith("trailer-title:") && trailerParts.size == 2) {
                                         trailerParts[1].toIntOrNull()?.let {
                                             beginMediaSelection()
                                             navController.navigate(Destinations.tmdbTrailers(trailerParts[0], it))
@@ -4123,7 +4189,7 @@ private fun AmbientTvApp(
                 }
                 GameSelectionDialog(
                     state = gameSelectionState,
-                    onDismiss = gameSelections::cancel,
+                    onDismiss = { scheduledGame = null; gameSelections.cancel() },
                     onPlay = { gameSelections.playPending() },
                     onPlayFresh = { gameSelections.playPending(fresh = true) },
                     onWake = { gameSelections.playPending(allowWake = true) },
@@ -4185,7 +4251,7 @@ private fun AmbientTvApp(
             // A DLNA sender that is not trusted yet asks before anything plays.
             com.ambient.tv.renderer.RendererPromptDialog()
             // A programme reminder that is due while the app is open.
-            com.ambient.tv.livetv.LiveTvReminderPromptDialog()
+            com.ambient.tv.livetv.LiveTvReminderPromptDialog(launchBlocked = pendingPlaybackStart != null || gameSelectionState != null || introVisible)
             com.ambient.tv.notifications.AppNotificationHost(
                 // The intro and app present the same retained connection session.
                 hidden = screensaverOverlayPresent || com.ambient.tv.ui.intro.IntroPresentation.active,
