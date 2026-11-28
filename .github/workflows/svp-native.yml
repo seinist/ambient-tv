@@ -82,6 +82,8 @@ jobs:
           done
       - name: Check independent HDR10+ numeric reference
         run: python3 native/ambientsvp/tests/hdr10plus_reference.py -v
+      - name: Test synthetic versioned HDR10+ bitstream payloads
+        run: python3 native/ambientsvp/tests/hdr10plus_bitstream_reference.py --self-test
       - name: Compare real FFmpeg FATE HDR10+ bitstream with reference metadata
         run: |
           set -euo pipefail
