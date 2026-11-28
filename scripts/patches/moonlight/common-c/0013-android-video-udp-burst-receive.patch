@@ -1,7 +1,7 @@
 diff --git a/src/VideoStream.c b/src/VideoStream.c
 --- a/src/VideoStream.c
 +++ b/src/VideoStream.c
-@@ -1,4 +1,13 @@
+@@ -1,4 +1,19 @@
 -#include "Limelight-internal.h"
 +#if defined(__ANDROID__) && !defined(_GNU_SOURCE)
 +#define _GNU_SOURCE
@@ -12,11 +12,17 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
 +#include <sys/uio.h>
 +// A small burst amortizes syscalls without waiting for additional datagrams.
 +#define VIDEO_UDP_BATCH 4
++
++static int receiveVideoDatagrams(int socket, struct mmsghdr* messages, unsigned int slots) {
++    // SO_RCVTIMEO bounds the first receive. MSG_WAITFORONE makes subsequent
++    // receives nonblocking, so we never wait to fill the batch.
++    return recvmmsg(socket, messages, slots, MSG_WAITFORONE, NULL);
++}
 +#endif
  
  #define FIRST_FRAME_MAX 1500
  #define FIRST_FRAME_TIMEOUT_SEC 10
-@@ -121,9 +130,67 @@
+@@ -121,9 +136,67 @@
          encryptedBuffer = NULL;
      }
  
@@ -58,7 +64,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
 +                useBatch = false; // Preserve the single-packet allocation/error path.
 +            }
 +            else {
-+                int count = recvmmsg(rtpSocket, messages, slots, MSG_WAITFORONE, NULL);
++                int count = receiveVideoDatagrams(rtpSocket, messages, slots);
 +                if (count > 0) batchCount = (unsigned int)count;
 +                else if (count == 0 || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == ETIMEDOUT) {
 +                    err = 0;
@@ -87,7 +93,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
  
          if (buffer == NULL) {
              buffer = RtpvAcquirePacket(bufferSize);
-@@ -134,10 +201,16 @@
+@@ -134,10 +207,16 @@
              }
          }
  
@@ -108,7 +114,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
          if (err < 0) {
              Limelog("Video Receive: recvUdpSocket() failed: %d\n", (int)LastSocketError());
              ListenerCallbacks.connectionTerminated(LastSocketFail());
-@@ -183,7 +256,7 @@
+@@ -183,7 +262,7 @@
  
          // Decrypt the packet into the buffer if encryption is enabled
          if (encrypted) {
@@ -117,7 +123,7 @@ diff --git a/src/VideoStream.c b/src/VideoStream.c
  
              // If this frame is below our current frame number, discard it before decryption
              // to save CPU cycles decrypting FEC shards for a frame we already reassembled.
-@@ -239,9 +312,15 @@
+@@ -239,9 +318,15 @@
          RtpvReleasePacket(buffer);
      }
  
