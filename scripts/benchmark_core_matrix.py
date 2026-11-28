@@ -158,17 +158,33 @@ def matrix(args):
                 meta["input_sha256"]!=identity["input_sha256"] or meta["settings_sha256"]!=identity["settings_sha256"] or
                 summary["renderer"]!=identity["renderer"]):
                 raise ValueError("Correctness replay identity mismatch")
-            return json.loads((target/"capture-output.json").read_text())
-        require_video=bool(config.get("require_video_hash",False))
+            validate_workload([{"round":0,"profile":"baseline",**summary}],warmup,measured)
+            proof=json.loads((target/"capture-output.json").read_text())
+            return proof,summary
+        def compare_replay(records, state_loaded=False):
+            proofs={p:record[0] for p,record in records.items()}
+            validate_output_proofs(proofs,require_video,state_loaded)
+            validate_workload([{"round":0,"profile":p,**record[1]} for p,record in records.items()],warmup,measured)
+            return proofs
+        require_video=bool(config.get("require_video_hash",True))
         interchange=bool(config.get("verify_states"))
-        proofs={p:correctness(p,out/("verify-"+p),export_state=interchange and p=="baseline") for p in ordered}
-        validate_output_proofs(proofs,require_video)
-        result["output_correctness"]=proofs
+        records={p:correctness(p,out/("verify-"+p),export_state=interchange) for p in ordered}
+        result["output_correctness"]=compare_replay(records)
         if interchange:
             baseline_state=out/"verify-baseline"/"capture-state.bin"
             restored={p:correctness(p,out/("restore-"+p),state_input=baseline_state) for p in ordered}
-            validate_output_proofs(restored,require_video,state_loaded=True)
-            result["state_interchange"]=restored
+            result["state_interchange"]=compare_replay(restored,state_loaded=True)
+            # Reverse direction: compare the candidate's own restored output
+            # with baseline loading the identical candidate-generated state.
+            reverse={}
+            for p in ordered:
+                if p=="baseline":
+                    continue
+                candidate_state=out/("verify-"+p)/"capture-state.bin"
+                own=correctness(p,out/("restore-own-"+p),state_input=candidate_state)
+                base=correctness("baseline",out/("restore-base-from-"+p),state_input=candidate_state)
+                reverse[p]=compare_replay({"baseline":base,p:own},state_loaded=True)
+            result["reverse_state_interchange"]=reverse
     (out/"comparison.json").write_text(json.dumps(result,indent=2)+"\n")
 
 if __name__=="__main__":

@@ -296,11 +296,13 @@ The diagnostic FNV-1a fingerprints are not cryptographic or a universal
 visual-quality metric. Asynchronous or nondeterministic fixtures may fail strict
 comparison. Do not mix these correctness runs with performance samples.
 
-Set `"verify_states": true` to additionally export the baseline state, load it
-into fresh instances of all selected profiles (including baseline), and compare
-replayed output. Unsupported serialization or rejected state loads fail the
-requested validation. This is a baseline-to-candidate state interchange check,
-not proof of the app's complete rewind lifecycle, real display output, or all hardware formats.
+Set `"verify_states": true` to additionally export each profile's state, load the
+baseline state into fresh instances of all selected profiles, then load each
+candidate's state into itself and baseline. Both directions compare replayed
+output, and every replay must meet the measured workload checks. Unsupported
+serialization or rejected state loads fail the requested validation. This is
+not proof of the app's complete rewind lifecycle, real display output, or all
+hardware formats.
 
 The signed release fingerprint now binds the effective acceleration rules for
 each core/ABI/profile plus the shared parser and evidence implementation. A

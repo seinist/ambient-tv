@@ -243,12 +243,14 @@ static void read_gles_pixels(unsigned w,unsigned h) {
        !eglQuerySurface(display,surface,EGL_HEIGHT,&surface_height) ||
        surface_width<=0 || surface_height<=0 || w>unsigned(surface_width) || h>unsigned(surface_height))
         die("Invalid GLES readback dimensions");
-    GLint fb=0,alignment=0,pack_buffer=0,row_length=0,skip_rows=0,skip_pixels=0;
+    GLint fb=0,alignment=0,pack_buffer=0,row_length=0,skip_rows=0,skip_pixels=0,read_buffer=0;
     const GLenum target=gles_major>=3?GL_READ_FRAMEBUFFER:GL_FRAMEBUFFER;
     glGetIntegerv(gles_major>=3?GL_READ_FRAMEBUFFER_BINDING:GL_FRAMEBUFFER_BINDING,&fb);
     glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);
     glBindFramebuffer(target,0);glPixelStorei(GL_PACK_ALIGNMENT,1);
     if(gles_major>=3) {
+        glGetIntegerv(GL_READ_BUFFER,&read_buffer);
+        glReadBuffer(GL_BACK);
         glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&pack_buffer);
         glGetIntegerv(GL_PACK_ROW_LENGTH,&row_length);
         glGetIntegerv(GL_PACK_SKIP_ROWS,&skip_rows);glGetIntegerv(GL_PACK_SKIP_PIXELS,&skip_pixels);
@@ -259,6 +261,7 @@ static void read_gles_pixels(unsigned w,unsigned h) {
     glReadPixels(0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,hardware_pixels.data());
     GLenum error=glGetError();
     if(gles_major>=3) {
+        glReadBuffer(static_cast<GLenum>(read_buffer));
         glBindBuffer(GL_PIXEL_PACK_BUFFER,static_cast<GLuint>(pack_buffer));
         glPixelStorei(GL_PACK_ROW_LENGTH,row_length);glPixelStorei(GL_PACK_SKIP_ROWS,skip_rows);glPixelStorei(GL_PACK_SKIP_PIXELS,skip_pixels);
     }
@@ -451,6 +454,13 @@ int main(int argc,char** argv) {
     }
     retro_system_av_info av{};get_system_av_info(&av);
     if(!(av.timing.fps>=1 && av.timing.fps<=240))die("Invalid core FPS");
+    // Discard any output produced during load/reset/unserialize, before the
+    // deterministic input replay starts. The actual timing path stays unchanged.
+    if(verify_output) {
+        video_hash=hash_offset;
+        std::lock_guard<std::mutex> lock(audio_hash_mutex);
+        audio_hash=hash_offset;
+    }
     std::string prefix=argv[8];
     FILE* csv=std::fopen((prefix+".csv").c_str(),"w");
     FILE* thermal=std::fopen((prefix+"-thermal.csv").c_str(),"w");
