@@ -8,6 +8,8 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <mutex>
+#include "../ambientsvp/include/ambientsvp_shared.h"
 
 // No mandatory Vulkan dependency: devices without a loader retain normal playback.
 namespace {
@@ -237,4 +239,90 @@ Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_vlcModules(JNIEnv *, job
     }
     dlclose(lib);
     return display && vk && android;
+}
+
+/* Lookup only already-loaded host libraries. Retain the successful handles
+ * for process lifetime, since a different linker namespace borrows pointers.
+ * The Kotlin caller passes the exact path of the selected signed module or
+ * the bundled SONAME after its normal availability/ABI probe.
+ */
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_sharedVlcFunctions(
+    JNIEnv *env, jobject, jstring svpPath, jstring pcmPath) {
+    static std::mutex lock;
+    static AmbientSharedSvp shared{};
+    static void *svpHandle = nullptr, *pcmHandle = nullptr, *pcm = nullptr;
+    std::lock_guard<std::mutex> guard(lock);
+    auto existing = [&](jstring path) -> void * {
+        if (!path) return nullptr;
+        const char *name = env->GetStringUTFChars(path, nullptr);
+        if (!name) return nullptr;
+        void *result = dlopen(name, RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL);
+        env->ReleaseStringUTFChars(path, name);
+        return result;
+    };
+    if (svpPath && !svpHandle) {
+        void *handle = existing(svpPath);
+        if (handle) {
+            auto abi = symbol<uint32_t (*)()>(handle, "ambient_svp_abi");
+            AmbientSharedSvp candidate{};
+            candidate.version = AMBIENT_SVP_SHARED_ABI;
+            candidate.size = sizeof(candidate);
+            candidate.engine_abi = abi ? abi() : 0;
+#define AMBIENT_BIND(name) candidate.name = symbol<decltype(candidate.name)>(handle, "ambient_svp_" #name)
+            AMBIENT_BIND(create); AMBIENT_BIND(destroy); AMBIENT_BIND(reset);
+            AMBIENT_BIND(push); AMBIENT_BIND(receive); AMBIENT_BIND(stats);
+            AMBIENT_BIND(bypass); AMBIENT_BIND(enabled);
+#undef AMBIENT_BIND
+            if (ambient_shared_svp_valid(&candidate)) {
+                shared = candidate;
+                svpHandle = handle;
+            } else dlclose(handle);
+        }
+    }
+    if (pcmPath && !pcmHandle) {
+        void *handle = existing(pcmPath);
+        if (handle) {
+            pcm = dlsym(handle, "ambient_projectm_pcm_v1");
+            if (pcm) pcmHandle = handle;
+            else dlclose(handle);
+        }
+    }
+    const jlong values[2] = {
+        svpPath && svpHandle ? static_cast<jlong>(reinterpret_cast<uintptr_t>(&shared)) : 0,
+        pcmPath && pcmHandle ? static_cast<jlong>(reinterpret_cast<uintptr_t>(pcm)) : 0,
+    };
+    jlongArray result = env->NewLongArray(2);
+    if (result) env->SetLongArrayRegion(result, 0, 2, values);
+    return result;
+}
+
+namespace {
+    std::mutex shaderResolverLock;
+    void *hostShaderHandle = nullptr; // process-lifetime lease
+    void *resolveHostShader(const char *name) {
+        if (!name || strncmp(name, "libra_", 6) != 0) return nullptr;
+        std::lock_guard<std::mutex> guard(shaderResolverLock);
+        return hostShaderHandle ? dlsym(hostShaderHandle, name) : nullptr;
+    }
+}
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_sharedShaderResolver(
+    JNIEnv *env, jobject, jstring path) {
+    if (!path) return 0;
+    std::lock_guard<std::mutex> guard(shaderResolverLock);
+    if (!hostShaderHandle) {
+        const char *name = env->GetStringUTFChars(path, nullptr);
+        if (!name) return 0;
+        void *handle = dlopen(name, RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL);
+        env->ReleaseStringUTFChars(path, name);
+        if (!handle) return 0;
+        if (!dlsym(handle, "libra_instance_abi_version") ||
+            !dlsym(handle, "libra_vk_filter_chain_create")) {
+            dlclose(handle);
+            return 0;
+        }
+        hostShaderHandle = handle;
+    }
+    return static_cast<jlong>(reinterpret_cast<uintptr_t>(&resolveHostShader));
 }

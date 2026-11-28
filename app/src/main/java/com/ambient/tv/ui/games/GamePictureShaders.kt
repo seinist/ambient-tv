@@ -1,6 +1,6 @@
 package com.ambient.tv.ui.games
 
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 
 /**
  * GLES picture options built from the LibretroDroid shader chain. textureSize is a

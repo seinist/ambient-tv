@@ -36,6 +36,7 @@ class PlayerRendererSelectorTest {
 
     @Before fun setUp() {
         rule.runOnUiThread {
+            com.ambient.tv.modules.SystemModuleAvailability.reportProbe(com.ambient.tv.modules.SystemModule.VLC, external = false, success = true)
             BackgroundPlaybackSession.stop()
             BackgroundPlaybackSession.takeCompleted()
             rule.activity.getSharedPreferences("test", 0).edit().clear().commit()
@@ -48,6 +49,7 @@ class PlayerRendererSelectorTest {
 
     @After fun tearDown() {
         rule.runOnUiThread {
+            com.ambient.tv.modules.SystemModuleAvailability.reportFailure(com.ambient.tv.modules.SystemModule.VLC)
             BackgroundPlaybackSession.stop()
             BackgroundPlaybackSession.takeCompleted()
         }

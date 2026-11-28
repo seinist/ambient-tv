@@ -17,17 +17,26 @@ object MpvBackendAvailability {
 
     /** True when the native libmpv payload and JNI shim can be loaded for this process ABI. */
     val nativeRuntimeAvailable: Boolean by lazy {
-        if (!NativeArmRuntime.isSupportedDevice) {
+        var externalLoaded = false
+        val available = if (!NativeArmRuntime.isSupportedDevice) {
             false
         } else {
             runCatching {
                 // Android resolves libmpv.so/libambientmpv.so from the matching ABI directory
                 // (arm64-v8a, armeabi-v7a, x86 or x86_64). No manual library path is needed.
-                System.loadLibrary("mpv")
-                System.loadLibrary("ambientmpv")
+                val external = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.MPV)
+                externalLoaded = external != null
+                if (external == null) {
+                    if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.MPV))
+                        return@runCatching false
+                    System.loadLibrary("mpv")
+                    System.loadLibrary("ambientmpv")
+                }
                 MpvNativeBridge.nativeVersion().isNotBlank()
             }.onFailure { timber.log.Timber.e(it, "MPV native runtime could not be loaded") }.getOrDefault(false)
         }
+        com.ambient.tv.modules.SystemModuleAvailability.reportProbe(com.ambient.tv.modules.SystemModule.MPV, externalLoaded, available && MpvNativeBridge.rendererImplemented)
+        available
     }
 
     /**
@@ -41,6 +50,7 @@ object MpvBackendAvailability {
 object PlaybackBackendResolver {
     fun resolve(requested: String?): PlaybackBackend = when (val backend = PlaybackBackend.fromKey(requested)) {
         PlaybackBackend.AUTO -> PlaybackBackend.MEDIA3
+        PlaybackBackend.VLC -> if (VlcBackendAvailability.isAvailable) PlaybackBackend.VLC else PlaybackBackend.MEDIA3
         PlaybackBackend.MPV -> if (MpvBackendAvailability.isAvailable) PlaybackBackend.MPV else PlaybackBackend.MEDIA3
         else -> backend
     }

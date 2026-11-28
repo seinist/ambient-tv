@@ -85,7 +85,41 @@ internal object GameVulkanSlangPresets {
     fun prepare(context: Context, shader: GameShader, selectedPack: String?): String? {
         if (selectedPack != null) return null
         val preset = supported[shader] ?: return null
-        return runCatching {
+        var external = false
+        val result = runCatching {
+            val module = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.SHADERS)
+            external = module != null
+            // Native code opens this SONAME in the host linker namespace. A
+            // complete package has already loaded it before any preset is used.
+            if (module?.nativeDirectory == null) {
+                if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.SHADERS))
+                    return@runCatching null
+                System.loadLibrary("librashader_capi")
+            }
+            if (RetroCoreRuntime.isolated) {
+                val path = module?.nativeDirectory?.resolve("liblibrashader_capi.so")?.absolutePath
+                    ?: "liblibrashader_capi.so"
+                val probe = com.ambient.tv.ui.player.backend.VulkanNativeProbe
+                if (!probe.available) return@runCatching null
+                val resolver = probe.sharedShaderResolver(path)
+                if (resolver == 0L) return@runCatching null
+                RetroCoreRuntime.core.bindSharedShader(resolver)
+            }
+            if (module != null) {
+                val directory = File(module.assets, "games/slang")
+                val prefix = directory.canonicalPath + File.separator
+                var bytes = 0L
+                for (filename in preset.files) {
+                    val file = File(directory, filename)
+                    check(file.canonicalPath.startsWith(prefix) && file.isFile &&
+                        file.length() in 1L..MAX_FILE_BYTES.toLong())
+                    bytes += file.length()
+                    check(bytes <= MAX_PRESET_BYTES)
+                }
+                // The verified process-leased materialized tree is immutable.
+                // Never overwrite shared bundled-cache files with another module version.
+                return@runCatching File(directory, preset.path).absolutePath
+            }
             val directory = File(context.noBackupFilesDir, "games/vulkan-slang/$VERSION")
             if (!directory.isDirectory && !directory.mkdirs())
                 error("Cannot prepare Vulkan shader storage")
@@ -115,6 +149,8 @@ internal object GameVulkanSlangPresets {
             }
             File(directory, preset.path).absolutePath
         }.getOrNull()
+        com.ambient.tv.modules.SystemModuleAvailability.reportProbe(com.ambient.tv.modules.SystemModule.SHADERS, external, result != null)
+        return result
     }
 
     private fun digest(bytes: ByteArray): ByteArray =

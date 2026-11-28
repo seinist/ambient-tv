@@ -148,6 +148,7 @@ class TelegramPlayerViewModel @Inject constructor(
         "telegram",
         com.ambient.tv.ui.player.sourceAutoDefaultRenderer("telegram", preferences.playbackBackendKey),
         MpvBackendAvailability.isAvailable,
+        vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
     ))
     val renderer = mutableRenderer.asStateFlow()
 
@@ -166,6 +167,7 @@ class TelegramPlayerViewModel @Inject constructor(
         if (selected == "mpv" && !MpvBackendAvailability.isAvailable) return
         val requested = com.ambient.tv.ui.player.resolveSourceAutoRenderer(
             "telegram", selected, MpvBackendAvailability.isAvailable,
+            vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
         )
         val metadata = mutableMedia.value?.playerMetadata()
         if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(metadata).canSelect(requested)) return
@@ -363,6 +365,7 @@ class TelegramPlayerViewModel @Inject constructor(
             title = TitleVideoSettingsStore.load(context, selected.playerMetadata()),
             resolution = null, // Monogram has no resolution-based renderer selection.
             mpvAvailable = MpvBackendAvailability.isAvailable,
+            vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
         )
         // Still playing in the background: keep the original start so the running
         // session is reattached, not reopened. Otherwise continue where it stopped.

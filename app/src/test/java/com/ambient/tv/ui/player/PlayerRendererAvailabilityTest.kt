@@ -32,6 +32,8 @@ class PlayerRendererAvailabilityTest {
     }
 
     @Before fun setUp() {
+        // Test the renderer policy with a successfully probed VLC module.
+        com.ambient.tv.modules.SystemModuleAvailability.reportProbe(com.ambient.tv.modules.SystemModule.VLC, external = false, success = true)
         BackgroundPlaybackSession.stop()
         BackgroundPlaybackSession.takeCompleted()
         application = RuntimeEnvironment.getApplication()
@@ -43,6 +45,7 @@ class PlayerRendererAvailabilityTest {
     }
 
     @After fun tearDown() {
+        com.ambient.tv.modules.SystemModuleAvailability.reportFailure(com.ambient.tv.modules.SystemModule.VLC)
         BackgroundPlaybackSession.stop()
         BackgroundPlaybackSession.takeCompleted()
     }

@@ -1,0 +1,146 @@
+import tempfile
+import struct
+import unittest
+from pathlib import Path
+import zipfile
+
+import export_monogram_adapter as exporter
+
+
+def ownership_policy_fixture(value, structural=False):
+    # Minimal constant pool with a UTF-8 entry and a string referencing it.
+    # An additional CONSTANT_Class sharing that entry must remain forbidden.
+    constants = b"\x01" + struct.pack(">H", len(value)) + value + b"\x08\x00\x01"
+    if structural:
+        constants += b"\x07\x00\x01"
+    return b"\xca\xfe\xba\xbe\x00\x00\x00\x34" + struct.pack(">H", 4 if structural else 3) + constants
+
+
+class MonogramDexExportTest(unittest.TestCase):
+    def test_policy_literals_are_not_host_linkages(self):
+        name = "com/ambient/tv/modules/ModuleDexOwnership.class"
+        for validate, value in (
+            (exporter.validate_private_boundary, b"com/jayway/jsonpath/JsonPath"),
+            (exporter.validate_vlc_boundary, b"org/videolan/libvlc/LibVLC"),
+            (exporter.validate_libretro_boundary, b"com/swordfish/libretrodroid/GLRetroView"),
+        ):
+            validate(name, ownership_policy_fixture(value))
+            with self.assertRaises(ValueError):
+                validate(name, ownership_policy_fixture(value, structural=True))
+            with self.assertRaises(ValueError):
+                validate(name, ownership_policy_fixture(b"L" + value + b";"))
+            with self.assertRaises(ValueError):
+                validate("host/Other.class", ownership_policy_fixture(value))
+
+    def make_inputs(self, root, extra=None):
+        classes = {
+            name: b"test" for name in exporter.REQUIRED
+        }
+        classes.update({
+            "uniffi/monogram_mtproto/UniffiLib.class": b"ffi",
+            "org/rustls/platformverifier/Verifier.class": b"tls",
+            "com/ambient/tv/data/telegram/MonogramModuleFactory.class": b"host",
+            "com/ambient/tv/data/telegram/TelegramMedia.class": b"host",
+            "kotlin/Unit.class": b"host",
+            "com/ambient/tv/data/telegram/MonogramNativeBackend$1.class": b"adapter",
+        })
+        classes.update(extra or {})
+        jar = root / "input.jar"
+        with zipfile.ZipFile(jar, "w") as archive:
+            for name, value in classes.items():
+                archive.writestr(name, value)
+        return jar
+
+    def test_only_owned_code_enters_program_jar(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = self.make_inputs(root)
+            program, host = root / "program.jar", root / "host.jar"
+            exporter.split([source], program, host)
+            with zipfile.ZipFile(program) as archive:
+                names = archive.namelist()
+                self.assertTrue(all(exporter.owns(name) for name in names))
+                self.assertIn(exporter.ENTRY, names)
+                self.assertIn("com/ambient/tv/data/telegram/MonogramNativeBackend$1.class", names)
+            with zipfile.ZipFile(host) as archive:
+                self.assertIn("com/ambient/tv/data/telegram/MonogramModuleFactory.class", archive.namelist())
+                self.assertIn("kotlin/Unit.class", archive.namelist())
+
+    def test_vlc_export_retains_host_resources_and_rejects_host_linkage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "vlc.jar"
+            with zipfile.ZipFile(source, "w") as archive:
+                for name in exporter.VLC_REQUIRED:
+                    archive.writestr(name, b"engine")
+                archive.writestr("org/videolan/libvlc/R$id.class", b"resource")
+                archive.writestr("host/Port.class", b"host")
+            program, host = root / "program.jar", root / "host.jar"
+            exporter.split([source], program, host, "vlc")
+            with zipfile.ZipFile(program) as archive:
+                self.assertEqual(set(archive.namelist()), set(exporter.VLC_REQUIRED))
+            with zipfile.ZipFile(host) as archive:
+                self.assertIn("org/videolan/libvlc/R$id.class", archive.namelist())
+            with zipfile.ZipFile(source, "a") as archive:
+                archive.writestr("host/Bad.class", b"\xca\xfe\xba\xbeLorg/videolan/libvlc/LibVLC;")
+            with self.assertRaisesRegex(ValueError, "host class references private VLC"):
+                exporter.split([source], program, host, "vlc")
+
+    def test_libretro_frontend_only_owns_adapter_and_vendor_classes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "retro.jar"
+            with zipfile.ZipFile(source, "w") as archive:
+                for name in exporter.LIBRETRO_REQUIRED:
+                    archive.writestr(name, b"engine")
+                archive.writestr("com/swordfish/libretrodroid/R$id.class", b"resource")
+                archive.writestr("com/ambient/tv/ui/games/RetroViewPort.class", b"host")
+            program, host = root / "program.jar", root / "host.jar"
+            exporter.split([source], program, host, "libretrodroid")
+            with zipfile.ZipFile(program) as archive:
+                self.assertEqual(set(archive.namelist()), set(exporter.LIBRETRO_REQUIRED))
+            with zipfile.ZipFile(host) as archive:
+                self.assertIn("com/ambient/tv/ui/games/RetroViewPort.class", archive.namelist())
+                self.assertIn("com/swordfish/libretrodroid/R$id.class", archive.namelist())
+            with zipfile.ZipFile(source, "a") as archive:
+                archive.writestr("host/Bad.class", b"\xca\xfe\xba\xbeLcom/swordfish/libretrodroid/GLRetroView;")
+            with self.assertRaisesRegex(ValueError, "host class references private LibretroDroid"):
+                exporter.split([source], program, host, "libretrodroid")
+
+    def test_conflicting_duplicate_class_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = self.make_inputs(root)
+            duplicate = root / "duplicate.jar"
+            with zipfile.ZipFile(duplicate, "w") as archive:
+                archive.writestr(exporter.ENTRY, b"different")
+            with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
+                exporter.split([source, duplicate], root / "program.jar", root / "host.jar")
+
+    def test_smarttube_keeps_resource_classes_and_shared_libraries_in_host(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "input.jar"
+            classes = {name: b"code" for name in exporter.SMARTTUBE_REQUIRED}
+            classes.update({
+                "com/liskovsoft/youtubeapi/R$raw.class": b"resource ids",
+                "com/eclipsesource/v8/LibraryLoader.class": b"native loader",
+                "okhttp3/OkHttpClient.class": b"shared",
+                "com/ambient/tv/youtube/SmartTubeEngine.class": b"host",
+            })
+            with zipfile.ZipFile(source, "w") as archive:
+                for name, value in classes.items():
+                    archive.writestr(name, value)
+            program, host = root / "program.jar", root / "host.jar"
+            exporter.split([source], program, host, "smarttube")
+            with zipfile.ZipFile(program) as archive:
+                self.assertEqual(set(archive.namelist()),
+                                 set(exporter.SMARTTUBE_REQUIRED) | {"com/eclipsesource/v8/LibraryLoader.class"})
+            with zipfile.ZipFile(host) as archive:
+                self.assertIn("com/liskovsoft/youtubeapi/R$raw.class", archive.namelist())
+                self.assertIn("okhttp3/OkHttpClient.class", archive.namelist())
+                self.assertIn("com/ambient/tv/youtube/SmartTubeEngine.class", archive.namelist())
+
+
+if __name__ == "__main__":
+    unittest.main()

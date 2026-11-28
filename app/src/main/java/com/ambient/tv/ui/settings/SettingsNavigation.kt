@@ -161,7 +161,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
             "sync", "transfer" -> TRANSFER
             "tvh", "tvheadend" -> TVHEADEND
             "iptv", "m3u" -> IPTV
-            "monogram", "telegram", "mtproto" -> TELEGRAM.takeIf { com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
+            "monogram", "telegram", "mtproto" -> TELEGRAM.takeIf { com.ambient.tv.modules.SystemModuleAvailability.monogramOffered }
             "live_tv", "livetv", "timeshift", "reminders" -> LIVE_TV
             "locale", "language" -> LANGUAGE
             "nav", "navigation", "media_selection", "mediaselection" -> MEDIA_SELECTION

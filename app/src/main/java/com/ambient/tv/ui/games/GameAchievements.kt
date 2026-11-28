@@ -9,9 +9,6 @@ import com.ambient.tv.games.RaAchievement
 import com.ambient.tv.games.RaConsoles
 import com.ambient.tv.games.RaGame
 import com.ambient.tv.games.RetroAchievementsClient
-import com.swordfish.libretrodroid.AchievementDef
-import com.swordfish.libretrodroid.GLRetroView
-import com.swordfish.libretrodroid.LibretroDroid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,7 +54,7 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
         }
     private var job: Job? = null
 
-    fun start(view: GLRetroView, game: PreparedGame, enabled: Boolean, hardcoreRequested: Boolean) {
+    internal fun start(view: RetroViewPort, game: PreparedGame, enabled: Boolean, hardcoreRequested: Boolean) {
         job?.cancel()
         val account = client.account
         val console = RaConsoles.forGame(game.system, GameSystems.extension(game.file.name))
@@ -69,7 +66,7 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
         state = GameAchievementState.Connecting
         job = scope.launch {
             try {
-                val hash = withContext(Dispatchers.IO) { LibretroDroid.computeRomHash(game.file.absolutePath, console) }
+                val hash = withContext(Dispatchers.IO) { RetroCoreRuntime.core.computeRomHash(game.file.absolutePath, console) }
                     ?.takeIf { it.isNotBlank() }
                 val gameId = hash?.let { client.gameId(it) }
                 if (hash == null || gameId == null) {
@@ -82,10 +79,10 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
                 val watchable = RetroAchievementsClient.watchable(raGame)
                 unlocked = done.intersect(watchable.map { it.id }.toSet())
                 val armed = watchable.filter { it.id !in done }
-                    .map { AchievementDef(it.id, it.memAddr) }.toTypedArray()
+                    .map { RetroAchievementDefinition(it.id, it.memAddr) }
                 view.achievementUnlockListener = { id -> scope.launch { onUnlocked(id) } }
                 val consoleId = raGame.consoleId.takeIf { it > 0 } ?: console
-                if (armed.isNotEmpty()) view.queueEvent { runCatching { LibretroDroid.initAchievements(armed, consoleId) } }
+                if (armed.isNotEmpty()) view.queueEvent { runCatching { RetroCoreRuntime.core.initAchievements(armed, consoleId) } }
                 state = GameAchievementState.Active(raGame.copy(achievements = watchable), hardcoreRequested)
                 while (isActive) {
                     delay(PING_MS)
@@ -118,10 +115,10 @@ class GameAchievements(private val client: RetroAchievementsClient, private val 
         }
     }
 
-    fun stop(view: GLRetroView) {
+    internal fun stop(view: RetroViewPort) {
         job?.cancel()
         view.achievementUnlockListener = null
-        if (state is GameAchievementState.Active) view.queueEvent { runCatching { LibretroDroid.clearAchievements() } }
+        if (state is GameAchievementState.Active) view.queueEvent { runCatching { RetroCoreRuntime.core.clearAchievements() } }
     }
 
     private companion object {

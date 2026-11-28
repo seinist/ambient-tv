@@ -1,14 +1,30 @@
 --- a/modules/audio_output/android/audiotrack.c
 +++ b/modules/audio_output/android/audiotrack.c
-@@ -598,6 +598,33 @@
+@@ -598,6 +598,49 @@
      return 0;
  }
  
 +#include <dlfcn.h>
 +#include <stdatomic.h>
++typedef void (*ambient_pcm_fn)(int, const void *, size_t, int, int);
++static _Atomic(ambient_pcm_fn) ambient_shared_pcm;
++static atomic_bool ambient_pcm_isolated;
++/* A borrowed process-lifetime pointer to the host-owned ProjectM PCM ring. */
++__attribute__((visibility("default"))) int ambient_vlc_bind_pcm_v1(ambient_pcm_fn tap)
++{
++    atomic_store_explicit(&ambient_shared_pcm, tap, memory_order_release);
++    atomic_store_explicit(&ambient_pcm_isolated, true, memory_order_release);
++    return tap != NULL;
++}
++
 +/* Optional in-process PCM tap; no microphone or system-wide audio capture. */
 +static void ambient_pcm_tap(int source, const void *data, size_t frames, int channels, int encoding)
 +{
++    if (atomic_load_explicit(&ambient_pcm_isolated, memory_order_acquire)) {
++        ambient_pcm_fn shared = atomic_load_explicit(&ambient_shared_pcm, memory_order_acquire);
++        if (shared) shared(source, data, frames, channels, encoding);
++        return;
++    }
 +    typedef void (*tap_fn)(int, const void *, size_t, int, int);
 +    static _Atomic(tap_fn) cached;
 +    static atomic_uint retry;
@@ -34,7 +50,7 @@
  struct role {
      char vlc[16];
  };
-@@ -1377,6 +1404,12 @@
+@@ -1377,6 +1420,12 @@
                              p_sys->i_chans_to_reorder, p_sys->p_chan_table,
                              p_sys->fmt.i_format );
  

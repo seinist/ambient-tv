@@ -3,10 +3,11 @@ package com.ambient.tv.ui.player
 private val supportedRendererKeys = setOf("auto", "media3", "vlc", "mpv")
 
 /** The same restrictions govern playback routing and explicit choices in the player panel. */
-internal data class RendererAvailability(val dolbyVision: Boolean, val mpvAvailable: Boolean) {
+internal data class RendererAvailability(val dolbyVision: Boolean, val mpvAvailable: Boolean, val vlcAvailable: Boolean = true) {
     val disabledKeys: Set<String> = buildSet {
         if (dolbyVision) addAll(setOf("vlc", "mpv"))
         if (!mpvAvailable) add("mpv")
+        if (!vlcAvailable) add("vlc")
     }
 
     fun canSelect(key: String): Boolean = key in supportedRendererKeys && key !in disabledKeys

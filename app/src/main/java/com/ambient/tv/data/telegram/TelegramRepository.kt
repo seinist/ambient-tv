@@ -192,18 +192,42 @@ class TelegramRepository @Inject constructor(
     // or on an ordinary no-Monogram build. Only enabled systems restore sessions.
     private val appContext = context.applicationContext
     private val backend: MonogramAuthClientPort? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        if (!BuildConfig.MONOGRAM_NATIVE) null
-        else runCatching {
-            val factory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
-            factory.getConstructor(Context::class.java, TokenStore::class.java)
-                .newInstance(appContext, tokenStore) as MonogramAuthClientPort
-        }.getOrNull()
+        var external = false
+        val result = runCatching {
+            val module = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.MONOGRAM)
+            external = module != null
+            val factory = module?.entrypoint
+            if (factory != null) {
+                val adapter = factory as? MonogramModuleFactory ?: error("Invalid Monogram adapter factory")
+                adapter.create(appContext, tokenStore)
+            } else {
+                if (module != null) {
+                    val library = java.io.File(checkNotNull(module.nativeDirectory), "libmonogram_mtproto.so")
+                    check(library.isFile)
+                    System.setProperty("uniffi.component.monogram_mtproto.libraryOverride", library.absolutePath)
+                } else {
+                    if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.MONOGRAM))
+                        return@runCatching null
+                    System.clearProperty("uniffi.component.monogram_mtproto.libraryOverride")
+                }
+                check(BuildConfig.MONOGRAM_NATIVE)
+                val bundledFactory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
+                bundledFactory.getConstructor(Context::class.java, TokenStore::class.java)
+                    .newInstance(appContext, tokenStore) as MonogramAuthClientPort
+            }
+        }.onFailure { timber.log.Timber.w("Monogram runtime initialization failed: %s", it.javaClass.simpleName) }.getOrNull()
+        if (result != null && mutableLogin.value.step == MonogramLoginStep.UNAVAILABLE)
+            mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY)
+        com.ambient.tv.modules.SystemModuleAvailability.reportProbe(
+            com.ambient.tv.modules.SystemModule.MONOGRAM, external, result != null,
+        )
+        result
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableLogin = MutableStateFlow(MonogramLoginState(
-        if (BuildConfig.MONOGRAM_NATIVE) MonogramLoginStep.READY else MonogramLoginStep.UNAVAILABLE))
+        if (com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) MonogramLoginStep.READY else MonogramLoginStep.UNAVAILABLE))
     val login: StateFlow<MonogramLoginState> = mutableLogin.asStateFlow()
-    val nativeAvailable: Boolean get() = BuildConfig.MONOGRAM_NATIVE
+    val nativeAvailable: Boolean get() = com.ambient.tv.modules.SystemModuleAvailability.monogramOffered
     val configuredApiId: String get() = tokenStore.monogramApiId
     val configuredApiHash: String get() = tokenStore.monogramApiHash
     val apiCredentialsReady: Boolean get() = tokenStore.monogramCredentials() != null
@@ -886,7 +910,7 @@ class TelegramRepository @Inject constructor(
      * but the screen no longer waits for it.
      */
     suspend fun search(query: String, limit: Int = TELEGRAM_SEARCH_LIMIT): List<TelegramMedia> {
-        if (!BuildConfig.MONOGRAM_NATIVE) return emptyList()
+        if (!com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) return emptyList()
         val selected = client ?: return emptyList()
         val trimmed = query.trim()
         if (trimmed.length < 2) return emptyList()
@@ -1220,8 +1244,12 @@ class TelegramRepository @Inject constructor(
     // Last in the class: the IO coroutine may reach disconnect()/installAuthorized() at once,
     // and those use properties that must already be initialized by the constructor.
     init {
-        if (nativeAvailable && preferences.telegramEnabled) {
-            scope.launch { restoreIfNeeded() }
+        scope.launch {
+            val module = com.ambient.tv.modules.SystemModule.MONOGRAM
+            if (com.ambient.tv.modules.SystemModuleAvailability.bundled(module) ||
+                runCatching { com.ambient.tv.modules.SystemModuleHost.selected(module) != null }.getOrDefault(false)) {
+                if (obtainBackend() != null && preferences.telegramEnabled) restoreIfNeeded()
+            }
         }
     }
 }

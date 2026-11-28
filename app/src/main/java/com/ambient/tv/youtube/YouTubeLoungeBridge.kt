@@ -38,12 +38,12 @@ internal object YouTubeLoungeBridge {
     private const val ON_COMMAND = "$LOUNGE\$OnCommand"
     private const val COMMAND = "com.liskovsoft.youtubeapi.service.data.YouTubeCommand"
 
-    fun service(): Any? = runCatching { Class.forName(LOUNGE).getMethod("instance").invoke(null) }.getOrNull()
+    fun service(): Any? = runCatching { SmartTubeModuleRuntime.type(LOUNGE).getMethod("instance").invoke(null) }.getOrNull()
 
     /** Blocks until the calling thread is interrupted (the lounge client reconnects on its own). */
     fun listen(lounge: Any, onCommand: (YouTubeLinkCommand) -> Unit) {
-        val callbackType = Class.forName(ON_COMMAND)
-        val from = Class.forName(COMMAND).methods.first { it.name == "from" && it.parameterTypes.size == 1 }
+        val callbackType = SmartTubeModuleRuntime.type(ON_COMMAND)
+        val from = SmartTubeModuleRuntime.type(COMMAND).methods.first { it.name == "from" && it.parameterTypes.size == 1 }
         val callback = Proxy.newProxyInstance(callbackType.classLoader, arrayOf(callbackType)) { proxy, method, args ->
             when (method.name) {
                 "onCommand" -> {

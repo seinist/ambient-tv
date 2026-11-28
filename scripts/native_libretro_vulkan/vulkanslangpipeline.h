@@ -44,6 +44,7 @@ private:
     std::string presetPath;
     SlangGeometryPolicy::Budget geometryBudget = SlangGeometryPolicy::Budget::Ordinary;
     void* dynamicLibrary = nullptr;
+    bool borrowedLibrary = false;
     libra_vk_filter_chain_t chain = nullptr;
     bool errorForThisPreset = false;
     uint32_t maxImageDimension = 0;

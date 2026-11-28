@@ -128,11 +128,11 @@ class PlaybackAuditInstrumentation : Instrumentation() {
     private fun auditVlcSeeksAndHandoffs(activity: PlaybackAuditActivity) {
         fun vlc() = BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.backend.VlcPlaybackController
         fun landed(target: Long, paused: Boolean) = vlc()?.let {
-            it.errorMessage == null && !it.hasPendingSeek() && kotlin.math.abs(it.player.time - target) <= 1_000L &&
-                it.player.isPlaying == !paused
+            it.errorMessage == null && !it.hasPendingSeek() && kotlin.math.abs(it.nativePlaybackTimeMs() - target) <= 1_000L &&
+                it.isPlayingNow() == !paused
         } == true
         main { BackgroundPlaybackSession.pause() }
-        await("VLC native pause") { vlc()?.player?.isPlaying == false }
+        await("VLC native pause") { vlc()?.isPlayingNow() == false }
         main {
             val handle = checkNotNull(vlc())
             handle.seekTo(20_000); handle.seekTo(25_000); handle.seekTo(0)
@@ -165,8 +165,8 @@ class PlaybackAuditInstrumentation : Instrumentation() {
         await("VLC filter reopen retains paused native clock", 35_000) { landed(25_000, true) }
         main { BackgroundPlaybackSession.play(); checkNotNull(vlc()).seekTo(5_000) }
         await("VLC backwards seek native clock", 35_000) { landed(5_000, false) }
-        val before = main { checkNotNull(vlc()).player.time }
-        await("VLC native clock advances after seek") { (vlc()?.player?.time ?: 0L) > before + 500 }
+        val before = main { checkNotNull(vlc()).nativePlaybackTimeMs() }
+        await("VLC native clock advances after seek") { (vlc()?.nativePlaybackTimeMs() ?: 0L) > before + 500 }
         assertVideo("VLC after seek and handoffs")
         assertPlaybackVideoMoves(this, "VLC after seek and handoffs")
         log("PASS VLC native seek zero / supersession / paused handoffs / filter reopen / moving picture")
@@ -196,7 +196,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     BackgroundPlaybackSession.snapshot.value.backend == target && status != null &&
                         kotlin.math.abs(status.positionMs - before) < 2_500 && status.playing == !paused &&
                         (h !is com.ambient.tv.ui.player.backend.VlcPlaybackController ||
-                            (!h.hasPendingSeek() && kotlin.math.abs(h.player.time - before) < 2_500 && h.player.isPlaying == !paused))
+                            (!h.hasPendingSeek() && kotlin.math.abs(h.nativePlaybackTimeMs() - before) < 2_500 && h.isPlayingNow() == !paused))
                 }
                 val restoredMs = SystemClock.elapsedRealtime() - started
                 if (paused) {
@@ -260,8 +260,8 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     await("$backend resumed") { BackgroundPlaybackSession.currentStatus()?.playing == true }
                     if (backend == "vlc") await("VLC $output native clock after replacement", 35_000) {
                         (BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.backend.VlcPlaybackController)?.let {
-                            it.errorMessage == null && !it.hasPendingSeek() && kotlin.math.abs(it.player.time - before) < 5_000L &&
-                                it.player.isPlaying
+                            it.errorMessage == null && !it.hasPendingSeek() && kotlin.math.abs(it.nativePlaybackTimeMs() - before) < 5_000L &&
+                                it.isPlayingNow()
                         } == true
                     }
                     assertVideo("$backend $output picture")

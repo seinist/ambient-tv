@@ -91,6 +91,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
     requestExit: (() -> Unit) -> Unit,
     onOpenFiles: () -> Unit,
     onOpenDlna: () -> Unit,
+    projectmAvailable: Boolean = com.ambient.tv.modules.SystemModuleAvailability.state(com.ambient.tv.modules.SystemModule.PROJECTM).usable,
+    mpvAvailable: Boolean = com.ambient.tv.modules.SystemModuleAvailability.state(com.ambient.tv.modules.SystemModule.MPV).usable,
+    vlcAvailable: Boolean = com.ambient.tv.modules.SystemModuleAvailability.state(com.ambient.tv.modules.SystemModule.VLC).usable,
 ) {
     when (category) {
         SettingsCategory.ROMM -> {
@@ -622,8 +625,8 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     SettingsSelect(
                         label = systemString(MediaSystem.TVHEADEND, R.string.settings_tvh_playback_backend),
                         description = stringResource(R.string.settings_tvh_playback_backend_hint),
-                        options = listOf("media3", "vlc", "mpv").map { backend ->
-                            val mpvUnavailable = backend == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
+                        options = listOf("media3", "vlc", "mpv").filter { (it != "mpv" || mpvAvailable) && (it != "vlc" || vlcAvailable) }.map { backend ->
+                            val mpvUnavailable = false
                             SettingsSelectOption(
                                 text = when (backend) {
                                     "media3" -> stringResource(R.string.player_backend_media3)
@@ -640,7 +643,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 }
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (uiState.tvheadendPlaybackBackendKey !in setOf("mpv", "vlc")) {
+                        if (uiState.tvheadendPlaybackBackendKey !in setOf("mpv", "vlc") ||
+                            (uiState.tvheadendPlaybackBackendKey == "mpv" && !mpvAvailable) ||
+                            (uiState.tvheadendPlaybackBackendKey == "vlc" && !vlcAvailable)) {
                             ConnectionListCaption(stringResource(R.string.tvh_deinterlace_state))
                             ImageHint(stringResource(R.string.tvh_deinterlace_media3_hint))
                         } else {
@@ -853,7 +858,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     SettingsSelect(
                         label = stringResource(R.string.settings_spotify_visualization),
                         description = stringResource(R.string.settings_spotify_visualization_subtitle),
-                        options = listOf("cover", "spectrum", "projectm", "off").map { mode ->
+                        options = listOf("cover", "spectrum", "projectm", "off").filter { it != "projectm" || projectmAvailable }.map { mode ->
                             val label = when (mode) {
                                 "spectrum" -> stringResource(R.string.spotify_visual_spectrum)
                                 "projectm" -> "projectM"
@@ -863,13 +868,15 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             SettingsSelectOption(
                                 text = label,
                                 selected = uiState.spotifyVisualizerModeKey == mode,
-                                enabled = mode != "projectm" || com.ambient.tv.ui.common.projectm.ProjectMAvailability.canConfigure,
+                                enabled = true,
                                 onClick = { viewModel.onSpotifyVisualizerChanged(mode) },
                             )
                         },
                     )
-                    Text(stringResource(R.string.settings_spotify_visualizer_link_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    SettingsPageLink(SettingsCategory.VISUALIZER, "spotify-visualizer")
+                    if (projectmAvailable) {
+                        Text(stringResource(R.string.settings_spotify_visualizer_link_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        SettingsPageLink(SettingsCategory.VISUALIZER, "spotify-visualizer")
+                    }
                 }
             }
             item { Text(stringResource(R.string.settings_spotify_native_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }

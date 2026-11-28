@@ -336,6 +336,21 @@ fun SettingsScreen(
         },
         onRequestAppExit = { showExitConfirmation = true },
     ) { selectedCategory, listState, panelModifier, focusContent, requestExit ->
+        val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+        val projectmAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.PROJECTM).usable
+        val mpvAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.MPV).usable
+        val vlcAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.VLC).usable
+        LaunchedEffect(selectedCategory) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                when (selectedCategory) {
+                    SettingsCategory.VISUALIZER, SettingsCategory.SPOTIFY ->
+                        com.ambient.tv.ui.common.projectm.ProjectMAvailability.isAvailable
+                    SettingsCategory.PLAYBACK, SettingsCategory.TVHEADEND, SettingsCategory.IMAGE ->
+                        com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
+                    else -> false
+                }
+            }
+        }
         Column(modifier = panelModifier, verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.itemGap)) {
             // Handheld already names this page in its toolbar; TV keeps the title in the content pane.
             if (!handheldUi) SettingsPageTitle(settingsCategoryTitle(selectedCategory))
@@ -848,6 +863,9 @@ fun SettingsScreen(
                                 requestExit = requestExit,
                                 onOpenFiles = onOpenFiles,
                                 onOpenDlna = onOpenDlna,
+                                projectmAvailable = projectmAvailable,
+                                mpvAvailable = mpvAvailable,
+                                vlcAvailable = vlcAvailable,
                             )
                         }
 
@@ -891,8 +909,8 @@ fun SettingsScreen(
                                         label = stringResource(R.string.settings_playback_backend),
                                         description = MediaSystem.renamedAll(stringResource(R.string.settings_playback_backend_hint)),
                                         options = buildList {
-                                        listOf("media3", "vlc", "mpv").forEach { backend ->
-                                            val mpvUnavailable = backend == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
+                                        listOf("media3", "vlc", "mpv").filter { (it != "mpv" || mpvAvailable) && (it != "vlc" || vlcAvailable) }.forEach { backend ->
+                                            val mpvUnavailable = false
                                             add(SettingsSelectOption(
                                                 text = when (backend) {
                                                     "media3" -> stringResource(R.string.player_backend_media3)
@@ -922,7 +940,10 @@ fun SettingsScreen(
                                     onClick = { savedProfiles = viewModel.savedProfileEntries() },
                                 )
                             }
-                            if (uiState.playbackBackendKey == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) {
+                            if (uiState.playbackBackendKey == "vlc" && !vlcAvailable) {
+                                item { Text(stringResource(R.string.player_vlc_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            }
+                            if (uiState.playbackBackendKey == "mpv" && !mpvAvailable) {
                                 item { Text(stringResource(R.string.player_backend_mpv_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
                             if (handheldUi) {
@@ -1316,8 +1337,8 @@ fun SettingsScreen(
                             item {
                                 SettingsGroup {
                                     SettingsSelect(label = stringResource(R.string.settings_audio_visualizer), description = stringResource(audioVisualizerHintRes(uiState.audioVisualizerModeKey)), options = buildList {
-                                        listOf("projectm", "spectrum", "off").forEach { mode ->
-                                            val unavailable = mode == "projectm" && !com.ambient.tv.ui.common.projectm.ProjectMAvailability.canConfigure
+                                        listOf("projectm", "spectrum", "off").filter { it != "projectm" || projectmAvailable }.forEach { mode ->
+                                            val unavailable = false
                                             add(SettingsSelectOption(
                                                 text = when (mode) {
                                                     "projectm" -> stringResource(R.string.settings_audio_visualizer_projectm)
@@ -1330,12 +1351,12 @@ fun SettingsScreen(
                                             ))
                                         }
                                     })
-                                    if (!com.ambient.tv.ui.common.projectm.ProjectMAvailability.isAvailable) {
+                                    if (!projectmAvailable) {
                                         Text(stringResource(R.string.settings_projectm_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                             }
-                            if (uiState.audioVisualizerModeKey == "projectm") {
+                            if (uiState.audioVisualizerModeKey == "projectm" && projectmAvailable) {
                                 item { SettingsSubheader(stringResource(R.string.settings_section_general_presets)) }
                                 item {
                                     SettingsGroup(subtitle = stringResource(R.string.settings_projectm_hint)) {
@@ -1693,7 +1714,8 @@ fun SettingsScreen(
                         SettingsCategory.ABOUT -> {
                             item { SettingsSubheader(stringResource(R.string.settings_section_general_app_updates)) }
                             item { AboutAppCard() }
-                            item { com.ambient.tv.update.UpdateSettingsCard() }
+                            if (BuildConfig.MODULE_PACKAGING == "full") item { com.ambient.tv.update.UpdateSettingsCard() }
+                            item { com.ambient.tv.modules.SystemModuleSettingsCard() }
                             item { SettingsSubheader(stringResource(R.string.settings_about_playback)) }
                             items(aboutPlaybackComponents(), key = { "about-playback-${it.name}" }) { component ->
                                 AboutComponentCard(component)

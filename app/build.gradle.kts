@@ -3,6 +3,20 @@ import java.security.MessageDigest
 import java.net.URI
 import java.util.Properties
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
+import com.android.build.api.artifact.ScopedArtifact
+import com.android.build.api.variant.ScopedArtifacts
+import org.gradle.api.file.Directory
+import org.gradle.api.file.RegularFile
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
 
 plugins {
     alias(libs.plugins.android.application)
@@ -147,10 +161,145 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
-val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
+val modulePackaging = providers.gradleProperty("MODULE_PACKAGING")
+    .orElse(providers.environmentVariable("MODULE_PACKAGING")).orElse("full").get()
+require(modulePackaging in setOf("full", "modular-preview", "modular")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
+val modularPreview = modulePackaging != "full"
+val stableModular = modulePackaging == "modular"
+require(!stableModular || providers.environmentVariable("REVIEWED_MODULAR_RELEASE").orNull == "1") {
+    "Stable Modular packaging requires REVIEWED_MODULAR_RELEASE=1"
+}
+// The protocol wrapper comes from the independent Moonlight optimization PR.
+val moonlightModuleRequested = providers.gradleProperty("MOONLIGHT_NATIVE")
+    .orElse(providers.environmentVariable("MOONLIGHT_NATIVE")).orElse("0").get()
+    .let { it == "1" || it.equals("true", true) }
+val moonlightModuleBinding = if (moonlightModuleRequested) {
+    check(rootProject.findProject(":moonlight_native") != null) { "Moonlight sources are not integrated" }
+    // Validate every reviewed integration seam, not only the feature flag.
+    // A native build must never bypass the selected module at any entry point.
+    providers.exec {
+        commandLine("python3", rootProject.file("scripts/reconcile_moonlight_module_host.py").absolutePath,
+            "--root", rootProject.projectDir.absolutePath, "--check")
+    }.result.get().assertNormalExitValue()
+    providers.exec {
+        commandLine("python3", rootProject.file("scripts/patch_moonlight_module_loader.py").absolutePath,
+            rootProject.file("third_party/moonlight-android").absolutePath, "--fingerprint")
+    }.standardOutput.asText.get().trim().also {
+        check(it.matches(Regex("[0-9a-f]{64}"))) { "Invalid Moonlight binding fingerprint" }
+    }
+} else ""
+val libretroModuleMarker = rootProject.file("third_party/libretrodroid/.ambient-libretrodroid")
+val libretroModuleJava = rootProject.file("third_party/libretrodroid/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java")
+val libretroModuleBinding = if (libretroModuleMarker.isFile && libretroModuleJava.isFile &&
+    libretroModuleJava.readText().contains("ambient.libretrodroid.native.directory")) {
+    MessageDigest.getInstance("SHA-256").let { digest ->
+        digest.update(libretroModuleMarker.readBytes())
+        digest.update(0.toByte())
+        digest.update(libretroModuleJava.readBytes())
+        digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+    }
+} else ""
+val libretroBundled = !modularPreview || libretroModuleBinding.isBlank()
+val libretroDexEnabled = providers.gradleProperty("LIBRETRO_DEX_MODULE")
+    .orElse(providers.environmentVariable("LIBRETRO_DEX_MODULE")).orElse("0").get() == "1"
+require(!libretroDexEnabled || libretroModuleBinding.isNotBlank()) { "Libretro DEX requires the patched frontend" }
+require(!libretroDexEnabled || !stableModular) { "Libretro DEX requires preview/device validation" }
+val libretroDexInputs = fileTree("src/main/java/com/ambient/tv/ui/games") {
+    include("Retro*Port.kt", "BundledRetro*.kt", "LibretroModuleAdapter.kt")
+}.files + setOf(file("src/main/java/com/ambient/tv/games/GameDirectContent.kt"),
+    file("src/main/java/com/ambient/tv/games/RetroShaderConfig.kt"),
+    file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
+    file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
+    rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/external-versions.properties"),
+    rootProject.file("scripts/export_monogram_adapter.py"), rootProject.file("scripts/strip_smarttube_classes.py"))
+val libretroDexBinding = if (libretroModuleBinding.isNotBlank()) MessageDigest.getInstance("SHA-256").let { digest ->
+    digest.update("ambient-libretro-dex-v1".toByteArray(Charsets.UTF_8))
+    digest.update(libretroModuleBinding.toByteArray(Charsets.UTF_8))
+    libretroDexInputs.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(it.readBytes())
+        digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+} else ""
+// An older custom AAR or Maven fallback must remain bundled until its Java
+// load sites support the same absolute path as the system module host.
+val vlcModuleBinding = if (vulkanVlcAar.isFile) ZipFile(vulkanVlcAar).use { aar ->
+    val classes = aar.getEntry("classes.jar")?.let { aar.getInputStream(it).use { input -> input.readBytes() } }
+        ?: error("LibVLC AAR has no Java bindings")
+    val patched = ZipInputStream(classes.inputStream()).use { jar ->
+        generateSequence { jar.nextEntry }.any { it.name == "org/videolan/libvlc/AmbientNativeLibraryLoader.class" }
+    }
+    if (patched) MessageDigest.getInstance("SHA-256").digest(classes)
+        .joinToString("") { "%02x".format(it.toInt() and 255) } else ""
+} else ""
+val vlcModuleSupported = vlcModuleBinding.isNotEmpty()
+val vlcDexEnabled = providers.gradleProperty("VLC_DEX_MODULE")
+    .orElse(providers.environmentVariable("VLC_DEX_MODULE")).orElse("0").get() == "1"
+require(!vlcDexEnabled || vlcModuleSupported) { "VLC DEX requires the patched custom AAR" }
+require(!vlcDexEnabled || !stableModular) { "VLC DEX is preview-only until shared SVP/ProjectM validation" }
+val vlcDexInputs = fileTree("src/main/java/com/ambient/tv/ui/player/backend") {
+    include("Vlc*.kt", "ReflectiveMembers.kt", "VideoAccelerationCapabilities.kt")
+}.files + setOf(file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
+    file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
+    rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/external-versions.properties"),
+    rootProject.file("scripts/export_monogram_adapter.py"), rootProject.file("scripts/strip_smarttube_classes.py"))
+val vlcDexBinding = if (vlcModuleSupported) MessageDigest.getInstance("SHA-256").let { digest ->
+    digest.update("ambient-vlc-dex-v1".toByteArray(Charsets.UTF_8))
+    digest.update(vlcModuleBinding.toByteArray(Charsets.UTF_8))
+    vlcDexInputs.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(it.readBytes())
+        digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+} else ""
+val vlcBundled = !modularPreview || !vlcModuleSupported
+val smartTubeHostResources = rootProject.findProject(":youtubeapi") != null
+val smartTubeBundled = smartTubeHostResources && !modularPreview
+val smartTubeAdapterInputs = fileTree("src/main/java/com/ambient/tv/youtube") { include("**/*.kt") }.files +
+    fileTree(rootProject.file("smarttube_wrappers")) { include("**/*.gradle.kts", "**/*.pro") }.files + setOf(
+        rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/external-versions.properties"),
+        rootProject.file("scripts/patch_smarttube_compat.py"),
+        rootProject.file("scripts/export_monogram_adapter.py"),
+        rootProject.file("scripts/strip_smarttube_classes.py"),
+        file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
+        file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
+    )
+val smartTubeAdapterSha = MessageDigest.getInstance("SHA-256").let { digest ->
+    smartTubeAdapterInputs.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(it.readBytes())
+        digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+}
+val monogramEnabled = !modularPreview && (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }
 val monogramAar = file("libs/monogram-mtproto.aar")
+// Exact host ABI source fingerprint shared by the DEX exporter and both APK variants.
+// Include the boundary's DTOs, Kotlin internal method names and runtime dependency pins.
+val monogramAdapterInputs = fileTree("src/main/java/com/ambient/tv/data/telegram") {
+    include("**/*.kt")
+}.files + setOf(
+    file("src/main/java/com/ambient/tv/data/local/TokenStore.kt"),
+    file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
+    file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
+    rootProject.file("gradle/libs.versions.toml"),
+)
+val monogramAdapterSha = MessageDigest.getInstance("SHA-256").let { digest ->
+    monogramAdapterInputs.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(it.readBytes())
+        digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+}
 // Spotify's in-app playback (librespot) is off: Spotify refuses its audio keys (librespot#1649).
 // SPOTIFY_NATIVE=1 brings the whole Spotify system back (core build, menus, settings).
 val spotifyEnabled = (providers.gradleProperty("SPOTIFY_NATIVE").orElse(
@@ -279,7 +428,30 @@ android {
         // ndk.abiFilters here: AGP 8.11+ rejects using both mechanisms together.
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
+        buildConfigField("String", "MODULE_PACKAGING", quotedBuildConfigString(modulePackaging))
+        manifestPlaceholders["modulePackaging"] = modulePackaging
+        buildConfigField("String", "MOONLIGHT_MODULE_BINDING_SHA256", quotedBuildConfigString(moonlightModuleBinding))
+        buildConfigField("boolean", "MOONLIGHT_MODULE_BUNDLED", (!modularPreview && moonlightModuleBinding.isNotEmpty()).toString())
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
+        // Pin the exact UniFFI/Kotlin bridge artifact, independent of CPU tuning.
+        val monogramBindingSha = if (monogramEnabled) ZipFile(monogramAar).use { aar ->
+            val entry = requireNotNull(aar.getEntry("classes.jar")) { "Monogram bindings missing" }
+            val hash = MessageDigest.getInstance("SHA-256")
+            aar.getInputStream(entry).use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    hash.update(buffer, 0, count)
+                }
+            }
+            hash.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+        } else ""
+        buildConfigField("String", "MONOGRAM_BINDING_SHA256", quotedBuildConfigString(monogramBindingSha))
+        buildConfigField("String", "MONOGRAM_ADAPTER_SHA256", quotedBuildConfigString(monogramAdapterSha))
+        buildConfigField("String", "SMARTTUBE_ADAPTER_SHA256", quotedBuildConfigString(smartTubeAdapterSha))
+        buildConfigField("boolean", "SMARTTUBE_BUNDLED", smartTubeBundled.toString())
+        buildConfigField("boolean", "SMARTTUBE_HOST_RESOURCES", smartTubeHostResources.toString())
         buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
         val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
         buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", monogramPgoGenerate.toString())
@@ -318,6 +490,10 @@ android {
         // Only the app's own VLC 4 build (scripts/build_vlc_vulkan.sh) carries the ambientsvp
         // filter; the Maven libVLC fallback cannot interpolate, so SVP is hidden there.
         buildConfigField("boolean", "VLC_SVP", vulkanVlcAar.isFile.toString())
+        buildConfigField("boolean", "VLC_BUNDLED", vlcBundled.toString())
+        buildConfigField("String", "VLC_MODULE_BINDING_SHA256", quotedBuildConfigString(vlcModuleBinding))
+        buildConfigField("String", "VLC_DEX_BINDING_SHA256", quotedBuildConfigString(vlcDexBinding))
+        buildConfigField("boolean", "VLC_DEX_ENABLED", vlcDexEnabled.toString())
         buildConfigField("String", "LIBVLC_VERSION", quotedBuildConfigString(if (vulkanVlcAar.isFile) "4.0.0-dev-vulkan+c84ef1e" else libs.versions.libvlc.get()))
         buildConfigField("String", "MEDIA3_VERSION", quotedBuildConfigString(libs.versions.media3.get()))
         buildConfigField("String", "COMPOSE_BOM_VERSION", quotedBuildConfigString(libs.versions.composeBom.get()))
@@ -345,13 +521,28 @@ android {
         buildConfigField("String", "MPV_ANDROID_REF", quotedBuildConfigString(externalVersion("MPV_ANDROID_REF")))
         buildConfigField("String", "PROJECTM_VERSION", quotedBuildConfigString(externalVersion("PROJECTM_REF")))
         buildConfigField("String", "SPOTIFY_RUSTY_VERSION", quotedBuildConfigString(externalVersion("SPOTIFY_RUSTY_REF")))
+        buildConfigField("String", "SVP_MODULE_BINDING_SHA256", quotedBuildConfigString(
+            MessageDigest.getInstance("SHA-256").digest(rootProject.file("native/ambientsvp/include/ambientsvp.h").readBytes())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+        ))
         buildConfigField("String", "SVPFLOW_VERSION", quotedBuildConfigString(externalVersion("SVPFLOW_VERSION")))
         buildConfigField("String", "SVPFLOW_REF", quotedBuildConfigString(externalVersion("SVPFLOW_REF")))
         buildConfigField("String", "FFMPEG_VERSION", quotedBuildConfigString(externalVersion("FFMPEG_REF")))
         buildConfigField("String", "FFMPEG_REF", quotedBuildConfigString(externalVersion("FFMPEG_COMMIT")))
+        buildConfigField("boolean", "LIBRETRODROID_BUNDLED", libretroBundled.toString())
+        buildConfigField("String", "LIBRETRODROID_MODULE_BINDING_SHA256", quotedBuildConfigString(libretroModuleBinding))
+        buildConfigField("String", "LIBRETRODROID_DEX_BINDING_SHA256", quotedBuildConfigString(libretroDexBinding))
+        buildConfigField("boolean", "LIBRETRODROID_DEX_ENABLED", libretroDexEnabled.toString())
         buildConfigField("String", "LIBRETRODROID_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_COMMIT")))
         buildConfigField("String", "RCHEEVOS_VERSION", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_VERSION")))
         buildConfigField("String", "RCHEEVOS_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_COMMIT")))
+        buildConfigField("String", "SHADER_MODULE_BINDING_SHA256", quotedBuildConfigString(
+            MessageDigest.getInstance("SHA-256").digest(rootProject.file("scripts/native_libretro_vulkan/librashader.h").readBytes())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+        ))
+        buildConfigField("boolean", "SHADER_RUNTIME_BUNDLED", (!modularPreview &&
+            providers.gradleProperty("LIBRASHADER_NATIVE").orElse(providers.environmentVariable("LIBRASHADER_NATIVE"))
+                .orElse("0").get() == "1").toString())
         buildConfigField("String", "LIBRASHADER_VERSION", quotedBuildConfigString(externalVersion("LIBRASHADER_VERSION")))
         buildConfigField("String", "LIBRASHADER_REF", quotedBuildConfigString(externalVersion("LIBRASHADER_COMMIT")))
     }
@@ -388,7 +579,9 @@ android {
                 signingConfig = signingConfigs.getByName("debug")
             }
             isMinifyEnabled = true
-            isShrinkResources = true
+            // Downloadable SmartTube references resources which are invisible to R8.
+            // Preserve the host resource table in resource-only preview builds.
+            isShrinkResources = !modularPreview
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         // Baseline profile capture (scripts/capture_baseline_profile.sh): release code, but not
@@ -427,6 +620,8 @@ android {
             // dnsjava's multi-release desktop JDK resolver provider is absent on Android.
             // Do not exclude other service descriptors: SLF4J and other providers need them.
             excludes += "META-INF/services/java.net.spi.InetAddressResolverProvider"
+            // The legacy JDK NameService SPI is also unavailable on Android.
+            excludes += "META-INF/services/sun.net.spi.nameservice.NameServiceDescriptor"
             merges += setOf("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/LICENSE.md", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/NOTICE.md")
         }
         jniLibs {
@@ -437,14 +632,24 @@ android {
             pickFirsts += selectedAbis.map { "**/$it/libc++_shared.so" }
             // JNA (Monogram) bundles libjnidispatch for ABIs Android no longer supports.
             excludes += setOf("**/mips/libjnidispatch.so", "**/mips64/libjnidispatch.so", "**/armeabi/libjnidispatch.so")
+            // Preview only: omit native roots already routed through the module host.
+            // Retain FFmpeg and other APK-owned dependencies for local audio and MPV modules.
+            if (modularPreview) excludes += setOf(
+                "**/libprojectM-4.so", "**/libambientprojectm.so",
+                "**/libmpv.so", "**/libambientmpv.so", "**/libj2v8.so", "**/libambientsvp.so",
+            )
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
-            if (!spotifyEnabled) excludes += "**/libspotify_receiver_core.so"
+            if (!libretroBundled) excludes += "**/liblibretrodroid.so"
+            if (modularPreview && vlcModuleSupported) excludes += setOf("**/libvlc.so", "**/libvlcjni.so")
+            if (modularPreview && moonlightModuleBinding.isNotEmpty()) excludes += "**/libmoonlight-core.so"
+            if (!spotifyEnabled || modularPreview) excludes += "**/libspotify_receiver_core.so"
+            if (modularPreview) excludes += "**/libmonogram_mtproto.so"
             // An earlier full Vulkan build may leave a 6+ MB native library in
             // jniLibs. A later GLES-only build must never accidentally ship it.
             val includeNativeSlang = providers.gradleProperty("LIBRASHADER_NATIVE")
                 .orElse(providers.environmentVariable("LIBRASHADER_NATIVE"))
                 .orElse("0").get() == "1"
-            if (!includeNativeSlang) excludes += "**/liblibrashader_capi.so"
+            if (!includeNativeSlang || modularPreview) excludes += "**/liblibrashader_capi.so"
 
             // AGP's llvm-strip rejects these prebuilt ELFs and would keep their debug info.
             // The release strip below still runs llvm-strip --strip-unneeded on every .so.
@@ -456,12 +661,215 @@ android {
     }
 }
 
+if (modularPreview) {
+    // Use a generated filtered asset directory, never delete tracked assets.
+    val filteredAssets = layout.buildDirectory.dir("generated/modularPreview/assets")
+    val prepareModularAssets = tasks.register<Sync>("prepareModularPreviewAssets") {
+        from("src/main/assets")
+        exclude("games/slang/**")
+        into(filteredAssets)
+    }
+    android.sourceSets {
+        named("main") {
+            assets.directories.clear()
+            assets.directories.add(filteredAssets.get().asFile.absolutePath)
+        }
+    }
+    tasks.configureEach {
+        if (name == "preBuild" || (name.startsWith("merge") && name.endsWith("Assets"))) {
+            dependsOn(prepareModularAssets)
+        }
+    }
+}
+
+
+/** Read-only view of the variant's complete pre-R8 class graph. */
+abstract class ExportMonogramDex @Inject constructor(
+    private val execOperations: ExecOperations,
+) : DefaultTask() {
+    @get:InputFiles abstract val allJars: ListProperty<RegularFile>
+    @get:InputFiles abstract val allDirectories: ListProperty<Directory>
+    @get:InputFiles abstract val androidLibraries: ListProperty<RegularFile>
+    @get:InputFile abstract val exporter: org.gradle.api.file.RegularFileProperty
+    @get:InputFile abstract val dexVerifier: org.gradle.api.file.RegularFileProperty
+    @get:InputFile abstract val d8: org.gradle.api.file.RegularFileProperty
+    @get:Input abstract val binding: Property<String>
+    @get:Input abstract val module: Property<String>
+    @get:OutputDirectory abstract val destination: org.gradle.api.file.DirectoryProperty
+
+    @TaskAction fun export() {
+        val output = destination.get().asFile
+        check(!output.exists() || output.deleteRecursively()) { "Cannot clean Monogram adapter output" }
+        val command = mutableListOf("python3", exporter.get().asFile.absolutePath,
+            "--d8", d8.get().asFile.absolutePath, "--binding", binding.get(), "--module", module.get(),
+            "--output", output.absolutePath)
+        for (input in allJars.get().map { it.asFile } + allDirectories.get().map { it.asFile }) {
+            command.addAll(listOf("--input", input.absolutePath))
+        }
+        for (library in androidLibraries.get()) command.addAll(listOf("--android-lib", library.asFile.absolutePath))
+        execOperations.exec { commandLine(command) }.assertNormalExitValue()
+    }
+}
+
+if (monogramEnabled) {
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+        val task = tasks.register<ExportMonogramDex>("exportMonogramAdapterDex") {
+            exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            dexVerifier.set(rootProject.layout.projectDirectory.file("scripts/verify_module_dex.py"))
+            binding.set(monogramAdapterSha)
+            module.set("monogram")
+            androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
+            d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
+            destination.set(layout.buildDirectory.dir("outputs/system-modules/monogram-dex"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
+            ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
+    }
+}
+
+if (smartTubeBundled) {
+    // Capture sources of the actual resolved private Java libraries, not the
+    // requested version-catalog pins (Gradle conflict resolution can differ).
+    // Only the release candidate workflow invokes this network-enabled task.
+    tasks.register("exportSmartTubeMavenSources") {
+        notCompatibleWithConfigurationCache("Resolves reviewed Maven source artifacts at execution time")
+        val destination = layout.buildDirectory.dir("outputs/system-modules/smarttube-maven-inputs")
+        outputs.dir(destination)
+        outputs.upToDateWhen { false }
+        doLast {
+            val runtime = configurations.getByName("releaseRuntimeClasspath")
+            val required = setOf("com.jayway.jsonpath:json-path", "net.minidev:json-smart",
+                "com.grack:nanojson", "com.github.florianingerl.util:regex", "com.jakewharton:disklrucache")
+            val components = runtime.incoming.resolutionResult.allComponents.mapNotNull {
+                it.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier
+            }.filter { "${it.group}:${it.module}" in required || it.group == "net.minidev" || it.group == "org.ow2.asm" }
+            check(components.map { "${it.group}:${it.module}" }.containsAll(required)) {
+                "Missing resolved SmartTube private Maven dependency"
+            }
+            val sources = dependencies.createArtifactResolutionQuery()
+                .forComponents(components)
+                .withArtifacts(org.gradle.jvm.JvmLibrary::class.java, org.gradle.language.base.artifact.SourcesArtifact::class.java)
+                .execute()
+            val binaries = runtime.incoming.artifacts.artifacts.groupBy { it.id.componentIdentifier }
+            val output = destination.get().asFile
+            check(!output.exists() || output.deleteRecursively())
+            check(output.mkdirs())
+            for (component in components.sortedBy { it.displayName }) {
+                val coordinate = "${component.group}:${component.module}:${component.version}"
+                check(coordinate.matches(Regex("[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+")))
+                val source = sources.resolvedComponents.singleOrNull { it.id == component }
+                    ?.getArtifacts(org.gradle.language.base.artifact.SourcesArtifact::class.java)
+                    ?.filterIsInstance<org.gradle.api.artifacts.result.ResolvedArtifactResult>()
+                    ?.singleOrNull()?.file ?: error("Missing exact Maven sources: $coordinate")
+                val binary = binaries[component]?.singleOrNull()?.file
+                    ?: error("Missing exact Maven binary: $coordinate")
+                check(source.isFile && binary.isFile && source.extension == "jar" && binary.extension == "jar")
+                val directory = File(output, coordinate.replace(':', '/'))
+                check(directory.mkdirs())
+                source.copyTo(File(directory, "sources.jar"))
+                binary.copyTo(File(directory, "binary.jar"))
+            }
+        }
+    }
+
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+        val task = tasks.register<ExportMonogramDex>("exportSmartTubeAdapterDex") {
+            exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            dexVerifier.set(rootProject.layout.projectDirectory.file("scripts/verify_module_dex.py"))
+            binding.set(smartTubeAdapterSha)
+            module.set("smarttube")
+            androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
+            d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
+            destination.set(layout.buildDirectory.dir("outputs/system-modules/smarttube-dex"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
+            ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
+    }
+}
+
+if (vlcDexEnabled && !modularPreview) {
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+        val task = tasks.register<ExportMonogramDex>("exportVlcAdapterDex") {
+            exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            dexVerifier.set(rootProject.layout.projectDirectory.file("scripts/verify_module_dex.py"))
+            binding.set(vlcDexBinding)
+            module.set("vlc")
+            androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
+            d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
+            destination.set(layout.buildDirectory.dir("outputs/system-modules/vlc-dex"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
+            ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
+    }
+}
+
+if (libretroDexEnabled && !modularPreview) {
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+        val task = tasks.register<ExportMonogramDex>("exportLibretroAdapterDex") {
+            exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            dexVerifier.set(rootProject.layout.projectDirectory.file("scripts/verify_module_dex.py"))
+            binding.set(libretroDexBinding)
+            module.set("libretrodroid")
+            androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
+            d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
+            destination.set(layout.buildDirectory.dir("outputs/system-modules/libretrodroid-dex"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
+            ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
+    }
+}
+
+/** Remove engine classes before D8/R8 while retaining normal AAR resource merging. */
+abstract class StripSmartTubeClasses @Inject constructor(
+    private val execOperations: ExecOperations,
+) : DefaultTask() {
+    @get:InputFiles abstract val allJars: ListProperty<RegularFile>
+    @get:InputFiles abstract val allDirectories: ListProperty<Directory>
+    @get:InputFile abstract val stripper: org.gradle.api.file.RegularFileProperty
+    @get:InputFile abstract val ownershipScript: org.gradle.api.file.RegularFileProperty
+    @get:Input abstract val modules: ListProperty<String>
+    @get:org.gradle.api.tasks.OutputFile abstract val output: org.gradle.api.file.RegularFileProperty
+
+    @TaskAction fun strip() {
+        val command = mutableListOf("python3", stripper.get().asFile.absolutePath,
+            "--output", output.get().asFile.absolutePath)
+        for (module in modules.get()) command.addAll(listOf("--module", module))
+        for (input in allJars.get().map { it.asFile } + allDirectories.get().map { it.asFile }) {
+            command.addAll(listOf("--input", input.absolutePath))
+        }
+        execOperations.exec { commandLine(command) }.assertNormalExitValue()
+    }
+}
+
+if (modularPreview && (smartTubeHostResources || vlcDexEnabled || libretroDexEnabled)) {
+    androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+        val task = tasks.register<StripSmartTubeClasses>(
+            "strip" + variant.name.replaceFirstChar { it.uppercase() } + "SmartTubeClasses",
+        ) {
+            stripper.set(rootProject.layout.projectDirectory.file("scripts/strip_smarttube_classes.py"))
+            ownershipScript.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            modules.set(listOfNotNull("smarttube".takeIf { smartTubeHostResources }, "vlc".takeIf { vlcDexEnabled },
+                "libretrodroid".takeIf { libretroDexEnabled }))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toTransform(
+            ScopedArtifact.CLASSES, StripSmartTubeClasses::allJars,
+            StripSmartTubeClasses::allDirectories, StripSmartTubeClasses::output,
+        )
+    }
+}
+
 val buildVulkanProbe = tasks.register<Exec>("buildVulkanProbe") {
     val sdk = loadProjectProperties("local.properties").getProperty("sdk.dir")
         ?: System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
         ?: error("Android SDK not configured")
     val ndk = File(sdk).resolve("ndk/30.0.16248370")
     inputs.file(rootProject.file("native/vulkan/probe.cpp"))
+    inputs.file(rootProject.file("native/ambientsvp/include/ambientsvp.h"))
+    inputs.file(rootProject.file("native/ambientsvp/include/ambientsvp_shared.h"))
     inputs.file(rootProject.file("scripts/build_vulkan_probe.sh"))
     inputs.property("abis", selectedAbis)
     outputs.dir(layout.buildDirectory.dir("generated/vulkan/jniLibs"))
@@ -933,6 +1341,7 @@ val generateUpdateManifest = tasks.register<Exec>("generateUpdateManifest") {
     group = "distribution"
     description = "Generates update.json from this release's signed APKs (deferred when unsigned)."
     dependsOn("packageRelease")
+    onlyIf { modulePackaging != "modular-preview" }
     val output = layout.buildDirectory.file("outputs/update/update.json")
     val script = rootProject.file("scripts/generate_update_manifest.py")
     val gradleMetadata = layout.buildDirectory.file("outputs/apk/release/output-metadata.json")
@@ -950,13 +1359,13 @@ val generateUpdateManifest = tasks.register<Exec>("generateUpdateManifest") {
             "--output", output.get().asFile.path, "--aapt2", File(toolsDir, "aapt2").path,
             "--apksigner", File(toolsDir, "apksigner").path, "--expected-abis", expected,
             "--gradle-metadata", gradleMetadata.get().asFile.path,
-            "--skip-unsigned")
+            "--packaging", if (stableModular) "modular" else "full", "--skip-unsigned")
     })
 }
 tasks.matching { it.name == "packageRelease" }.configureEach {
     val staleManifest = layout.buildDirectory.file("outputs/update/update.json").get().asFile
     doFirst { staleManifest.delete() }
-    finalizedBy(generateUpdateManifest)
+    if (modulePackaging != "modular-preview") finalizedBy(generateUpdateManifest)
 }
 // generateUpdateManifest depends on packageRelease, so Gradle never runs it after a failed packageRelease.
 

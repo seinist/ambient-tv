@@ -72,7 +72,7 @@ internal class YouTubeRendererAudit(private val instrumentation: Instrumentation
         }
         fun diagnostics(): String = when (val h = BackgroundPlaybackSession.activeHandle()) {
             is Media3PlaybackHandle -> "Media3 ${h.player.videoFormat} rendered=${h.player.videoDecoderCounters?.renderedOutputBufferCount} dropped=${h.player.videoDecoderCounters?.droppedBufferCount} audio=${h.player.audioFormat}"
-            is VlcPlaybackController -> "VLC ${h.runtimeStats()} seekPending=${h.hasPendingSeek()} nativeTime=${h.player.time}"
+            is VlcPlaybackController -> "VLC ${h.runtimeStats()} seekPending=${h.hasPendingSeek()} nativeTime=${h.nativePlaybackTimeMs()}"
             is MpvPlaybackController -> "MPV output=${h.configuredVideoOutput()} decoder=${h.decoder()} drops=${h.frameDropCount()} decodeDrops=${h.decoderFrameDropCount()} audio=${h.audioOutputDriver()}/${h.audioOutputFormat()}"
             else -> "no player"
         }
@@ -138,7 +138,7 @@ internal class YouTubeRendererAudit(private val instrumentation: Instrumentation
             await("backward seek") { BackgroundPlaybackSession.snapshot.value.status.positionMs in 29_000..35_000 }
             await("backward seek native completion") {
                 when (val h = BackgroundPlaybackSession.activeHandle()) {
-                    is VlcPlaybackController -> !h.hasPendingSeek() && h.player.time in 29_000..36_000 && h.player.isPlaying
+                    is VlcPlaybackController -> !h.hasPendingSeek() && h.nativePlaybackTimeMs() in 29_000..36_000 && h.isPlayingNow()
                     else -> BackgroundPlaybackSession.snapshot.value.playing
                 }
             }

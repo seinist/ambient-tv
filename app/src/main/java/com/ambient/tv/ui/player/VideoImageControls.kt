@@ -65,7 +65,14 @@ internal fun HdrMedia3Hint() = ImageHint(stringResource(R.string.hdr_plays_throu
 /** SVP group of the settings editors; hidden while the global SVP switch is off. */
 @Composable
 internal fun SvpSettingsGroup(mode: String, options: SvpOptions, change: (String, SvpOptions) -> Unit) {
+    val modules by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
     if (!videoImagePreferences(LocalContext.current).svpAvailable) return
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.ambient.tv.ui.player.backend.SvpNative.probe()
+        }
+    }
+    if (!modules.getValue(com.ambient.tv.modules.SystemModule.SVP).usable) return
     val maximum = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.allowSvpInterpolation
     SvpEditorGroup(mode, options, svpUiUnavailable(engineSupportsSvp = true, maximumPerformance = maximum), change)
 }

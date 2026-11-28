@@ -8,6 +8,23 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <atomic>
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
+
+namespace {
+using HostShaderResolver = void *(*)(const char *);
+std::atomic<HostShaderResolver> sharedResolver{nullptr};
+std::atomic<bool> isolatedFrontend{false};
+}
+#ifdef __ANDROID__
+extern "C" JNIEXPORT void JNICALL
+Java_com_swordfish_libretrodroid_LibretroDroid_ambientBindSharedShader(JNIEnv *, jclass, jlong address) {
+    sharedResolver.store(reinterpret_cast<HostShaderResolver>(static_cast<uintptr_t>(address)), std::memory_order_release);
+    isolatedFrontend.store(true, std::memory_order_release);
+}
+#endif
 
 namespace libretrodroid {
 
@@ -51,17 +68,23 @@ void VulkanSlangPipeline::logError(const char* label, libra_error_t error) {
 }
 
 bool VulkanSlangPipeline::loadLibrary() {
-    if (dynamicLibrary != nullptr) return true;
-    dynamicLibrary = dlopen("liblibrashader_capi.so", RTLD_NOW | RTLD_LOCAL);
-    if (dynamicLibrary == nullptr) {
+    if (dynamicLibrary != nullptr || borrowedLibrary) return true;
+    const bool isolated = isolatedFrontend.load(std::memory_order_acquire);
+    const auto resolver = isolated ? sharedResolver.load(std::memory_order_acquire) : nullptr;
+    if (isolated && !resolver) return false;
+    if (!isolated) dynamicLibrary = dlopen("liblibrashader_capi.so", RTLD_NOW | RTLD_LOCAL);
+    if (!isolated && dynamicLibrary == nullptr) {
         __android_log_print(ANDROID_LOG_WARN, TAG, "Vulkan Slang runtime unavailable: %s", dlerror());
         return false;
     }
-#define LOAD(name) do { name = reinterpret_cast<PFN_libra_##name>(dlsym(dynamicLibrary, "libra_" #name)); \
+    auto resolve = [&](const char *symbol) -> void * {
+        return isolated ? resolver(symbol) : dlsym(dynamicLibrary, symbol);
+    };
+#define LOAD(name) do { name = reinterpret_cast<PFN_libra_##name>(resolve("libra_" #name)); \
     if (name == nullptr) { __android_log_print(ANDROID_LOG_WARN, TAG, "Missing librashader symbol: %s", #name); \
         releaseLibrary(); return false; } } while(0)
     // Named function pointer members do not share the bare names of exported symbols.
-#define LOAD_MEMBER(member, name) do { member = reinterpret_cast<PFN_libra_##name>(dlsym(dynamicLibrary, "libra_" #name)); \
+#define LOAD_MEMBER(member, name) do { member = reinterpret_cast<PFN_libra_##name>(resolve("libra_" #name)); \
     if (member == nullptr) { __android_log_print(ANDROID_LOG_WARN, TAG, "Missing librashader symbol: %s", #name); \
         releaseLibrary(); return false; } } while(0)
     LOAD_MEMBER(abiVersion, instance_abi_version);
@@ -82,6 +105,7 @@ bool VulkanSlangPipeline::loadLibrary() {
         releaseLibrary();
         return false;
     }
+    borrowedLibrary = isolated;
     return true;
 }
 
@@ -214,6 +238,7 @@ void VulkanSlangPipeline::releaseLibrary() {
     // No GL, Vulkan device, or queue callbacks are accessed after the library is unloaded.
     if (dynamicLibrary != nullptr) dlclose(dynamicLibrary);
     dynamicLibrary = nullptr;
+    borrowedLibrary = false;
     abiVersion = nullptr;
     apiVersion = nullptr;
     createPreset = nullptr;

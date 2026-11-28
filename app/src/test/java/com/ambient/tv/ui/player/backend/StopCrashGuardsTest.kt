@@ -39,7 +39,7 @@ class StopCrashGuardsTest {
         assertTrue(body("fun isPlayingNow(").contains("!released"))
         assertTrue(vlc.contains("VlcPlaybackSnapshot(isPlaying = controller.isPlayingNow()"))
         // The player is only replaced inside the controller.
-        assertTrue(Regex("""var player = MediaPlayer\(libVlc\)\s+private set""").containsMatchIn(vlc))
+        assertTrue(vlc.contains("private var player = libVlc.createPlayer()"))
     }
 
     // 4 VLC: LibVLC outlives retiring DV-surface players ----------------------------------------

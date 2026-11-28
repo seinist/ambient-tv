@@ -41,9 +41,13 @@ def inspect_apk(path, aapt2, apksigner):
                       "size": path.stat().st_size, "sha256": digest.hexdigest()}
 
 
-def generate(paths, aapt2, apksigner, expected_abis):
+def generate(paths, aapt2, apksigner, expected_abis, packaging="full"):
+    if packaging not in {"full", "modular"}:
+        raise ValueError("Preview APKs cannot enter the stable update channel")
     if not paths:
         raise ValueError("No APKs supplied")
+    for path in paths:
+        verify_packaging(path, aapt2, packaging)
     inspected = [inspect_apk(path, aapt2, apksigner) for path in paths]
     identities = {identity for identity, _ in inspected}
     if len(identities) != 1:
@@ -55,8 +59,27 @@ def generate(paths, aapt2, apksigner, expected_abis):
     if actual != set(expected_abis):
         raise ValueError(f"Expected {sorted(expected_abis)}, got {sorted(actual)}")
     package, code, version, sdk, _ = identities.pop()
-    return {"schemaVersion": 1, "packageName": package, "versionCode": code,
-            "versionName": version, "minSdk": sdk, "apks": sorted(apks, key=lambda apk: apk["abi"])}
+    manifest = {"schemaVersion": 1, "packageName": package, "versionCode": code,
+                "versionName": version, "minSdk": sdk, "apks": sorted(apks, key=lambda apk: apk["abi"])}
+    if packaging == "modular":
+        manifest.update(schemaVersion=2, packaging=packaging)
+    return manifest
+
+
+def verify_packaging(path, aapt2, expected, require_marker=False):
+    xml = subprocess.run([str(aapt2), "dump", "xmltree", "--file", "AndroidManifest.xml", str(path)],
+                         check=True, capture_output=True, text=True).stdout
+    # aapt2 reports the element and its attributes on separate lines.
+    blocks = re.split(r"(?m)^\s*E: ", xml)
+    markers = []
+    for block in blocks:
+        if block.startswith("meta-data ") and re.search(r'android:name[^\n]*="com\.ambient\.tv\.MODULE_PACKAGING"', block):
+            match = re.search(r'android:value[^\n]*="([^"]+)"', block)
+            if not match:
+                raise ValueError("Invalid APK packaging marker")
+            markers.append(match[1])
+    if markers != [expected] and not (expected == "full" and not markers and not require_marker):
+        raise ValueError(f"APK packaging mismatch: {path}")
 
 
 def main():
@@ -65,6 +88,7 @@ def main():
     parser.add_argument("--aapt2", type=Path, required=True)
     parser.add_argument("--apksigner", type=Path, required=True)
     parser.add_argument("--expected-abis", required=True)
+    parser.add_argument("--packaging", choices=("full", "modular"), default="full")
     parser.add_argument("--gradle-metadata", type=Path)
     parser.add_argument("--skip-unsigned", action="store_true", help="Raw Gradle APKs may await build.sh signing")
     parser.add_argument("apks", type=Path, nargs="*")
@@ -81,7 +105,7 @@ def main():
         if any(subprocess.run([str(args.apksigner), "verify", str(path)], capture_output=True).returncode for path in paths):
             print("Update manifest deferred: APKs are unsigned. build.sh generates it after signing.")
             return
-    manifest = generate(paths, args.aapt2, args.apksigner, args.expected_abis.split(","))
+    manifest = generate(paths, args.aapt2, args.apksigner, args.expected_abis.split(","), args.packaging)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", dir=args.output.parent, delete=False) as stream:
         json.dump(manifest, stream, indent=2)

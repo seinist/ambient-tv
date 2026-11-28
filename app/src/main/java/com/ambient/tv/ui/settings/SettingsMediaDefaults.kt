@@ -17,12 +17,25 @@ import com.ambient.tv.ui.player.backend.VlcNightProcessing
 
 private fun profileRendererKey(playbackBackendKey: String): String = selectedRendererSettingsKey(playbackBackendKey)
 
+@Composable
+private fun rememberMpvAvailable(): Boolean {
+    val states by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { MpvBackendAvailability.isAvailable }
+    }
+    return states.getValue(com.ambient.tv.modules.SystemModule.MPV).usable
+}
+
 /** Renderer output and acceleration only; picture filters are set per playback in the player's settings panel. */
 @Composable
 internal fun SettingsImageDefaults(state: SettingsUiState, model: SettingsViewModel) {
     var renderer by rememberSaveable(state.playbackBackendKey) {
         mutableStateOf(profileRendererKey(state.playbackBackendKey))
     }
+    val mpvAvailable = rememberMpvAvailable()
+    val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+    val vlcAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.VLC).usable
+    val effectiveRenderer = if ((renderer == "mpv" && !mpvAvailable) || (renderer == "vlc" && !vlcAvailable)) "media3" else renderer
     Column(verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSectionHeader(
             stringResource(R.string.settings_playback_section_renderer),
@@ -30,19 +43,26 @@ internal fun SettingsImageDefaults(state: SettingsUiState, model: SettingsViewMo
         )
         ImageHint(stringResource(R.string.settings_image_filters_in_player))
         ImageChoice(
-            R.string.settings_defaults_renderer, renderer,
-            listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV"),
+            R.string.settings_defaults_renderer, effectiveRenderer,
+            listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV").filter { (it.first != "mpv" || mpvAvailable) && (it.first != "vlc" || vlcAvailable) },
         ) { renderer = it }
         ImageHint(stringResource(R.string.settings_defaults_renderer_hint))
-        if (renderer == "mpv" && !MpvBackendAvailability.isAvailable) ImageHint(stringResource(R.string.player_backend_mpv_unavailable))
-        SettingsVideoAcceleration(state, model, renderer)
-        SettingsSectionHeader(stringResource(R.string.image_motion))
-        TvSettingRow(
-            title = stringResource(R.string.settings_svp_available),
-            body = stringResource(R.string.settings_svp_available_hint),
-            checked = state.svpAvailable,
-            onCheckedChange = model::onSvpAvailableChanged,
-        )
+        if (renderer == "mpv" && !mpvAvailable) ImageHint(stringResource(R.string.player_backend_mpv_unavailable))
+        SettingsVideoAcceleration(state, model, effectiveRenderer)
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.ambient.tv.ui.player.backend.SvpNative.probe()
+            }
+        }
+        if (moduleStates.getValue(com.ambient.tv.modules.SystemModule.SVP).usable) {
+            SettingsSectionHeader(stringResource(R.string.image_motion))
+            TvSettingRow(
+                title = stringResource(R.string.settings_svp_available),
+                body = stringResource(R.string.settings_svp_available_hint),
+                checked = state.svpAvailable,
+                onCheckedChange = model::onSvpAvailableChanged,
+            )
+        }
     }
 }
 
@@ -51,6 +71,10 @@ internal fun SettingsAudioDefaults(state: SettingsUiState, model: SettingsViewMo
     var renderer by rememberSaveable {
         mutableStateOf(profileRendererKey(state.playbackBackendKey))
     }
+    val mpvAvailable = rememberMpvAvailable()
+    val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+    val vlcAvailable = moduleStates.getValue(com.ambient.tv.modules.SystemModule.VLC).usable
+    val effectiveRenderer = if ((renderer == "mpv" && !mpvAvailable) || (renderer == "vlc" && !vlcAvailable)) "media3" else renderer
     // Cached per process and queried off the main thread; no audio session during composition.
     val vlcNightAvailable by produceState(initialValue = false) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { VlcNightProcessing.deviceSupported }
@@ -59,20 +83,20 @@ internal fun SettingsAudioDefaults(state: SettingsUiState, model: SettingsViewMo
         SettingsHint(stringResource(R.string.settings_playback_scope_defaults) + " · " + stringResource(R.string.settings_defaults_hint))
         ImageChoice(
             R.string.settings_defaults_renderer,
-            renderer,
-            listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV"),
+            effectiveRenderer,
+            listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV").filter { (it.first != "mpv" || mpvAvailable) && (it.first != "vlc" || vlcAvailable) },
         ) { renderer = it }
         ImageHint(stringResource(R.string.settings_audio_shared))
         // Passthrough is chosen per audio profile ("Audio-Ausgabe"); the former global switch
         // only remains as the meaning of untouched "source" profiles.
-        if (renderer == "vlc") ImageHint(stringResource(R.string.settings_audio_vlc_night))
+        if (effectiveRenderer == "vlc") ImageHint(stringResource(R.string.settings_audio_vlc_night))
         val route = rememberAudioRoute()
         AudioProfileEditor(
             settings = state.audioSettings,
-            backend = renderer,
+            backend = effectiveRenderer,
             // Untouched "source" profiles still follow the stored former global switch.
             sourcePassthrough = state.mediaAudioPassthroughEnabled,
-            supportsNight = renderer != "vlc" || vlcNightAvailable,
+            supportsNight = effectiveRenderer != "vlc" || vlcNightAvailable,
             selectProfile = { model.onAudioSettingsChanged(state.audioSettings.copy(selectedProfile = it)) },
             change = { model.onAudioSettingsChanged(state.audioSettings.updateForRoute(it, route.profile)) },
             trackPreference = { model.onAudioSettingsChanged(state.audioSettings.copy(tracks = it)) },

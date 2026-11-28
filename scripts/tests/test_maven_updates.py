@@ -245,10 +245,16 @@ class MavenUpdatesTest(unittest.TestCase):
         self.assertIn("-dontwarn com.sun.jna.platform.win32.Guid$GUID", rules)
         self.assertIn("-dontwarn javax.naming.directory.InitialDirContext", rules)
         self.assertIn("-dontwarn lombok.Generated", rules)
+        self.assertIn("-dontwarn lombok.NonNull", rules)
+        self.assertIn("-dontwarn sun.net.spi.nameservice.NameService\n", rules)
+        self.assertIn("-dontwarn sun.net.spi.nameservice.NameServiceDescriptor\n", rules)
+        self.assertIn("-keep class !org.xbill.DNS.spi.**,org.xbill.DNS.**", rules)
+        self.assertNotIn("-keep class org.xbill.DNS.**", rules)
         self.assertIn("-keep,allowshrinking class com.jayway.jsonpath.**", rules)
         self.assertNotIn("-keep class com.jayway.jsonpath.**", rules)
         self.assertNotIn("-dontwarn com.sun.jna.**", rules)
         self.assertIn('excludes += "META-INF/services/java.net.spi.InetAddressResolverProvider"', app)
+        self.assertIn('excludes += "META-INF/services/sun.net.spi.nameservice.NameServiceDescriptor"', app)
         self.assertNotIn('excludes += "META-INF/services/**"', app)
 
     def test_root_compat_template_and_recovery_share_cronet_substitution(self):

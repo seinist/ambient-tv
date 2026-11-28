@@ -1,0 +1,168 @@
+name: Experimental J2V8 source build
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/build_j2v8_from_source.py'
+      - 'scripts/test_build_j2v8_from_source.py'
+      - 'scripts/j2v8_source_audit.py'
+      - 'scripts/test_j2v8_source_audit.py'
+      - 'smarttube_wrappers/j2v8/**'
+      - '.github/workflows/j2v8-source-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: j2v8-source-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate source-build scripts and real ELF fixtures
+        run: |
+          set -euo pipefail
+          command -v cc
+          command -v readelf
+          python3 -m py_compile scripts/build_j2v8_from_source.py scripts/j2v8_source_audit.py
+          python3 -m unittest discover -s scripts -p test_build_j2v8_from_source.py -v
+          python3 -m unittest discover -s scripts -p test_j2v8_source_audit.py -v
+  source-build:
+    needs: source-preflight
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install source build prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git curl ca-certificates binutils build-essential python3 python-is-python3 xz-utils unzip
+          # 32-bit host mksnapshot executables for arm/x86 need libatomic.
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libatomic1 libatomic1:i386 libstdc++6:i386
+          df -h
+      - name: Fetch pinned SmartTube Java and legacy JNI inputs
+        run: bash scripts/fetch_smarttube_engine.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Compile pinned J2V8 and V8 native sources
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          set -euo pipefail
+          python3 scripts/build_j2v8_from_source.py --abi "$ABI" \
+            --work "$RUNNER_TEMP/j2v8-source" --output j2v8-source-candidate \
+            --shared third_party/smarttube/SharedModules --jobs 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-j2v8-source-${{ matrix.abi }}
+          path: j2v8-source-candidate/
+          if-no-files-found: error
+
+  android-runtime:
+    needs: source-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SKIP_MPV_NATIVE: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: experimental-j2v8-source-*
+          path: j2v8-artifacts
+      - name: Fetch pinned wrapper and verify native candidates
+        run: |
+          set -euo pipefail
+          bash scripts/fetch_smarttube_engine.sh
+          bash scripts/fetch_libretrodroid.sh
+          python3 scripts/build_j2v8_from_source.py --stage j2v8-artifacts \
+            --shared third_party/smarttube/SharedModules --output "$RUNNER_TEMP/j2v8-test-jni"
+      - name: Install Android SDK and emulator
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1" "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64" ||
+            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1" "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
+          test -x "$ANDROID_HOME/platform-tools/adb"
+          test -x "$ANDROID_HOME/emulator/emulator"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/platform-tools/adb" version
+      - name: Compile Android JNI test APK before launching the emulator
+        run: |
+          set -euo pipefail
+          ./gradlew :j2v8:assembleDebugAndroidTest -PAPK_ABI=x86_64 \
+            -PJ2V8_SOURCE_TEST_DIR="$RUNNER_TEMP/j2v8-test-jni"
+      - name: Run real Android JNI and JavaScript tests
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          export ANDROID_SERIAL=emulator-5554
+          adb="$ANDROID_HOME/platform-tools/adb"
+          test -x "$adb"
+          sudo chmod 666 /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+          # Keep avdmanager and the emulator on the same fresh, writable AVD home.
+          export ANDROID_USER_HOME="$RUNNER_TEMP/j2v8-android-home"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          unset ANDROID_SDK_HOME
+          mkdir -p "$ANDROID_AVD_HOME"
+          avd_path="$ANDROID_AVD_HOME/j2v8-test.avd"
+          avd_ini="$ANDROID_AVD_HOME/j2v8-test.ini"
+          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name j2v8-test --path "$avd_path" --package "system-images;android-35;google_apis;x86_64"
+          # Some command-line tools write the locator in a different user home.
+          # Only reconstruct it after verifying that the actual AVD was created.
+          test -s "$avd_path/config.ini" || { echo "::error::avdmanager did not create an AVD configuration"; exit 1; }
+          if [[ ! -s "$avd_ini" ]]; then
+            printf 'avd.ini.encoding=UTF-8\npath=%s\ntarget=android-35\n' "$avd_path" > "$avd_ini"
+          fi
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx j2v8-test
+          "$adb" start-server
+          "$ANDROID_HOME/emulator/emulator" -avd j2v8-test -port 5554 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/j2v8-emulator.log" 2>&1 &
+          emulator_pid=$!
+          cleanup() {
+            "$adb" -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
+            kill "$emulator_pid" 2>/dev/null || true
+            wait "$emulator_pid" 2>/dev/null || true
+            tail -80 "$RUNNER_TEMP/j2v8-emulator.log" || true
+          }
+          trap cleanup EXIT
+          deadline=$((SECONDS + 300))
+          while :; do
+            kill -0 "$emulator_pid" || { echo "::error::Android emulator exited during boot"; exit 1; }
+            boot="$(timeout 10 "$adb" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+            [[ "$boot" == 1 ]] && break
+            (( SECONDS < deadline )) || { echo "::error::Android emulator boot timeout"; exit 1; }
+            sleep 5
+          done
+          "$adb" -s "$ANDROID_SERIAL" shell input keyevent 82
+          ./gradlew :j2v8:connectedDebugAndroidTest -PAPK_ABI=x86_64 \
+            -PJ2V8_SOURCE_TEST_DIR="$RUNNER_TEMP/j2v8-test-jni"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: experimental-j2v8-android-test
+          path: |
+            smarttube_wrappers/j2v8/build/reports/androidTests/
+            smarttube_wrappers/j2v8/build/outputs/androidTest-results/
+            ${{ runner.temp }}/j2v8-emulator.log
+          if-no-files-found: warn

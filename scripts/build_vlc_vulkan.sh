@@ -4,7 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
-    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch) | sha256sum | cut -d ' ' -f1
+    (
+        cd "$ROOT"
+        grep -E '^(FFMPEG_COMMIT|SVPFLOW_REF|PROJECTM_REF|PROJECTM_COMMIT)=' gradle/external-versions.properties
+        sha256sum scripts/build_vlc_vulkan.sh scripts/check_vlc_shared_native.py scripts/patch_vlc_module_loader.py scripts/prepare_svp_sources.sh native/ambientsvp/adapters/vlc_ambientsvp.c native/ambientsvp/include/*.h native/ambientprojectm/native_audio_tap.h native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch native/vlc-aar/build.gradle.kts
+    ) | sha256sum | cut -d ' ' -f1
     exit 0
 fi
 SOURCE_HASH="$(bash "$0" --hash)"
@@ -32,6 +36,7 @@ for patch in "$ROOT"/native/vlc-aar/jni-patches/*.patch; do
         git -C "$JNI" apply --reverse --check "$patch"
     fi
 done
+python3 "$ROOT/scripts/patch_vlc_module_loader.py" "$JNI/libvlc/src/main/java" --jni-root "$JNI/libvlc/jni"
 bash "$ROOT/scripts/prepare_svp_sources.sh" vlc "$JNI/vlc"
 for patch in "$JNI"/libvlc/patches/*.patch; do
     if git -C "$JNI/vlc" apply --check "$patch" 2>/dev/null; then
@@ -100,6 +105,12 @@ sed -i 's/^FLAC_CONF = \\/FLAC_CONF = -DHAVE_FSEEKO=1 -DHAVE_FTELLO=1 \\/' "$JNI
 if ! grep -q 'wildcard.*libintl.a' "$JNI/libvlc/jni/libvlc.mk"; then
     sed -i 's/-lintl //g; s/    -ldl -lm -llog /    $(if $(wildcard $(VLC_CONTRIB)\/lib\/libintl.a),-lintl) -ldl -lm -llog /' "$JNI/libvlc/jni/libvlc.mk"
 fi
+# Explicitly retain the public callback registrations from the static module
+# archives even when the final Android link garbage-collects unused sections.
+if ! grep -q '^LOCAL_LDFLAGS += .*--undefined=ambient_vlc_bind_svp_v1' "$JNI/libvlc/jni/libvlc.mk"; then
+    sed -i '/^LOCAL_LDFLAGS += .*--gc-sections/a\LOCAL_LDFLAGS += -Wl,--undefined=ambient_vlc_bind_svp_v1 -Wl,--undefined=ambient_vlc_bind_pcm_v1 -Wl,--export-dynamic-symbol=ambient_vlc_bind_svp_v1 -Wl,--export-dynamic-symbol=ambient_vlc_bind_pcm_v1' "$JNI/libvlc/jni/libvlc.mk"
+fi
+grep -q '^LOCAL_LDFLAGS += .*--undefined=ambient_vlc_bind_svp_v1' "$JNI/libvlc/jni/libvlc.mk"
 # Keep the visualizer used by the app (upstream's minimal Android build omits it).
 sed -i '/^[[:space:]]*visual$/d' "$JNI/buildsystem/build-libvlc.sh"
 # Upstream's probe used `which` as a standalone command under set -e.
@@ -116,13 +127,19 @@ if ! command -v autopoint >/dev/null; then
 fi
 for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     env -u DEBUG "$JNI/buildsystem/compile-libvlc.sh" -a "$abi" --release
-    mkdir -p "$ROOT/app/libs"
-    bash "$ROOT/scripts/prepare_svp_sources.sh" --hash vlc > "$ROOT/app/libs/.svp-vlc-$abi"
-    touch "$ROOT/app/libs/.projectm-pcm-vlc-$abi"
-    printf '%s\n' "$SOURCE_HASH" > "$ROOT/app/libs/.vlc-source-$abi"
 done
 # Build the Java wrapper from this exact JNI revision, never mix VLC 3 Java with VLC 4 JNI.
 env -u ANDROID_SDK_ROOT ANDROID_HOME="${ANDROID_NDK%/ndk/*}" "$ROOT/gradlew" -p "$ROOT/native/vlc-aar" assembleRelease -PVLC_SOURCE="$JNI" --console=plain
 mkdir -p "$ROOT/app/libs"
-cp "$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar" "$ROOT/app/libs/libvlc-vulkan.aar"
+candidate="$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar"
+# Never publish a cache stamp or replace a working AAR before validation.
+python3 "$ROOT/scripts/check_vlc_shared_native.py" "$candidate" \
+    --abis "${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}"
+cp "$candidate" "$ROOT/app/libs/libvlc-vulkan.aar.tmp"
+mv -f "$ROOT/app/libs/libvlc-vulkan.aar.tmp" "$ROOT/app/libs/libvlc-vulkan.aar"
+for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
+    bash "$ROOT/scripts/prepare_svp_sources.sh" --hash vlc > "$ROOT/app/libs/.svp-vlc-$abi"
+    touch "$ROOT/app/libs/.projectm-pcm-vlc-$abi"
+    printf '%s\n' "$SOURCE_HASH" > "$ROOT/app/libs/.vlc-source-$abi"
+done
 echo "Installed Vulkan-enabled LibVLC AAR (Java + JNI from $JNI_REF, VLC $VLC_REF)"

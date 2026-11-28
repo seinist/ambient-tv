@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.update
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 
 internal data class UpdateOffer(val manifest: UpdateManifest, val apk: UpdateApk, val url: String, val notes: String) {
@@ -33,6 +35,7 @@ internal data class UpdateOffer(val manifest: UpdateManifest, val apk: UpdateApk
 }
 internal data class UpdateState(
     val automatic: Boolean = false,
+    val target: UpdateVariant = UpdateVariant.FULL,
     val checking: Boolean = false,
     val checked: Boolean = false,
     val offer: UpdateOffer? = null,
@@ -48,12 +51,14 @@ internal data class UpdateState(
 @Singleton
 class AppUpdater @Inject constructor(@ApplicationContext private val context: Context) {
     private val prefs = updatePreferences(context)
+    internal val installedVariant = UpdateVariant.fromId(BuildConfig.MODULE_PACKAGING)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS).followSslRedirects(false).build()
+        .readTimeout(30, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
     private val directory get() = File(context.filesDir, "updates").apply { mkdirs() }
     private val mutable = MutableStateFlow(UpdateState(
         automatic = prefs.getBoolean("automatic", false), skipped = prefs.getLong("skipped", 0),
+        target = UpdateVariant.fromId(prefs.getString("target_variant", null)) ?: installedVariant ?: UpdateVariant.FULL,
     ))
     internal val state = mutable.asStateFlow()
     private val preferenceChanges = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -85,6 +90,15 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
         if (value) onAppStart()
     }
 
+    internal fun setTarget(variant: UpdateVariant) {
+        if (installedVariant == null || work?.isActive == true || mutable.value.preparingInstall ||
+            mutable.value.target == variant) return
+        prefs.edit().putString("target_variant", variant.id)
+            .remove("release").remove("manifest").remove("last_attempt").remove("skipped").remove("announced").apply()
+        mutable.update { UpdateState(automatic = it.automatic, target = variant) }
+        check()
+    }
+
     internal fun skip() {
         val code = mutable.value.offer?.manifest?.versionCode ?: return
         prefs.edit().putLong("skipped", code).apply()
@@ -105,7 +119,9 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
     }
 
     internal fun check(automatic: Boolean = false) {
+        if (installedVariant == null) return
         if (work?.isActive == true || mutable.value.preparingInstall) return
+        val target = mutable.value.target
         val now = System.currentTimeMillis()
         if (automatic && !updateCheckDue(now, prefs.getLong("last_attempt", 0))) return
         prefs.edit().putLong("last_attempt", now).apply()
@@ -113,17 +129,16 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
         work = scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    val release = fetchJson("https://api.github.com/repos/$UPDATE_REPOSITORY/releases/latest")
-                    val json = JSONObject(release)
-                    require(!json.getBoolean("draft") && !json.getBoolean("prerelease"))
-                    val assets = json.getJSONArray("assets")
-                    val manifestAssets = (0 until assets.length()).map { assets.getJSONObject(it) }
-                        .filter { it.optString("name") == "update.json" }
-                    if (manifestAssets.size != 1) throw UpdateFailure(R.string.update_manifest_missing)
-                    val manifestUrl = manifestAssets.single().getString("browser_download_url")
-                    require(trustedReleaseAsset(manifestUrl))
-                    val manifest = fetchJson(manifestUrl)
-                    Triple(release, manifest, parseOffer(release, manifest))
+                    val latest = try {
+                        fetchJson("${UpdateReleaseDiscovery.API}/latest")
+                    } catch (failure: UpdateFailure) {
+                        if (failure.resource != R.string.update_manifest_missing) throw failure
+                        null
+                    }
+                    val candidate = UpdateReleaseDiscovery.find(target, ::fetchJson, latest)
+                        ?: throw UpdateFailure(R.string.update_manifest_missing)
+                    val manifest = fetchJson(candidate.manifestUrl)
+                    Triple(candidate.release, manifest, parseOffer(candidate.release, manifest, target))
                 }
                 prefs.edit().putString("release", result.first).putString("manifest", result.second).apply()
                 mutable.update { it.copy(offer = result.third, checked = true,
@@ -138,11 +153,13 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
         }
     }
 
-    private fun parseOffer(release: String, text: String): UpdateOffer? {
+    private fun parseOffer(release: String, text: String, target: UpdateVariant = mutable.value.target): UpdateOffer? {
+        if (installedVariant == null) return null
         val json = JSONObject(release)
         require(!json.getBoolean("draft") && !json.getBoolean("prerelease"))
         val manifest = UpdateManifest.parse(text)
-        if (manifest.versionCode <= BuildConfig.VERSION_CODE) return null
+        require(manifest.variant == target)
+        if (!updateVersionAllowed(BuildConfig.VERSION_CODE.toLong(), installedVariant, manifest.versionCode, target)) return null
         if (BuildConfig.APPLICATION_ID != "com.ambient.tv" || manifest.minSdk > Build.VERSION.SDK_INT)
             throw UpdateFailure(R.string.update_incompatible)
         val apk = manifest.select(Build.SUPPORTED_ABIS.toList()) ?: throw UpdateFailure(R.string.update_incompatible)
@@ -151,15 +168,35 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
         require(matches.size == 1)
         val asset = matches.single()
         val url = asset.getString("browser_download_url")
-        require(trustedReleaseAsset(url) && asset.getLong("size") == apk.size)
+        require(trustedReleaseAsset(url, json.getString("tag_name"), apk.name) && asset.getLong("size") == apk.size)
         return UpdateOffer(manifest, apk, url, json.optString("body").take(12_000))
     }
 
+    private fun openTrusted(url: String, downloading: Boolean = false): Response {
+        val initial = url.toHttpUrl()
+        require(initial.host == "api.github.com" && initial.isHttps && initial.port == 443 &&
+            initial.username.isEmpty() && initial.password.isEmpty() ||
+            trustedReleaseAsset(url))
+        var next = initial
+        repeat(6) {
+            require(trustedUpdateRedirect(initial, next))
+            val request = Request.Builder().url(next)
+                .header("Accept", if (downloading) "application/octet-stream" else "application/vnd.github+json")
+                .header("Accept-Encoding", "identity")
+                .header("User-Agent", "AmbientTV/${BuildConfig.VERSION_NAME}").build()
+            val call = client.newCall(request)
+            if (downloading) downloadCall = call else call.timeout().timeout(45, TimeUnit.SECONDS)
+            val response = call.execute()
+            if (response.code !in setOf(301, 302, 303, 307, 308)) return response
+            response.use {
+                next = it.header("Location")?.let(next::resolve) ?: throw IOException("Invalid update redirect")
+            }
+        }
+        throw IOException("Too many update redirects")
+    }
+
     private fun fetchJson(url: String): String {
-        val request = Request.Builder().url(url).header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "AmbientTV/${BuildConfig.VERSION_NAME}").build()
-        val call = client.newCall(request).apply { timeout().timeout(45, TimeUnit.SECONDS) }
-        call.execute().use { response ->
+        openTrusted(url).use { response ->
             if (response.code == 403 || response.code == 429) throw UpdateFailure(R.string.update_rate_limited)
             if (response.code == 404) throw UpdateFailure(R.string.update_manifest_missing)
             if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
@@ -192,11 +229,12 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
                     if (directory.usableSpace < offer.apk.size * 2 + 32_000_000) throw UpdateFailure(R.string.update_no_space)
                     val part = File(directory, "download.part.apk")
                     try {
-                        val call = client.newCall(Request.Builder().url(offer.url).build())
-                        downloadCall = call
-                        call.execute().use { response ->
+                        openTrusted(offer.url, downloading = true).use { response ->
                             if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
                             val body = response.body
+                            if (response.header("Content-Encoding")?.equals("identity", true) == false ||
+                                (body.contentLength() >= 0 && body.contentLength() != offer.apk.size))
+                                throw UpdateFailure(R.string.update_invalid_apk)
                             val digest = MessageDigest.getInstance("SHA-256")
                             var count = 0L
                             body.byteStream().use { input ->
@@ -248,7 +286,7 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
      */
     internal suspend fun install(withProfile: Boolean = true): Boolean {
         val offer = mutable.value.offer ?: return false
-        if (!mutable.value.ready || mutable.value.preparingInstall) return false
+        if (!mutable.value.ready || mutable.value.preparingInstall || work?.isActive == true) return false
         mutable.update { it.copy(preparingInstall = true, error = null) }
         return try {
             withContext(Dispatchers.IO) {
@@ -266,7 +304,7 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
                 if (file.length() != offer.apk.size || digest.digest().hex() != offer.apk.sha256)
                     throw UpdateFailure(R.string.update_invalid_apk)
                 validateApk(file, offer)
-                commitSession(file, withProfile)
+                commitSession(file, withProfile, offer.apk.sha256)
             }
             true
         } catch (cancelled: CancellationException) { throw cancelled
@@ -277,11 +315,13 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
     }
 
     /** ART rejected the profile on this device: the same verified APK goes in once more without it. */
-    internal fun retryWithoutProfile() {
-        scope.launch { if (!install(withProfile = false)) reportInstallError() }
+    internal fun retryWithoutProfile(expectedHash: String?) {
+        scope.launch {
+            if (expectedHash == null || mutable.value.offer?.apk?.sha256 != expectedHash || !install(withProfile = false)) reportInstallError()
+        }
     }
 
-    private fun commitSession(file: File, withProfile: Boolean) {
+    private fun commitSession(file: File, withProfile: Boolean, apkHash: String) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
@@ -303,6 +343,7 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
                 val result = Intent(context, UpdateInstallReceiver::class.java)
                     .setPackage(context.packageName)
                     .putExtra(UpdateInstallReceiver.EXTRA_PROFILED, profiled)
+                    .putExtra(UpdateInstallReceiver.EXTRA_APK_HASH, apkHash)
                 // Mutable: the installer adds the status and its confirmation intent.
                 val pending = PendingIntent.getBroadcast(context, id, result,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
@@ -317,12 +358,19 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
     @Suppress("DEPRECATION")
     private fun validateApk(file: File, offer: UpdateOffer) {
         val pm = context.packageManager
-        val archive = pm.getPackageArchiveInfo(file.path, PackageManager.GET_SIGNING_CERTIFICATES)
+        val archive = pm.getPackageArchiveInfo(file.path, PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_META_DATA)
             ?: throw UpdateFailure(R.string.update_invalid_apk)
         if (archive.packageName != context.packageName || archive.longVersionCode != offer.manifest.versionCode ||
-            archive.versionName != offer.manifest.versionName || archive.longVersionCode <= BuildConfig.VERSION_CODE ||
+            archive.versionName != offer.manifest.versionName ||
+            offer.manifest.variant != mutable.value.target ||
+            !updateVersionAllowed(BuildConfig.VERSION_CODE.toLong(), installedVariant, archive.longVersionCode, offer.manifest.variant) ||
             archive.applicationInfo?.minSdkVersion != offer.manifest.minSdk)
             throw UpdateFailure(R.string.update_invalid_apk)
+        // Older Full APKs have no marker. Modular and preview APKs must never
+        // masquerade as Full, and a Modular offer requires an explicit marker.
+        val metadata = archive.applicationInfo?.metaData?.getString(UPDATE_PACKAGING_METADATA)
+        val actualVariant = if (metadata == null) UpdateVariant.FULL else UpdateVariant.fromId(metadata)
+        if (actualVariant != offer.manifest.variant) throw UpdateFailure(R.string.update_invalid_apk)
         val installed = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo
             ?: throw UpdateFailure(R.string.update_signature_mismatch)
         val incoming = archive.signingInfo ?: throw UpdateFailure(R.string.update_signature_mismatch)

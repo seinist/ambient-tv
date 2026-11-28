@@ -1,0 +1,240 @@
+name: System module packages
+
+on:
+  pull_request:
+    paths:
+      - 'app/src/main/java/com/ambient/tv/modules/**'
+      - 'app/src/main/assets/games/slang/**'
+      - 'scripts/package_system_modules.py'
+      - 'scripts/prepare_native_module_release.py'
+      - 'scripts/module_corresponding_source.py'
+      - 'scripts/test_module_corresponding_source.py'
+      - 'scripts/j2v8_source_audit.py'
+      - 'scripts/test_j2v8_source_audit.py'
+      - 'scripts/build_j2v8_from_source.py'
+      - 'scripts/test_build_j2v8_from_source.py'
+      - 'scripts/native_cache_keys.py'
+      - 'scripts/test_native_cache_keys.py'
+      - 'scripts/verify_paired_apk_release.py'
+      - 'scripts/test_verify_paired_apk_release.py'
+      - 'scripts/verify_release_draft.py'
+      - 'scripts/test_verify_release_draft.py'
+      - 'scripts/generate_update_manifest.py'
+      - 'scripts/test_update_manifest.py'
+      - 'scripts/incremental_system_modules.py'
+      - 'scripts/test_incremental_system_modules.py'
+      - 'scripts/test_prepare_native_module_release.py'
+      - '.github/workflows/release.yml'
+      - 'scripts/export_monogram_adapter.py'
+      - 'scripts/verify_module_dex.py'
+      - 'scripts/test_verify_module_dex.py'
+      - 'scripts/test_export_monogram_adapter.py'
+      - 'scripts/strip_smarttube_classes.py'
+      - 'scripts/test_strip_smarttube_classes.py'
+      - 'scripts/patch_vlc_module_loader.py'
+      - 'scripts/check_vlc_shared_native.py'
+      - 'scripts/test_check_vlc_shared_native.py'
+      - 'native/ambientsvp/include/ambientsvp_shared.h'
+      - 'scripts/test_patch_vlc_module_loader.py'
+      - 'scripts/patch_libretrodroid_module_loader.py'
+      - 'scripts/test_patch_libretrodroid_module_loader.py'
+      - 'scripts/patch_moonlight_module_loader.py'
+      - 'scripts/reconcile_moonlight_module_host.py'
+      - 'scripts/test_reconcile_moonlight_module_host.py'
+      - 'scripts/test_patch_moonlight_module_loader.py'
+      - 'scripts/check_modular_preview_apk.py'
+      - 'scripts/test_*system_modules.py'
+      - 'scripts/test_check_modular_preview_apk.py'
+      - '.github/workflows/system-modules.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish reviewed candidate (main only)
+        type: boolean
+        default: false
+      native_module:
+        description: Native module to publish, or none for legacy shader assets
+        type: choice
+        default: none
+        options: [none, monogram, smarttube, spotify, mpv, vlc, libretrodroid, projectm, svp, shaders, moonlight]
+      candidate_run_id:
+        description: Successful Build release run ID for the reviewed native candidate
+        type: string
+        default: ''
+      force_publish:
+        description: Publish a new version even if the native payload is unchanged
+        type: boolean
+        default: false
+      reviewed:
+        description: Confirm device validation and corresponding source/license distribution review
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: system-modules-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package-shaders:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install shader validation tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq glslang-tools
+      - name: Validate bundled shader sources
+        run: python3 scripts/check_game_slang.py
+      - name: Package format tests
+        run: |
+          python3 -m unittest discover -s scripts -p test_package_system_modules.py
+          python3 -m unittest discover -s scripts -p test_prepare_native_module_release.py
+          python3 -m unittest discover -s scripts -p test_module_corresponding_source.py
+          python3 -m unittest discover -s scripts -p test_j2v8_source_audit.py
+          python3 -m unittest discover -s scripts -p test_build_j2v8_from_source.py
+          python3 -m unittest discover -s scripts -p test_native_cache_keys.py
+          python3 -m unittest discover -s scripts -p test_verify_paired_apk_release.py
+          python3 -m unittest discover -s scripts -p test_verify_release_draft.py
+          python3 -m unittest discover -s scripts -p test_update_manifest.py
+          python3 -m unittest discover -s scripts -p test_incremental_system_modules.py
+          python3 -m unittest discover -s scripts -p test_check_modular_preview_apk.py
+          python3 -m unittest discover -s scripts -p test_export_monogram_adapter.py
+          python3 -m unittest discover -s scripts -p test_verify_module_dex.py
+          python3 -m unittest discover -s scripts -p test_strip_smarttube_classes.py
+          python3 -m unittest discover -s scripts -p test_patch_vlc_module_loader.py
+          python3 -m unittest discover -s scripts -p test_check_vlc_shared_native.py
+          python3 -m unittest discover -s scripts -p test_patch_libretrodroid_module_loader.py
+          python3 -m unittest discover -s scripts -p test_patch_moonlight_module_loader.py
+          python3 -m unittest discover -s scripts -p test_reconcile_moonlight_module_host.py
+      - name: Build reproducible module package
+        run: |
+          set -euo pipefail
+          tag="modules-shaders-v${GITHUB_RUN_ID}"
+          python3 scripts/package_system_modules.py --module shaders --tag "$tag" --version "$GITHUB_RUN_ID" --output module-release
+          python3 scripts/package_system_modules.py --module shaders --tag "$tag" --version "$GITHUB_RUN_ID" --output module-repeat
+          diff -r module-release module-repeat
+          python3 -m zipfile -t module-release/shaders--any--baseline.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shader-module-candidate
+          path: module-release/
+          if-no-files-found: error
+
+  publish-shaders:
+    needs: package-shaders
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && inputs.reviewed && inputs.native_module == 'none' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: shader-module-candidate
+          path: module-release
+      - name: Sign and publish module
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY"
+          umask 077
+          key="$(mktemp)"
+          pub="$(mktemp)"
+          trap 'rm -f "$key" "$pub"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          openssl pkey -in "$key" -pubout -out "$pub"
+          cmp "$pub" cores/signing-public.pem
+          tag="modules-shaders-v${GITHUB_RUN_ID}"
+          python3 - "$tag" <<'PY'
+          import hashlib, json, pathlib, sys
+          root = pathlib.Path("module-release")
+          manifest = json.loads((root / "manifest.json").read_text())
+          assert manifest["tag"] == sys.argv[1]
+          assert len(manifest["modules"]) == 1
+          entry = manifest["modules"][0]
+          assert entry["module"] == "shaders" and entry["asset"] == "shaders--any--baseline.zip"
+          blob = (root / entry["asset"]).read_bytes()
+          assert len(blob) == entry["size"] and hashlib.sha256(blob).hexdigest() == entry["sha256"]
+          PY
+          result="$(python3 scripts/incremental_system_modules.py --repo "$GITHUB_REPOSITORY" --module shaders --candidate module-release/manifest.json --public-key cores/signing-public.pem)"
+          if [[ "$result" == unchanged ]]; then
+            echo "Unchanged shader assets; retaining existing release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$result" = publish
+          # Never publish a stale candidate after main moves.
+          git fetch origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          openssl dgst -sha256 -sign "$key" -out module-release/manifest.json.sig module-release/manifest.json
+          openssl dgst -sha256 -verify cores/signing-public.pem -signature module-release/manifest.json.sig module-release/manifest.json
+          gh release create "$tag" module-release/* --draft --title "System library: Vulkan shaders" --target "$GITHUB_SHA" --notes "Signed optional shader assets."
+          python3 scripts/verify_release_draft.py --repo "$GITHUB_REPOSITORY" --tag "$tag" --target "$GITHUB_SHA" module-release/*
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          gh release edit "$tag" --draft=false --latest=false
+
+  publish-native:
+    needs: package-shaders
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && inputs.reviewed && inputs.native_module != 'none' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      MODULE: ${{ inputs.native_module }}
+      CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Verify candidate run origin
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_RUN" =~ ^[1-9][0-9]{0,17}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN" | jq -e --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '.path == ".github/workflows/release.yml" and .event == "workflow_dispatch" and .head_branch == "main" and .head_sha == $sha and .conclusion == "success" and .status == "completed" and .head_repository.full_name == $repo'
+      - uses: actions/download-artifact@v5
+        with:
+          name: native-module-candidate-${{ inputs.native_module }}-${{ inputs.candidate_run_id }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: module-release
+      - name: Compare verified native candidate with published catalog
+        id: incremental
+        env:
+          FORCE_PUBLISH: ${{ inputs.force_publish }}
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_native_module_release.py verify --module "$MODULE" --run-id "$CANDIDATE_RUN" --sha "$GITHUB_SHA" --output module-release
+          args=()
+          if [[ "$FORCE_PUBLISH" == true ]]; then args+=(--force); fi
+          result="$(python3 scripts/incremental_system_modules.py --repo "$GITHUB_REPOSITORY" --module "$MODULE" --candidate module-release/manifest.json --public-key cores/signing-public.pem "${args[@]}")"
+          case "$result" in
+            publish|unchanged) echo "result=$result" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
+          if [[ "$result" == unchanged ]]; then echo "Unchanged native module; retaining previous signed release." >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Verify and sign reviewed native candidate
+        if: steps.incremental.outputs.result == 'publish'
+        env:
+          SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          tag="$(python3 scripts/prepare_native_module_release.py verify --module "$MODULE" --run-id "$CANDIDATE_RUN" --sha "$GITHUB_SHA" --output module-release)"
+          test -n "$SIGNING_KEY"
+          umask 077
+          key="$(mktemp)"
+          pub="$(mktemp)"
+          trap 'rm -f "$key" "$pub"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          openssl pkey -in "$key" -pubout -out "$pub"
+          cmp "$pub" cores/signing-public.pem
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          openssl dgst -sha256 -sign "$key" -out module-release/manifest.json.sig module-release/manifest.json
+          openssl dgst -sha256 -verify cores/signing-public.pem -signature module-release/manifest.json.sig module-release/manifest.json
+          gh release create "$tag" module-release/* --draft --target "$GITHUB_SHA" --title "System library: $MODULE" --notes "Reviewed optional native module. Full APK build run: $CANDIDATE_RUN."
+          python3 scripts/verify_release_draft.py --repo "$GITHUB_REPOSITORY" --tag "$tag" --target "$GITHUB_SHA" module-release/*
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          gh release edit "$tag" --draft=false --latest=false

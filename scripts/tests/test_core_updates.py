@@ -170,11 +170,9 @@ class CoreUpdateTest(unittest.TestCase):
         self.assertEqual(withheld, {"first": NEW})
 
     def test_build_system_preflight_runs_production_helpers(self):
-        from core_hotpath_remaining import PATCHES
         for name, jni, required, helper in (
                 ("mupen64plus_next_gles3", "libretro", {"libretro/jni/Android.mk", "libretro-common/libco/amd64.c"}, "prepare_ndk"),
                 ("snes9x2010", ".", {"jni/Android.mk", "build/Makefile.common"}, "prepare_ndk"),
-                ("panda3ds", ".", {"CMakeLists.txt"}, "prepare_cmake"),
                 ("swanstation", ".", {"CMakeLists.txt"}, "prepare_cmake")):
             core = {"core": name, "jni": jni, "repo": "https://github.com/a/b", "commit": "a"*40}
             with mock.patch.object(updater, "get_bytes", return_value=b"source") as fetch, mock.patch(
@@ -184,10 +182,23 @@ class CoreUpdateTest(unittest.TestCase):
                 self.assertTrue(required <= {call.args[0].split(NEW+"/", 1)[1] for call in fetch.call_args_list})
                 prepare.assert_called_once()
 
+    def test_threaded_snes_preflight_has_no_hotpath_dependency(self):
+        core = {"core": "snes9x2010", "jni": ".", "repo": "https://github.com/a/b", "commit": "a"*40}
+        with mock.patch.object(updater, "get_bytes", return_value=b"source") as fetch, mock.patch(
+                "core_hotpath_patches.prepare_hotpaths") as hotpaths, mock.patch(
+                "core_build_policy.prepare_ndk") as prepare:
+            self.assertTrue(updater.core_candidate_compatible(core, NEW))
+            hotpaths.assert_not_called()
+            self.assertEqual(fetch.call_count, 2)
+            prepare.assert_called_once()
+
     def test_candidate_anchor_preflight(self):
         from core_hotpath_remaining import PATCHES
-        path, old, _ = PATCHES["picodrive"][0]
-        core = {"core": "picodrive", "repo": "https://github.com/a/b", "commit": "a"*40}
+        # PCS X ReARMed has exactly one reviewed patch in the current catalog.
+        # PicoDrive's separate SH2 build profile is not a hotpath patch.
+        path, old, _ = PATCHES["pcsx_rearmed"][0]
+        self.assertEqual(len(PATCHES["pcsx_rearmed"]), 1)
+        core = {"core": "pcsx_rearmed", "repo": "https://github.com/a/b", "commit": "a"*40}
         with mock.patch.object(updater, "get_bytes", return_value=old.encode()) as fetch:
             self.assertTrue(updater.core_candidate_compatible(core, NEW))
             fetch.assert_called_once_with(f"https://raw.githubusercontent.com/a/b/{NEW}/{path}")

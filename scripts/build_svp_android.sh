@@ -8,7 +8,7 @@ export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/S
 RUSTC_BIN="$(rustup which --toolchain stable rustc)"
 export PATH="$(dirname "$RUSTC_BIN"):$HOME/.cargo/bin:$PATH"
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384"
-TOOLCHAIN_KEY="$(rustc --version)|$(<"$ANDROID_NDK_HOME/source.properties")|$RUSTFLAGS|${CARGO_ENCODED_RUSTFLAGS:-}"
+TOOLCHAIN_KEY="$(rustc --version)|$(<"$ANDROID_NDK_HOME/source.properties")|$RUSTFLAGS|${CARGO_ENCODED_RUSTFLAGS:-}|module-soname-v1"
 cd "$ROOT/native/ambientsvp"
 
 # cargo-ndk copies hashed upstream cdylibs (libsvpflow_wasm-<meta>.so,
@@ -46,7 +46,8 @@ RUSTFLAGS="$RUSTFLAGS -C target-feature=+ssse3" \
     cargo test --release --locked --no-default-features --lib --tests
 for abi in "${build_abis[@]}"; do
     cargo ndk --manifest-path "$ROOT/native/ambientsvp/Cargo.toml" -t "$abi" -P 29 \
-        -o "$ROOT/app/src/main/jniLibs" build --release --locked --lib
+        -o "$ROOT/app/src/main/jniLibs" rustc --release --locked --lib -- -C link-arg=-Wl,-soname,libambientsvp.so
+    "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -d "$ROOT/app/src/main/jniLibs/$abi/libambientsvp.so" | grep -Eq 'SONAME.*\[libambientsvp\.so\]'
     prune_svp_dep_libs "$ROOT/app/src/main/jniLibs/$abi"
 done
 bash "$ROOT/scripts/vendor_svp_licenses.sh"

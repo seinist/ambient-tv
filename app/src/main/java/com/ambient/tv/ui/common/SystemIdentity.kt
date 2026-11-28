@@ -94,10 +94,11 @@ enum class MediaSystem(
          * Logo catalog on first launch and on Settings › Add system. Monogram (Telegram) is only
          * offered by builds that contain its optional native MTProto core.
          */
-        val addOrder: List<MediaSystem> = listOf(
+        val addOrder: List<MediaSystem> get() = listOf(
             PLEX, JELLYFIN, EMBY, DLNA, ROMM, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
-        ).filter { it != TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
-            .filter { it != SPOTIFY || com.ambient.tv.BuildConfig.SPOTIFY_ENABLED }
+        ).filter { it != TELEGRAM || com.ambient.tv.modules.SystemModuleAvailability.monogramOffered }
+            .filter { it != SPOTIFY || com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered }
+            .filter { it != YOUTUBE || com.ambient.tv.modules.SystemModuleAvailability.smartTubeOffered }
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND

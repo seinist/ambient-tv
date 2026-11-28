@@ -12,7 +12,6 @@ import android.system.OsConstants
 import com.ambient.tv.data.files.FileAccess
 import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.files.SeekableMedia
-import com.swordfish.libretrodroid.VirtualFile
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.Closeable
 import java.io.IOException
@@ -20,16 +19,21 @@ import java.util.LinkedHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Host-owned FD descriptor. The frontend receives the same PFD at handoff;
+ * this model never detaches, duplicates or reads the underlying file.
+ */
+data class GameVirtualFile(val path: String, val fileDescriptor: ParcelFileDescriptor)
+
 /**
  * One open, read-only libretro content file. No ROM bytes are copied to the app's storage or
  * loaded into a ByteArray. The FD is owned by LibretroDroid after it detaches it; until then this
  * object closes it on cancellation. The optional proxy's onRelease closes the remote connection.
  */
 class GameDirectContent internal constructor(
-    val virtualFiles: List<VirtualFile>,
+    val virtualFiles: List<GameVirtualFile>,
     val bytes: Long,
 ) : Closeable {
-    constructor(virtualFile: VirtualFile, bytes: Long) : this(listOf(virtualFile), bytes)
+    constructor(virtualFile: GameVirtualFile, bytes: Long) : this(listOf(virtualFile), bytes)
 
     override fun close() {
         // GLRetroView detaches descriptors when its native VFS takes ownership.
@@ -126,7 +130,7 @@ class GameDirectAccess @Inject constructor(
                 Os.lseek(descriptor.fileDescriptor, 0L, OsConstants.SEEK_CUR)
                 val length = Os.fstat(descriptor.fileDescriptor).st_size
                 if (length <= 0L) throw IOException("Document has no seekable length")
-                return GameDirectContent(VirtualFile(virtualPath, descriptor), length)
+                return GameDirectContent(GameVirtualFile(virtualPath, descriptor), length)
             } catch (error: Exception) {
                 descriptor.close()
                 throw IOException("Original document is not seekable", error)
@@ -161,7 +165,7 @@ class GameDirectAccess @Inject constructor(
             val descriptor = storage.openProxyFileDescriptor(
                 ParcelFileDescriptor.MODE_READ_ONLY, callback, Handler(thread.looper),
             )
-            return GameDirectContent(VirtualFile(virtualPath, descriptor), media.size)
+            return GameDirectContent(GameVirtualFile(virtualPath, descriptor), media.size)
         } catch (error: Exception) {
             worker?.quitSafely()
             runCatching { media.close() }

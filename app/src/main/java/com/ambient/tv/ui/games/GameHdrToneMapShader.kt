@@ -2,7 +2,7 @@ package com.ambient.tv.ui.games
 
 import com.ambient.tv.games.GameHdrToneMap
 import com.ambient.tv.games.GameShader
-import com.swordfish.libretrodroid.ShaderConfig
+import com.ambient.tv.games.RetroShaderConfig as ShaderConfig
 
 /**
  * The Vulkan core can export into an optional FP16 AHardwareBuffer for GLES when supported.

@@ -11,15 +11,22 @@ import android.util.Log
 object NativeBridge {
     val available: Boolean
     init {
-        available = try {
-            // Rusty >= 2.7 no longer links libc++_shared; other native components may still ship it.
-            runCatching { System.loadLibrary("c++_shared") }
-            System.loadLibrary("spotify_receiver_core")
+        var external = false
+        available = runCatching {
+            val loaded = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.SPOTIFY)
+            external = loaded != null
+            if (loaded == null) {
+                if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.SPOTIFY))
+                    return@runCatching false
+                // Rusty >= 2.7 no longer links libc++_shared.
+                runCatching { System.loadLibrary("c++_shared") }
+                System.loadLibrary("spotify_receiver_core")
+            }
             true
-        } catch (e: UnsatisfiedLinkError) {
-            Log.w("SpotifyNative", "libspotify_receiver_core unavailable: ${e.message}")
-            false
-        }
+        }.onFailure { Log.w("SpotifyNative", "Spotify receiver unavailable", it) }.getOrDefault(false)
+        com.ambient.tv.modules.SystemModuleAvailability.reportProbe(
+            com.ambient.tv.modules.SystemModule.SPOTIFY, external, available,
+        )
     }
 
     external fun initAndroidContext(context: Context, cacheDir: String)

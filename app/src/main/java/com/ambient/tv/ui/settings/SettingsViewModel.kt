@@ -347,6 +347,16 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            com.ambient.tv.modules.SystemModuleAvailability.states.collect { states ->
+                val available = states.getValue(com.ambient.tv.modules.SystemModule.SMARTTUBE).usable
+                if (_uiState.value.youtubeAvailable != available) {
+                    youtubeSettingsLoaded = false
+                    _uiState.update { it.copy(youtubeAvailable = available, youtubeAuthKnown = false,
+                        youtubeSignedIn = false) }
+                }
+            }
+        }
+        viewModelScope.launch {
             // collectLatest + delay debounces typing; toggles and choices land within ~0.4 s.
             _uiState.collectLatest {
                 kotlinx.coroutines.delay(AUTOSAVE_DEBOUNCE_MS)
@@ -447,7 +457,7 @@ class SettingsViewModel @Inject constructor(
         systemNames = appPreferences.systemNames,
         youtubeEnabled = appPreferences.youtubeEnabled,
         youtubeAvailable = smartTubeEngine.available,
-        spotifyEnabled = appPreferences.spotifyEnabled,
+        spotifyEnabled = appPreferences.spotifyRequestedEnabled,
         radioEnabled = appPreferences.radioEnabled,
         rommEnabled = appPreferences.rommEnabled,
         rommConfigured = appPreferences.rommServerUrl.isNotBlank() && appPreferences.rommAuthMode.isNotBlank(),
@@ -3010,7 +3020,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.filesEnabled = state.filesEnabled
         if (state.systemNames != baseline.systemNames) appPreferences.systemNames = state.systemNames
         appPreferences.youtubeEnabled = state.youtubeEnabled
-        appPreferences.spotifyEnabled = state.spotifyEnabled
+        if (com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered)
+            appPreferences.spotifyEnabled = state.spotifyEnabled
         appPreferences.radioEnabled = state.radioEnabled
         appPreferences.telegramEnabled = state.telegramEnabled
         appPreferences.telegramSubmenuKeys = state.telegramSubmenuKeys

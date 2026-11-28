@@ -1165,7 +1165,7 @@ class PlayerViewModel @Inject constructor(
         if (toneMapped != resolved) Timber.i("HDR source on an SDR display: %s -> %s for tone mapping", resolved, toneMapped)
         return RendererCapabilityPolicy.effectiveBackend(toneMapped, videoCodec, dynamicRange, videoProfile,
             videoTranscoded = videoTranscoded)
-            .let { if (it == "mpv" && !MpvBackendAvailability.isAvailable) "media3" else it }
+            .let { if ((it == "mpv" && !MpvBackendAvailability.isAvailable) || (it == "vlc" && !com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable)) "media3" else it }
     }
 
     fun followAudioPlan(positionMs: Long) {
@@ -1295,6 +1295,7 @@ class PlayerViewModel @Inject constructor(
         audioFallbackBackends.add(active)
         val localBackend = if (serverAudioFallbackCodec != null && current.playbackMode == PlaybackMode.DIRECT_STREAM) null else LocalAudioFallbackPolicy.nextBackend(
             active, audioFallbackBackends, MpvBackendAvailability.isAvailable,
+            vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
             enabled = routedAudioOptions().localFallback != "off",
             videoCodec = current.videoCodec, dynamicRange = current.videoDynamicRange, videoProfile = current.videoProfile,
             detectedDolbyVision = current.runtimeHdrStandard == HdrStandard.DOLBY_VISION,
@@ -1485,7 +1486,7 @@ class PlayerViewModel @Inject constructor(
         // Reject an unavailable explicit choice before changing global or title preferences.
         // Recovery still uses the effective-backend policy below without persisting its fallback.
         if ((persistForTitle || makeGlobal) && !RendererAvailability(dolbyVision,
-                MpvBackendAvailability.isAvailable).canSelect(normalized)) return
+                MpvBackendAvailability.isAvailable, com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable).canSelect(normalized)) return
         BackgroundPlaybackSession.cancelResumeRewind()
         if (makeGlobal) appPreferences.playbackBackendKey = normalized
         val requested = (if (normalized == "auto" && !makeGlobal) ResolutionVideoProfileStore.rendererFor(

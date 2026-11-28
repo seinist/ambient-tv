@@ -151,6 +151,19 @@ monogram_gradle_retryable() {
 }
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
+# On a confirmed Central HTTP 429, retry through Google's HTTPS Central
+# mirror. Exact coordinates stay pinned; no version substitution or
+# insecure transport. Init script is per invocation, never persisted.
+cat > "$scratch/central-mirror.init.gradle" <<'GRADLE'
+beforeSettings { settings ->
+    settings.pluginManagement.repositories.maven {
+        url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+    }
+    settings.dependencyResolutionManagement.repositories.maven {
+        url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+    }
+}
+GRADLE
 for abi in "${abis[@]}"; do
     case "$abi" in
         arm64-v8a) target=aarch64-linux-android ;;
@@ -167,8 +180,10 @@ for abi in "${abis[@]}"; do
       # build or a dependency downgrade. Preserve the normal positive cache;
       # refresh only the final attempt to invalidate negative resolution entries.
       log="$scratch/gradle-$abi.log"
+      mirror=0
       for attempt in 1 2 3; do
           extra=()
+          if (( mirror == 1 )); then extra+=(--init-script "$scratch/central-mirror.init.gradle"); fi
           if (( attempt == 3 )); then extra+=(--refresh-dependencies); fi
           if ./gradlew "${gradle_args[@]}" "${extra[@]}" 2>&1 | tee "$log"; then
               break
@@ -177,12 +192,20 @@ for abi in "${abis[@]}"; do
               (( attempt == 3 )) || ! monogram_gradle_retryable "$log"; then
               exit 1
           fi
+          if grep -Fq 'repo.maven.apache.org/maven2/' "$log" && grep -Eq 'status code 429' "$log"; then
+              mirror=1
+          fi
           # Spread concurrent runners and respect a repository's recovery time.
           delay=$((20 * attempt + RANDOM % 15))
           echo "Retrying pinned Gradle dependency resolution for $abi in ${delay}s (attempt $((attempt + 1))/3)" >&2
           sleep "$delay"
       done
     )
+    # Reject future generated bindings which no longer honor the verified
+    # absolute override before publishing any incompatible AAR.
+    generated="$source_dir/native/mtproto/src/main/java/uniffi/monogram_mtproto/monogram_mtproto.kt"
+    grep -Fq 'System.getProperty("uniffi.component.$componentName.libraryOverride")' "$generated"
+    grep -Fq 'findLibraryName(componentName = "monogram_mtproto")' "$generated"
     aar="$source_dir/native/mtproto/build/outputs/aar/mtproto-release.aar"
     [[ -s "$aar" ]] || { echo "Missing $aar" >&2; exit 1; }
     cp "$aar" "$scratch/$abi.aar"

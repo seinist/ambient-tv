@@ -27,7 +27,7 @@ concurrency:
 jobs:
   smarttube:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       SKIP_MPV_NATIVE: '1'
       ROBOLECTRIC_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
@@ -43,14 +43,23 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
           yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
-          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1" ||
-            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1"
+          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1" ||
+            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v4
       - name: Fetch and patch pinned upstream sources
         run: |
           bash scripts/fetch_smarttube_engine.sh
           bash scripts/fetch_libretrodroid.sh
           python3 scripts/patch_smarttube_compat.py --check --root third_party/smarttube
+      - name: Compare J2V8 historical and official AAR native binaries
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --connect-timeout 20 --max-time 180 \
+            --max-filesize 134217728 \
+            https://repo.maven.apache.org/maven2/com/eclipsesource/j2v8/j2v8/6.2.1/j2v8-6.2.1.aar \
+            -o "$RUNNER_TEMP/j2v8-official.aar"
+          python3 scripts/j2v8_source_audit.py --shared third_party/smarttube/SharedModules \
+            --official-aar "$RUNNER_TEMP/j2v8-official.aar" --output j2v8-native-source-audit.json
       - name: Resolve actual AARs and reject duplicate classes before unit tests
         run: |
           set -euo pipefail
@@ -82,6 +91,13 @@ jobs:
           ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 \
             --tests '*SmartTube*' --tests '*YouTube*' \
             --tests '*ChunkedStreamRelayTest' --tests '*RenewingMedia3DataSourceTest'
+      - name: Export SmartTube adapter candidate
+        run: |
+          ./gradlew :app:exportSmartTubeAdapterDex -PAPK_ABI=arm64
+          test -s app/build/outputs/system-modules/smarttube-dex/classes.dex
+      - name: Validate resource-only modular SmartTube class graph
+        run: |
+          ./gradlew :app:stripReleaseSmartTubeClasses -PAPK_ABI=arm64 -PMODULE_PACKAGING=modular-preview -PMONOGRAM_NATIVE=0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -91,4 +107,6 @@ jobs:
             smarttube_wrappers/sharedutils/build/test-results/
             app/build/outputs/mapping/release/
             app/build/test-results/
+            app/build/outputs/system-modules/smarttube-dex/
+            j2v8-native-source-audit.json
           if-no-files-found: warn

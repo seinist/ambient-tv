@@ -47,8 +47,13 @@
 -dontwarn com.sun.jna.WString
 -dontwarn com.sun.jna.ptr.IntByReference
 -dontwarn com.sun.jna.win32.W32APIOptions
-# Lombok's generated-code marker is build-time metadata, not a runtime API.
+# Lombok annotations are build-time metadata, not runtime APIs.
 -dontwarn lombok.Generated
+-dontwarn lombok.NonNull
+# dnsjava retains the legacy desktop JDK NameService SPI for older Java
+# releases. Android does not implement it; its descriptor is not packaged.
+-dontwarn sun.net.spi.nameservice.NameService
+-dontwarn sun.net.spi.nameservice.NameServiceDescriptor
 # The Java 18+ InetAddressResolver SPI is not an Android API. Its multi-release
 # service descriptor is excluded by Android packaging (see app/build.gradle.kts).
 -dontwarn java.net.spi.InetAddressResolverProvider
@@ -132,3 +137,86 @@
 # name, never by a direct static reference. Keep the constructor for release R8.
 # The upstream AAR supplies additional UniFFI/JNA consumer rules.
 -keep class com.ambient.tv.data.telegram.MonogramNativeBackend { *; }
+
+# Downloaded adapters link this host API by its original binary name.
+-keep interface com.ambient.tv.modules.SystemModuleEntrypoint { *; }
+
+# Downloaded Monogram adapter is compiled before R8. Its host types must
+# retain binary names, including Kotlin internal/default-argument methods.
+-keep class com.ambient.tv.data.telegram.** { *; }
+-keep interface com.ambient.tv.data.telegram.** { *; }
+-keep class com.ambient.tv.data.local.TokenStore { *; }
+-keep class kotlin.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-keep class timber.log.** { *; }
+
+# SmartTube external DEX shares Android resources and common dependency types
+# with the host. Keep their ABI until adapter integration is validated on device.
+-keep class com.liskovsoft.** { *; }
+-keep class com.eclipsesource.v8.** { *; }
+-keep class com.ambient.tv.youtube.SmartTubeModuleAdapter { *; }
+-keep class okhttp3.** { *; }
+-keep class okio.** { *; }
+-keep class retrofit2.** { *; }
+-keep class com.google.gson.** { *; }
+-keep class io.reactivex.** { *; }
+-keep class org.reactivestreams.** { *; }
+-keep class org.apache.commons.io.** { *; }
+# JsonPath is module-owned, not a shared host ABI. The allowshrinking rule
+# above keeps names without rooting optional unsupported provider classes.
+-keep class net.minidev.** { *; }
+# Preserve the shared Android DNS ABI, not unused desktop resolver SPI.
+-keep class !org.xbill.DNS.spi.**,org.xbill.DNS.** { *; }
+-keep class org.slf4j.** { *; }
+-keep class androidx.webkit.** { *; }
+-keep class androidx.preference.** { *; }
+-keep class androidx.appcompat.** { *; }
+
+# SmartTube resource-only host: code in a downloaded DEX is not visible to R8.
+# Preserve the pinned transitive dependency entry points, not just the app's own callers.
+-keep class androidx.core.** { *; }
+-keep class androidx.collection.** { *; }
+-keep class com.grack.nanojson.** { *; }
+-keep class com.florianingerl.util.regex.** { *; }
+-keep class com.localebro.** { *; }
+-keep class com.jakewharton.disklrucache.** { *; }
+-keep class info.guardianproject.netcipher.** { *; }
+-keep class org.chromium.net.** { *; }
+-keep class com.google.android.gms.net.** { *; }
+-keep class org.brotli.** { *; }
+-keep class org.objectweb.asm.** { *; }
+
+# VLC pre-R8 adapter ABI and reflective bundled fallback.
+-keep class com.ambient.tv.ui.player.backend.VlcNativeEngine { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcModuleAdapter { *; }
+-keep class com.ambient.tv.ui.player.backend.Vlc*Port { *; }
+-keep interface com.ambient.tv.ui.player.backend.Vlc*Port { *; }
+-keep interface com.ambient.tv.ui.player.backend.VlcOutputPort$* { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcEvent* { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcChapter { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcEqualizer { *; }
+-keep class com.ambient.tv.ui.player.backend.Vlc*Track { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcRuntimeStats { *; }
+-keep class com.ambient.tv.ui.player.backend.ReflectiveMembers { *; }
+-keep class com.ambient.tv.ui.player.backend.VlcStreamInfoKt { *; }
+-keep class androidx.legacy.** { *; }
+-keep class androidx.fragment.** { *; }
+-keep class org.videolan.libvlc.R$* { *; }
+
+# Libretro frontend DEX shares only the host-owned ABI and Android lifecycle.
+-keep class com.ambient.tv.ui.games.BundledRetroCore { *; }
+-keep class com.ambient.tv.ui.games.LibretroModuleAdapter { *; }
+-keep interface com.ambient.tv.ui.games.Retro*Port { *; }
+-keep class com.ambient.tv.ui.games.RetroViewConfig { *; }
+-keep class com.ambient.tv.ui.games.RetroVariable { *; }
+-keep class com.ambient.tv.ui.games.RetroController { *; }
+-keep class com.ambient.tv.ui.games.RetroRenderEvent { *; }
+-keep class com.ambient.tv.ui.games.RetroViewError { *; }
+-keep class com.ambient.tv.ui.games.RetroRumble { *; }
+-keep class com.ambient.tv.ui.games.RetroAchievementDefinition { *; }
+-keep class com.ambient.tv.games.GameVirtualFile { *; }
+-keep class com.ambient.tv.games.RetroShaderConfig { *; }
+-keep class com.ambient.tv.games.RetroShaderConfig$* { *; }
+-keep interface com.ambient.tv.games.RetroShaderConfig { *; }
+-keep class androidx.lifecycle.** { *; }
+-keep class com.swordfish.libretrodroid.R$* { *; }

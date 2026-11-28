@@ -140,10 +140,21 @@ internal fun SettingsHub(
     onRequestAppExit: (() -> Unit)? = null,
     content: @Composable (SettingsCategory, LazyListState, Modifier, () -> Unit, ((() -> Unit) -> Unit)) -> Unit,
 ) {
+    val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+    val spotifyRuntime = moduleStates.getValue(com.ambient.tv.modules.SystemModule.SPOTIFY)
+    val spotifyOffered = spotifyRuntime.usable
+    val monogramOffered = com.ambient.tv.modules.SystemModuleAvailability.monogramOffered
+    val smartTubeOffered = moduleStates.getValue(com.ambient.tv.modules.SystemModule.SMARTTUBE).usable
+    fun pageAvailable(category: SettingsCategory?) = when (category) {
+        SettingsCategory.YOUTUBE -> smartTubeOffered
+        SettingsCategory.SPOTIFY, SettingsCategory.ADVANCED -> spotifyOffered
+        SettingsCategory.TELEGRAM -> monogramOffered
+        else -> true
+    }
     val handheld = LocalHandheldUi.current
     val sideIndex = settingsUsesSideIndex(isTabletUi(), LocalConfiguration.current.screenWidthDp)
     val initialPage = remember(initialCategoryKey, handheld) {
-        settingsShortcutCategory(initialCategoryKey)?.let {
+        settingsShortcutCategory(initialCategoryKey)?.takeIf(::pageAvailable)?.let {
             if (!handheld && it == SettingsCategory.TRANSFER) SettingsCategory.COMPANION else it
         }
     }
@@ -283,6 +294,7 @@ internal fun SettingsHub(
             !handheld && target == SettingsCategory.TRANSFER -> SettingsCategory.COMPANION
             else -> target
         }
+        if (!pageAvailable(resolved)) return
         searchLandingQuery = query.takeIf { !fromLink && search && it.isNotBlank() }
         returnToSearch = !fromLink && search
         returnToAdd = !fromLink && addingSystems && !search
@@ -348,7 +360,13 @@ internal fun SettingsHub(
         exitGuardCallback { action -> requestExit(action) }
         onDispose { exitGuardCallback(null) }
     }
-    LaunchedEffect(page) { viewModel.onPageOpened(page) }
+    LaunchedEffect(page, spotifyOffered, monogramOffered, smartTubeOffered) {
+        if (!pageAvailable(page)) {
+            page = null
+            directEntry = false
+            settlingPageFocus = false
+        } else viewModel.onPageOpened(page)
+    }
     DisposableEffect(viewModel) { onDispose { viewModel.onPageOpened(null) } }
     LaunchedEffect(navigationKey) {
         // One page only. Sparsam cuts; otherwise the incoming view eases in. A second page
@@ -368,8 +386,9 @@ internal fun SettingsHub(
         // The UPnP receiver only runs on TVs; phones are senders.
         if (category == SettingsCategory.RECEIVER && handheld) return@filter false
         // Monogram needs the optional native core; normal builds show no Telegram page at all.
-        if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) return@filter false
-        if (category == SettingsCategory.SPOTIFY && !com.ambient.tv.BuildConfig.SPOTIFY_ENABLED) return@filter false
+        if (category == SettingsCategory.TELEGRAM && !monogramOffered) return@filter false
+        if (category == SettingsCategory.YOUTUBE && !smartTubeOffered) return@filter false
+        if (category == SettingsCategory.SPOTIFY && !spotifyOffered) return@filter false
         // A renamed system is still found under its provider name.
         val haystack = buildString {
             append(title); append(' '); append(hint); append(' ')
@@ -1165,10 +1184,10 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.JELLYFIN -> state.jellyfinEnabled && state.jellyfinConfigured
     SettingsCategory.EMBY -> state.embyEnabled && state.embyConfigured
     SettingsCategory.TVHEADEND -> state.tvheadendEnabled && state.tvheadendHost.isNotBlank()
-    SettingsCategory.YOUTUBE -> state.youtubeEnabled
-    SettingsCategory.TELEGRAM -> com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && state.telegramEnabled
+    SettingsCategory.YOUTUBE -> state.youtubeEnabled && state.youtubeAvailable
+    SettingsCategory.TELEGRAM -> com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && state.telegramEnabled
     SettingsCategory.TRAILERS -> state.trailersConfigured
-    SettingsCategory.SPOTIFY -> state.spotifyEnabled && state.spotifyWebAuthorized
+    SettingsCategory.SPOTIFY -> com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered && state.spotifyEnabled && state.spotifyWebAuthorized
     SettingsCategory.RADIO -> state.radioEnabled
     SettingsCategory.FILES -> state.filesEnabled && state.fileSourceCount > 0
     SettingsCategory.DLNA -> state.dlnaServerCount > 0
@@ -1221,7 +1240,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
             SettingsCategory.JELLYFIN -> state.jellyfinEnabled
             SettingsCategory.EMBY -> state.embyEnabled
             SettingsCategory.TVHEADEND -> state.tvheadendEnabled
-            SettingsCategory.YOUTUBE -> state.youtubeEnabled
+            SettingsCategory.YOUTUBE -> state.youtubeEnabled && state.youtubeAvailable
             SettingsCategory.TELEGRAM -> state.telegramEnabled
             SettingsCategory.SPOTIFY -> state.spotifyEnabled
             SettingsCategory.RADIO -> state.radioEnabled

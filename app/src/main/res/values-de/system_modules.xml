@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_settings_title">Systembibliotheken</string>
+    <string name="module_settings_description">Optionale Komponenten herunterladen. Änderungen werden nach einem Neustart von Ambient TV wirksam.</string>
+    <string name="module_settings_shaders">Vulkan-Shader-Voreinstellungen</string>
+    <string name="module_settings_installed">Heruntergeladene Version: %1$d</string>
+    <string name="module_settings_no_override">Keine heruntergeladene Bibliotheksversion</string>
+    <string name="module_settings_no_key">Downloads nicht verfügbar: Der Prüfschlüssel fehlt.</string>
+    <string name="module_settings_install">Herunterladen / aktualisieren</string>
+    <string name="module_settings_rollback">Vorherige Version</string>
+    <string name="module_settings_remove">Download entfernen</string>
+    <string name="module_settings_restart">Auswahl gespeichert. App neu starten, um sie anzuwenden.</string>
+    <string name="module_settings_no_candidate">Kein kompatibles Paket oder keine vorherige Version verfügbar.</string>
+    <string name="module_settings_error">Modulvorgang fehlgeschlagen. Die bestehende Auswahl wurde nicht absichtlich ersetzt.</string>
+    <string name="module_state_missing">Nicht installiert</string>
+    <string name="module_state_bundled">Integriert – noch nicht initialisiert</string>
+    <string name="module_state_external">Heruntergeladen – noch nicht initialisiert</string>
+    <string name="module_state_active_bundled">Aktiv (integriert)</string>
+    <string name="module_state_active_external">Aktiv (heruntergeladen)</string>
+    <string name="module_state_failed">Modul nicht verfügbar oder inkompatibel</string>
+    <string name="module_settings_spotify_experimental">Experimentell: Spotify verweigert derzeit die vom Receiver verwendeten Audioschlüssel. Das Laden des Moduls garantiert keine Wiedergabe.</string>
+    <string name="module_settings_searching">Kompatibles Release wird gesucht …</string>
+    <string name="module_settings_verifying">Paket wird geprüft …</string>
+    <string name="module_settings_committing">Auswahl wird gespeichert …</string>
+    <string name="module_settings_cancelling">Download wird abgebrochen …</string>
+    <string name="module_settings_progress">Download: %1$d%%</string>
+    <string name="module_settings_cancel">Download abbrechen</string>
+    <string name="module_settings_cancelled">Download abgebrochen. Die bisherige Auswahl bleibt erhalten.</string>
+    <string name="update_variant_installed">Installierte Variante: %1$s</string>
+    <string name="update_variant_hint">Full enthält die Bibliotheken. Modular lädt optionale Bibliotheken separat. Der Wechsel erfolgt erst nach bestätigter APK-Installation.</string>
+    <string name="update_variant_choice">Update-Kanal: %1$s</string>
+    <string name="update_variant_preview">Die Vorschau verwendet keine stabilen App-Updates.</string>
+    <string name="module_settings_incompatible_selection">Die heruntergeladene Version passt nicht zur installierten App. Aktualisiere das Modul. Eine integrierte Bibliothek wird verwendet, falls vorhanden.</string>
+    <string name="module_settings_unchanged">Die Auswahl ist bereits aktuell. Kein Neustart erforderlich.</string>
+</resources>

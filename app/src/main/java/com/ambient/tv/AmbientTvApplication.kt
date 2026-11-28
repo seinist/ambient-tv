@@ -188,6 +188,13 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        com.ambient.tv.modules.SystemModuleHost.initialize(this)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.ambient.tv.youtube.SmartTubeModuleRuntime.probe()
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.ambient.tv.ui.games.LibretroFrontendAvailability.probe()
+        }
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
@@ -233,15 +240,31 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             com.ambient.tv.ui.player.backend.VideoAccelerationRuntime.refresh(this@AmbientTvApplication)
         }
-        // Disabled providers must not load native libraries or restore accounts on cold start.
-        // YouTube initializes itself on IO on its first actual request.
-        if (preferences.spotifyEnabled &&
-            com.ambient.tv.ui.mobile.isTelevision(this) &&
-            com.ambient.tv.util.LocalNetworkAccess.isGranted(this)) {
-            Thread({
-                runCatching { spotifyRepository.get().start() }
-                    .onFailure { Timber.w(it, "Spotify startup failed") }
-            }, "SpotifyInit").start()
+        // Monogram's repository probes its selected backend on IO before exposing account UI.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching {
+                val module = com.ambient.tv.modules.SystemModule.MONOGRAM
+                if (com.ambient.tv.modules.SystemModuleAvailability.bundled(module) ||
+                    com.ambient.tv.modules.SystemModuleHost.selected(module) != null)
+                    telegramRepository.get()
+            }.onFailure { Timber.w("Monogram startup failed: %s", it.javaClass.simpleName) }
+        }
+        // A downloaded Spotify receiver must be probed before its UI becomes available.
+        // Merely probing the native library does not log in or start the receiver.
+        // The opt-in bundled receiver is also probed, without creating a repository.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching {
+                val selected = com.ambient.tv.modules.SystemModuleHost.selected(com.ambient.tv.modules.SystemModule.SPOTIFY)
+                if (selected != null || com.ambient.tv.modules.SystemModuleAvailability.bundled(
+                        com.ambient.tv.modules.SystemModule.SPOTIFY)) {
+                    val ready = com.ambient.tv.spotify.playback.probeSpotifyNativeReceiver()
+                    if (ready && preferences.spotifyEnabled &&
+                        com.ambient.tv.ui.mobile.isTelevision(this@AmbientTvApplication) &&
+                        com.ambient.tv.util.LocalNetworkAccess.isGranted(this@AmbientTvApplication)) {
+                        spotifyRepository.get().start()
+                    }
+                }
+            }.onFailure { Timber.w(it, "Spotify startup failed") }
         }
     }
 }

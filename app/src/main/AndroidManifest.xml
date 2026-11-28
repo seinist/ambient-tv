@@ -71,6 +71,7 @@
         android:theme="@style/Theme.AmbientTv"
         android:networkSecurityConfig="@xml/network_security_config">
 
+        <meta-data android:name="com.ambient.tv.MODULE_PACKAGING" android:value="${modulePackaging}" />
         <meta-data
             android:name="android.software.leanback.supports_touch"
             android:value="true" />

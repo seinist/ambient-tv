@@ -76,6 +76,20 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_core_hotpath_patches.py'
           python3 -m unittest discover -s scripts -p 'test_core_hotpath_remaining.py'
 
+  script-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Script checks
+        run: |
+          bash -n build.sh
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+          python3 -m unittest discover -s scripts -p 'test_instrument_libretro_trace.py'
+          python3 -m unittest discover -s scripts -p 'test_libretro_perf_tools.py'
+          python3 scripts/import_game_system_icons.py --check
+          python3 scripts/import_input_controller_artwork.py --check
+
   unit-tests:
     needs: core-policy
     runs-on: ubuntu-latest
@@ -108,15 +122,6 @@ jobs:
           fi
 
       - uses: gradle/actions/setup-gradle@v4
-
-      - name: Script checks
-        run: |
-          bash -n build.sh
-          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-          python3 -m unittest discover -s scripts -p 'test_instrument_libretro_trace.py'
-          python3 -m unittest discover -s scripts -p 'test_libretro_perf_tools.py'
-          python3 scripts/import_game_system_icons.py --check
-          python3 scripts/import_input_controller_artwork.py --check
 
       - name: Fetch LibretroDroid
         # The games frontend (pinned Argosy fork plus scripts/patches/libretrodroid).
@@ -183,6 +188,19 @@ jobs:
               | sed 's/%/%25/g; s/^/::error title=gradle::/'
             exit 1
           fi
+
+      - name: Compile isolated Libretro DEX and verify stripped host class boundary
+        env:
+          LIBRETRO_DEX_MODULE: '1'
+          SKIP_MPV_NATIVE: '1'
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager" --channel=3 'build-tools;37.0.0'
+          ./gradlew :app:exportLibretroAdapterDex -PAPK_ABI=arm64 -PMODULE_PACKAGING=full
+          test -s app/build/outputs/system-modules/libretrodroid-dex/classes.dex
+          test -s app/build/outputs/system-modules/libretrodroid-dex/host-binding.sha256
+          ./gradlew :app:stripReleaseSmartTubeClasses -PAPK_ABI=arm64 -PMODULE_PACKAGING=modular-preview
 
       - name: Upload input artwork previews
         if: always()

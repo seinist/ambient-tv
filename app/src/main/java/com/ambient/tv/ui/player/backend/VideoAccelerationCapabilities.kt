@@ -13,13 +13,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import org.videolan.libvlc.LibVLC
 import timber.log.Timber
 
 internal object VulkanNativeProbe {
     val available by lazy { runCatching { System.loadLibrary("ambientvulkan"); true }.getOrDefault(false) }
     external fun probe(surface: Surface?): String
     external fun vlcModules(): Boolean
+    external fun sharedVlcFunctions(svpPath: String?, pcmPath: String?): LongArray
+    external fun sharedShaderResolver(path: String): Long
     /** Read-only producer dataspace, not a Vulkan capability query. Unknown returns zero. */
     external fun dataSpace(surface: Surface): Int
     external fun restoreDataSpace(surface: Surface, dataSpace: Int): Boolean
@@ -61,9 +62,10 @@ object VideoAccelerationRuntime {
                 val mpv = if (MpvBackendAvailability.nativeRuntimeAvailable) {
                     runCatching { MpvNativeBridge.nativeVulkanSupport() }.getOrDefault(0)
                 } else 0
-                val vlc = if (VulkanNativeProbe.available) runCatching {
-                    val instance = LibVLC(context.applicationContext, arrayListOf("--verbose=0"))
-                    try { VulkanNativeProbe.vlcModules() } finally { instance.release() }
+                val vlcReady = VlcBackendAvailability.probe(context)
+                val vlc = if (vlcReady && VulkanNativeProbe.available) runCatching {
+                    val instance = VlcEngineRuntime.engine.createLibrary(context.applicationContext, arrayListOf("--verbose=0"))
+                    try { VlcEngineRuntime.engine.vulkanModules() } finally { instance.release() }
                 }.getOrDefault(false) else false
                 val eglPq = MpvEglHdrProbe.hdr10Pq()
                 val eglSurfacePatch = MpvNativeFeatures.EGL_HDR_SURFACE in MpvNativeFeatures.current

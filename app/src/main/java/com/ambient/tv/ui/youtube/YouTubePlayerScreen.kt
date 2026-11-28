@@ -303,6 +303,7 @@ fun YouTubePlayerScreen(
                 if (normalized == "mpv" && !MpvBackendAvailability.isAvailable) return
                 val effective = com.ambient.tv.ui.player.resolveSourceAutoRenderer(
                     "youtube", normalized, MpvBackendAvailability.isAvailable, isTrailer = isTrailer,
+                    vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
                 )
                 if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(profileMetadata).canSelect(effective)) return
                 BackgroundPlaybackSession.cancelResumeRewind()

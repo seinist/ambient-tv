@@ -54,7 +54,7 @@ class GameSession(
     val autoState: ByteArray?,
     /** Initial signed shader is verified during the existing IO preparation, not Compose. */
     val initialPackSelection: String? = null,
-    val initialPackConfig: com.swordfish.libretrodroid.ShaderConfig.Custom? = null,
+    val initialPackConfig: com.ambient.tv.games.RetroShaderConfig.Custom? = null,
     val coreSource: GameCoreSource = GameCoreSource.AUTO,
 )
 
@@ -154,6 +154,10 @@ class GamePlayerViewModel @Inject constructor(
             prepared?.close()
             prepared = null
             directFailed = false
+            if (!withContext(Dispatchers.IO) { LibretroFrontendAvailability.probe() }) {
+                mutable.value = GameUiState.Failed(GameFailure.START)
+                return@launch
+            }
             val game = try {
                 preparer.prepare(fileId, { progress -> mutable.value = GameUiState.Preparing(progress) }, forceCache, assignedSystem)
             } catch (error: GameDirectUnavailableException) {

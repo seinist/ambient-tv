@@ -26,6 +26,9 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
+/** Probe the JNI receiver without constructing repositories or starting a session. */
+internal fun probeSpotifyNativeReceiver(): Boolean = NativeBridge.available
+
 /**
  * Rusty/librespot implementation of [SpotifyPlaybackEngine].
  *

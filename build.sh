@@ -3,7 +3,9 @@
 #
 # Usage:
 #   ./build.sh debug          # MPV (if needed) + debug APK
-#   ./build.sh release        # release APKs for all ABIs, including Monogram
+#   ./build.sh release        # Full release APKs for all ABIs, including Monogram
+#   ./build.sh release-full   # same Full release
+#   ./build.sh release-modular-preview # separate development APKs (ProjectM/Slang external)
 #   ./build.sh arm64          # arm64-v8a release APK only
 #   ./build.sh armv7          # armeabi-v7a release APK only
 #   ./build.sh x86            # x86 release APK only (emulator)
@@ -759,7 +761,12 @@ ensure_vlc_vulkan() {
             [[ -f "$ROOT_DIR/app/libs/.projectm-pcm-vlc-$abi" ]] || complete=0
             [[ -f "$ROOT_DIR/app/libs/.svp-vlc-$abi" && "$(<"$ROOT_DIR/app/libs/.svp-vlc-$abi")" == "$(svp_adapter_hash vlc)" ]] || complete=0
         done
-        [[ "$complete" == 1 ]] && return 0
+        if [[ "$complete" == 1 ]]; then
+            if [[ "${VLC_DEX_MODULE:-0}" != 1 ]] || python3 "$ROOT_DIR/scripts/check_vlc_shared_native.py" "$artifact" --abis "${SUPPORTED_ABIS[*]}"; then
+                return 0
+            fi
+            log "Cached VLC is missing required shared native exports; rebuilding"
+        fi
     fi
     log "Building Vulkan-enabled LibVLC for ${SUPPORTED_ABIS[*]}"
     bash "$ROOT_DIR/scripts/build_vlc_vulkan.sh"
@@ -1055,8 +1062,10 @@ package_release_variant_output() {
     local suffix label
     suffix="$(printf '%s' "$variant" | tr '[:upper:]' '[:lower:]')"
     label="$(apk_version_label "$name" "$code")"
-    local signed_dest="$DIST_DIR/ambient-tv-${suffix}-${label}.apk"
-    local unsigned_dest="$DIST_DIR/ambient-tv-${suffix}-unsigned-${label}.apk"
+    local prefix=ambient-tv
+    [[ "${MODULE_PACKAGING:-full}" != modular ]] || prefix=ambient-tv-modular
+    local signed_dest="$DIST_DIR/${prefix}-${suffix}-${label}.apk"
+    local unsigned_dest="$DIST_DIR/${prefix}-${suffix}-unsigned-${label}.apk"
 
     if [[ "$(basename "$src")" != *unsigned* ]]; then
         cp "$src" "$signed_dest"
@@ -1083,7 +1092,12 @@ UPDATE_APKS=()
 UPDATE_ABIS=()
 generate_release_update_manifest() {
     local output="$DIST_DIR/update.json"
+    [[ "${MODULE_PACKAGING:-full}" != modular ]] || output="$DIST_DIR/update-modular.json"
     rm -f "$output"
+    if [[ "${MODULE_PACKAGING:-full}" == modular-preview ]]; then
+        log "Preview build: do not generate a stable self-update manifest"
+        return 0
+    fi
     local apk
     for apk in "${UPDATE_APKS[@]}"; do
         if [[ "$apk" == *-unsigned-* ]]; then
@@ -1097,7 +1111,7 @@ generate_release_update_manifest() {
     [[ -n "$aapt2" && -n "$apksigner" ]] || fail "aapt2 and apksigner are required for the update manifest."
     expected="$(IFS=,; printf '%s' "${UPDATE_ABIS[*]}")"
     python3 "$ROOT_DIR/scripts/generate_update_manifest.py" --output "$output" \
-        --aapt2 "$aapt2" --apksigner "$apksigner" --expected-abis "$expected" "${UPDATE_APKS[@]}"
+        --aapt2 "$aapt2" --apksigner "$apksigner" --expected-abis "$expected" --packaging "${MODULE_PACKAGING:-full}" "${UPDATE_APKS[@]}"
 }
 
 build_release_variant() {
@@ -1229,7 +1243,7 @@ build_release() {
     ensure_monogram_native "${SUPPORTED_ABIS[*]}"
     UPDATE_APKS=()
     UPDATE_ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
-    rm -f "$DIST_DIR/update.json"
+    rm -f "$DIST_DIR/update.json" "$DIST_DIR/update-modular.json"
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_libretrodroid
@@ -1249,6 +1263,19 @@ build_release() {
         package_release_variant_output "$variant" "$release_dir"
         UPDATE_APKS+=("$LAST_BUILT_APK")
     done
+    if [[ "${MODULE_PACKAGING:-full}" != full ]]; then
+        local -a module_audit_args=()
+        if [[ "${SKIP_VLC_VULKAN:-0}" != 1 ]]; then
+            module_audit_args+=(--expect-vlc-external)
+        fi
+        if [[ "${VLC_DEX_MODULE:-0}" == 1 ]]; then
+            module_audit_args+=(--expect-vlc-dex)
+        fi
+        if [[ "${LIBRETRO_DEX_MODULE:-0}" == 1 ]]; then
+            module_audit_args+=(--expect-libretro-dex)
+        fi
+        python3 "$ROOT_DIR/scripts/check_modular_preview_apk.py" "${module_audit_args[@]}" "${UPDATE_APKS[@]}"
+    fi
     generate_release_update_manifest
 }
 
@@ -1570,7 +1597,21 @@ case "$MODE" in
     debug)
         build_debug
         ;;
-    release)
+    release|release-full)
+        export MODULE_PACKAGING=full
+        build_release
+        ;;
+    release-modular)
+        [[ "${REVIEWED_MODULAR_RELEASE:-0}" == 1 ]] || fail "Stable Modular requires reviewed release approval."
+        [[ -n "${ORG_GRADLE_PROJECT_versionCode:-}" && -n "${ORG_GRADLE_PROJECT_versionName:-}" ]] || fail "Use explicit release versionCode and versionName."
+        export MODULE_PACKAGING=modular MONOGRAM_NATIVE=0
+        DIST_DIR="$ROOT_DIR/dist/modular"
+        build_release
+        ;;
+    release-modular-preview)
+        export MODULE_PACKAGING=modular-preview
+        export MONOGRAM_NATIVE=0
+        DIST_DIR="$ROOT_DIR/dist/modular-preview"
         build_release
         ;;
     arm64|arm64-v8a)

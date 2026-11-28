@@ -120,20 +120,20 @@ class SidebarViewModel @Inject constructor(
             trailersConfigured = appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
             systemOrder = appPreferences.sidebarSystemOrder,
             filesEnabled = appPreferences.filesEnabled,
-            gamesAvailable = gameLibrary.hasConfiguredFolders(),
+            gamesAvailable = gameLibrary.hasConfiguredFolders() && com.ambient.tv.ui.games.LibretroFrontendAvailability.isAvailable,
             gameSystemIds = configuredGameSystemIds(),
             networkFileSources = networkFileSourcesFromStore(),
             dlnaServers = dlnaStore.servers(),
             plexEnabled = appPreferences.isConfigured,
             jellyfinEnabled = appPreferences.isJellyfinConfigured,
             embyEnabled = appPreferences.isEmbyConfigured,
-            youtubeEnabled = appPreferences.youtubeEnabled,
+            youtubeEnabled = appPreferences.youtubeEnabled && smartTubeEngine.available,
             youtubeFeedKeys = appPreferences.youtubeFeedKeys.ifEmpty { listOf("home") },
             youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
             spotifyEnabled = appPreferences.spotifyEnabled,
             radioEnabled = appPreferences.radioEnabled,
             weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
-            telegramEnabled = appPreferences.telegramEnabled,
+            telegramEnabled = com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && appPreferences.telegramEnabled,
             telegramAuthorized = telegramRepository.available,
             telegramHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_TELEGRAM },
             telegramSubmenuKeys = telegramUsableSections(appPreferences.telegramSubmenuKeys,
@@ -212,12 +212,12 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.isEmbyConfigured) add("emby")
             if (appPreferences.hasTvheadendEndpoint) add("tvheadend")
             addAll(liveTv.configured().map { it.source.system })
-            if (appPreferences.youtubeEnabled) add("youtube")
+            if (appPreferences.youtubeEnabled && smartTubeEngine.available) add("youtube")
             if (appPreferences.spotifyEnabled) add("spotify")
             if (appPreferences.radioEnabled) add("radio")
-            if (com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && appPreferences.telegramEnabled) add("telegram")
+            if (com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && appPreferences.telegramEnabled) add("telegram")
             if (appPreferences.filesEnabled) add("files")
-            if (gameLibrary.hasConfiguredFolders()) add("games")
+            if (gameLibrary.hasConfiguredFolders() && com.ambient.tv.ui.games.LibretroFrontendAvailability.isAvailable) add("games")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
             if (appPreferences.isRommConfigured) add("romm")
         }
@@ -322,7 +322,7 @@ class SidebarViewModel @Inject constructor(
             catch (_: Exception) { configuredGameSystemIds() }
             _uiState.update { state -> state.copy(
                 networkFileSources = networkFileSourcesFromStore(),
-                gamesAvailable = gameLibrary.hasConfiguredFolders(),
+                gamesAvailable = gameLibrary.hasConfiguredFolders() && com.ambient.tv.ui.games.LibretroFrontendAvailability.isAvailable,
                 gameSystemIds = systems,
             ) }
         }
@@ -356,7 +356,7 @@ class SidebarViewModel @Inject constructor(
             addAll(dlnaStore.servers().map { "dlna:${it.id}" })
         }
         val remote = buildSet {
-            if (appPreferences.youtubeEnabled) add("youtube")
+            if (appPreferences.youtubeEnabled && smartTubeEngine.available) add("youtube")
             if (appPreferences.radioEnabled) add("radio")
             if (appPreferences.weatherSettings.enabled && appPreferences.weatherSettings.showInSidebar) add("weather")
             if (appPreferences.telegramEnabled && telegramRepository.authorized.value) add("telegram")
@@ -477,7 +477,7 @@ class SidebarViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 filesEnabled = appPreferences.filesEnabled,
-                gamesAvailable = gameLibrary.hasConfiguredFolders(),
+                gamesAvailable = gameLibrary.hasConfiguredFolders() && com.ambient.tv.ui.games.LibretroFrontendAvailability.isAvailable,
                 networkFileSources = networkFileSourcesFromStore(),
                 dlnaServers = dlnaStore.servers(),
                 systemOrder = appPreferences.sidebarSystemOrder,
@@ -486,13 +486,13 @@ class SidebarViewModel @Inject constructor(
                 plexEnabled = appPreferences.isConfigured,
                 jellyfinEnabled = appPreferences.isJellyfinConfigured,
                 embyEnabled = appPreferences.isEmbyConfigured,
-                youtubeEnabled = appPreferences.youtubeEnabled,
+                youtubeEnabled = appPreferences.youtubeEnabled && smartTubeEngine.available,
                 youtubeFeedKeys = appPreferences.youtubeFeedKeys.ifEmpty { listOf("home") },
                 youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
                 spotifyEnabled = appPreferences.spotifyEnabled,
                 radioEnabled = appPreferences.radioEnabled,
                 weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
-            telegramEnabled = appPreferences.telegramEnabled,
+            telegramEnabled = com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && appPreferences.telegramEnabled,
             telegramAuthorized = telegramRepository.available,
             telegramHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_TELEGRAM },
             telegramSubmenuKeys = telegramUsableSections(appPreferences.telegramSubmenuKeys,

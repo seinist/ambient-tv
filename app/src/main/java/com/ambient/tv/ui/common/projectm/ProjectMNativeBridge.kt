@@ -53,17 +53,32 @@ internal fun probeProjectMRuntime(
 }
 
 object ProjectMAvailability {
-    /** Configuration is meaningful for every ABI the app ships projectM for, even if this run's
-     * native probe failed. That keeps the handheld UI reachable and lets playback fall back safely. */
+    @Volatile private var selectedPath: String? = null
+    internal fun sharedNativePath(): String? = if (isAvailable) selectedPath else null
+    /** Only expose ProjectM-specific controls after the actual runtime probe. */
     val canConfigure: Boolean
-        get() = com.ambient.tv.ui.player.backend.NativeArmRuntime.isSupportedDevice
+        get() = isAvailable
 
     private val status: ProjectMRuntimeStatus by lazy {
-        probeProjectMRuntime(
-            abiSupported = canConfigure,
-            loadLibrary = System::loadLibrary,
-            readVersion = ProjectMNativeBridge::nativeVersion,
-        ).also { result ->
+        var external = false
+        val result = runCatching {
+            val loaded = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.PROJECTM)
+            external = loaded != null
+            if (loaded == null && !com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.PROJECTM))
+                return@runCatching ProjectMRuntimeStatus(false, error = "module not installed")
+            selectedPath = loaded?.nativeDirectory?.resolve("libambientprojectm.so")?.absolutePath ?: "libambientprojectm.so"
+            if (loaded == null) probeProjectMRuntime(
+                abiSupported = com.ambient.tv.ui.player.backend.NativeArmRuntime.isSupportedDevice,
+                loadLibrary = System::loadLibrary,
+                readVersion = ProjectMNativeBridge::nativeVersion,
+            ) else probeProjectMRuntime(
+                abiSupported = com.ambient.tv.ui.player.backend.NativeArmRuntime.isSupportedDevice,
+                loadLibrary = {}, // Runtime already loaded the complete native dependency graph.
+                readVersion = ProjectMNativeBridge::nativeVersion,
+            )
+        }.getOrElse { ProjectMRuntimeStatus(false, error = it.javaClass.simpleName) }
+        com.ambient.tv.modules.SystemModuleAvailability.reportProbe(com.ambient.tv.modules.SystemModule.PROJECTM, external, result.available)
+        result.also { result ->
             if (result.available) {
                 timber.log.Timber.i("projectM native runtime %s (%s)",
                     result.version, com.ambient.tv.ui.player.backend.NativeArmRuntime.selectedAbi)

@@ -164,7 +164,7 @@ class SearchViewModel @Inject constructor(
             if (preferences.youtubeEnabled) add("youtube")
             if (preferences.spotifyEnabled) add("spotify")
             if (preferences.radioEnabled) add("radio")
-            if (com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && preferences.telegramEnabled) add("telegram")
+            if (com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && preferences.telegramEnabled) add("telegram")
         }
 
     private fun availableSearchSources(): Set<SearchSource> {
@@ -175,7 +175,7 @@ class SearchViewModel @Inject constructor(
             if (liveTvRegistry.configured().any { liveTvSearchSource(it.source.system) == SearchSource.LIVE_TV }) add(SearchSource.LIVE_TV)
             if (preferences.isRommConfigured) add(SearchSource.ROMM)
             if (preferences.trailersEnabled && trailerRepository.configured) add(SearchSource.TRAILERS)
-            if (com.ambient.tv.data.telegram.telegramSearchAvailable(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE,
+            if (com.ambient.tv.data.telegram.telegramSearchAvailable(com.ambient.tv.modules.SystemModuleAvailability.monogramOffered,
                     preferences.telegramEnabled, telegramRepository.available)) add(SearchSource.TELEGRAM)
             if (preferences.youtubeEnabled && smartTubeEngine.available && youtubeSignedIn) add(SearchSource.YOUTUBE)
             if (preferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized) add(SearchSource.SPOTIFY)

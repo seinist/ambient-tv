@@ -61,9 +61,10 @@ class SettingsNavigationTest {
         assertEquals(
             listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.ROMM, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.TELEGRAM, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES)
                 // Monogram is only offered by builds that contain its native core.
-                .filter { it != MediaSystem.TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
-                // Spotify only in builds with SPOTIFY_NATIVE.
-                .filter { it != MediaSystem.SPOTIFY || com.ambient.tv.BuildConfig.SPOTIFY_ENABLED },
+                .filter { it != MediaSystem.TELEGRAM || com.ambient.tv.modules.SystemModuleAvailability.monogramOffered }
+                // Native Spotify must have passed its actual runtime probe.
+                .filter { it != MediaSystem.SPOTIFY || com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered }
+                .filter { it != MediaSystem.YOUTUBE || com.ambient.tv.modules.SystemModuleAvailability.smartTubeOffered },
             MediaSystem.addOrder,
         )
     }
@@ -128,7 +129,7 @@ class SettingsNavigationTest {
 
     @Test fun directSettingsEntryBackReturnsStraightToSource() {
         SettingsCategory.entries.forEach { category ->
-            if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) {
+            if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) {
                 assertNull(SettingsCategory.fromKey(category.name))
                 return@forEach
             }
@@ -310,7 +311,17 @@ class SettingsNavigationTest {
             youtubeSupportedFeedKeys = setOf("home"),
         )))
         assertFalse(homeRowSourceAddable(HomeRowDefinition.SYSTEM_SPOTIFY, "liked", empty.copy(spotifyEnabled = true)))
-        assertTrue(homeRowSourceAddable(HomeRowDefinition.SYSTEM_SPOTIFY, "liked", empty.copy(spotifyEnabled = true, spotifyWebAuthorized = true)))
+        val spotify = empty.copy(spotifyEnabled = true, spotifyWebAuthorized = true)
+        val modules = com.ambient.tv.modules.SystemModuleAvailability
+        val spotifyModule = com.ambient.tv.modules.SystemModule.SPOTIFY
+        modules.reportFailure(spotifyModule)
+        assertFalse(homeRowSourceAddable(HomeRowDefinition.SYSTEM_SPOTIFY, "liked", spotify))
+        try {
+            modules.reportProbe(spotifyModule, external = true, success = true)
+            assertTrue(homeRowSourceAddable(HomeRowDefinition.SYSTEM_SPOTIFY, "liked", spotify))
+        } finally {
+            modules.reportFailure(spotifyModule)
+        }
     }
     @Test fun refreshKeepsDraftAndAcceptsUneditedPlayerDefaults() {
         val baseline = SettingsUiState()

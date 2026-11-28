@@ -20,6 +20,7 @@ class ManifestTest(unittest.TestCase):
         self.bad_code = False
         self.unsigned = False
         self.mixed_signers = False
+        self.packaging = None
 
     def run_tool(self, args, **kwargs):
         if args[0] == "apksigner":
@@ -27,6 +28,12 @@ class ManifestTest(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, args)
             fingerprint = "b" if self.mixed_signers and "armeabi" in str(args[-1]) else "a"
             return subprocess.CompletedProcess(args, 0, stdout="Signer #1 certificate SHA-256 digest: " + fingerprint * 64 + "\n")
+        if "xmltree" in args:
+            marker = self.packaging
+            return subprocess.CompletedProcess(args, 0, stdout=(
+                f'  E: meta-data (line=1)\n'
+                f'    A: android:name(0x01010003)="com.ambient.tv.MODULE_PACKAGING"\n'
+                f'    A: android:value(0x01010024)="{marker}"\n') if marker else 'E: manifest (line=1)\n')
         path = Path(args[-1])
         abi = "arm64-v8a" if "arm64" in path.name else "armeabi-v7a"
         code = 11 if self.bad_code and abi == "armeabi-v7a" else 10
@@ -83,6 +90,27 @@ class ManifestTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 generator.main()
         self.assertFalse(output.exists())
+
+    def test_modular_requires_explicit_apk_marker(self):
+        def run(args, **kwargs):
+            if "xmltree" in args:
+                return subprocess.CompletedProcess(args, 0, stdout=(
+                    '  E: meta-data (line=1)\n'
+                    '    A: android:name(0x01010003)="com.ambient.tv.MODULE_PACKAGING"\n'
+                    '    A: android:value(0x01010024)="modular"\n'))
+            return self.run_tool(args, **kwargs)
+        with patch.object(generator.subprocess, "run", side_effect=run):
+            result = generator.generate(self.paths, "aapt2", "apksigner", ["arm64-v8a", "armeabi-v7a"], "modular")
+        self.assertEqual(2, result["schemaVersion"])
+        self.assertEqual("modular", result["packaging"])
+        with patch.object(generator.subprocess, "run", side_effect=self.run_tool):
+            with self.assertRaises(ValueError):
+                generator.generate(self.paths, "aapt2", "apksigner", ["arm64-v8a", "armeabi-v7a"], "modular")
+
+    def test_preview_cannot_be_published_as_full(self):
+        self.packaging = "modular-preview"
+        with self.assertRaises(ValueError):
+            self.generate()
 
     def test_empty_artifact_set_is_rejected(self):
         with self.assertRaises(ValueError):

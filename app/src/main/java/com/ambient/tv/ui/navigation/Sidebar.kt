@@ -434,7 +434,7 @@ internal fun SidebarContent(
         spotifyCanSearch = spotifyEnabled && spotifyAuthorized && spotifyNativeAvailable,
         radioEnabled = radioEnabled,
         telegramCanSearch = com.ambient.tv.data.telegram.telegramSearchAvailable(
-            com.ambient.tv.BuildConfig.MONOGRAM_NATIVE, sidebarState.telegramEnabled, sidebarState.telegramAuthorized),
+            com.ambient.tv.modules.SystemModuleAvailability.monogramOffered, sidebarState.telegramEnabled, sidebarState.telegramAuthorized),
     )
     val globals = buildList {
         // Plex-style order: Search above Home.
