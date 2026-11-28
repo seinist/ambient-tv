@@ -1,0 +1,113 @@
+name: Core device validation (trusted Android runner)
+on:
+  workflow_dispatch:
+    inputs:
+      abi:
+        description: Android ABI
+        type: choice
+        options: [arm64-v8a, armeabi-v7a, x86_64, x86]
+        default: arm64-v8a
+      cores:
+        description: Comma-separated core IDs (empty means entire ABI catalog)
+        type: string
+        default: ''
+      catalog_run_id:
+        description: Successful same-commit full catalog manual artifact run
+        required: true
+      runner_run_id:
+        description: Successful same-commit benchmark runner manual artifact run
+        required: true
+      jit_run_id:
+        description: Optional same-commit ARM64 JIT candidate artifact run
+        default: ''
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: trusted-core-device-validation
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    environment: core-device-validation
+    runs-on: [self-hosted, ambient-core-benchmark]
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate artifact provenance and download selected binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ABI: ${{ inputs.abi }}
+          CORES: ${{ inputs.cores }}
+          CATALOG_RUN: ${{ inputs.catalog_run_id }}
+          RUNNER_RUN: ${{ inputs.runner_run_id }}
+          JIT_RUN: ${{ inputs.jit_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$ABI" =~ ^(arm64-v8a|armeabi-v7a|x86_64|x86)$ ]]
+          [[ "$CORES" =~ ^[a-z0-9_,]*$ && "$CATALOG_RUN" =~ ^[0-9]+$ && "$RUNNER_RUN" =~ ^[0-9]+$ ]]
+          [[ -z "$JIT_RUN" || ( "$ABI" == arm64-v8a && "$JIT_RUN" =~ ^[0-9]+$ ) ]]
+          check_run() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1" |
+              jq -e --arg workflow "$2" --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" '
+                .head_branch=="main" and .conclusion=="success" and
+                .event=="workflow_dispatch" and .head_sha==$sha and
+                .head_repository.full_name==$repo and .repository.full_name==$repo and
+                .path==(".github/workflows/"+$workflow)'
+          }
+          check_run "$CATALOG_RUN" core-catalog-validation.yml
+          check_run "$RUNNER_RUN" core-benchmark-runner.yml
+          extra=()
+          if [[ -n "$JIT_RUN" ]]; then
+            check_run "$JIT_RUN" core-jit-candidates.yml
+            extra+=(--include-jit)
+          fi
+          work="$RUNNER_TEMP/ambient-core-device-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir "$work"
+          echo "CORE_DEVICE_WORK=$work" >> "$GITHUB_ENV"
+          python3 scripts/validate_core_device_matrix.py --abi "$ABI" --cores "$CORES" "${extra[@]}" --list-artifacts > "$work/artifacts.txt"
+          while IFS= read -r artifact; do
+            run="$CATALOG_RUN"
+            if [[ "$artifact" == candidate-citra-arm64-jit-* || "$artifact" == candidate-yabause-arm64-jit-* ]]; then
+              run="$JIT_RUN"
+            fi
+            gh run download "$run" -n "$artifact" -D "$work/builds/$artifact"
+          done < "$work/artifacts.txt"
+          gh run download "$RUNNER_RUN" -n "core-benchmark-runner-$ABI" -D "$work/runner"
+      - name: Execute paired performance and functional validation
+        env:
+          ABI: ${{ inputs.abi }}
+          CORES: ${{ inputs.cores }}
+          JIT_RUN: ${{ inputs.jit_run_id }}
+        run: |
+          set -euo pipefail
+          fixture_root=$(realpath "${AMBIENT_BENCHMARK_FIXTURES:?}")
+          ndk="${ANDROID_NDK_HOME:?}"
+          grep -Eq '^Pkg.Revision[[:space:]]*=[[:space:]]*30\.0\.16248370[[:space:]]*$' "$ndk/source.properties"
+          case "$ABI" in
+            arm64-v8a) triple=aarch64-linux-android ;;
+            armeabi-v7a) triple=arm-linux-androideabi ;;
+            x86_64) triple=x86_64-linux-android ;;
+            x86) triple=i686-linux-android ;;
+          esac
+          runtime="$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$triple/libc++_shared.so"
+          extra=()
+          if [[ -n "$JIT_RUN" ]]; then extra+=(--include-jit); fi
+          python3 scripts/validate_core_device_matrix.py --abi "$ABI" --cores "$CORES" "${extra[@]}" \
+            --fixture-root "$fixture_root" --artifacts "$CORE_DEVICE_WORK/builds" \
+            --runner "$CORE_DEVICE_WORK/runner/core-benchmark-runner" --runtime "$runtime" \
+            --output "$CORE_DEVICE_WORK/results"
+      - uses: actions/upload-artifact@v7
+        if: always() && env.CORE_DEVICE_WORK != ''
+        with:
+          name: core-device-validation-summary-${{ inputs.abi }}
+          path: ${{ env.CORE_DEVICE_WORK }}/results/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove local fixture-derived artifacts
+        if: always() && env.CORE_DEVICE_WORK != ''
+        run: |
+          case "$CORE_DEVICE_WORK" in
+            "$RUNNER_TEMP"/ambient-core-device-*) rm -rf -- "$CORE_DEVICE_WORK" ;;
+            *) exit 1 ;;
+          esac

@@ -120,6 +120,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_core_pgo.py
           python3 -m unittest discover -s scripts -p test_core_candidates.py
           python3 -m unittest discover -s scripts -p test_core_benchmark.py
+          python3 -m unittest discover -s scripts -p test_core_device_validation.py
           python3 scripts/test_game_rewind.py
       - id: plan
         env:

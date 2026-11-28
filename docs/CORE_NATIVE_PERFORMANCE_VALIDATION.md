@@ -357,3 +357,24 @@ option negotiation, multiplayer/keyboard input, dynamic A/V scheduling, state
 export and production rewind. A separate host test builds the pinned PPSSPP
 ThreadManager source with its exact production replacements and simulated Android
 CPU-affinity changes while concurrent producers enqueue work.
+
+## Full-catalog real-device validation
+
+The `Core device validation (trusted Android runner)` workflow accepts successful
+same-main-commit catalog and benchmark-runner artifacts, and optionally the
+separate JIT candidate artifacts. It never executes PR artifacts on a trusted
+self-hosted device. For each selected ABI it defaults to every supported core
+and all public profiles. Local fixtures live under
+`$AMBIENT_BENCHMARK_FIXTURES/<core>/fixture.json`, with content/system/input/options
+paths inside that directory, ROM, timing and renderer settings, and explicit
+`verify_states` / `verify_rewind` booleans. Any unavailable state check needs a
+nonempty `state_validation_limitation`; the summary distinguishes limited from
+full state coverage. Output correctness is always mandatory. The workflow
+uploads only the summary, not ROMs, BIOS, captured states or input files.
+
+For pre-merge testing, use the same `scripts/validate_core_device_matrix.py`
+locally with a trusted checkout, reviewed downloaded artifact directories and
+an attached device. The protected workflow must be configured with the
+`core-device-validation` environment and a self-hosted Android runner before
+use. Without actual device results there is no claim of measured speedup or
+universal rewind compatibility.
