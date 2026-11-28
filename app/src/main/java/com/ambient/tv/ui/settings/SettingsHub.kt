@@ -144,7 +144,9 @@ internal fun SettingsHub(
     val spotifyRuntime = moduleStates.getValue(com.ambient.tv.modules.SystemModule.SPOTIFY)
     val spotifyOffered = spotifyRuntime.usable
     val monogramOffered = com.ambient.tv.modules.SystemModuleAvailability.monogramOffered
+    val smartTubeOffered = moduleStates.getValue(com.ambient.tv.modules.SystemModule.SMARTTUBE).usable
     fun pageAvailable(category: SettingsCategory?) = when (category) {
+        SettingsCategory.YOUTUBE -> smartTubeOffered
         SettingsCategory.SPOTIFY, SettingsCategory.ADVANCED -> spotifyOffered
         SettingsCategory.TELEGRAM -> monogramOffered
         else -> true
@@ -358,7 +360,7 @@ internal fun SettingsHub(
         exitGuardCallback { action -> requestExit(action) }
         onDispose { exitGuardCallback(null) }
     }
-    LaunchedEffect(page, spotifyOffered, monogramOffered) {
+    LaunchedEffect(page, spotifyOffered, monogramOffered, smartTubeOffered) {
         if (!pageAvailable(page)) {
             page = null
             directEntry = false
@@ -385,6 +387,7 @@ internal fun SettingsHub(
         if (category == SettingsCategory.RECEIVER && handheld) return@filter false
         // Monogram needs the optional native core; normal builds show no Telegram page at all.
         if (category == SettingsCategory.TELEGRAM && !monogramOffered) return@filter false
+        if (category == SettingsCategory.YOUTUBE && !smartTubeOffered) return@filter false
         if (category == SettingsCategory.SPOTIFY && !spotifyOffered) return@filter false
         // A renamed system is still found under its provider name.
         val haystack = buildString {
@@ -1181,7 +1184,7 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.JELLYFIN -> state.jellyfinEnabled && state.jellyfinConfigured
     SettingsCategory.EMBY -> state.embyEnabled && state.embyConfigured
     SettingsCategory.TVHEADEND -> state.tvheadendEnabled && state.tvheadendHost.isNotBlank()
-    SettingsCategory.YOUTUBE -> state.youtubeEnabled
+    SettingsCategory.YOUTUBE -> state.youtubeEnabled && state.youtubeAvailable
     SettingsCategory.TELEGRAM -> com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && state.telegramEnabled
     SettingsCategory.TRAILERS -> state.trailersConfigured
     SettingsCategory.SPOTIFY -> com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered && state.spotifyEnabled && state.spotifyWebAuthorized
@@ -1237,7 +1240,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
             SettingsCategory.JELLYFIN -> state.jellyfinEnabled
             SettingsCategory.EMBY -> state.embyEnabled
             SettingsCategory.TVHEADEND -> state.tvheadendEnabled
-            SettingsCategory.YOUTUBE -> state.youtubeEnabled
+            SettingsCategory.YOUTUBE -> state.youtubeEnabled && state.youtubeAvailable
             SettingsCategory.TELEGRAM -> state.telegramEnabled
             SettingsCategory.SPOTIFY -> state.spotifyEnabled
             SettingsCategory.RADIO -> state.radioEnabled
