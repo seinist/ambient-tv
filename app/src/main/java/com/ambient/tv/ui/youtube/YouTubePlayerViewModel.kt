@@ -58,6 +58,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
         return programmeReminderStore.toggle(com.ambient.tv.livetv.LiveTvReminder(
             sourceId = "youtube", channelUuid = "", channelName = "SmartTube",
             eventId = videoId, title = event.title, startEpochSeconds = start / 1000, youtube = true,
+            imageUrl = com.ambient.tv.youtube.youtubeThumbnailUrl(videoId),
         ))
     }
 
