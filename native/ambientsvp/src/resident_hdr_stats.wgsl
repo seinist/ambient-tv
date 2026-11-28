@@ -136,6 +136,37 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
             let hi=vec2u(clamp(ceil(mid+extent),vec2f(lo)+vec2f(1.0),vec2f(params.xy)));
             if all(hi-lo>=vec2u(2u)){moved=vec4u(lo,hi);}
         }
+        if atomicLoad(&words[o+67u])==1u{
+            let angle=f32(atomicLoad(&words[o+66u]))*0.017453292519943295;
+            let u=f32(atomicLoad(&words[o+64u]));let v=f32(atomicLoad(&words[o+65u]));
+            let t=bitcast<f32>(atomicLoad(&words[o+43u]));
+            let weight=2.0*t*(1.0-t);
+            let gx=vec2f(bitcast<f32>(atomicLoad(&words[o+56u])),bitcast<f32>(atomicLoad(&words[o+57u])));
+            let gy=vec2f(bitcast<f32>(atomicLoad(&words[o+58u])),bitcast<f32>(atomicLoad(&words[o+59u])));
+            let a=vec2f(1.0,0.0)+weight*gx;
+            let b=vec2f(0.0,1.0)+weight*gy;
+            let x=u*(a*cos(angle)+b*sin(angle));
+            let y=v*(-a*sin(angle)+b*cos(angle));
+            let xx=x.x*x.x+y.x*y.x;
+            let yy=x.y*x.y+y.y*y.y;
+            let xy=x.x*x.y+y.x*y.y;
+            let disc=length(vec2f(xx-yy,2.0*xy));
+            let major=sqrt(max(0.0,(xx+yy+disc)*0.5));
+            let minor=sqrt(max(0.0,(xx+yy-disc)*0.5));
+            var axes=vec2f(u,v);
+            var rotation=f32(atomicLoad(&words[o+66u]));
+            if major<=65535.0&&minor>=1.0&&weight>0.0&&any(vec4f(gx,gy)!=vec4f(0.0)){
+                axes=floor(vec2f(major,minor)+vec2f(0.5));
+                if disc>0.00000001{
+                    let degrees=atan2(2.0*xy,xx-yy)*28.64788975654116;
+                    rotation=sign(degrees)*floor(abs(degrees)+0.5);
+                }
+            }
+
+            atomicStore(&words[o+68u],u32(axes.x));
+            atomicStore(&words[o+69u],u32(axes.y));
+            atomicStore(&words[o+70u],u32((i32(rotation)+180)%180));
+        }
         for(var k=0u;k<4u;k++){atomicStore(&words[o+k],moved[k]);}
         atomicStore(&words[o+41u],bitcast<u32>(shift.x));
         atomicStore(&words[o+42u],bitcast<u32>(shift.y));
@@ -154,32 +185,9 @@ fn collect(@builtin(global_invocation_id) id:vec3u){
         if atomicLoad(&words[o+67u])==1u{
             let center=vec2f(f32(atomicLoad(&words[o+52u])),f32(atomicLoad(&words[o+53u])))+
                 vec2f(f32(bitcast<i32>(atomicLoad(&words[o+41u]))),f32(bitcast<i32>(atomicLoad(&words[o+42u]))));
-            let angle=f32(atomicLoad(&words[o+66u]))*0.017453292519943295;
-            let u=f32(atomicLoad(&words[o+64u]));let v=f32(atomicLoad(&words[o+65u]));
+            let axes=vec2f(f32(atomicLoad(&words[o+68u])),f32(atomicLoad(&words[o+69u])));
+            let rotation=f32(atomicLoad(&words[o+70u]))*0.017453292519943295;
             let delta=vec2f(id.xy)-center;
-            let t=bitcast<f32>(atomicLoad(&words[o+43u]));
-            let weight=2.0*t*(1.0-t);
-            let gx=vec2f(bitcast<f32>(atomicLoad(&words[o+56u])),bitcast<f32>(atomicLoad(&words[o+57u])));
-            let gy=vec2f(bitcast<f32>(atomicLoad(&words[o+58u])),bitcast<f32>(atomicLoad(&words[o+59u])));
-            let a=vec2f(1.0,0.0)+weight*gx;
-            let b=vec2f(0.0,1.0)+weight*gy;
-            let x=u*(a*cos(angle)+b*sin(angle));
-            let y=v*(-a*sin(angle)+b*cos(angle));
-            let xx=x.x*x.x+y.x*y.x;
-            let yy=x.y*x.y+y.y*y.y;
-            let xy=x.x*x.y+y.x*y.y;
-            let disc=length(vec2f(xx-yy,2.0*xy));
-            let major=sqrt(max(0.0,(xx+yy+disc)*0.5));
-            let minor=sqrt(max(0.0,(xx+yy-disc)*0.5));
-            var axes=vec2f(u,v);
-            var rotation=angle;
-            if major<=65535.0&&minor>=1.0&&weight>0.0&&any(vec4f(gx,gy)!=vec4f(0.0)){
-                axes=floor(vec2f(major,minor)+vec2f(0.5));
-                if disc>0.00000001{
-                    let degrees=atan2(2.0*xy,xx-yy)*28.64788975654116;
-                    rotation=sign(degrees)*floor(abs(degrees)+0.5)*0.017453292519943295;
-                }
-            }
             let q=vec2f(dot(delta,vec2f(cos(rotation),sin(rotation)))/axes.x,
                 dot(delta,vec2f(-sin(rotation),cos(rotation)))/axes.y);
             inside=dot(q,q)<=1.0;
