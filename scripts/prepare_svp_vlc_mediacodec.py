@@ -20,6 +20,7 @@ def insert(path, old, new, marker):
 
 shutil.copyfile(svp / "adapters/svp_vlc_android.h", source / "modules/video_filter/svp_vlc_android.h")
 shutil.copyfile(svp / "include/ambientsvp_android_stream.h", source / "modules/video_filter/ambientsvp_android_stream.h")
+shutil.copyfile(svp / "include/ambientsvp_quality.h", source / "modules/video_filter/ambientsvp_quality.h")
 
 utils = "modules/video_output/android/utils.h"
 insert(utils, "#include <assert.h>", "#include <assert.h>\n#include <stdatomic.h> // SVP consumer fence state",
