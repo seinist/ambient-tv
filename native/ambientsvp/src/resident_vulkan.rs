@@ -1125,7 +1125,22 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_track(pair:*mut VulkanPair,pha
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
         let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t)))else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,false)))else{return -1;};
+        unsafe{job.record(p.command,p.core.width,p.core.height);}
+        p.hdr_jobs[i]=Some(job);0
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_affine(pair:*mut VulkanPair,phase:u32,
+    windows:*const HdrWindow,tracks:*const HdrTrack,t:f32,count:u32)->i32{
+    if pair.is_null()||windows.is_null()||tracks.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&mut *pair};let i=phase as usize;
+        if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
+            p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
+        let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
+        let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,true)))else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
@@ -1147,6 +1162,18 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_read_track(pair:*const VulkanPair,ph
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_hdr_read_affine(pair:*const VulkanPair,phase:u32,
     gradients:*mut [f32;4],count:u32)->i32{
+    if pair.is_null()||gradients.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&*pair};let i=phase as usize;
+        if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
+        match unsafe{p.core.device.get_fence_status(p.fence)}{Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
+        let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        job.gradients(unsafe{std::slice::from_raw_parts_mut(gradients,count as usize)}).map_or(-1,|_|1)
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_read_rectangles(pair:*const VulkanPair,phase:u32,
+    rectangles:*mut [u32;4],count:u32)->i32{
     if pair.is_null()||gradients.is_null()||!(1..=3).contains(&count){return -1;}
     catch_unwind(AssertUnwindSafe(||{
         let p=unsafe{&*pair};let i=phase as usize;
