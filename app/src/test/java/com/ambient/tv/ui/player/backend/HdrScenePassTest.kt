@@ -22,7 +22,8 @@ class HdrScenePassTest {
         assertNotNull(key)
         assertEquals(key, HdrScenePlanner.metadata(length))
         assertNotEquals(key, HdrScenePlanner.metadata(byteArrayOf(0,0,1)+sei(value=20)))
-        assertNull(HdrScenePlanner.metadata(byteArrayOf(0,0,1)+sei(version=0)))
+        assertNotNull(HdrScenePlanner.metadata(byteArrayOf(0,0,1)+sei(version=0)))
+        assertNull(HdrScenePlanner.metadata(byteArrayOf(0,0,1)+sei(version=2)))
         assertNull(HdrScenePlanner.metadata(length.copyOf(length.size-1)))
         assertNull(HdrScenePlanner.metadata(annex + byteArrayOf(0,0,1)+sei(value=21)))
     }
@@ -96,6 +97,22 @@ class HdrScenePassTest {
         assertFalse(session.valid())
         session.cleanup()
         assertFalse(dir.exists())
+    }
+
+    @Test fun legacyCacheHasIndependentWindowSchemasAndZeroFraction() {
+        val dir=folder.newFolder()
+        val media=folder.newFile().apply { writeText("media") }
+        val manifest=java.io.File(dir,"plan").apply { writeText("plan") }
+        val cache=java.io.File(dir,"cache")
+        val key="b".repeat(64)
+        val session=HdrSceneSession(media,media.length(),media.lastModified(),key,
+            HdrScenePlanner.Plan(listOf(20),24.0,60.0),manifest,cache,version=0)
+        val header="AMBIENTSVP_SCENE_CACHE_0\n$key\nmpv:fixture\n128 64\n"
+        cache.writeText(header+"0 20 2 1 400 400 400 200 0 99 400 2 300 300 300 100 1 50 100 99 300\n")
+        assertFalse(session.advance())
+        cache.writeText(header+"0 20 2 1 400 400 400 200 0 99 400 2 300 300 300 100 0 50 100 99 300\n")
+        assertTrue(session.advance())
+        session.cleanup()
     }
 
     @Test fun hdr10plusVlcRequiresExplicitOptInAndMetadataAwareRoute() {
