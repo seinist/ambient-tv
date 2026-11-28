@@ -21,7 +21,10 @@ compiler build is not proof of correct gameplay or a performance improvement.
   register aliasing, sign extension, retry cycles and write notifications.
   Predecoded complex memory operations include TAS, byte read-modify-write,
   system-register loads/stores, MAC.W/MAC.L, TRAPA and RTE. Delay-slot execution
-  retains its original handler. This is not a full native SH2 JIT.
+  retains its original handler. The mapped no-cache bus directly specializes
+  aligned High/Low WRAM loads/stores only when the exact original table target
+  matches. MMIO, debug tracing, cache-enabled and unusual accesses retain
+  the original bus paths. This is not a full native SH2 JIT.
 * Both are artifact-only until the CI and device acceptance gates pass. Public
   channels do not silently select these binaries.
 
