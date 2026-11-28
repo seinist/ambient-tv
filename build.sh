@@ -27,7 +27,8 @@
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
 #   ./build.sh check-deps [key]  # check Gradle Maven catalog pins (stable by default)
-#   ./build.sh update-deps [key] # update Maven pins only (no build)
+#   ./build.sh build-deps [key]  # update Maven pins, compile/test, rollback on failure
+#   ./build.sh update-deps [key] # alias for validated Maven update
 #   ./build.sh libs-check [svp|monogram|libretro]  # check managed libraries, or only one
 #   ./build.sh libs-update [svp|monogram|libretro] # update pins/assets/lockfile (no native build)
 #                               # includes Monogram, LibretroDroid and cores/cores.json; lib-check / lib-update are aliases
@@ -279,7 +280,12 @@ write_canonical_root_build_kts() {
     cat > "$target" <<'EOF_ROOT_BUILD'
 // AMBIENT_TV_ROOT_BUILD_V038
 buildscript {
-    dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
+    // The catalog is the single source of truth, including this early classpath.
+    val kotlinPin = file("gradle/libs.versions.toml").readLines()
+        .single { it.substringBefore('=').trim() == "kotlin" }
+        .substringAfter('=').substringBefore('#').trim().removeSurrounding("\"")
+    require(kotlinPin.isNotBlank())
+    dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinPin") }
 }
 
 plugins {
@@ -389,9 +395,9 @@ verify_build_toolchain_matrix() {
     # AGP and KSP are checked by Gradle plugin resolution/compilation; do not pin
     # their versions a second time here and block Maven catalog updates.
     grep -Eq '^agp[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid AGP catalog pin."
-    grep -F 'kotlin = "2.4.21"' "$catalog" >/dev/null || fail "Unexpected Kotlin plugin version. Expected Kotlin 2.4.21."
+    grep -Eq '^kotlin[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid Kotlin catalog pin."
     grep -Eq '^ksp[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid KSP catalog pin."
-    grep -F 'hilt = "2.60.1"' "$catalog" >/dev/null || fail "Expected Hilt 2.60.1."
+    grep -Eq '^hilt[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid Hilt catalog pin."
     grep -F 'gradle-9.8.1-bin.zip' "$wrapper" >/dev/null || fail "Unexpected Gradle wrapper. Expected Gradle 9.8.1."
     grep -F 'alias(libs.plugins.android.library) apply false' "$ROOT_DIR/build.gradle.kts" >/dev/null || fail "Android library plugin is not aligned to the AGP catalog pin."
 }
@@ -1425,7 +1431,8 @@ Android: debug, release, arm64, armv7, x86, x86_64, all, clean, gen-keystore
 Deploy: arm64-adb, armv7-adb, x86-adb, x86_64-adb [adb-ip[:port]]
 Native: youtube-engine, spotify, clean-spotify, mpv, clean-mpv, svp,
         nnedi3-shaders, projectm, clean-projectm, monogram
-Maven: check-deps [key], update-deps [key] (stable by default; no native build)
+Maven: check-deps [key], build-deps [key], update-deps [key] (alias)
+       build-deps validates changes and restores the previous catalog on failure.
        MAVEN_CHANNEL=prerelease, MEDIA3_CHANNEL=prerelease, MAVEN_ALLOW_MAJOR=1
 Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretro],
            monogram-check, monogram-update, monogram-size [abi|all]
@@ -1460,7 +1467,7 @@ case "$MODE" in
         ;;
 esac
 
-if [[ "$MODE" == "check-deps" || "$MODE" == "update-deps" ]]; then
+if [[ "$MODE" == "check-deps" || "$MODE" == "update-deps" || "$MODE" == "build-deps" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$MAVEN_UPDATE_SCRIPT" ]] || fail "Missing Maven updater: $MAVEN_UPDATE_SCRIPT"
     [[ $# -le 2 ]] || fail "Usage: $0 $MODE [key]"
@@ -1469,7 +1476,7 @@ if [[ "$MODE" == "check-deps" || "$MODE" == "update-deps" ]]; then
     if [[ "$MODE" == "check-deps" ]]; then
         python3 "$MAVEN_UPDATE_SCRIPT" --check "${dep_args[@]}"
     else
-        python3 "$MAVEN_UPDATE_SCRIPT" --apply "${dep_args[@]}"
+        python3 "$MAVEN_UPDATE_SCRIPT" --apply --validate "${dep_args[@]}"
     fi
     exit 0
 fi

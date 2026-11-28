@@ -22,14 +22,10 @@ VERSION = re.compile(
     r"([0-9]+(?:\.[0-9]+){0,3})(?:[-.]?(alpha|beta|rc|milestone|m)[.-]?([0-9]*)|[-.](final|ga|release))?",
     re.IGNORECASE,
 )
-# These pins are coupled to build.sh, generated Gradle files, native ABI or
-# explicitly documented compatibility/security constraints. Check, never
-# auto-apply them; changing them requires a coordinated compatibility review.
-MANUAL = {
-    "kotlin": "Kotlin plugin and buildscript classpath matrix",
-    "hilt": "Hilt plugin / compiler / build matrix",
-    "jna": "Monogram native ABI",
-}
+# Catalog pins participate in regular stable updates. Compatibility is checked
+# by the validated build-deps transaction; incompatible major versions remain
+# opt-in and libVLC 4.x still needs a separate renderer migration.
+MANUAL: dict[str, str] = {}
 DATE_BASED = {"composeBom"}
 # Chromium Cronet release numbers are not a semantic API-major series.
 # Only the replacement Cronet artifact is tracked; deprecated aliases must not freeze updates.

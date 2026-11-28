@@ -18,7 +18,7 @@ jobs:
   maven-compat:
     if: github.event.pull_request.number == 536 && github.event.pull_request.head.ref == 'deps/modernize-manual-maven-pins' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       SKIP_MPV_NATIVE: '1'
       ROBOLECTRIC_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
@@ -97,14 +97,19 @@ jobs:
           ./gradlew :youtubeapi:testDebugUnitTest -PAPK_ABI=arm64 \
             --no-configuration-cache --stacktrace 2>&1 | tee maven-smarttube-tests.log
 
-      - name: Test affected application components
+      - name: Test all application and library JVM regressions
         run: |
           set -euo pipefail
-          ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 \
-            --tests '*SmartTube*' --tests '*YouTube*' \
-            --tests '*ChunkedStreamRelayTest' --tests '*RenewingMedia3DataSourceTest' \
-            --tests '*GameArchive*' --tests '*FileStoreTest' --tests '*RemoteFileSourcesTest' \
-            --no-configuration-cache --stacktrace 2>&1 | tee maven-app-tests.log
+          ./gradlew :app:testDebugUnitTest :sharedutils:testDebugUnitTest \
+            :mediaserviceinterfaces:testDebugUnitTest :j2v8:testDebugUnitTest \
+            :libretrodroid:testDebugUnitTest -PAPK_ABI=arm64 \
+            --continue --no-configuration-cache --stacktrace 2>&1 | tee maven-app-tests.log
+
+      - name: Check debug and release duplicate classes
+        run: |
+          set -euo pipefail
+          ./gradlew :app:checkDebugDuplicateClasses :app:checkReleaseDuplicateClasses \
+            -PAPK_ABI=arm64 --no-configuration-cache --stacktrace 2>&1 | tee maven-duplicates.log
 
       - name: Validate release shrinker compatibility without APK packaging
         run: |
@@ -120,7 +125,8 @@ jobs:
             maven-*.log
             app/build/test-results/
             app/build/reports/tests/
-            smarttube_wrappers/youtubeapi/build/test-results/
+            smarttube_wrappers/*/build/test-results/
+            libretrodroid_wrapper/build/test-results/
             app/build/outputs/mapping/release/
           if-no-files-found: warn
           retention-days: 7

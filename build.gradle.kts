@@ -1,6 +1,11 @@
 // AMBIENT_TV_ROOT_BUILD_V038
 buildscript {
-    dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
+    // The catalog is the single source of truth, including this early classpath.
+    val kotlinPin = file("gradle/libs.versions.toml").readLines()
+        .single { it.substringBefore('=').trim() == "kotlin" }
+        .substringAfter('=').substringBefore('#').trim().removeSurrounding("\"")
+    require(kotlinPin.isNotBlank())
+    dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinPin") }
 }
 
 plugins {

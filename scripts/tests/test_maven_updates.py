@@ -220,8 +220,23 @@ class MavenUpdatesTest(unittest.TestCase):
             self.assertNotIn(key, maven.MANUAL)
         cronet = maven.Pin("chromiumCronet", "143.7445.0", pins["chromiumCronet"].artifacts)
         self.assertEqual(maven.find_update(cronet, {"500.1.0"}, "stable").status, "UPDATE")
-        self.assertIn("hilt", maven.MANUAL)
-        self.assertIn("jna", maven.MANUAL)
+        for key in ("kotlin", "hilt", "jna"):
+            self.assertNotIn(key, maven.MANUAL)
+
+    def test_validated_update_rolls_back_on_failed_build(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            catalog = root / "gradle" / "libs.versions.toml"
+            catalog.parent.mkdir()
+            catalog.write_text(FIXTURE, encoding="utf-8")
+            with mock.patch.object(cli, "CATALOG", catalog), \
+                 mock.patch.object(cli, "get_bytes", side_effect=repository("1.11.1", "1.12.0")), \
+                 mock.patch.dict(os.environ, {"MAVEN_CHANNEL": "stable", "MAVEN_ALLOW_MAJOR": "0"}, clear=True), \
+                 mock.patch.object(sys, "argv", ["updater", "--apply", "--validate", "media3"]), \
+                 mock.patch.object(cli.subprocess, "run", side_effect=cli.subprocess.CalledProcessError(1, "gradle")):
+                with self.assertRaises(cli.subprocess.CalledProcessError):
+                    cli.main()
+            self.assertEqual(catalog.read_text(), FIXTURE)
 
     def test_root_compat_template_and_recovery_share_cronet_substitution(self):
         root = cli.CATALOG.parents[1]
