@@ -248,6 +248,8 @@ int ambient_svp_vk_seal(AmbientSvpVkPair *,VkFence);
  * On error keep all resources alive until explicit device teardown.
  * Never use a pair again after return 1. */
 int ambient_svp_vk_release(AmbientSvpVkPair *);
+/* Only with the actual fence of a successfully submitted pair. */
+int ambient_svp_vk_release_unsealed(AmbientSvpVkPair *,VkFence);
 /* Cancel only if the command buffer has been discarded/reset and has
  * NEVER been submitted. No effect on already sealed pairs. */
 int ambient_svp_vk_cancel(AmbientSvpVkPair *);

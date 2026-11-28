@@ -81,6 +81,14 @@ static inline void svp_placebo_remove_pending(pl_gpu gpu,struct svp_placebo_qual
     memmove(p,p+1,(s->pending_count-i)*sizeof(*p));
     s->pending[s->pending_count]=(struct svp_placebo_pending){0};
 }
+// The scene accumulator is CPU-only. Native GPU tickets never retain
+// it; remove every borrowed pointer before closing an aborted scene.
+static inline void svp_placebo_cancel_capture(struct svp_placebo_quality *s,AmbientSvpHdrPass *pass)
+{
+    for(unsigned i=0;i<s->pending_count;i++)if(s->pending[i].capture==pass){
+        s->pending[i].capture=NULL;s->pending[i].capture_end=0;
+    }
+}
 static inline void svp_placebo_discard_stats(struct svp_placebo_quality *s,uint64_t token)
 {
     for(unsigned i=0;i<s->pending_count;i++)if(s->pending[i].stats_token==token)s->pending[i].stats_token=0;
@@ -155,7 +163,7 @@ static inline void svp_placebo_quality_destroy(pl_gpu gpu,struct svp_placebo_qua
 {
     svp_placebo_quality_retire_texture(gpu,s,NULL);
     // Renderer dependencies on the shared timeline may outlive native jobs.
-    if(s->done){pl_gpu_finish(gpu);pl_vulkan_sem_destroy(gpu,&s->done);}
+    if(s->done){if(!s->device_lost)pl_gpu_finish(gpu);pl_vulkan_sem_destroy(gpu,&s->done);}
     if(s->engine)s->destroy(s->engine);
     if(s->lib)dlclose(s->lib);
     *s=(struct svp_placebo_quality){0};
@@ -284,7 +292,7 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
     // holds the external Vulkan queue lock while waiting for the fence.
     if(split_stats&&job&&deferred_token&&ok){
         *deferred_token=s->value;
-    }else if(split_stats&&job){
+    }else if(split_stats&&job&&ok){
         int result=s->collect_stats(job,s->retire_status?2:1,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index);
         if(result==1||result==2||result==3)job=NULL;
         // On timeout keep the ticket and its textures alive, and fall back
@@ -301,7 +309,8 @@ cleanup:
             .qf=VK_QUEUE_FAMILY_IGNORED,.semaphore={retired?s->done:VK_NULL_HANDLE,retired?s->value:0}));
     if(job){
         struct svp_placebo_pending *p=&s->pending[s->pending_count++];
-        p->job=job;p->count=count;p->capture=capture?pass:NULL;p->index=index;
+        p->job=job;p->count=count;p->capture=capture&&ok?pass:NULL;p->index=index;
+        if(capture&&!ok)s->capture_failed=true;
         p->capture_end=capture?s->capture_end:0;
         p->stats_token=deferred_token?*deferred_token:0;
         memcpy(p->textures,tex,count*sizeof(*tex));

@@ -68,7 +68,10 @@ static inline void ambient_svp_hdr_scene_close(pl_gpu gpu,struct ambient_svp_hdr
 {
     if(abort&&!s->scene_finished){ambient_svp_scene_config_abort(s->scene);s->quality.capture_failed=true;}
     ambient_svp_hdr_discard_phases(s);
-    svp_placebo_quality_retire_texture(gpu,&s->quality,NULL);
+    // Aborting a CPU accumulator does not require waiting for GPU work.
+    // The bridge still owns tickets/textures until their fences retire.
+    if(s->scene_pass)svp_placebo_cancel_capture(&s->quality,s->scene_pass);
+    while(s->quality.pending_count&&svp_placebo_retire_one(gpu,&s->quality,0,0)){}
     s->quality.capture_failed=false;
     if(s->scene_pass)s->scene_destroy(s->scene_pass);
     if(s->scene_lib)dlclose(s->scene_lib);
@@ -122,8 +125,7 @@ static inline bool ambient_svp_hdr_scene_end(pl_gpu gpu,struct ambient_svp_hdr_d
 {
     if(s->quality.capture_failed)return false;
     if(!pair->scene_final)return true;
-    svp_placebo_quality_retire_texture(gpu,&s->quality,NULL);
-    if(s->quality.capture_failed)return false;
+    if(!svp_placebo_quality_try_retire_texture(gpu,&s->quality,NULL)||s->quality.capture_failed||s->quality.device_lost)return false;
     if(!atomic_load(&s->scene->ended)||atomic_load(&s->scene->aborted)||s->scene_finish(s->scene_pass)!=1)return false;
     s->scene_finished=true;return true;
 }
@@ -547,7 +549,8 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct ambient_svp_hdr_source *a=&s->sources[0],*b=&s->sources[1];
     if(!ambient_svp_hdr_source_load(gpu,log,s,owner,a,pair->a,pair->a_id,raw,dovi)){ambient_svp_scene_config_abort(pair->scene);ambient_svp_hdr_scene_close(gpu,s,true);return false;}
     bool same=pair->a_id==pair->b_id||pair->phase==0.f;
-    if(!same&&!ambient_svp_hdr_source_load(gpu,log,s,owner,b,pair->b,pair->b_id,raw,dovi)){
+    bool may_discover=pair->scene&&pair->scene->mode==1&&pair->a_id!=pair->b_id;
+    if((!same||may_discover)&&!ambient_svp_hdr_source_load(gpu,log,s,owner,b,pair->b,pair->b_id,raw,dovi)){
         ambient_svp_scene_config_abort(pair->scene);ambient_svp_hdr_scene_close(gpu,s,true);return false;
     }
     s->has_metadata=a->has_hdrplus;s->metadata_aligned=a->aligned;
@@ -556,6 +559,9 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     bool scene=pair->scene!=NULL,repeat_group=pair->a_id==pair->b_id;
     if(!ambient_svp_hdr_scene_open(gpu,s,pair,w,h,a->has_hdrplus?a->hdrplus.version:2)||s->quality.capture_failed)goto original;
     s->quality.capture_end=scene&&s->scene_dynamic&&s->scene->mode==1?pair->scene_pair_end:0;
+    // Even a group with one phase-zero output must inspect the next
+    // source's field during dynamic capture. Synthesis holds A exactly.
+    if(s->quality.capture_end&&may_discover)same=false;
     if(scene){
         uint64_t boundary;
         if(s->scene_interval(s->scene_pass,pair->scene_index,&boundary)!=1||

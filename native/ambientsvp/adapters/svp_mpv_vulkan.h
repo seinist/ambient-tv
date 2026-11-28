@@ -84,6 +84,7 @@ struct svp_vk_mpv {
     void (*scene_destroy)(AmbientSvpHdrPass *);
     int (*seal)(AmbientSvpVkPair *,VkFence);
     int (*release)(AmbientSvpVkPair *);
+    int (*release_unsealed)(AmbientSvpVkPair *,VkFence);
     int (*cancel)(AmbientSvpVkPair *);
     AVBufferRef *device_ref, *output_hwframes;
     AVHWDeviceContext *avdev;
@@ -761,11 +762,12 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
         if (!j) continue;
         if(j->metadata_pending||(s->scene_pass&&j->capture_count)){outstanding++;continue;}
         // A submitted pair must be released by its own fence check.
-        if (j->sealed && s->release(j->pair)==1) {
+        int retired=j->sealed?s->release(j->pair):s->release_unsealed?s->release_unsealed(j->pair,j->fence):0;
+        if (retired==1) {
             j->pair=NULL;
             s->jobs[i]=NULL;
             // Never pool after device loss or failed fence status.
-            if(s->idle_count<SVP_VK_JOBS&&s->wait_fences(s->device,1,&j->fence,VK_TRUE,0)==VK_SUCCESS){
+            if(j->sealed&&s->idle_count<SVP_VK_JOBS&&s->wait_fences(s->device,1,&j->fence,VK_TRUE,0)==VK_SUCCESS){
                 for(unsigned k=0;k<j->nviews;k++)s->destroy_view(s->device,j->views[k],NULL);
                 for(unsigned k=0;k<j->nframes;k++)av_frame_free(&j->frames[k]);
                 mp_image_unrefp(&j->fallback);
@@ -847,6 +849,7 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
 #define LOAD_API(name) s->name=dlsym(library,"ambient_svp_vk_" #name); if(!s->name) goto fail
     LOAD_API(create); LOAD_API(destroy); LOAD_API(begin); LOAD_API(render);
     LOAD_API(seal); LOAD_API(release); LOAD_API(cancel);
+    s->release_unsealed=dlsym(library,"ambient_svp_vk_release_unsealed");
     s->hdr_stats=dlsym(library,"ambient_svp_vk_hdr_stats");
     s->hdr_read=dlsym(library,"ambient_svp_vk_hdr_read");
     s->hdr_stats_track=dlsym(library,"ambient_svp_vk_hdr_stats_track");

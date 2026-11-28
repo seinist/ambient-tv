@@ -1061,7 +1061,7 @@ unsafe fn retire_held_with(job:*mut HeldSubmission,wait:u32,consume:impl FnOnce(
         }
     };
     let j=unsafe{Box::from_raw(job)};
-    let captured=!lost&&consume(j.pair);
+    let captured=!lost&&catch_unwind(AssertUnwindSafe(||consume(j.pair))).unwrap_or(false);
     if lost{j.core.lost.store(true,Ordering::Release);}
     unsafe{
         if lost||ambient_svp_vk_release(j.pair)!=1{drop(Box::from_raw(j.pair));}
@@ -1278,13 +1278,13 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 if cache[i].key==Some(key){let entry=cache.remove(i);cache.push(entry);}
             }
             let sealed=ambient_svp_vk_seal(pair,fence)==0;
-            if sealed{
-                if let Some(mut job)=ticket.take(){
-                    job.commands=commands.take();job.views=std::mem::take(&mut views);job.pair=pair;
-                    *async_job=Box::into_raw(job);
-                    deferred=true;
-                    return Ok(());
-                }
+            if let Some(mut job)=ticket.take(){
+                // Even a rejected seal cannot revoke a successful queue
+                // submit. Publish ownership; the fence is authoritative.
+                job.commands=commands.take();job.views=std::mem::take(&mut views);job.pair=pair;
+                *async_job=Box::into_raw(job);
+                deferred=true;
+                return if sealed{Ok(())}else{Err("submitted pair seal failed".into())};
             }
             match d.wait_for_fences(&[fence],true,u64::MAX){
                 Ok(())=>fence_retired=true,
@@ -1304,8 +1304,15 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
                 ambient_svp_hdr_pass_verify_geometry(pass,pair,0,index)!=1{return Err("scene replay geometry mismatch".into());}
             Ok(())
         })).unwrap_or_else(|_|Err("held submission panic".into()));
-        if deferred{return 0;}
+        if deferred{return if result.is_ok(){0}else{1};}
         if submitted{
+            // A panic after queue_submit must not force a live renderer to
+            // wait for queue idle. Preserve all ownership in its ticket.
+            if let Some(mut job)=ticket.take(){
+                job.commands=commands.take();job.views=std::mem::take(&mut views);job.pair=pair;
+                *async_job=Box::into_raw(job);
+                return 1;
+            }
             // A failed wait may only release resources after confirmed
             // retirement/device loss. Retry queue idle before cleanup.
             let mut lost=device_lost;
@@ -1873,6 +1880,21 @@ pub unsafe extern "C" fn ambient_svp_vk_release(pair:*mut VulkanPair)->i32{
 }
 // Only after discarding/resetting the UNSUBMITTED command buffer. Never
 // cancel a submitted pair. Device-lost teardown is explicit at the caller.
+// Recovery for a caller that successfully submitted but could not seal.
+// The actual submit fence must belong to this pair's submission. Never
+// recycle an unsealed pair; destroy it only on proven completion/loss.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_release_unsealed(pair:*mut VulkanPair,fence:vk::Fence)->i32{
+    if pair.is_null()||fence==vk::Fence::null(){return -1;}
+    let p=unsafe{&*pair};
+    if p.fence!=vk::Fence::null()&&p.fence!=fence{return -1;}
+    match unsafe{p.core.device.get_fence_status(fence)}{
+        Ok(true)=>{unsafe{drop(Box::from_raw(pair))};1}
+        Ok(false)=>0,
+        Err(vk::Result::ERROR_DEVICE_LOST)=>{p.core.lost.store(true,Ordering::Release);unsafe{drop(Box::from_raw(pair))};1}
+        Err(_)=>-1,
+    }
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_cancel(pair:*mut VulkanPair)->i32{
     if pair.is_null() || unsafe{(*pair).fence}!=vk::Fence::null(){return -1;}
