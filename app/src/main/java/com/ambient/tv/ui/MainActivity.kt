@@ -4251,7 +4251,7 @@ private fun AmbientTvApp(
             // A DLNA sender that is not trusted yet asks before anything plays.
             com.ambient.tv.renderer.RendererPromptDialog()
             // A programme reminder that is due while the app is open.
-            com.ambient.tv.livetv.LiveTvReminderPromptDialog()
+            com.ambient.tv.livetv.LiveTvReminderPromptDialog(launchBlocked = pendingPlaybackStart != null || gameSelectionState != null || introVisible)
             com.ambient.tv.notifications.AppNotificationHost(
                 // The intro and app present the same retained connection session.
                 hidden = screensaverOverlayPresent || com.ambient.tv.ui.intro.IntroPresentation.active,
