@@ -60,6 +60,20 @@ class GameRomChecksumsTest {
         assertEquals("", gameDatSearchKey(" %_[()] "))
     }
 
+    @Test fun trimmedDsChecksumMatchesFullyPaddedCartridge() {
+        val rom = ByteArray(100_000).also(Random(42)::nextBytes)
+        "ABCD".toByteArray().copyInto(rom, 0x0c)
+        rom[0x12] = 0
+        rom[0x14] = 0
+        java.nio.ByteBuffer.wrap(rom).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(0x80, rom.size)
+        val padded = rom.copyOf(128 * 1024).apply { fill(0xff.toByte(), rom.size) }
+        val result = GameRomChecksums.forRom("nds", rom.size.toLong(), rom.copyOf(512), crc(rom))
+        assertEquals(crc(rom), result.crc32)
+        assertEquals(crc(padded), result.datCrc32)
+        assertTrue(GameRomChecksums.canHash("game.nds", 512L * 1024 * 1024))
+        assertFalse(GameRomChecksums.canHash("game.nds", 512L * 1024 * 1024 + 1))
+    }
+
     @Test fun explicitChecksumScansStayBoundedAndExcludeArchivesAndDiscImages() {
         assertTrue(GameRomChecksums.canHash("game.smc", 2L * 1024 * 1024))
         assertFalse(GameRomChecksums.canHash("game.smc", 128L * 1024 * 1024 + 1))
