@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="programme_reminder_play">Play now</string>
+    <string name="programme_reminder_snooze">Remind in 5 minutes</string>
+    <string name="programme_reminder_manage">Manage reminders</string>
+    <string name="programme_reminder_empty">No reminders</string>
+    <string name="programme_reminder_status_due">Reminder due</string>
+    <string name="programme_reminder_smarttube">SmartTube reminders</string>
+    <string name="programme_reminder_scheduled_hint">Scheduled start reached; availability is checked when playback is requested.</string>
+</resources>
