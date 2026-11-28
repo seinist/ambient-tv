@@ -38,14 +38,21 @@ class StopCrashGuardsTest {
         assertTrue(body("fun currentVideoTrackId(").contains("if (nativeCommandsBlocked()) -1"))
         assertTrue(body("fun isPlayingNow(").contains("!released"))
         assertTrue(vlc.contains("VlcPlaybackSnapshot(isPlaying = controller.isPlayingNow()"))
-        // The player is only replaced inside the controller.
-        assertTrue(Regex("""var player = MediaPlayer\(libVlc\)\s+private set""").containsMatchIn(vlc))
+        // The player remains privately settable and construction must use
+        // the failure-safe factory, including the initial player.
+        assertTrue(Regex("""var player = createPlayerWithNewLibrary\(libVlc\)\s+private set""").containsMatchIn(vlc))
+        val factory = vlc.substringAfter("private fun createPlayerWithNewLibrary(")
+            .substringBefore("var player =")
+        assertTrue(factory.contains("MediaPlayer(library)"))
+        assertTrue(factory.contains("VlcNativeRetirement.releaseUnopenedLibrary(library)"))
+        assertTrue(factory.contains("throw failure"))
     }
 
     @Test fun vlcFallbackGuardsCoverAllNativeOwnershipTransitions() {
         val vlc = source("ui/player/backend/VlcPlaybackView.kt")
         val guard = vlc.substringAfter("private fun nativeCommandsBlocked(): Boolean =").substringBefore("private val previousAudioRelease")
-        listOf("released", "restartStopFailed", "vulkanFallbackPosted", "restartStop != null", "dvRetirementPending").forEach {
+        listOf("released", "restartStopFailed", "VlcNativeRetirement.isQuarantined", "vulkanFallbackPosted",
+            "restartStop != null", "rebuildRetirement != null", "dvRetirementPending").forEach {
             assertTrue("missing ownership guard: $it", guard.contains(it))
         }
         val playing = vlc.substringAfter("MediaPlayer.Event.Playing -> {").substringBefore("private fun fourCc")
