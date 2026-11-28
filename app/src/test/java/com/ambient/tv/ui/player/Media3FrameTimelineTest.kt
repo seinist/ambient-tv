@@ -37,6 +37,26 @@ class Media3FrameTimelineTest {
         assertNull(history.neighbor(0, true))
     }
 
+    @Test fun staleOutputCannotRepopulateHistoryAfterDiscontinuity() {
+        val history = Media3FrameTimeline()
+        val old = history.beginOutput()
+        history.clear()
+        history.presentedFromOutput(95_000)
+        history.decoded(100_000, old)
+        history.pending(130_000, old)
+        history.endOutput()
+        assertEquals(20_000L, history.anchor(20_000))
+        assertNull(history.neighbor(20_000, true))
+        val current = history.beginOutput()
+        history.presentedFromOutput(20_000)
+        history.decoded(30_000, current)
+        history.invalidatePending()
+        history.pending(50_000, current)
+        history.endOutput()
+        assertEquals(30_000L, history.neighbor(20_000, true))
+        assertNull(history.neighbor(30_000, true))
+    }
+
     @Test fun historyEvictsOldFramesAndPendingIsInvalidated() {
         val history = Media3FrameTimeline(capacity = 2)
         history.presented(0)

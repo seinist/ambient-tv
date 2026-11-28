@@ -69,7 +69,7 @@ class Media3PlaybackHandle(
     private val frameTimeline = Media3AudioProcessing.session(player)?.media3Frames ?: Media3FrameTimeline()
     private var frameStepCursorUs: Long? = null
     private val frameListener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { ptsUs, _, _, _ ->
-        frameTimeline.presented(ptsUs)
+        frameTimeline.presentedFromOutput(ptsUs)
     }
 
     /** A polling window must not bridge a short seek, pause or decoder replacement. */
@@ -107,7 +107,7 @@ class Media3PlaybackHandle(
                 expected == null || kotlin.math.abs(newPosition.positionMs - expected / 1000L) > 1L) {
                 frameStepCursorUs = null
                 frameTimeline.clear()
-            } else frameTimeline.pending(-1L)
+            } else frameTimeline.invalidatePending()
             hdrOutput.discontinuity()
         }
         override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
@@ -259,7 +259,7 @@ class Media3PlaybackHandle(
         // timestamps that the millisecond seek API cannot distinguish.
         if (forward && plan.targetMs <= anchor / 1000L || !forward && plan.targetMs >= anchor / 1000L) return
         frameStepCursorUs = plan.cursorUs
-        frameTimeline.pending(-1L)
+        frameTimeline.invalidatePending()
         if (!Media3ResumePrimer.retarget(player, plan.targetMs)) {
             // Scrubbing/fast seek parameters must not move this request to a sync sample.
             val previous = player.seekParameters

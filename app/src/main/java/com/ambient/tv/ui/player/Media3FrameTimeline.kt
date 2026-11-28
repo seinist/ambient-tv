@@ -14,6 +14,8 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
     private var cursor = 0
     private var lastPresented = -1L
     private var pending = -1L
+    private var generation = 0L
+    private val outputGeneration = ThreadLocal<Long>()
 
     init { require(capacity > 0) }
 
@@ -27,18 +29,30 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
 
     /** A real, non-decode-only output timestamp is useful even if rendering
      * dropped it. It is not proof that the picture was displayed. */
-    @Synchronized fun decoded(ptsUs: Long) { remember(ptsUs) }
+    @Synchronized fun generation(): Long = generation
+    fun beginOutput(): Long = generation().also { outputGeneration.set(it) }
+    fun endOutput() { outputGeneration.remove() }
+    fun presentedFromOutput(ptsUs: Long) = presented(ptsUs, outputGeneration.get() ?: generation())
+    @Synchronized fun decoded(ptsUs: Long, token: Long = generation) {
+        if (token == generation) remember(ptsUs)
+    }
 
-    @Synchronized fun presented(ptsUs: Long) {
-        if (ptsUs < 0L) return
+    @Synchronized fun presented(ptsUs: Long, token: Long = generation) {
+        if (token != generation || ptsUs < 0L) return
         remember(ptsUs)
         lastPresented = ptsUs
         if (pending == ptsUs) pending = -1L
     }
 
-    @Synchronized fun pending(ptsUs: Long) { pending = ptsUs.coerceAtLeast(-1L) }
+    @Synchronized fun pending(ptsUs: Long, token: Long = generation) {
+        if (token == generation) pending = ptsUs.coerceAtLeast(-1L)
+    }
+
+    /** Frame stepping retains verified history but invalidates in-flight output. */
+    @Synchronized fun invalidatePending() { generation++; pending = -1L }
 
     @Synchronized fun clear() {
+        generation++
         count = 0
         cursor = 0
         lastPresented = -1L

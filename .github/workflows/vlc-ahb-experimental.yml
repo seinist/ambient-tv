@@ -26,6 +26,7 @@ on:
       - 'scripts/prepare_vlc_ahb_experimental.sh'
       - 'scripts/build_vlc_vulkan.sh'
       - 'scripts/run_vlc_seek_e2e.sh'
+      - 'scripts/verify_vlc_cached_aar.py'
       - 'scripts/audit_profile7_stream.sh'
       - 'native/vlc-aar/seek-audit/**'
       - '.github/workflows/vlc-ahb-experimental.yml'
@@ -288,15 +289,7 @@ jobs:
           retention-days: 7
 
   linked-arm64-aar:
-    name: linked-${{ matrix.label }}-aar
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - abi: arm64-v8a
-            label: arm64
-          - abi: x86_64
-            label: x86_64
+    name: linked-arm64-aar
     # Only the repository-owned experiment or integration branch can spend time building the
     # whole native stack. No release credentials or publishing step.
     if: github.event_name == 'workflow_dispatch' || ((github.head_ref == 'experiment/vlc-vulkan-ahb-import' || github.head_ref == 'fix/video-renderer-deep-audit-20261126') && github.event.pull_request.head.repo.full_name == github.repository)
@@ -304,7 +297,7 @@ jobs:
     # Let an expensive linked build finish even while a newer commit is
     # audited. GitHub keeps only the newest queued build in this group.
     concurrency:
-      group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}-${{ matrix.abi }}
+      group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}-arm64-v8a
       cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -313,8 +306,8 @@ jobs:
       NATIVE_JOBS: '2'
       CARGO_BUILD_JOBS: '2'
       VLC_EXPERIMENTAL_AHB: '1'
-      VLC_VULKAN_ABIS: ${{ matrix.abi }}
-      VLC_SEEK_AUDIT_ABI: ${{ matrix.abi }}
+      VLC_VULKAN_ABIS: arm64-v8a
+      VLC_SEEK_AUDIT_ABI: arm64-v8a
       VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
       VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
     steps:
@@ -348,7 +341,24 @@ jobs:
           # This job only runs on the repository-owned experiment branch
           # or a manual dispatch. PR caches remain scoped to their merge ref.
           cache-read-only: false
-      - name: Build full linked VLC and JNI AAR (${{ matrix.abi }})
+      - name: Compute native build identity
+        id: native-key
+        run: |
+          echo "source=$(bash scripts/build_vlc_vulkan.sh --hash)" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$(bash scripts/build_vlc_vulkan.sh --toolchain-hash)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: native-aar-cache
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v2-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}
+      - name: Validate cached AAR and rebind receipt to current checkout
+        if: steps.native-aar-cache.outputs.cache-hit == 'true'
+        run: |
+          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+      - name: Build full linked VLC and JNI AAR (arm64-v8a)
+        if: steps.native-aar-cache.outputs.cache-hit != 'true'
         run: |
           bash scripts/build_vlc_vulkan.sh
           aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
@@ -357,7 +367,7 @@ jobs:
           unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlcjni.so"
       - uses: actions/upload-artifact@v5
         with:
-          name: vlc-ahb-experimental-${{ matrix.label }}
+          name: vlc-ahb-experimental-arm64
           path: |
             native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
             native/vlc-aar/build/experimental/native-link-receipt.txt
@@ -367,31 +377,122 @@ jobs:
         if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
         uses: actions/upload-artifact@v5
         with:
-          name: vlc-ahb-native-link-only-${{ matrix.label }}-not-aar
+          name: vlc-ahb-native-link-only-arm64-not-aar
           path: |
             native/vlc-aar/build/experimental/native-link-receipt.txt
-            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/${{ matrix.abi }}/libvlc.so
-            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/${{ matrix.abi }}/libvlcjni.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/arm64-v8a/libvlc.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/arm64-v8a/libvlcjni.so
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
 
-  seek-audit-package:
-    name: seek-audit-${{ matrix.label }}-apk
+  linked-x86_64-aar:
+    name: linked-x86_64-aar
+    # Only the repository-owned experiment or integration branch can spend time building the
+    # whole native stack. No release credentials or publishing step.
+    if: github.event_name == 'workflow_dispatch' || ((github.head_ref == 'experiment/vlc-vulkan-ahb-import' || github.head_ref == 'fix/video-renderer-deep-audit-20261126') && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [ndk-contract, ffmpeg-rpu-contract, hdrplus-spatial-gpu]
+    # Let an expensive linked build finish even while a newer commit is
+    # audited. GitHub keeps only the newest queued build in this group.
+    concurrency:
+      group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}-x86_64
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CI: 'true'
+      NATIVE_JOBS: '2'
+      CARGO_BUILD_JOBS: '2'
+      VLC_EXPERIMENTAL_AHB: '1'
+      VLC_VULKAN_ABIS: x86_64
+      VLC_SEEK_AUDIT_ABI: x86_64
+      VLC_BUILD_ROOT: ${{ github.workspace }}/.native/libvlcjni-ahb-experimental
+      VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+            pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install pinned Meson and SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          "$RUNNER_TEMP/meson-venv/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0'
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # This job only runs on the repository-owned experiment branch
+          # or a manual dispatch. PR caches remain scoped to their merge ref.
+          cache-read-only: false
+      - name: Compute native build identity
+        id: native-key
+        run: |
+          echo "source=$(bash scripts/build_vlc_vulkan.sh --hash)" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$(bash scripts/build_vlc_vulkan.sh --toolchain-hash)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: native-aar-cache
+        with:
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          key: vlc-linked-v2-${{ runner.os }}-${{ steps.native-key.outputs.source }}-${{ steps.native-key.outputs.toolchain }}
+      - name: Validate cached AAR and rebind receipt to current checkout
+        if: steps.native-aar-cache.outputs.cache-hit == 'true'
+        run: |
+          python3 scripts/verify_vlc_cached_aar.py "$VLC_VULKAN_ABIS" "${{ steps.native-key.outputs.source }}" "${{ steps.native-key.outputs.toolchain }}"
+      - name: Build full linked VLC and JNI AAR (x86_64)
+        if: steps.native-aar-cache.outputs.cache-hit != 'true'
+        run: |
+          bash scripts/build_vlc_vulkan.sh
+          aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          unzip -tq "$aar"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlc.so"
+          unzip -Z1 "$aar" | grep -Fx "jni/$VLC_VULKAN_ABIS/libvlcjni.so"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-experimental-x86_64
+          path: |
+            native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain verified native libraries if packaging fails
+        if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-native-link-only-x86_64-not-aar
+          path: |
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/x86_64/libvlc.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/x86_64/libvlcjni.so
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+
+  seek-audit-arm64-package:
+    name: seek-audit-arm64-apk
     needs: linked-arm64-aar
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - abi: arm64-v8a
-            label: arm64
-          - abi: x86_64
-            label: x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      VLC_SEEK_AUDIT_ABI: ${{ matrix.abi }}
+      VLC_SEEK_AUDIT_ABI: arm64-v8a
       VLC_EXPERIMENTAL_AHB: '1'
     steps:
       - uses: actions/checkout@v5
@@ -409,13 +510,51 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0'
       - uses: actions/download-artifact@v5
         with:
-          name: vlc-ahb-experimental-${{ matrix.label }}
+          name: vlc-ahb-experimental-arm64
           path: native/vlc-aar/build/experimental
       - name: Build seek audit APK against the verified native AAR
         run: bash scripts/run_vlc_seek_e2e.sh --prepare-only
       - uses: actions/upload-artifact@v5
         with:
-          name: vlc-seek-audit-${{ matrix.label }}
+          name: vlc-seek-audit-arm64
+          path: |
+            native/vlc-aar/seek-audit/build/outputs/apk/debug/seek-audit-debug.apk
+            native/vlc-aar/seek-audit/build/seek-fixture.mp4
+            native/vlc-aar/seek-audit/build/seek-audit.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  seek-audit-x86_64-package:
+    name: seek-audit-x86_64-apk
+    needs: linked-x86_64-aar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VLC_SEEK_AUDIT_ABI: x86_64
+      VLC_EXPERIMENTAL_AHB: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install seek audit dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y ffmpeg
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: actions/download-artifact@v5
+        with:
+          name: vlc-ahb-experimental-x86_64
+          path: native/vlc-aar/build/experimental
+      - name: Build seek audit APK against the verified native AAR
+        run: bash scripts/run_vlc_seek_e2e.sh --prepare-only
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-seek-audit-x86_64
           path: |
             native/vlc-aar/seek-audit/build/outputs/apk/debug/seek-audit-debug.apk
             native/vlc-aar/seek-audit/build/seek-fixture.mp4
@@ -424,7 +563,7 @@ jobs:
           retention-days: 7
 
   seek-x86_64-integration:
-    needs: seek-audit-package
+    needs: seek-audit-x86_64-package
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:

@@ -1901,7 +1901,8 @@ class VlcPlaybackController(
             if (tagged != null) tagged.invoke(player, target, metadataSeekId) == true
             else player.setTime(target, false) >= 0L
         }.getOrDefault(false)
-        if (!accepted) timedMetadataInbox.rejectSeek(metadataFence)
+        if (accepted) timedMetadataInbox.acceptSeek(metadataFence)
+        else timedMetadataInbox.rejectSeek(metadataFence)
         seekState.submitted(accepted, now)
         // VLC 4 can keep its native clock frozen on a paused seek, especially zero.
         // Decode silently until the requested native clock is confirmed, then pause again.

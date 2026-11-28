@@ -193,6 +193,28 @@ class VlcTimedMetadataTest {
         assertEquals(listOf(initial), inbox.events.value)
     }
 
+    @Test fun overlappingRejectedSeeksRestoreTheLastCommittedHistory() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        val old = readEvent(packet(3).inputStream())
+        inbox.offer(session, old)
+        val a = inbox.clearForSeek(1000000, 41)
+        val b = inbox.clearForSeek(2000000, 42)
+        inbox.rejectSeek(a)
+        assertTrue(inbox.events.value.isEmpty())
+        inbox.rejectSeek(b)
+        assertEquals(listOf(old), inbox.events.value)
+        val c = inbox.clearForSeek(3000000, 43)
+        val d = inbox.clearForSeek(4000000, 44)
+        inbox.acceptSeek(c)
+        inbox.rejectSeek(d)
+        val current = old.copy(seekEpoch = 4, seekTargetUs = 3000000, seekRequestId = 43)
+        inbox.offer(session, current)
+        assertEquals(listOf(current), inbox.events.value)
+        inbox.offer(session, current.copy(box = current.box.copyOf()))
+        assertEquals(listOf(current), inbox.events.value)
+    }
+
     @Test fun rejectedRetryDoesNotOverwriteAnEventReceivedDuringNativeCall() {
         val inbox = VlcTimedMetadataInbox()
         val session = inbox.beginSession()

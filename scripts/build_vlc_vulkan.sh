@@ -29,7 +29,26 @@ if [[ "${1:-}" == "--hash" ]]; then
     ) | sha256sum | cut -d ' ' -f1
     exit 0
 fi
+# Build-tool identity is separate from the source fingerprint so emulator
+# jobs can validate source provenance without installing a compiler.
+if [[ "${1:-}" == "--toolchain-hash" ]]; then
+    ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-$HOME/Android/Sdk/ndk/30.0.16248370}}"
+    (
+        uname -srm
+        [[ ! -r /etc/os-release ]] || cat /etc/os-release
+        [[ ! -r "$ndk/source.properties" ]] || cat "$ndk/source.properties"
+        for tool in cc c++ cmake ninja meson rustc cargo java python3 pkg-config make autoconf automake glslc; do
+            printf '%s\n' "$tool"
+            if command -v "$tool" >/dev/null; then "$tool" --version 2>&1 || true; else echo missing; fi
+        done
+        find "$ndk/toolchains/llvm/prebuilt" -path '*/bin/clang' -type f -print0 2>/dev/null |
+            sort -z | xargs -0 -r sha256sum | sed 's@  .*@  ndk-clang@' || true
+        printf 'abi=%s\nexperimental=%s\n' "${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}" "$EXPERIMENTAL_AHB"
+    ) | sha256sum | cut -d ' ' -f1
+    exit 0
+fi
 SOURCE_HASH="$(VLC_EXPERIMENTAL_AHB="$EXPERIMENTAL_AHB" bash "$0" --hash)"
+TOOLCHAIN_HASH="$(VLC_EXPERIMENTAL_AHB="$EXPERIMENTAL_AHB" bash "$0" --toolchain-hash)"
 # A native-link receipt is opt-in and is never an AAR success marker.
 if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
     [[ "$EXPERIMENTAL_AHB" == 1 ]] || { echo "Native-link receipt requires experimental build" >&2; exit 1; }
@@ -183,7 +202,7 @@ done
 if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
     receipt_tmp="$(mktemp)"
     {
-        printf 'source_hash=%s\n' "$SOURCE_HASH"
+        printf 'source_hash=%s\ntoolchain_hash=%s\n' "$SOURCE_HASH" "$TOOLCHAIN_HASH"
         printf 'ambient_head=%s\n' "$(git -C "$ROOT" rev-parse HEAD)"
         printf 'jni_ref=%s\nvlc_ref=%s\n' "$JNI_REF" "$VLC_REF"
         for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
@@ -245,6 +264,7 @@ if [[ "$INSTALL_APP" == 1 ]]; then
         bash "$ROOT/scripts/prepare_svp_sources.sh" --hash vlc > "$ROOT/app/libs/.svp-vlc-$abi"
         touch "$ROOT/app/libs/.projectm-pcm-vlc-$abi"
         printf '%s\n' "$SOURCE_HASH" > "$ROOT/app/libs/.vlc-source-$abi"
+        printf '%s\n' "$TOOLCHAIN_HASH" > "$ROOT/app/libs/.vlc-toolchain-$abi"
     done
     echo "Installed Vulkan-enabled LibVLC AAR (extended=$EXPERIMENTAL_AHB)"
 else

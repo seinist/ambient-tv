@@ -1,7 +1,10 @@
 diff --git a/src/video_output/display.c b/src/video_output/display.c
 --- a/src/video_output/display.c
 +++ b/src/video_output/display.c
-@@ -44,3 +44,15 @@
+@@ -41,9 +41,21 @@
+ #include "../libvlc.h"
+ 
+ #include "display.h"
 -#include "vout_internal.h"
 -
 -static int UpdateSourceSAR(vout_display_t *, const video_format_t *);
@@ -20,28 +23,46 @@ diff --git a/src/video_output/display.c b/src/video_output/display.c
 +}
 +
 +static int UpdateSourceSAR(vout_display_t *, const video_format_t *);
+ 
+ /*****************************************************************************
+  *
 diff --git a/include/vlc_vout_display.h b/include/vlc_vout_display.h
 --- a/include/vlc_vout_display.h
 +++ b/include/vlc_vout_display.h
-@@ -453,1 +453,3 @@
+@@ -450,7 +450,9 @@
+ /**
+  * Destroys a video output display.
+  */
 -VLC_API void vout_display_Delete(vout_display_t *);
 +VLC_API void vout_display_Delete(vout_display_t *);
 +VLC_API void vlc_ambient_output_quarantine(void);
 +VLC_API bool vlc_ambient_output_quarantined(void);
+ 
+ /**
+  * Prepares a picture for display.
 diff --git a/src/libvlccore.sym b/src/libvlccore.sym
 --- a/src/libvlccore.sym
 +++ b/src/libvlccore.sym
-@@ -797,2 +797,4 @@
+@@ -794,8 +794,10 @@
+ vout_display_GetDefaultDisplaySize
+ vout_display_PlacePicture
+ vout_display_New
 -vout_display_Delete
 -vout_display_Prepare
 +vout_display_Delete
 +vlc_ambient_output_quarantine
 +vlc_ambient_output_quarantined
 +vout_display_Prepare
+ vout_display_SetSize
+ xml_Create
+ text_style_Copy
 diff --git a/modules/video_output/vulkan/platform_android.c b/modules/video_output/vulkan/platform_android.c
 --- a/modules/video_output/vulkan/platform_android.c
 +++ b/modules/video_output/vulkan/platform_android.c
-@@ -46,18 +46,31 @@
+@@ -43,24 +43,37 @@
+     if (vk->window->type != VLC_WINDOW_TYPE_ANDROID_NATIVE)
+         return VLC_EGENERIC;
+ 
 -    vk->platform_ext = VK_KHR_ANDROID_SURFACE_EXTENSION_NAME;
 -    vk->ops = &platform_ops;
 -    return VLC_SUCCESS;
@@ -91,3 +112,6 @@ diff --git a/modules/video_output/vulkan/platform_android.c b/modules/video_outp
 +    } else if (vk->platform_sys != anw)
 +        return VLC_EGENERIC;
 +    PFN_vkCreateAndroidSurfaceKHR CreateAndroidSurfaceKHR = (PFN_vkCreateAndroidSurfaceKHR)
+         inst->get_proc_address(inst->instance, "vkCreateAndroidSurfaceKHR");
+ 
+     VkAndroidSurfaceCreateInfoKHR ainfo = {

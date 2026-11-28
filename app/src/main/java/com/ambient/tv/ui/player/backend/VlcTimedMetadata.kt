@@ -82,6 +82,7 @@ internal class VlcTimedMetadataInbox {
     private var requestedId = 0L
     private var fenceSerial = 0L
     private var bytes = 0
+    private val pendingFences = ArrayDeque<SeekFence>()
     @Synchronized fun beginSession(): Long {
         generation++
         epoch = 0
@@ -89,13 +90,16 @@ internal class VlcTimedMetadataInbox {
         requestedTargetUs = null
         requestedId = 0L
         fenceSerial = 0L
+        pendingFences.clear()
         bytes = 0
         mutable.value = emptyList()
         return generation
     }
     internal data class SeekFence(val session: Long, val epoch: Long, val previous: Long,
         val previousTargetUs: Long?, val previousId: Long, val serial: Long,
-        val previousEvents: List<VlcTimedMetadata>, val previousBytes: Int, val changed: Boolean)
+        val previousEvents: List<VlcTimedMetadata>, val previousBytes: Int, val changed: Boolean) {
+        var rejected = false
+    }
 
     @Synchronized fun clearForSeek(targetUs: Long? = null, requestId: Long = 0L): SeekFence {
         // A retry of the same tagged native request must not erase a
@@ -104,6 +108,10 @@ internal class VlcTimedMetadataInbox {
         val fence = SeekFence(generation, epoch, discardedThroughEpoch, requestedTargetUs, requestedId,
             ++fenceSerial, mutable.value, bytes, changed)
         if (!changed) return fence
+        // The native API normally completes synchronously. Bound the outstanding
+        // journal even if a future caller overlaps more than one request.
+        if (pendingFences.size == 8) pendingFences.removeFirst()
+        pendingFences.addLast(fence)
         requestedTargetUs = targetUs
         requestedId = requestId
         // The native worker may already be sending one packet from the retired epoch.
@@ -114,14 +122,27 @@ internal class VlcTimedMetadataInbox {
         return fence
     }
 
+    @Synchronized fun acceptSeek(fence: SeekFence) {
+        if (fence.session != generation || fence.epoch != epoch) return
+        // An accepted request is a new committed baseline; older rejected
+        // requests must not roll it back if a later request fails.
+        while (pendingFences.isNotEmpty() && pendingFences.first().serial <= fence.serial)
+            pendingFences.removeFirst()
+    }
+
     @Synchronized fun rejectSeek(fence: SeekFence) {
-        // Do not undo a new media session or a native epoch observed during the call.
-        if (fence.changed && generation == fence.session && epoch == fence.epoch && fence.serial == fenceSerial) {
-            discardedThroughEpoch = fence.previous
-            requestedTargetUs = fence.previousTargetUs
-            requestedId = fence.previousId
-            bytes = fence.previousBytes
-            mutable.value = fence.previousEvents
+        if (!fence.changed || generation != fence.session || epoch != fence.epoch) return
+        val pending = pendingFences.firstOrNull { it.serial == fence.serial } ?: return
+        pending.rejected = true
+        // Roll back only a rejected suffix, including earlier requests that
+        // were rejected while a newer one was outstanding.
+        while (pendingFences.lastOrNull()?.rejected == true) {
+            val rejected = pendingFences.removeLast()
+            discardedThroughEpoch = rejected.previous
+            requestedTargetUs = rejected.previousTargetUs
+            requestedId = rejected.previousId
+            bytes = rejected.previousBytes
+            mutable.value = rejected.previousEvents
         }
     }
 
@@ -136,6 +157,7 @@ internal class VlcTimedMetadataInbox {
         if (session != generation || incoming < epoch || incoming <= discardedThroughEpoch) return false
         if (incoming != epoch) {
             epoch = incoming
+            pendingFences.clear()
             bytes = 0
             mutable.value = emptyList()
         }
@@ -148,6 +170,12 @@ internal class VlcTimedMetadataInbox {
     @Synchronized fun offer(session: Long, event: VlcTimedMetadata) {
         if (!advanceEpoch(session, event.seekEpoch, event.seekTargetUs, event.seekRequestId)) return
         if (event.box.size > VlcTimedMetadataPacket.MAX_BOX) return
+        // A sender whose ACK was lost can retransmit the identical framed box.
+        // Deduplicate only exact identity (including timestamps and payload).
+        if (mutable.value.any { it.kind == event.kind && it.presentationTimeUs == event.presentationTimeUs &&
+                it.durationUs == event.durationUs && it.seekEpoch == event.seekEpoch &&
+                it.seekRequestId == event.seekRequestId && it.seekTargetUs == event.seekTargetUs &&
+                it.box.contentEquals(event.box) }) return
         val next = mutable.value.toMutableList()
         while (next.isNotEmpty() && (next.size >= 64 || bytes + event.box.size > 4 * 1024 * 1024)) {
             bytes -= next.removeAt(0).box.size

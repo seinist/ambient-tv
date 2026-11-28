@@ -192,6 +192,7 @@ object Media3AudioProcessing {
                         .setMaxDroppedFramesToNotify(50),
                 ) {
                     private val frameTimeline = session.media3Frames
+                    private var previousCodec: androidx.media3.exoplayer.mediacodec.MediaCodecAdapter? = null
                     override fun processOutputBuffer(
                         positionUs: Long, elapsedRealtimeUs: Long,
                         codec: androidx.media3.exoplayer.mediacodec.MediaCodecAdapter?,
@@ -199,15 +200,20 @@ object Media3AudioProcessing {
                         bufferPresentationTimeUs: Long, isDecodeOnlyBuffer: Boolean, isLastBuffer: Boolean,
                         format: Format,
                     ): Boolean {
-                        val consumed = super.processOutputBuffer(positionUs, elapsedRealtimeUs, codec, buffer,
-                            bufferIndex, bufferFlags, sampleCount, bufferPresentationTimeUs,
-                            isDecodeOnlyBuffer, isLastBuffer, format)
+                        if (previousCodec != null && previousCodec !== codec) frameTimeline.clear()
+                        previousCodec = codec
+                        val token = frameTimeline.beginOutput()
                         val ptsUs = bufferPresentationTimeUs - getOutputStreamOffsetUs()
-                        val picture = !isDecodeOnlyBuffer && bufferFlags and
-                            (android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG or android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0
-                        if (consumed && picture) frameTimeline.decoded(ptsUs)
-                        frameTimeline.pending(if (!consumed && picture) ptsUs else -1L)
-                        return consumed
+                        return try {
+                            val consumed = super.processOutputBuffer(positionUs, elapsedRealtimeUs, codec, buffer,
+                                bufferIndex, bufferFlags, sampleCount, bufferPresentationTimeUs,
+                                isDecodeOnlyBuffer, isLastBuffer, format)
+                            val picture = !isDecodeOnlyBuffer && bufferFlags and
+                                (android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG or android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0
+                            if (consumed && picture) frameTimeline.decoded(ptsUs, token)
+                            frameTimeline.pending(if (!consumed && picture) ptsUs else -1L, token)
+                            consumed
+                        } finally { frameTimeline.endOutput() }
                     }
 
                     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
