@@ -37,6 +37,34 @@ static inline bool svp_hdr_scene_values(const uint32_t maxscl[3],uint32_t averag
     const uint32_t schema[9]={1,5,10,25,50,75,90,95,99};
     return svp_hdr_scene_values_schema(maxscl,average,percentiles,fraction,schema);
 }
+/* Prove nonnegative Bezier derivative in Bernstein form. A decreasing
+ * control-point pair is not necessarily a nonmonotone curve. */
+static inline bool svp_hdr_bernstein_nonnegative(const double *p,unsigned n,unsigned depth)
+{
+    bool positive=true;
+    for(unsigned i=0;i<=n;i++)if(p[i]<0.0){positive=false;break;}
+    if(positive)return true;
+    if(p[0]<0.0||p[n]<0.0||!depth)return false;
+    double v[16],left[16],right[16];
+    for(unsigned i=0;i<=n;i++)v[i]=p[i];
+    left[0]=v[0];right[n]=v[n];
+    for(unsigned k=1;k<=n;k++){
+        for(unsigned j=0;j<=n-k;j++)v[j]=(v[j]+v[j+1])*.5;
+        left[k]=v[0];right[n-k]=v[n-k];
+    }
+    return svp_hdr_bernstein_nonnegative(left,n,depth-1)&&svp_hdr_bernstein_nonnegative(right,n,depth-1);
+}
+static inline bool svp_hdr_anchors_monotone(const uint16_t *anchors,unsigned count)
+{
+    if(count>15||(!anchors&&count))return false;
+    double delta[16];unsigned last=0;
+    for(unsigned i=0;i<count;i++){
+        if(anchors[i]>1023)return false;
+        delta[i]=(double)anchors[i]-last;last=anchors[i];
+    }
+    delta[count]=1023.0-last;
+    return svp_hdr_bernstein_nonnegative(delta,count,14);
+}
 static inline bool svp_hdr_curve(uint32_t peak,uint32_t mean,uint32_t percentile,
     double target_nits,SvpHdrCurve *out)
 {
