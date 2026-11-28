@@ -7,4 +7,6 @@
     <string name="programme_reminder_status_due">Erinnerung fällig</string>
     <string name="programme_reminder_smarttube">SmartTube-Erinnerungen</string>
     <string name="programme_reminder_scheduled_hint">Geplanter Start erreicht; die Verfügbarkeit wird beim Abspielen geprüft.</string>
+    <string name="programme_reminder_home">Vormerkungen auf Home anzeigen</string>
+    <string name="programme_reminder_row">Vorgemerkt</string>
 </resources>
