@@ -79,7 +79,21 @@ class ScheduledPlaybackTest {
         assertFalse(movie.overlaps(game.copy(startEpochSeconds = movie.startEpochSeconds + 5400)))
         val automatic = movie.copy(plan = movie.plan!!.copy(automatic = true, leadMinutes = 30))
         assertEquals(movie.startEpochSeconds * 1000, LiveTvReminderScheduler.alarmAt(context, automatic))
-        val manual = movie.copy(plan = movie.plan.copy(leadMinutes = 5))
+        val manual = movie.copy(plan = movie.plan!!.copy(leadMinutes = 5))
         assertEquals(movie.startEpochSeconds * 1000 - 300000L, LiveTvReminderScheduler.alarmAt(context, manual))
+    }
+
+    @Test fun failedAutomaticAttemptReturnsAsManualReminderAndRecurrenceResetsIt() {
+        val store = LiveTvReminderStore(context)
+        val planned = entry(movie(true).copy(automatic = true))
+        assertTrue(store.putPlan(planned))
+        store.snooze(planned.id)
+        val saved = LiveTvReminderStore(context).find(planned.id)!!
+        assertTrue(saved.automaticAttempted)
+        assertFalse(LiveTvReminderScheduler.shouldAutoSwitch(context, saved))
+        store.completePlan(saved)
+        val recurring = store.find(planned.id)!!
+        assertFalse(recurring.automaticAttempted)
+        assertTrue(LiveTvReminderScheduler.shouldAutoSwitch(context, recurring))
     }
 }
