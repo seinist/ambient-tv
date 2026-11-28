@@ -38,6 +38,8 @@ object VideoAccelerationRuntime {
     private val json = Json { ignoreUnknownKeys = true }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val surfaceProbeSlots = java.util.concurrent.Semaphore(2)
+    private const val SURFACE_PROBE_LIMIT_MS = 5_000L
 
     /**
      * Never blocks the caller (players construct on the main thread). Until the startup probe has
@@ -123,7 +125,15 @@ object VideoAccelerationRuntime {
     fun surfaceSupported(surface: Surface, backend: String? = null,
         onCapabilities: (VulkanDeviceCapabilities) -> Unit = {},
     ): Boolean {
-        val probed = probeSurface(surface)
+        val probe = startSurfaceProbe(surface)
+        val probed = try {
+            probe.get(SURFACE_PROBE_LIMIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            VulkanDeviceCapabilities(reason = "surface_probe_interrupted")
+        } catch (_: Exception) {
+            VulkanDeviceCapabilities(reason = "surface_probe_timeout")
+        }
         onCapabilities(probed)
         return acceptSurfaceProbe(probed, backend)
     }
@@ -146,8 +156,12 @@ object VideoAccelerationRuntime {
      * only the capability query on IO. The caller must validate its generation before accepting.
      * No swapchain, decoder or producer is created here.
      */
-    internal fun probeSurfaceAsync(surface: Surface, result: (VulkanDeviceCapabilities) -> Unit) {
-        val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private fun startSurfaceProbe(surface: Surface): java.util.concurrent.CompletableFuture<VulkanDeviceCapabilities> {
+        val future = java.util.concurrent.CompletableFuture<VulkanDeviceCapabilities>()
+        if (!surfaceProbeSlots.tryAcquire()) {
+            future.complete(VulkanDeviceCapabilities(reason = "surface_probe_busy"))
+            return future
+        }
         val copy = runCatching {
             val parcel = android.os.Parcel.obtain()
             try {
@@ -157,14 +171,37 @@ object VideoAccelerationRuntime {
             } finally { parcel.recycle() }
         }.getOrNull()
         if (copy == null) {
-            main.post { result(VulkanDeviceCapabilities(reason = "surface_copy")) }
-            return
+            surfaceProbeSlots.release()
+            future.complete(VulkanDeviceCapabilities(reason = "surface_copy"))
+            return future
         }
         scope.launch {
             val probed = try {
                 runCatching { probeSurface(copy) }.getOrElse { VulkanDeviceCapabilities(reason = "surface_probe") }
-            } finally { runCatching { copy.release() } }
-            main.post { result(probed) }
+            } finally {
+                runCatching { copy.release() }
+                surfaceProbeSlots.release()
+            }
+            future.complete(probed)
+        }
+        return future
+    }
+
+    internal fun probeSurfaceAsync(surface: Surface, result: (VulkanDeviceCapabilities) -> Unit) {
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val delivered = java.util.concurrent.atomic.AtomicBoolean(false)
+        val deadline = Runnable {
+            if (delivered.compareAndSet(false, true))
+                result(VulkanDeviceCapabilities(reason = "surface_probe_timeout"))
+        }
+        main.postDelayed(deadline, SURFACE_PROBE_LIMIT_MS)
+        startSurfaceProbe(surface).whenComplete { probed, error ->
+            main.post {
+                if (delivered.compareAndSet(false, true)) {
+                    main.removeCallbacks(deadline)
+                    result(if (error == null && probed != null) probed else VulkanDeviceCapabilities(reason = "surface_probe"))
+                }
+            }
         }
     }
 

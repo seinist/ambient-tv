@@ -282,9 +282,13 @@ class VlcPlaybackController(
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
     /** An option this LibVLC build does not know fails the whole instance: retry without the subtitle look. */
-    private fun createLibVlc(): LibVLC = runCatching { createLibVlc(subtitleLook = true) }.getOrElse { error ->
-        timber.log.Timber.w(error, "VLC rejected the subtitle look options; using its defaults")
-        createLibVlc(subtitleLook = false)
+    private fun createLibVlc(): LibVLC {
+        VlcNativeRetirement.ensureAvailable()
+        return runCatching { createLibVlc(subtitleLook = true) }.getOrElse { error ->
+            VlcNativeRetirement.ensureAvailable()
+            timber.log.Timber.w(error, "VLC rejected the subtitle look options; using its defaults")
+            createLibVlc(subtitleLook = false)
+        }
     }
     private fun createLibVlc(subtitleLook: Boolean) = LibVLC(
         context,
@@ -503,7 +507,7 @@ class VlcPlaybackController(
     private var headerRelayFailed = false
     private var dvRetirementPending = false
     // All main-thread callbacks must recheck after a call that can initiate a reopen.
-    private fun nativeCommandsBlocked(): Boolean = released || restartStopFailed ||
+    private fun nativeCommandsBlocked(): Boolean = released || restartStopFailed || VlcNativeRetirement.isQuarantined ||
         vulkanFallbackPosted || restartStop != null || rebuildRetirement != null || dvRetirementPending
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = android.os.SystemClock.elapsedRealtime()
