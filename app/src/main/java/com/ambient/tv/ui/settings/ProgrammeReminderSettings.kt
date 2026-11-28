@@ -19,6 +19,7 @@ internal fun ProgrammeReminderSettings(youtube: Boolean) {
     val context = LocalContext.current.applicationContext
     val store = remember(context) { LiveTvReminderStore(context) }
     val reminders by store.reminders.collectAsState()
+    val homeVisible by store.homeVisible.collectAsState()
     var lead by remember(youtube) { mutableIntStateOf(LiveTvReminderScheduler.leadMinutes(context, youtube)) }
     var auto by remember(youtube) { mutableStateOf(LiveTvReminderScheduler.autoSwitch(context, youtube)) }
     var manage by remember { mutableStateOf(false) }
@@ -39,6 +40,8 @@ internal fun ProgrammeReminderSettings(youtube: Boolean) {
                 )
             },
         )
+        TvSettingRow(title = stringResource(R.string.programme_reminder_home), checked = homeVisible,
+            onCheckedChange = store::setHomeVisible)
         SettingsSingleAction(text = stringResource(R.string.programme_reminder_manage), onClick = { store.refresh(); manage = true })
     }
     if (manage) AppDialog(
