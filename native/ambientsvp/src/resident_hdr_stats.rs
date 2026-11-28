@@ -845,3 +845,66 @@ fn two_pass_cache_identity_completeness_and_replay(){
     assert!(q.lookup(1).is_err());assert!(q.lookup(0).is_err());
     let _=std::fs::remove_dir_all(root);
 }
+
+#[cfg(test)]
+mod legacy_scene_cache_tests{
+    use super::*;
+    fn frame(values:&[u32],indices:&[u32])->SceneWindowFrame{
+        let mut bins=vec![0;BINS as usize];let mut percentages=[0;15];
+        percentages[..indices.len()].copy_from_slice(indices);
+        for &v in values{bins[v as usize]+=1;}
+        SceneWindowFrame{count:indices.len() as u32,percentages,frame:SceneFrame{
+            width:4,height:1,maxscl:[*values.iter().max().unwrap();3],bins,average:0.2,fraction:1.0,
+            linear_sum:values.iter().map(|&v|u64::from(v)*10_000).sum()}}
+    }
+    #[test]
+    fn legacy_scene_uses_per_window_population_and_no_reserved_markers(){
+        let p=[1,5,10,25,50,75,90,95,99];
+        let f=vec![frame(&[100,200,300,400],&p),frame(&[300,400],&[5,10,99]),frame(&[100],&[50])];
+        let mut s=LegacyScene::new(0,2,&f).unwrap();
+        s.push(0,f,4,1).unwrap();
+        s.push(1,vec![frame(&[100,200,300,400],&p),frame(&[100],&[5,10,99]),frame(&[400,400],&[50])],4,1).unwrap();
+        let r=s.finish().unwrap();
+        assert_eq!(r.count,3);
+        assert_eq!(r.windows[0].average,250);
+        // Independent sorted reference: legacy 5 and 10 are real indices.
+        assert_eq!(&r.windows[0].percentiles[..9],&[100,100,100,100,200,300,400,400,400]);
+        assert_eq!(r.windows[1].average,267);
+        assert_eq!(&r.windows[1].percentiles[..3],&[100,100,400]);
+        assert_eq!(r.windows[2].average,300);
+        assert_eq!(r.windows[2].percentiles[0],400);
+        assert!(r.windows.iter().all(|w|w.fraction==0));
+    }
+    #[test]
+    fn legacy_cache_round_trip_and_v1_arbitrary_indices(){
+        let root=std::env::temp_dir().join(format!("ambient-svp-legacy-scene-{}",std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let plan=root.join("plan");let cache=root.join("cache");
+        let _=std::fs::remove_file(&cache);
+        let key="b".repeat(64);
+        std::fs::write(&plan,format!("AMBIENTSVP_SCENE_PLAN_1\n{key}\n2\n")).unwrap();
+        let mut p=TwoPass::open_version(1,0,&plan,&cache,&key,"fixture",4,1).unwrap();
+        p.capture_legacy(0,vec![frame(&[100,200,300,400],&[5,10,99]),frame(&[400],&[99])]).unwrap();
+        assert!(p.finish().is_err());assert!(!cache.exists());
+        p.capture_legacy(1,vec![frame(&[100,200,300,400],&[5,10,99]),frame(&[200,300],&[99])]).unwrap();
+        p.finish().unwrap();
+        assert!(TwoPass::open_version(2,1,&plan,&cache,&key,"fixture",4,1).is_err());
+        let mut p=TwoPass::open_version(2,0,&plan,&cache,&key,"fixture",4,1).unwrap();
+        let r=p.lookup_legacy(0).unwrap();
+        assert_eq!(r.windows[1].average,300);
+        assert_eq!(r.windows[0].percentiles[1],100);
+        assert_eq!(p.lookup_legacy(1).unwrap(),r);p.finish().unwrap();
+        std::fs::remove_file(&cache).unwrap();
+        let schema=[0,4,11,26,51,76,91,99,100];
+        let mut p=TwoPass::open_version(1,1,&plan,&cache,&key,"fixture",4,1).unwrap();
+        for index in 0..2{p.capture_v1(index,frame(&[100,200,300,400],&schema).frame,schema).unwrap();}
+        p.finish().unwrap();
+        let mut p=TwoPass::open_version(2,1,&plan,&cache,&key,"fixture",4,1).unwrap();
+        assert!(p.lookup(0).is_err());
+        let mut p=TwoPass::open_version(2,1,&plan,&cache,&key,"fixture",4,1).unwrap();
+        let r=p.lookup_v1(0,schema).unwrap();
+        assert_eq!(r.percentiles[1],100);assert_eq!(r.percentiles[2],100);
+        assert_eq!(p.lookup_v1(1,schema).unwrap(),r);p.finish().unwrap();
+        let _=std::fs::remove_dir_all(root);
+    }
+}
