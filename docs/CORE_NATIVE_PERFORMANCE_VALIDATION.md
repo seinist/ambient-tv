@@ -351,3 +351,9 @@ PPSSPP queue publication and worker notification now use the same lock as
 active-width changes; both growing and shrinking wake the appropriate workers.
 Flycast regression coverage stresses producer overflow and consumer-side flush
 while preserving stereo pairs and init/deinit ordering.
+
+The host benchmark workflow now executes an asset-free mock core through actual
+option negotiation, multiplayer/keyboard input, dynamic A/V scheduling, state
+export and production rewind. A separate host test builds the pinned PPSSPP
+ThreadManager source with its exact production replacements and simulated Android
+CPU-affinity changes while concurrent producers enqueue work.
