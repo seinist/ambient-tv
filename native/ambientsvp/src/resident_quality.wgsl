@@ -31,19 +31,73 @@ var<workgroup> seed_raw:u32;
 fn texel(t:texture_2d<f32>,p:vec2i,hi:vec2i,channel:u32)->i32{
     return i32(round(clamp(textureLoad(t,clamp(p,vec2i(0),hi),0)[channel]*SCALE,0.0,f32(CODE_MAX))));
 }
-// Use integer bilinear weights so negative displacement and phase
-// rounding are deterministic. Exact endpoints require only one fetch.
+// The pinned SuperBuilder stores rounded half-pel phase planes. Quarter
+// phases are then averages of two already rounded half-pel samples.
+// In particular the bilinear diagonal is avg(A,D), not avg(A,B,C,D).
+const FILTER:i32=SVP_FILTER;
+fn avg(a:i32,b:i32)->i32{return (a+b+1)>>1;}
+fn half_axis(t:texture_2d<f32>,p:vec2i,hi:vec2i,channel:u32,axis:vec2i)->i32{
+    let a=texel(t,p,hi,channel);let b=texel(t,p+axis,hi,channel);
+    let at=p.x*axis.x+p.y*axis.y;
+    let last=hi.x*axis.x+hi.y*axis.y;
+    if FILTER==1&&at>=1&&at<last-2{
+        let m=texel(t,p-axis,hi,channel);let n=texel(t,p+2*axis,hi,channel);
+        return clamp((-m+9*a+9*b-n+8)>>4,0,CODE_MAX);
+    }
+    if FILTER==2&&at>=2&&at<last-3{
+        let m2=texel(t,p-2*axis,hi,channel);let m1=texel(t,p-axis,hi,channel);
+        let p2=texel(t,p+2*axis,hi,channel);let p3=texel(t,p+3*axis,hi,channel);
+        return clamp((m2-5*m1+20*a+20*b-5*p2+p3+16)>>5,0,CODE_MAX);
+    }
+    return avg(a,b);
+}
+fn vertical(t:texture_2d<f32>,p:vec2i,hi:vec2i,channel:u32)->i32{
+    // Upstream bilinear first-row convention.
+    if FILTER==0&&p.y==0{return texel(t,p,hi,channel);}
+    return half_axis(t,p,hi,channel,vec2i(0,1));
+}
+fn diagonal(t:texture_2d<f32>,p:vec2i,hi:vec2i,channel:u32)->i32{
+    if FILTER==0{
+        if p.y==0{return texel(t,p+vec2i(1,0),hi,channel);}
+        return avg(texel(t,p,hi,channel),texel(t,p+vec2i(1),hi,channel));
+    }
+    // Upstream applies horizontal FIR to the already rounded/clipped
+    // vertical phase, rather than a single two-dimensional convolution.
+    let x=vec2i(1,0);
+    let a=vertical(t,p,hi,channel);let b=vertical(t,p+x,hi,channel);
+    if FILTER==1&&p.x>=1&&p.x<hi.x-2{
+        return clamp((-vertical(t,p-x,hi,channel)+9*a+9*b-vertical(t,p+2*x,hi,channel)+8)>>4,0,CODE_MAX);
+    }
+    if FILTER==2&&p.x>=2&&p.x<hi.x-3{
+        return clamp((vertical(t,p-2*x,hi,channel)-5*vertical(t,p-x,hi,channel)+20*a+20*b-
+            5*vertical(t,p+2*x,hi,channel)+vertical(t,p+3*x,hi,channel)+16)>>5,0,CODE_MAX);
+    }
+    return avg(a,b);
+}
+fn half_sample(t:texture_2d<f32>,q:vec2i,hi:vec2i,channel:u32)->i32{
+    let p=q>>vec2u(1);
+    let f=q&vec2i(1);
+    if all(f==vec2i(0)){return texel(t,p,hi,channel);}
+    if f.y==0{return half_axis(t,p,hi,channel,vec2i(1,0));}
+    if f.x==0{return vertical(t,p,hi,channel);}
+    return diagonal(t,p,hi,channel);
+}
+fn vertical_quarter(t:texture_2d<f32>,q:vec2i,yodd:bool,hi:vec2i,channel:u32)->i32{
+    let a=half_sample(t,q,hi,channel);
+    if !yodd{return a;}
+    return avg(a,half_sample(t,q+vec2i(0,1),hi,channel));
+}
 fn sample_plane(t:texture_2d<f32>,p:vec2i,hi:vec2i,channel:u32)->i32{
-    let divisor=vec2i(PEL);
-    let base=(p-(p%divisor+divisor)%divisor)/divisor;
-    let f=p-base*PEL;
-    let a=texel(t,base,hi,channel);
-    if all(f==vec2i(0)){return a;}
-    let b=texel(t,base+vec2i(1,0),hi,channel);
-    let c=texel(t,base+vec2i(0,1),hi,channel);
-    let d=texel(t,base+vec2i(1),hi,channel);
-    let x=PEL-f.x;let y=PEL-f.y;
-    return (a*x*y+b*f.x*y+c*x*f.y+d*f.x*f.y+PEL*PEL/2)/(PEL*PEL);
+    // Bounds are deliberately visible-frame safe. The legacy upstream
+    // packed canvas can spill across physical phase rows at the edge;
+    // those storage-specific bytes are not reproduced from an image view.
+    let q=clamp(p,vec2i(0),hi*PEL);
+    if PEL==1{return texel(t,q,hi,channel);}
+    if PEL==2{return half_sample(t,q,hi,channel);}
+    let h=q>>vec2u(1);let f=q&vec2i(1);
+    let a=vertical_quarter(t,h,f.y!=0,hi,channel);
+    if f.x==0{return a;}
+    return avg(a,vertical_quarter(t,h+vec2i(1,0),f.y!=0,hi,channel));
 }
 fn rgb_code(t:texture_2d<f32>,p:vec2i,hi:vec2i,plane:u32)->i32{
     let r=sample_plane(t,p,hi,0u);
