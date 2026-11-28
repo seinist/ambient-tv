@@ -296,6 +296,7 @@ internal object HdrScenePlanner {
         if (pts.size != samples.size) return null
         val cuts = HdrContentSceneDetector.analyze(file,pts) ?: return null
         val plan = plan(samples,source,target,vlc,cuts) ?: return null
+        if (version == "0" && plan.ends.last() > 1_000_000L) return null
         currentCoroutineContext().ensureActive()
         if (file.length() != length || file.lastModified() != modified) return null
         return try {
@@ -334,7 +335,10 @@ internal class HdrSceneSession(
             // the native second pass validates every interval and profile.
             val header = cache.inputStream().bufferedReader().use {
                 it.readLine() == "AMBIENTSVP_SCENE_CACHE_$version" && it.readLine() == key &&
-                    !it.readLine().isNullOrBlank() && !it.readLine().isNullOrBlank()
+                    !it.readLine().isNullOrBlank() && !it.readLine().isNullOrBlank() &&
+                    (version == 1 || plan.ends.last() <= 1_000_000L &&
+                        cache.length() > plan.ends.last() * 19 &&
+                        it.readLine()?.matches(Regex("G [0-9a-f]{16}")) == true)
             }
             if (!header) false else java.io.RandomAccessFile(cache,"r").use { f ->
                 val size = minOf(f.length(),4096L).toInt()
