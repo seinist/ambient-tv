@@ -33,6 +33,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+import java.io.File
 import org.videolan.libvlc.interfaces.IVLCVout
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
@@ -161,7 +168,76 @@ class VlcPlaybackController(
         else -> "Android Surface / OpenGL ES"
     }
     private var residentRejected = false
-    private fun hdrResidentAvailable(): Boolean = nativeHdrPreferred && svpStaticHdrResident(sourceHdrStandard) &&
+    private val hdrSceneScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var hdrSceneJob: Job? = null
+    private var hdrSceneSession: HdrSceneSession? = null
+    private var hdrSceneAttempted = false
+    private var hdrSceneRestartPending = false
+    private var hdrSceneReattaching = false
+    private var configuredHdrSceneMode = 0
+
+    private fun cancelHdrScenePass() {
+        hdrSceneJob?.cancel()
+        hdrSceneJob = null
+        hdrSceneSession?.cleanup()
+        hdrSceneSession = null
+        hdrSceneRestartPending = false
+        hdrSceneAttempted = true
+    }
+
+    private fun maybeStartHdrScenePass() {
+        if (hdrSceneAttempted || hdrSceneJob != null || released || !prepared || openingOrRestarting ||
+            liveStream || audioOnly || startPositionMs > 0 || !nativeHdrPreferred ||
+            sourceHdrStandard != HdrStandard.HDR10_PLUS || !imageOptions.svp.hdrTwoPass ||
+            !imageOptions.svp.hardwareResident || imageOptions.svpMode == "off" || !vlcSvpAllowed(context) ||
+            residentRejected || vulkanOutput || !player.isSeekable || attachedView?.holder?.surface?.isValid != true ||
+            HdrScenePlanner.localFile(url) == null ||
+            SvpNative.residentOutputsOrNull() == null || !VideoAccelerationRuntime.current(context).let { it.checked && it.device.render }) return
+        val source = measuredSourceFps ?: return
+        val target = svpOutputFps(svpDisplayFps(context), imageOptions.svp) ?: return
+        val settings = imageOptions
+        hdrSceneAttempted = true
+        hdrSceneJob = hdrSceneScope.launch {
+            val result = try {
+                HdrScenePlanner.scan(url, target, true, File(context.noBackupFilesDir, "hdr-scene"))
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Timber.w(e, "VLC HDR scene plan unavailable"); null }
+            if (result == null) { Timber.i("VLC automatic HDR10+ scene plan not supported for this file"); return@launch }
+            if (released || !prepared || openingOrRestarting || imageOptions != settings ||
+                attachedView?.holder?.surface?.isValid != true || kotlin.math.abs(result.plan.source-source) > 0.0001 ||
+                svpOutputFps(svpDisplayFps(context), imageOptions.svp) != target) {
+                result.cleanup(); return@launch
+            }
+            hdrSceneSession = result
+            restartHdrScenePass()
+        }
+    }
+
+    private fun restartHdrScenePass() {
+        hdrSceneRestartPending = true
+        rememberTrackSelection()
+        openingOrRestarting = true
+        runCatching { player.stop() }
+        prepared = false
+        pendingRestorePositionMs = null
+        prepare(0L, desiredPlayWhenReady)
+    }
+
+    private fun hdrScenePlaybackEnded() {
+        val session = hdrSceneSession
+        if (session?.mode == 1 && session.advance()) {
+            openingOrRestarting = true
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (!released && hdrSceneSession === session) restartHdrScenePass()
+            }
+            return
+        }
+        if (session != null) cancelHdrScenePass()
+        ended = true
+    }
+
+    private fun hdrResidentAvailable(): Boolean = nativeHdrPreferred && (svpStaticHdrResident(sourceHdrStandard) ||
+            sourceHdrStandard == HdrStandard.HDR10_PLUS && hdrSceneSession?.valid() == true) &&
         !residentRejected && !audioOnly && !vulkanOutput &&
         svpResidentRequested(com.ambient.tv.data.local.SvpOptions(hardwareResident = true), measuredSourceSize?.first, measuredSourceSize?.second) &&
         com.ambient.tv.BuildConfig.VLC_SVP &&
@@ -210,6 +286,8 @@ class VlcPlaybackController(
             // Old VLC AAR or rejected native options: retry once on the normal transport.
             timber.log.Timber.w(error, "VLC rejected experimental SVP Surface options; using copy-back")
             residentRejected = true
+            if (hdrSceneSession != null) cancelHdrScenePass()
+            configuredHdrSceneMode = 0
             configuredResident = false
             if (preserveHdrSource) configuredSvpMode = "off"
             runCatching { createLibVlc(subtitleLook = true) }.getOrElse { createLibVlc(subtitleLook = false) }
@@ -233,7 +311,7 @@ class VlcPlaybackController(
             addAll(vlcDeinterlaceOptions(configuredDeinterlaceMode, configuredDeinterlaceFilter))
             // VLC 4's vout filter chain is inherited from the instance/player,
             // not from Media options. Media-only video-filter is silently ignored.
-            addAll(vlcImageMediaOptions(VlcImageOptions(svpMode = configuredSvpMode, svp = configuredSvpOptions), configuredSvpRate, configuredResident)
+            addAll(vlcImageMediaOptions(VlcImageOptions(svpMode = configuredSvpMode, svp = configuredSvpOptions), configuredSvpRate, configuredResident, hdrSceneSession?.vlcOptions().orEmpty())
                 .filter { it.startsWith(":video-filter=") || it in setOf(":no-mediacodec-dr", ":mediacodec-dr", ":mediacodec-svp-vulkan") }
                 .map { "--" + it.removePrefix(":") })
             // VLC 4 owns vout at player level, not at input/media level.
@@ -572,6 +650,7 @@ class VlcPlaybackController(
                 if (event.type == MediaPlayer.Event.Buffering) event.buffering else 100f)
             when (event.type) {
                 MediaPlayer.Event.EncounteredError -> {
+                    if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePass()
                     com.ambient.tv.diagnostics.DiagnosticLog.error("playback", "VLC error ${com.ambient.tv.diagnostics.diagnosticUrl(url)}")
                     if (fallbackVulkan("playback_error")) {
                         // prepare() reopens this media with VLC's normal Android output.
@@ -607,8 +686,8 @@ class VlcPlaybackController(
                 }
                 // VLC 4 reuses EndReached's number for Stopping. Only the final
                 // Stopped event can finish that session; explicit restarts are guarded.
-                MediaPlayer.Event.EndReached -> if (!trackAccess.modern && !openingOrRestarting && pendingRestorePositionMs == null) ended = true
-                MediaPlayer.Event.Stopped -> if (trackAccess.modern && !openingOrRestarting && pendingRestorePositionMs == null) ended = true
+                MediaPlayer.Event.EndReached -> if (!trackAccess.modern && !openingOrRestarting && pendingRestorePositionMs == null) hdrScenePlaybackEnded()
+                MediaPlayer.Event.Stopped -> if (trackAccess.modern && !openingOrRestarting && pendingRestorePositionMs == null) hdrScenePlaybackEnded()
                 MediaPlayer.Event.ESAdded -> attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
                 MediaPlayer.Event.TimeChanged -> {
                     if (!openingOrRestarting && pendingRestorePositionMs == null && player.time >= 0L) {
@@ -897,6 +976,7 @@ class VlcPlaybackController(
     fun detach(view: SurfaceView) {
         if (pendingAttachView === view) pendingAttachView = null
         if (released || attachedView !== view) return
+        if (!hdrSceneReattaching && (hdrSceneSession != null || hdrSceneJob != null)) cancelHdrScenePass()
         if (dvResumeWorkaround && prepared) {
             dvSurfacePosition = confirmedPlaybackTimeMs()
             pendingImageTrackSelection = pendingImageTrackSelection ?:
@@ -1012,21 +1092,27 @@ class VlcPlaybackController(
             .takeIf { !liveStream && (it > 0L || hadPendingSeek) }
         pauseAfterRestorePositionMs = null
         if (liveStream) resumeVideoSeekMs = null
+        if (hdrSceneSession != null && (!hdrSceneRestartPending || resumePositionMs != 0L || hdrSceneSession?.valid() != true)) cancelHdrScenePass()
+        hdrSceneRestartPending = false
         val effectiveImage = effectiveImage()
         val targetRate = svpOutputFps(svpDisplayFps(context), effectiveImage.svp)
         val effectiveDeinterlaceMode = if (preserveHdrSource) "off" else deinterlaceMode
         val effectiveDeinterlace = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
         val desiredResident = wantsResident(effectiveImage, effectiveDeinterlaceMode)
-        val reattach = if (configuredResident != desiredResident || configuredSoftwareProcessing != effectiveImage.softwareProcessing ||
+        if (hdrSceneSession != null && (!desiredResident || hdrSceneSession?.plan?.target != targetRate)) cancelHdrScenePass()
+        val desiredSceneMode = hdrSceneSession?.mode ?: 0
+        val reattach = if (configuredHdrSceneMode != desiredSceneMode || configuredResident != desiredResident || configuredSoftwareProcessing != effectiveImage.softwareProcessing ||
             configuredSvpOptions != effectiveImage.svp || configuredSvpMode != effectiveImage.svpMode || svpTargetChanged(effectiveImage.svpMode, configuredSvpRate, targetRate) ||
             configuredDeinterlaceMode != effectiveDeinterlaceMode || configuredDeinterlaceFilter != effectiveDeinterlace) {
             val view = attachedView
-            view?.let(::detach)
+            hdrSceneReattaching = true
+            try { view?.let(::detach) } finally { hdrSceneReattaching = false }
             player.setEventListener(null)
             player.vlcVout.removeCallback(surfaceCallback)
             player.stop(); player.release(); libVlcRelease.releaseWhenIdle(libVlc)
             configuredSoftwareProcessing = effectiveImage.softwareProcessing
             configuredResident = desiredResident
+            configuredHdrSceneMode = desiredSceneMode
             configuredSvpOptions = effectiveImage.svp
             configuredSvpMode = effectiveImage.svpMode
             configuredSvpRate = targetRate
@@ -1068,7 +1154,7 @@ class VlcPlaybackController(
             media.addOption(":no-mediacodec-dr")
         }
         applyDeinterlaceOptions(media)
-        vlcImageMediaOptions(effectiveImage, configuredSvpRate, configuredResident).forEach(media::addOption)
+        vlcImageMediaOptions(effectiveImage, configuredSvpRate, configuredResident, hdrSceneSession?.vlcOptions().orEmpty()).forEach(media::addOption)
         residentLastOutput = if (configuredResident) SvpNative.residentOutputsOrNull() else null
         residentLastProgressMs = 0L
         if (audioVisualizationEnabled && !bitstreamPermitted) {
@@ -1271,8 +1357,9 @@ class VlcPlaybackController(
         if (!automaticFallback) imageProcessingFallback = false
         if (!automaticFallback && safe.svp.hardwareResident != imageOptions.svp.hardwareResident) residentRejected = false
         if (released || safe == imageOptions) return
+        if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePass()
         imageOptions = safe
-        if (preserveHdrSource && !svpStaticHdrResident(sourceHdrStandard)) return
+        if (preserveHdrSource && !svpStaticHdrResident(sourceHdrStandard) && sourceHdrStandard != HdrStandard.HDR10_PLUS) return
         val resumePosition = vlcRestartPosition(pendingRestorePositionMs, confirmedPlaybackTimeMs(), preservePosition)
         val resumePlaying = wantsToPlay()
         rememberTrackSelection()
@@ -1284,7 +1371,7 @@ class VlcPlaybackController(
 
     /** Re-open media so Sparsam effective overrides (or leaving Low) take effect without changing prefs. */
     fun refreshEffectiveOverrides(preservePosition: Boolean = true) {
-        if (released || preserveHdrSource && !svpStaticHdrResident(sourceHdrStandard)) return
+        if (released || preserveHdrSource && !svpStaticHdrResident(sourceHdrStandard) && sourceHdrStandard != HdrStandard.HDR10_PLUS) return
         val resumePosition = vlcRestartPosition(pendingRestorePositionMs, confirmedPlaybackTimeMs(), preservePosition)
         val resumePlaying = wantsToPlay()
         rememberTrackSelection()
@@ -1378,6 +1465,7 @@ class VlcPlaybackController(
         if (imageOptions.svpMode != "off" || configuredSvpMode != "off") {
             if (measuredSourceFps == null) measuredSourceFps = currentSourceFps()
             if (measuredSourceSize == null) measuredSourceSize = currentSourceSize()
+            maybeStartHdrScenePass()
             // prepare() returns early without a valid surface; restarting here would stop/prepare every poll.
             val outputReady = audioOnly || attachedView?.holder?.surface?.isValid == true
             val effective = effectiveImage()
@@ -1397,7 +1485,7 @@ class VlcPlaybackController(
                 }
             } else residentLastProgressMs = 0L
             val wanted = wantsResident(effective, if (preserveHdrSource) "off" else deinterlaceMode)
-            if (outputReady && (wanted != configuredResident || effectiveMode != configuredSvpMode ||
+            if (outputReady && !hdrSceneRestartPending && (configuredHdrSceneMode != (hdrSceneSession?.mode ?: 0) || wanted != configuredResident || effectiveMode != configuredSvpMode ||
                     svpTargetChanged(effectiveMode, configuredSvpRate, svpOutputFps(svpDisplayFps(context), imageOptions.svp))))
                 refreshEffectiveOverrides(player.isSeekable)
         }
@@ -1417,6 +1505,7 @@ class VlcPlaybackController(
         // Live no longer means unseekable: YouTube HLS/DASH can advertise a real DVR window.
         // Still reject streams without a native seek index (ordinary live channels).
         if (released || (liveStream && !canSeekNow())) return
+        if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePass()
         val duration = player.length
         val length = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
         // At the end of a live window, a seek is not VOD EOF.
@@ -1612,6 +1701,7 @@ class VlcPlaybackController(
     fun currentVideoTrackId(): Int = if (released) -1 else trackAccess.videoTrack
     fun selectVideoTrack(id: Int) {
         if (released) return
+        if (hdrSceneSession != null || hdrSceneJob != null) cancelHdrScenePass()
         userVideoDisabled = id < 0
         trackAccess.setVideoTrack(id)
     }
@@ -1893,6 +1983,8 @@ class VlcPlaybackController(
 
     override fun release() {
         if (released) return
+        cancelHdrScenePass()
+        hdrSceneScope.cancel()
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "release vulkan=$vulkanOutput")
         pendingSeekTask?.let(pendingSeekHandler::removeCallbacks)
         pendingSeekTask = null
