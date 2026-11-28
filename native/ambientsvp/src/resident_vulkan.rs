@@ -1996,9 +1996,9 @@ mod gpu_tests{
                     if mode==3{
                         if tuned{
                             let tracks=windows.map(|window|HdrTrack{a:window.rect,b:window.rect,ellipse:[window.rect[0],window.rect[1]]});
-                            let axes=[[0,0,0],[4,2,0],[4,2,90]];
+                            let axes=if i==0{[[0,0,0],[4,2,0],[4,2,90]]}else{[[0,0,0],[4,2,45],[4,2,73]]};
                             if i==0{assert_eq!(ambient_svp_vk_hdr_stats_ellipse(pair,0,windows.as_ptr(),tracks.as_ptr(),axes.as_ptr(),phase,3),0);}
-                            else{assert_eq!(ambient_svp_vk_hdr_stats_scene_legacy(pair,0,windows.as_ptr(),tracks.as_ptr(),axes.as_ptr(),3),0);}
+                            else{assert_eq!(ambient_svp_vk_hdr_stats_scene_legacy_tracked(pair,0,windows.as_ptr(),tracks.as_ptr(),axes.as_ptr(),phase,3),0);}
                         }else{
                             assert!(!scene.is_null());
                             let mut global=windows[0];global.count=9;global.percentages[..9].copy_from_slice(&scene_p);
@@ -2024,7 +2024,7 @@ mod gpu_tests{
                             assert_eq!(frames.len(),3);
                             for (j,f) in frames.iter().enumerate(){
                                 let n=f.frame.bins.iter().map(|&v|u64::from(v)).sum::<u64>();
-                                assert_eq!(n,if j==0{u64::from(w)*u64::from(h)}else{10});
+                                assert_eq!(n,match j{0=>u64::from(w)*u64::from(h),1=>13,2=>11,_=>unreachable!()});
                                 // Independent Decimal ST 2084 fixture for FP16 0x3802;
                                 // allow adjacent half-float rounding in the synthesis.
                                 assert!(f.frame.maxscl.iter().all(|&x|[927,932,936].contains(&x)));
