@@ -215,6 +215,80 @@ static unsigned ambient_sh2_emit(uint16_t op, uint32_t* code)
     return count + 1; /* 0 is unsupported; 1 is a NOP with no native words */
 }
 
+/* Byte offsets relative to the guest register array, derived from the
+ * actual pinned core layout, never hard-coded in production. */
+typedef struct { unsigned mach, macl, gbr, vbr, pr; } AmbientSh2Layout;
+
+static inline unsigned ambient_sh2_emit_extended(uint16_t op, uint32_t* code,
+                                                AmbientSh2Layout layout, unsigned* cycles)
+{
+    const unsigned n = (op >> 8) & 15, m = (op >> 4) & 15;
+    const unsigned key = op & 0xf00f, single = op & 0xf0ff;
+    const uint32_t ln = 0xb9400001u | (n << 10);
+    const uint32_t lm = 0xb9400002u | (m << 10);
+    const uint32_t sn = 0xb9000001u | (n << 10);
+    unsigned count = 0, offset = 0;
+    *cycles = 1;
+    /* Upstream ignores the unused B nibble on these opcodes. */
+    if (single == 0x0009 || single == 0x0008 || single == 0x0018)
+        return ambient_sh2_emit(single, code);
+    if (single == 0x0028) {
+        code[count++] = 0xb900001fu | (layout.mach << 8);
+        code[count++] = 0xb900001fu | (layout.macl << 8);
+        return count+1;
+    }
+    if (single == 0x0019) { /* DIV0U: clear M, Q, T */
+        code[count++] = 0xb94000e1u;
+        code[count++] = 0x52806022u; /* MOV w2,#0x301 */
+        code[count++] = 0x0a220021u; /* BIC w1,w1,w2 */
+        code[count++] = 0xb90000e1u;
+        return count+1;
+    }
+    switch (key) {
+    case 0x0007: case 0x200e: case 0x200f: case 0x3005: case 0x300d:
+        code[count++] = ln;
+        code[count++] = lm;
+        if (key == 0x200e || key == 0x200f) {
+            code[count++] = key == 0x200e ? 0x53003c21u : 0x13003c21u;
+            code[count++] = key == 0x200e ? 0x53003c42u : 0x13003c42u;
+        }
+        if (key == 0x3005 || key == 0x300d) {
+            code[count++] = key == 0x3005 ? 0x9ba27c23u : 0x9b227c23u;
+            code[count++] = 0xb9000003u | (layout.macl << 8);
+            code[count++] = 0xd360fc63u;
+            code[count++] = 0xb9000003u | (layout.mach << 8);
+            *cycles = 2;
+        } else {
+            code[count++] = 0x1b027c21u;
+            code[count++] = 0xb9000001u | (layout.macl << 8);
+            *cycles = key == 0x0007 ? 2 : 1;
+        }
+        return count+1;
+    default: break;
+    }
+    switch (single) {
+    case 0x0002: /* STC SR */
+        code[count++] = 0xb94000e1u; code[count++] = sn; return count+1;
+    case 0x400e: /* LDC SR: preserve the exact architectural mask */
+        code[count++] = ln; code[count++] = 0x52807e63u;
+        code[count++] = 0x0a030021u; code[count++] = 0xb90000e1u; return count+1;
+    case 0x0012: case 0x401e: offset = layout.gbr; break;
+    case 0x0022: case 0x402e: offset = layout.vbr; break;
+    case 0x000a: case 0x400a: offset = layout.mach; break;
+    case 0x001a: case 0x401a: offset = layout.macl; break;
+    case 0x002a: case 0x402a: offset = layout.pr; break;
+    default: return ambient_sh2_emit(op, code);
+    }
+    if (op & 0x4000u) {
+        code[count++] = ln;
+        code[count++] = 0xb9000001u | (offset << 8);
+    } else {
+        code[count++] = 0xb9400001u | (offset << 8);
+        code[count++] = sn;
+    }
+    return count+1;
+}
+
 /* Terminal, non-delay conditional branch. Return exact guest cycle charge. */
 static inline unsigned ambient_sh2_branch(uint16_t op, uint32_t* pc, uint32_t sr)
 {
@@ -233,13 +307,20 @@ static inline unsigned ambient_sh2_branch(uint16_t op, uint32_t* pc, uint32_t sr
 #include <unistd.h>
 #include <string.h>
 #include "ambient_sh2_memory.h"
+#include "ambient_sh2_control.h"
+#define AMBIENT_REG_OFFSET(field) (offsetof(SH2_struct, regs.field)-offsetof(SH2_struct, regs.R))
+static const AmbientSh2Layout ambient_sh2_layout = {
+    AMBIENT_REG_OFFSET(MACH), AMBIENT_REG_OFFSET(MACL), AMBIENT_REG_OFFSET(GBR),
+    AMBIENT_REG_OFFSET(VBR), AMBIENT_REG_OFFSET(PR)
+};
+#undef AMBIENT_REG_OFFSET
 #define AMBIENT_SH2_SLOTS 64
 #define AMBIENT_SH2_HOT 4
 
 typedef struct {
     uint32_t pc;
     uint16_t ops[AMBIENT_SH2_MAX_OPS];
-    unsigned count, hits;
+    unsigned count, cycles, hits;
     uint16_t terminal;
     unsigned has_terminal;
     AmbientMemOp memory;
@@ -280,8 +361,8 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
     if (ambient_sh2_disabled[cpu]) return 0;
     AmbientSh2Block* block = &ambient_sh2_cache[cpu][(pc >> 1 ^ pc >> 9) & (AMBIENT_SH2_SLOTS-1)];
     if (block->pc == pc && block->count && block->code &&
-        block->count <= budget - context->cycles &&
-        (!block->has_terminal || block->count < budget - context->cycles)) {
+        block->cycles <= budget - context->cycles &&
+        (!block->has_terminal || block->cycles < budget - context->cycles)) {
         unsigned i;
         /* Self-modifying code, savestate loads and RAM aliases cannot reuse
          * a stale translation: verify every source instruction before entry. */
@@ -297,7 +378,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
             ((void (*)(u32*, u32*))block->code)(context->regs.R, &context->regs.SR.all);
             context->instruction = block->ops[block->count-1];
             context->regs.PC += block->count * 2;
-            context->cycles += block->count;
+            context->cycles += block->cycles;
             if (block->has_terminal) {
                 context->instruction = block->terminal;
                 unsigned cost = ambient_sh2_branch(block->terminal, &context->regs.PC,
@@ -305,6 +386,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
                 if (cost) context->cycles += cost;
                 else if (block->memory.mode) ambient_mem_execute(context, block->memory);
                 else if (block->complex_memory.mode) ambient_complex_execute(context, block->complex_memory);
+                else if (ambient_sh2_control(context, block->terminal)) { /* native terminal */ }
                 else {
                     // Delay-slot, MMIO, bus-wait and self-modifying store
                     // semantics remain in the exact existing opcode handler.
@@ -329,7 +411,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         block->count = 0;
     }
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
-    unsigned words = 0, count = 0;
+    unsigned words = 0, count = 0, cycles = 0;
     block->has_terminal = 0;
     code[words++] = 0xd503245fu; /* BTI c, harmless hint on older ARM64 */
     code[words++] = 0xaa0103e7u; /* MOV x7,x1: SR pointer survives scratch register writes */
@@ -337,7 +419,8 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
         uint32_t addr = pc + count*2;
         if (((fetchfunc*)context->fetchlist)[(addr >> 20) & 255] != fetch) break;
         uint16_t op = (uint16_t)fetch(context, addr);
-        unsigned emitted = ambient_sh2_emit(op, code + words);
+        unsigned cost;
+        unsigned emitted = ambient_sh2_emit_extended(op, code + words, ambient_sh2_layout, &cost);
         if (!emitted) {
             // One terminal instruction may reuse the verified fetch. Never
             // precompile beyond a potentially mutating memory/control operation.
@@ -351,6 +434,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
             break;
         }
         words += emitted-1;
+        cycles += cost;
         block->ops[count++] = op;
     }
     if (count < (block->has_terminal ? 2u : 4u)) {
@@ -377,6 +461,7 @@ static int ambient_sh2_try(SH2_struct* context, u32 budget)
     block->code = mapped;
     block->bytes = (size_t)page;
     block->count = count;
+    block->cycles = cycles;
     return 0; /* interpreter executes this iteration; next hot entry uses translation */
 }
 #endif

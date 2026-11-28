@@ -21,7 +21,12 @@ compiler build is not proof of correct gameplay or a performance improvement.
   register aliasing, sign extension, retry cycles and write notifications.
   Predecoded complex memory operations include TAS, byte read-modify-write,
   system-register loads/stores, MAC.W/MAC.L, TRAPA and RTE. Delay-slot execution
-  retains its original handler. The mapped no-cache bus directly specializes
+  retains its original handler. Native ARM64 blocks now also emit signed/unsigned
+  16- and 32-bit multiplication, 64-bit products, system-register transfers,
+  CLRMAC and DIV0U with independent guest cycle accounting. Native terminal
+  control handles BRA/BSR, register jumps/returns, delayed conditional branches,
+  MOVA, DIV0S, DIV1 and SLEEP while delegating delay-slot execution to upstream.
+  The mapped no-cache bus directly specializes
   aligned High/Low WRAM loads/stores only when the exact original table target
   matches. MMIO, debug tracing, cache-enabled and unusual accesses retain
   the original bus paths. This is not a full native SH2 JIT.

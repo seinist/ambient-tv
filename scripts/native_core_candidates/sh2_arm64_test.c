@@ -155,6 +155,65 @@ int main(void)
             }
         }
     }
+    // Exercise native multiplication and system-register transfers against
+    // scalar arithmetic, with deliberately non-contiguous register offsets.
+    struct { uint32_t r[16], pad[3], mach, macl, gbr, vbr, pr; } regs;
+    const AmbientSh2Layout layout = {76,80,84,88,92};
+    for (unsigned raw=0; raw<65536; ++raw) {
+        const unsigned key=raw&0xf00f, single=raw&0xf0ff;
+        unsigned cost=0, expected_cost=1;
+        uint32_t words[AMBIENT_SH2_MAX_WORDS]={0xd503245fu,0xaa0103e7u};
+        unsigned n=ambient_sh2_emit_extended(raw,words+2,layout,&cost);
+        if (!n || ambient_sh2_emit(raw,words+2)) continue;
+        n=ambient_sh2_emit_extended(raw,words+2,layout,&cost);
+        words[n+1]=0xd65f03c0u;
+        assert(mprotect(code,(size_t)page,PROT_READ|PROT_WRITE)==0);
+        memcpy(code,words,(n+2)*sizeof(uint32_t));
+        __builtin___clear_cache((char*)code,(char*)code+(n+2)*sizeof(uint32_t));
+        assert(mprotect(code,(size_t)page,PROT_READ|PROT_EXEC)==0);
+        for(unsigned sample=0;sample<32;++sample) {
+            memset(&regs,0,sizeof(regs));
+            for(unsigned j=0;j<16;++j) regs.r[j]=sample<16?edge[(sample+j)%8]:next(&seed);
+            regs.mach=next(&seed);regs.macl=next(&seed);regs.gbr=next(&seed);
+            regs.vbr=next(&seed);regs.pr=next(&seed);
+            uint32_t sr=next(&seed),want_sr=sr;
+            __typeof__(regs) want=regs;
+            const unsigned a=(raw>>8)&15,b=(raw>>4)&15;
+            uint64_t product;
+            switch(key) {
+            case 0x0007: want.macl=want.r[a]*want.r[b];expected_cost=2;break;
+            case 0x200e: want.macl=(uint32_t)(uint16_t)want.r[a]*(uint16_t)want.r[b];break;
+            case 0x200f: want.macl=(uint32_t)((int32_t)(int16_t)want.r[a]*(int16_t)want.r[b]);break;
+            case 0x3005: case 0x300d:
+                product=key==0x3005?(uint64_t)want.r[a]*want.r[b]:
+                    (uint64_t)((int64_t)(int32_t)want.r[a]*(int32_t)want.r[b]);
+                want.mach=product>>32;want.macl=(uint32_t)product;expected_cost=2;break;
+            default:
+                switch(single) {
+                case 0x0009: break;
+                case 0x0008: want_sr&=~1u;break;
+                case 0x0018: want_sr|=1u;break;
+                case 0x0019: want_sr&=~0x301u;break;
+                case 0x0028: want.mach=want.macl=0;break;
+                case 0x0002: want.r[a]=sr;break;
+                case 0x400e: want_sr=want.r[a]&0x3f3u;break;
+                case 0x0012: want.r[a]=want.gbr;break;
+                case 0x0022: want.r[a]=want.vbr;break;
+                case 0x000a: want.r[a]=want.mach;break;
+                case 0x001a: want.r[a]=want.macl;break;
+                case 0x002a: want.r[a]=want.pr;break;
+                case 0x401e: want.gbr=want.r[a];break;
+                case 0x402e: want.vbr=want.r[a];break;
+                case 0x400a: want.mach=want.r[a];break;
+                case 0x401a: want.macl=want.r[a];break;
+                case 0x402a: want.pr=want.r[a];break;
+                default: assert(0);
+                }
+            }
+            ((void(*)(uint32_t*,uint32_t*))code)(regs.r,&sr);
+            assert(cost==expected_cost && sr==want_sr && !memcmp(&regs,&want,sizeof(regs)));
+        }
+    }
     // Test concatenated blocks, not just independent opcodes: flags and
     // register outputs must survive across each emitted operation.
     for (unsigned block=0; block<4096; ++block) {

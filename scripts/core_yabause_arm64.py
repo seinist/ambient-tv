@@ -19,6 +19,8 @@ def prepare(root):
                     path.with_name("ambient_sh2_arm64.h"))
     shutil.copyfile(Path(__file__).parent / "native_core_candidates/sh2_memory.h",
                     path.with_name("ambient_sh2_memory.h"))
+    shutil.copyfile(Path(__file__).parent / "native_core_candidates/sh2_control.h",
+                    path.with_name("ambient_sh2_control.h"))
     # Specialize the mapped no-cache RAM handlers inside their own TU, where
     # the exact upstream table targets are visible. All other targets retain
     # the original indirect call; do not guess mappings from the address.
