@@ -66,10 +66,17 @@ int main() {
     api->set_image(api->handle,&frame,0,nullptr,VK_QUEUE_FAMILY_IGNORED);
     api->set_command_buffers(api->handle,1,&cmd);
     api->set_signal_semaphore(api->handle,done);
-    assert(backend.frame(true));
+    std::vector<uint8_t> pixels;
+    VkFormat captured_format=VK_FORMAT_UNDEFINED;
+    assert(backend.frame(true,4,4,&pixels,&captured_format));
+    assert(captured_format==VK_FORMAT_R8G8B8A8_UNORM && pixels.size()==64);
+    for(size_t i=0;i<pixels.size();i+=4) {
+        assert(pixels[i]==255 && pixels[i+1]==0 && pixels[i+2]==0);
+    }
     // Consume previous signal using the semaphore submission mode.
     api->set_image(api->handle,&frame,1,&done,VK_QUEUE_FAMILY_IGNORED);
-    assert(backend.frame(true));
+    assert(backend.frame(true,4,4,&pixels,&captured_format));
+    for(size_t i=0;i<pixels.size();i+=4)assert(pixels[i]==255);
     assert(backend.frame(false)); // duplicate, no stale command buffer or semaphore
     api->wait_sync_index(api->handle);
     assert(backend.good());

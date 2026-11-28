@@ -4,6 +4,8 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+#include <cstdint>
+#include <cstring>
 
 // Build the matching acquire/release barriers for a core's exclusive image.
 // Both halves preserve the supplied image layout; no pixels are sampled.
@@ -30,6 +32,12 @@ class BenchmarkVulkan {
     VkCommandPool ownership_pool = VK_NULL_HANDLE;
     VkCommandBuffer ownership_cmd = VK_NULL_HANDLE;
     uint32_t family_count=0;
+    VkBuffer readback_buffer=VK_NULL_HANDLE;
+    VkDeviceMemory readback_memory=VK_NULL_HANDLE;
+    void* readback_map=nullptr;
+    VkDeviceSize readback_capacity=0;
+    bool readback_coherent=false;
+    VkFormat frame_format=VK_FORMAT_UNDEFINED;
     VkImage frame_image=VK_NULL_HANDLE;
     VkImageLayout frame_layout=VK_IMAGE_LAYOUT_UNDEFINED;
     VkImageSubresourceRange frame_range{};
@@ -68,6 +76,7 @@ class BenchmarkVulkan {
             s.failed=true;return;
         }
         s.frame_image=image->create_info.image;
+        s.frame_format=image->create_info.format;
         s.frame_layout=image->image_layout;
         s.frame_range=image->create_info.subresourceRange;
         s.frame_family=family;
@@ -118,6 +127,40 @@ class BenchmarkVulkan {
             return true;
         }
         return false;
+    }
+    void destroy_readback() {
+        if(readback_map)vkUnmapMemory(context.device,readback_memory);
+        if(readback_buffer)vkDestroyBuffer(context.device,readback_buffer,nullptr);
+        if(readback_memory)vkFreeMemory(context.device,readback_memory,nullptr);
+        readback_map=nullptr;readback_buffer=VK_NULL_HANDLE;
+        readback_memory=VK_NULL_HANDLE;readback_capacity=0;
+    }
+    bool ensure_readback(VkDeviceSize bytes) {
+        if(readback_capacity>=bytes)return true;
+        destroy_readback();
+        VkBufferCreateInfo info{};info.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        info.size=bytes;info.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        info.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
+        if(vkCreateBuffer(context.device,&info,nullptr,&readback_buffer)!=VK_SUCCESS)return false;
+        VkMemoryRequirements req{};vkGetBufferMemoryRequirements(context.device,readback_buffer,&req);
+        VkPhysicalDeviceMemoryProperties props{};vkGetPhysicalDeviceMemoryProperties(context.gpu,&props);
+        uint32_t type=UINT32_MAX;
+        for(uint32_t i=0;i<props.memoryTypeCount;++i) {
+            const auto flags=props.memoryTypes[i].propertyFlags;
+            if(!(req.memoryTypeBits&(1u<<i)) || !(flags&VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))continue;
+            if(type==UINT32_MAX)type=i;
+            if(flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT){type=i;break;}
+        }
+        if(type==UINT32_MAX){destroy_readback();return false;}
+        readback_coherent=(props.memoryTypes[type].propertyFlags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)!=0;
+        VkMemoryAllocateInfo alloc{};alloc.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        alloc.allocationSize=req.size;alloc.memoryTypeIndex=type;
+        if(vkAllocateMemory(context.device,&alloc,nullptr,&readback_memory)!=VK_SUCCESS ||
+           vkBindBufferMemory(context.device,readback_buffer,readback_memory,0)!=VK_SUCCESS ||
+           vkMapMemory(context.device,readback_memory,0,VK_WHOLE_SIZE,0,&readback_map)!=VK_SUCCESS) {
+            destroy_readback();return false;
+        }
+        readback_capacity=bytes;return true;
     }
 public:
     bool configure(const retro_hw_render_context_negotiation_interface* base) {
@@ -186,12 +229,15 @@ public:
     const retro_hw_render_interface* interface() {
         return init()?reinterpret_cast<const retro_hw_render_interface*>(&iface):nullptr;
     }
-    bool frame(bool valid) {
+    // Optional correctness readback; no staging allocation or copy in timing mode.
+    bool frame(bool valid,uint32_t width=0,uint32_t height=0,
+               std::vector<uint8_t>* pixels=nullptr,VkFormat* pixel_format=nullptr) {
         std::vector<VkSemaphore> frame_waits;
         std::vector<VkCommandBuffer> frame_commands;
         VkSemaphore frame_signal=VK_NULL_HANDLE;
         VkImage image=VK_NULL_HANDLE;
         VkImageLayout layout=VK_IMAGE_LAYOUT_UNDEFINED;
+        VkFormat format=VK_FORMAT_UNDEFINED;
         VkImageSubresourceRange range{};
         uint32_t family=VK_QUEUE_FAMILY_IGNORED;
         {
@@ -199,7 +245,7 @@ public:
             if(!created || failed || (valid && !image_set))return false;
             waits.swap(frame_waits);commands.swap(frame_commands);
             frame_signal=signal;signal=VK_NULL_HANDLE;
-            if(valid){image=frame_image;layout=frame_layout;range=frame_range;family=frame_family;}
+            if(valid){image=frame_image;layout=frame_layout;format=frame_format;range=frame_range;family=frame_family;}
             image_set=false;frame_image=VK_NULL_HANDLE;frame_family=VK_QUEUE_FAMILY_IGNORED;
         }
         // Never hold the callback state mutex while waiting on the queue lock.
@@ -207,20 +253,57 @@ public:
         std::lock_guard<std::mutex> queue_lock(queue_mutex);
         const bool wait_image=valid && frame_commands.empty();
         const bool transfer=valid && family!=VK_QUEUE_FAMILY_IGNORED && family!=iface.queue_index;
-        if(transfer) {
-            // The core must submit its release separately. In command-buffer
-            // mode the libretro contract explicitly ignores image semaphores.
-            if(!wait_image || frame_waits.empty()) {failed=true;return false;}
+        const bool capture=valid && pixels;
+        if(transfer && (!wait_image || frame_waits.empty())) {failed=true;return false;}
+        if(capture) {
+            // The Libretro Vulkan interface requires TRANSFER_SRC usage.
+            // Restrict strict readback to explicitly supported packed formats.
+            if(!image || !width || !height || width>8192 || height>8192 ||
+               (format!=VK_FORMAT_R8G8B8A8_UNORM && format!=VK_FORMAT_R8G8B8A8_SRGB &&
+                format!=VK_FORMAT_B8G8R8A8_UNORM && format!=VK_FORMAT_B8G8R8A8_SRGB) ||
+               (layout!=VK_IMAGE_LAYOUT_GENERAL && layout!=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) ||
+               range.aspectMask!=VK_IMAGE_ASPECT_COLOR_BIT || range.levelCount!=1 || range.layerCount!=1 ||
+               !ensure_readback(VkDeviceSize(width)*height*4)) {failed=true;return false;}
+        }
+        if(transfer || capture) {
             VkCommandBufferBeginInfo begin{};begin.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             if(vkResetCommandBuffer(ownership_cmd,0)!=VK_SUCCESS ||
                vkBeginCommandBuffer(ownership_cmd,&begin)!=VK_SUCCESS){failed=true;return false;}
-            auto acquire=benchmark_ownership_barrier(image,layout,range,family,iface.queue_index,true);
-            auto release=benchmark_ownership_barrier(image,layout,range,iface.queue_index,family,false);
-            vkCmdPipelineBarrier(ownership_cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                                 0,0,nullptr,0,nullptr,1,&acquire);
-            vkCmdPipelineBarrier(ownership_cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                 0,0,nullptr,0,nullptr,1,&release);
+            if(transfer) {
+                auto acquire=benchmark_ownership_barrier(image,layout,range,family,iface.queue_index,true);
+                vkCmdPipelineBarrier(ownership_cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                     0,0,nullptr,0,nullptr,1,&acquire);
+            }
+            if(capture) {
+                VkImageMemoryBarrier transition{};transition.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                transition.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT|VK_ACCESS_MEMORY_READ_BIT;
+                transition.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+                transition.oldLayout=layout;transition.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                transition.srcQueueFamilyIndex=transition.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+                transition.image=image;transition.subresourceRange=range;
+                vkCmdPipelineBarrier(ownership_cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                     0,0,nullptr,0,nullptr,1,&transition);
+                VkBufferImageCopy copy{};
+                copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,range.baseMipLevel,range.baseArrayLayer,1};
+                copy.imageExtent={width,height,1};
+                vkCmdCopyImageToBuffer(ownership_cmd,image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback_buffer,1,&copy);
+                transition.srcAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+                transition.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
+                transition.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;transition.newLayout=layout;
+                VkBufferMemoryBarrier host{};host.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+                host.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
+                host.srcQueueFamilyIndex=host.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+                host.buffer=readback_buffer;host.size=VK_WHOLE_SIZE;
+                vkCmdPipelineBarrier(ownership_cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT|VK_PIPELINE_STAGE_HOST_BIT,
+                                     0,0,nullptr,1,&host,1,&transition);
+            }
+            if(transfer) {
+                auto release=benchmark_ownership_barrier(image,layout,range,iface.queue_index,family,false);
+                vkCmdPipelineBarrier(ownership_cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                     0,0,nullptr,0,nullptr,1,&release);
+            }
             if(vkEndCommandBuffer(ownership_cmd)!=VK_SUCCESS){failed=true;return false;}
             frame_commands.push_back(ownership_cmd);
         }
@@ -235,6 +318,18 @@ public:
         bool ok=vkResetFences(context.device,1,&fence)==VK_SUCCESS &&
                 vkQueueSubmit(context.queue,1,&submit,fence)==VK_SUCCESS &&
                 vkWaitForFences(context.device,1,&fence,VK_TRUE,30000000000ull)==VK_SUCCESS;
+        if(ok && capture) {
+            if(!readback_coherent) {
+                VkMappedMemoryRange mapped{};mapped.sType=VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+                mapped.memory=readback_memory;mapped.size=VK_WHOLE_SIZE;
+                ok=vkInvalidateMappedMemoryRanges(context.device,1,&mapped)==VK_SUCCESS;
+            }
+            if(ok) {
+                pixels->resize(size_t(width)*height*4);
+                std::memcpy(pixels->data(),readback_map,pixels->size());
+                if(pixel_format)*pixel_format=format;
+            }
+        }
         if(!ok)failed=true;
         return ok;
     }
@@ -242,6 +337,7 @@ public:
     void idle(){if(created)wait_index(this);}
     void shutdown() {
         idle();
+        destroy_readback();
         if(ownership_pool)vkDestroyCommandPool(context.device,ownership_pool,nullptr);
         if(fence)vkDestroyFence(context.device,fence,nullptr);
         if(negotiation.destroy_device)negotiation.destroy_device();

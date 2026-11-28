@@ -43,6 +43,8 @@ static EGLDisplay display = EGL_NO_DISPLAY;
 static EGLContext context = EGL_NO_CONTEXT;
 static EGLSurface surface = EGL_NO_SURFACE;
 static bool hardware = false, reset_done = false, vulkan = false;
+static int gles_major=0;
+static std::vector<uint8_t> hardware_pixels;
 static BenchmarkVulkan vk;
 static unsigned preferred_renderer=RETRO_HW_CONTEXT_OPENGLES3;
 static bool require_vulkan=false, require_gles=false;
@@ -110,7 +112,7 @@ static bool create_context(retro_hw_render_callback* request) {
     request->get_current_framebuffer=framebuffer;
     request->get_proc_address=proc;
     hw=*request;
-    hardware=true;
+    hardware=true;gles_major=major;
     return true;
 }
 static void log_message(enum retro_log_level, const char* fmt, ...) {
@@ -235,8 +237,54 @@ static bool env(unsigned cmd, void* data) {
     default: return false;
     }
 }
+static void read_gles_pixels(unsigned w,unsigned h) {
+    EGLint surface_width=0,surface_height=0;
+    if(!w || !h || !eglQuerySurface(display,surface,EGL_WIDTH,&surface_width) ||
+       !eglQuerySurface(display,surface,EGL_HEIGHT,&surface_height) ||
+       surface_width<=0 || surface_height<=0 || w>unsigned(surface_width) || h>unsigned(surface_height))
+        die("Invalid GLES readback dimensions");
+    GLint fb=0,alignment=0,pack_buffer=0,row_length=0,skip_rows=0,skip_pixels=0;
+    const GLenum target=gles_major>=3?GL_READ_FRAMEBUFFER:GL_FRAMEBUFFER;
+    glGetIntegerv(gles_major>=3?GL_READ_FRAMEBUFFER_BINDING:GL_FRAMEBUFFER_BINDING,&fb);
+    glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);
+    glBindFramebuffer(target,0);glPixelStorei(GL_PACK_ALIGNMENT,1);
+    if(gles_major>=3) {
+        glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&pack_buffer);
+        glGetIntegerv(GL_PACK_ROW_LENGTH,&row_length);
+        glGetIntegerv(GL_PACK_SKIP_ROWS,&skip_rows);glGetIntegerv(GL_PACK_SKIP_PIXELS,&skip_pixels);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,0);
+        glPixelStorei(GL_PACK_ROW_LENGTH,0);glPixelStorei(GL_PACK_SKIP_ROWS,0);glPixelStorei(GL_PACK_SKIP_PIXELS,0);
+    }
+    hardware_pixels.resize(size_t(w)*h*4);
+    glReadPixels(0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,hardware_pixels.data());
+    GLenum error=glGetError();
+    if(gles_major>=3) {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,static_cast<GLuint>(pack_buffer));
+        glPixelStorei(GL_PACK_ROW_LENGTH,row_length);glPixelStorei(GL_PACK_SKIP_ROWS,skip_rows);glPixelStorei(GL_PACK_SKIP_PIXELS,skip_pixels);
+    }
+    glPixelStorei(GL_PACK_ALIGNMENT,alignment);glBindFramebuffer(target,static_cast<GLuint>(fb));
+    if(error!=GL_NO_ERROR)die("GLES readback failed");
+}
 static void video(const void* data,unsigned w,unsigned h,size_t pitch) {
-    if(vulkan && !vk.frame(data==RETRO_HW_FRAME_BUFFER_VALID))die("Vulkan frame submission failed");
+    VkFormat vk_format=VK_FORMAT_UNDEFINED;
+    const bool hw_frame=data==RETRO_HW_FRAME_BUFFER_VALID;
+    if(vulkan && !vk.frame(hw_frame,w,h,verify_output?&hardware_pixels:nullptr,&vk_format))
+        die("Vulkan frame submission/readback failed");
+    if(verify_output && hardware) {
+        hash_value(video_hash,w,4);hash_value(video_hash,h,4);
+        hash_value(video_hash,hw_frame?1u:0u,1);
+        if(data && !hw_frame)die("Unexpected software callback in hardware mode");
+        if(hw_frame) {
+            if(!vulkan)read_gles_pixels(w,h);
+            hash_value(video_hash,static_cast<uint32_t>(vk_format),4);
+            const bool bgra=vk_format==VK_FORMAT_B8G8R8A8_UNORM || vk_format==VK_FORMAT_B8G8R8A8_SRGB;
+            for(size_t i=0;i<hardware_pixels.size();i+=4) {
+                hash_value(video_hash,hardware_pixels[i+(bgra?2:0)],1);
+                hash_value(video_hash,hardware_pixels[i+1],1);
+                hash_value(video_hash,hardware_pixels[i+(bgra?0:2)],1);
+            }
+        }
+    }
     if(verify_output && !hardware) {
         // Hash visible pixels only, excluding row padding and unused bits.
         if(data==RETRO_HW_FRAME_BUFFER_VALID)die("Unexpected hardware frame");
@@ -474,8 +522,7 @@ int main(int argc,char** argv) {
         if(!proof)die("Cannot write correctness proof");
         std::fprintf(proof,"{\"audio_hash\":\"%016llx\",\"video_hash\":",
                      static_cast<unsigned long long>(captured_audio_hash));
-        if(hardware)std::fputs("null",proof);
-        else std::fprintf(proof,"\"%016llx\"",static_cast<unsigned long long>(captured_video_hash));
+        std::fprintf(proof,"\"%016llx\"",static_cast<unsigned long long>(captured_video_hash));
         std::fprintf(proof,",\"state_loaded\":%s}\n",state_input?"true":"false");
         if(std::fclose(proof))die("Cannot write correctness proof");
     }
