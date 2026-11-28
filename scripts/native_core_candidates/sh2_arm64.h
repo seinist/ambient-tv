@@ -9,7 +9,7 @@
 
 #include "sh2_regcache.h"
 #define AMBIENT_SH2_MAX_OPS 32
-#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 9 + AMBIENT_SH2_REGCACHE_EXTRA)
+#define AMBIENT_SH2_MAX_WORDS (16 * AMBIENT_SH2_MAX_OPS + 14 + AMBIENT_SH2_REGCACHE_EXTRA)
 
 /* Emit a single side-effect-free, one-cycle SH2 instruction into AArch64.
  * x0 points at R[16], x7 at SR; w1..w5 are caller-saved scratch.
@@ -421,6 +421,11 @@ void ambient_sh2_note_t2_write(unsigned bank,u32 offset,unsigned size)
         __atomic_add_fetch(&ambient_sh2_page_generation[bank*AMBIENT_SH2_BANK_PAGES+last],1u,__ATOMIC_RELAXED);
 }
 static uint64_t ambient_sh2_scope_counter[2];
+static uint64_t ambient_sh2_bulk_epoch;
+void ambient_sh2_note_bulk_write(void)
+{
+    __atomic_add_fetch(&ambient_sh2_bulk_epoch,1u,__ATOMIC_RELAXED);
+}
 
 typedef struct AmbientSh2Block AmbientSh2Block;
 struct AmbientSh2Block {
@@ -429,11 +434,12 @@ struct AmbientSh2Block {
     uint16_t ops[AMBIENT_SH2_MAX_OPS];
     unsigned count, cycles, hits;
     unsigned span_count;
-    uint64_t validated_scope;
+    uint64_t validated_scope, validated_epoch;
     fetchfunc source_fetch;
     struct { u32 pc,version; uint16_t first,count,page; } spans[AMBIENT_SH2_MAX_OPS+1];
     uint16_t terminal;
-    unsigned has_terminal, dynamic_exit, native_loop, native_link;
+    unsigned has_terminal, dynamic_exit, native_loop, native_link, conditional_loop;
+    u32 fallthrough_pc;
     AmbientMemOp memory;
     AmbientComplexMem complex_memory;
     opcodefunc terminal_handler;
@@ -445,13 +451,56 @@ struct AmbientSh2Block {
 static AmbientSh2Block ambient_sh2_cache[2][AMBIENT_SH2_SLOTS];
 static int ambient_sh2_disabled[2];
 static uint8_t ambient_sh2_victim[2][AMBIENT_SH2_SETS];
+/* Permanent per-CPU slot addresses in page-sized W^X slabs. Never change
+ * permissions while executing generated code; SH2 dispatch is serialized
+ * on the emulation thread. On 16 KiB hosts several blocks share a page. */
+#define AMBIENT_SH2_CODE_STRIDE ((AMBIENT_SH2_MAX_WORDS*4u+63u)&~63u)
+static void* ambient_sh2_code_pages[2][AMBIENT_SH2_SLOTS];
+static size_t ambient_sh2_code_page_size;
+static unsigned ambient_sh2_code_per_page;
+static void ambient_sh2_drop_code(AmbientSh2Block* block)
+{
+    block->code=NULL;block->bytes=0;
+}
+static void* ambient_sh2_install_code(unsigned cpu,AmbientSh2Block* block,const uint32_t* words,unsigned count)
+{
+    if(!ambient_sh2_code_page_size) {
+        const long page=sysconf(_SC_PAGESIZE);
+        if(page<=0 || (size_t)page<AMBIENT_SH2_CODE_STRIDE)return NULL;
+        ambient_sh2_code_page_size=(size_t)page;
+        ambient_sh2_code_per_page=(unsigned)((size_t)page/AMBIENT_SH2_CODE_STRIDE);
+    }
+    if(count>AMBIENT_SH2_MAX_WORDS)return NULL;
+    const unsigned slot=(unsigned)(block-ambient_sh2_cache[cpu]);
+    const unsigned group=slot/ambient_sh2_code_per_page;
+    void* page=ambient_sh2_code_pages[cpu][group];
+    if(page) {
+        if(mprotect(page,ambient_sh2_code_page_size,PROT_READ|PROT_WRITE))return NULL;
+    } else {
+        page=mmap(NULL,ambient_sh2_code_page_size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        if(page==MAP_FAILED)return NULL;
+        ambient_sh2_code_pages[cpu][group]=page;
+    }
+    char* dest=(char*)page+(slot%ambient_sh2_code_per_page)*AMBIENT_SH2_CODE_STRIDE;
+    memcpy(dest,words,count*sizeof(uint32_t));
+    __builtin___clear_cache(dest,dest+count*sizeof(uint32_t));
+    if(mprotect(page,ambient_sh2_code_page_size,PROT_READ|PROT_EXEC)) {
+        munmap(page,ambient_sh2_code_page_size);
+        ambient_sh2_code_pages[cpu][group]=NULL;
+        const unsigned end=(group+1)*ambient_sh2_code_per_page;
+        for(unsigned i=group*ambient_sh2_code_per_page;i<end&&i<AMBIENT_SH2_SLOTS;++i)
+            memset(&ambient_sh2_cache[cpu][i],0,sizeof(AmbientSh2Block));
+        return NULL;
+    }
+    block->bytes=count*sizeof(uint32_t);return dest;
+}
 
 static void ambient_sh2_clear(void)
 {
     for (unsigned cpu = 0; cpu < 2; ++cpu) {
         for (unsigned slot = 0; slot < AMBIENT_SH2_SLOTS; ++slot) {
-            AmbientSh2Block* b = &ambient_sh2_cache[cpu][slot];
-            if (b->code) munmap(b->code, b->bytes);
+            if(ambient_sh2_code_pages[cpu][slot])
+                munmap(ambient_sh2_code_pages[cpu][slot],ambient_sh2_code_page_size);
         }
     }
     for(unsigned cpu=0;cpu<2;++cpu)
@@ -460,6 +509,9 @@ static void ambient_sh2_clear(void)
                 munmap(ambient_sh2_single[cpu][i].code,ambient_sh2_single[cpu][i].bytes);
     memset(ambient_sh2_single,0,sizeof(ambient_sh2_single));
     memset(ambient_sh2_cache, 0, sizeof(ambient_sh2_cache));
+    memset(ambient_sh2_code_pages,0,sizeof(ambient_sh2_code_pages));
+    ambient_sh2_code_page_size=0;ambient_sh2_code_per_page=0;
+    ambient_sh2_note_bulk_write();
     memset(ambient_sh2_disabled, 0, sizeof(ambient_sh2_disabled));
     memset(ambient_sh2_victim,0,sizeof(ambient_sh2_victim));
     memset(ambient_sh2_page_generation,0,sizeof(ambient_sh2_page_generation));
@@ -557,7 +609,8 @@ static int ambient_sh2_validate(AmbientSh2Block* block,SH2_struct* context,
         }
         block->validated_scope=0;return 1;
     }
-    const int reuse=scope && block->validated_scope==scope;
+    const uint64_t epoch=__atomic_load_n(&ambient_sh2_bulk_epoch,__ATOMIC_RELAXED);
+    const int reuse=scope && block->validated_scope==scope && block->validated_epoch==epoch;
     for(unsigned j=0;j<block->span_count;++j) {
         const u32 pc=block->spans[j].pc;
         const unsigned count=block->spans[j].count,first=block->spans[j].first;
@@ -580,7 +633,7 @@ static int ambient_sh2_validate(AmbientSh2Block* block,SH2_struct* context,
             block->spans[j].version=generation;
         }
     }
-    block->validated_scope=scope;return 1;
+    block->validated_scope=scope;block->validated_epoch=epoch;return 1;
 }
 static uint64_t ambient_sh2_new_scope(unsigned cpu)
 {
@@ -615,7 +668,7 @@ static AmbientSh2Block* ambient_sh2_lookup(unsigned cpu,u32 pc,int allocate)
     if(!allocate)return NULL;
     const unsigned way=empty<AMBIENT_SH2_WAYS?empty:ambient_sh2_victim[cpu][set];
     AmbientSh2Block* b=&ambient_sh2_cache[cpu][set+way*AMBIENT_SH2_SETS];
-    if(b->code)munmap(b->code,b->bytes);
+    ambient_sh2_drop_code(b);
     memset(b,0,sizeof(*b));b->pc=pc;
     ambient_sh2_victim[cpu][set]=(uint8_t)(way^1u);
     return b;
@@ -655,13 +708,18 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
                     for(unsigned j=0;j<block->count;++j)
                         (void)fetch(context,block->pcs[j]);
                 u32 next_pc=block->next_pc;
-                unsigned repeat=1;
+                unsigned repeat=1,cycle_discount=0;
                 if(block->native_loop) {
                     if(scope && !yabsys.sh2_cache_enabled) {
                         repeat=(budget-context->cycles)/block->cycles;
                         if(repeat>64)repeat=64;
                     }
-                    ((void (*)(u32*,u32*,u32))block->code)(context->regs.R,&context->regs.SR.all,repeat);
+                    if(block->conditional_loop) {
+                        const u32 result=((u32 (*)(u32*,u32*,u32))block->code)(context->regs.R,&context->regs.SR.all,repeat);
+                        repeat-=result&0x7fffffffu;
+                        if(result>>31){next_pc=block->fallthrough_pc;cycle_discount=2;}
+                    } else
+                        ((void (*)(u32*,u32*,u32))block->code)(context->regs.R,&context->regs.SR.all,repeat);
                 } else if(block->dynamic_exit)
                     next_pc=((u32 (*)(u32*,u32*))block->code)(context->regs.R,&context->regs.SR.all);
                 else if(block->native_link) {
@@ -688,7 +746,7 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
                     ((void (*)(u32*,u32*))block->code)(context->regs.R,&context->regs.SR.all);
                 context->instruction = block->ops[block->count-1];
                 context->regs.PC = next_pc;
-                context->cycles += block->cycles*repeat;
+                context->cycles += block->cycles*repeat-cycle_discount;
             }
             if (block->has_terminal) {
                 if(yabsys.sh2_cache_enabled)(void)fetch(context,terminal_pc);
@@ -704,13 +762,13 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
             *executed=block;
             return 1;
         }
-        if (block->code) munmap(block->code, block->bytes);
+        ambient_sh2_drop_code(block);
         memset(block, 0, sizeof(*block));
         block->pc = pc;
     }
     if (linked || ((block->code || block->has_terminal) && block->pc == pc)) return 0; /* insufficient cycle budget or invalidated link */
     if (block->pc != pc) {
-        if (block->code) munmap(block->code, block->bytes);
+        ambient_sh2_drop_code(block);
         memset(block, 0, sizeof(*block));
         block->pc = pc;
     }
@@ -724,7 +782,7 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
     uint32_t code[AMBIENT_SH2_MAX_WORDS];
     unsigned words = 0, count = 0, cycles = 0;
     u32 addr=pc;
-    block->has_terminal = block->dynamic_exit = block->native_loop = block->native_link = 0;
+    block->has_terminal = block->dynamic_exit = block->native_loop = block->native_link = block->conditional_loop = 0;
     code[words++] = 0xd503245fu; /* BTI c, harmless hint on older ARM64 */
     code[words++] = 0xaa0103e7u; /* MOV x7,x1: SR pointer survives scratch register writes */
     while (count < AMBIENT_SH2_MAX_OPS) {
@@ -798,6 +856,18 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
                 }
             }
         }
+        /* BT/BF back to this entry: carry T out of the register-resident
+         * body, execute a bounded native loop, and account for the shorter
+         * final not-taken branch. No speculative execution after exit. */
+        const unsigned high=op&0xff00u;
+        if(count && (high==0x8900u || high==0x8b00u) &&
+           addr+4+(u32)(2*(int32_t)(int8_t)op)==pc) {
+            code[words++]=0xb94000e5u; /* LDR w5,[x7] */
+            block->pcs[count]=addr;block->ops[count++]=op;
+            block->conditional_loop=high==0x8900u?1u:2u;
+            block->fallthrough_pc=addr+2;
+            cycles+=3;addr=pc;break;
+        }
         unsigned emitted = ambient_sh2_emit_extended(op, code + words, ambient_sh2_layout, &cost);
         if (!emitted) {
             // One terminal instruction may reuse the verified fetch. Never
@@ -828,7 +898,7 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
         ambient_sh2_build_spans(block,fetch);
         return 0;
     }
-    if (!block->has_terminal && !block->dynamic_exit && count < 4u) {
+    if (!block->has_terminal && !block->dynamic_exit && !block->conditional_loop && count < 4u) {
         u16 current;
         if(ambient_sh2_peek(context,fetch,pc,&current)) {
             block->ops[0]=current;
@@ -850,11 +920,20 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
         unsigned loop_start,loop_end;
         words=3+ambient_sh2_regcache_split(code+2,words-2,optimized+3,&loop_start,&loop_end);
         loop_start+=3;loop_end+=3;
-        memmove(optimized+loop_end+2,optimized+loop_end,(words-loop_end)*sizeof(uint32_t));
+        const unsigned tail=block->conditional_loop?5u:2u;
+        memmove(optimized+loop_end+tail,optimized+loop_end,(words-loop_end)*sizeof(uint32_t));
         optimized[loop_end]=0x710004c6u; /* SUBS w6,w6,#1 */
-        const int displacement=(int)loop_start-(int)(loop_end+1);
-        optimized[loop_end+1]=0x54000001u|(((uint32_t)displacement&0x7ffffu)<<5); /* B.NE */
-        words+=2;
+        const unsigned branch=loop_end+(block->conditional_loop?2:1);
+        const int displacement=(int)loop_start-(int)branch;
+        optimized[branch]=0x54000001u|(((uint32_t)displacement&0x7ffffu)<<5); /* B.NE */
+        if(block->conditional_loop) {
+            /* Exit on opposite T value, mark bit31 of remaining iterations. */
+            optimized[loop_end+1]=(block->conditional_loop==1?0x36000000u:0x37000000u)|(3u<<5)|5u;
+            optimized[loop_end+3]=0x14000002u; /* B writeback */
+            optimized[loop_end+4]=0x320100c6u; /* ORR w6,w6,#0x80000000 */
+        }
+        words+=tail;
+        if(block->conditional_loop)optimized[words++]=0x2a0603e0u; /* MOV w0,w6 */
     } else if(!block->has_terminal&&!block->dynamic_exit) {
         /* x6 holds an optional prevalidated successor entry, untouched by
          * pure ALU code. At exit all dirty registers are committed; x16
@@ -871,22 +950,9 @@ static int ambient_sh2_try_block_scoped(SH2_struct* context, u32 budget,
     } else words=2+ambient_sh2_regcache(code+2,words-2,optimized+2);
     if(block->dynamic_exit)optimized[words++]=0x2a0603e0u; /* MOV w0,w6, after all writebacks */
     optimized[words++]=0xd65f03c0u;
-    const long page = sysconf(_SC_PAGESIZE);
-    if (page <= 0 || (size_t)page < words*sizeof(uint32_t)) {
-        ambient_sh2_disabled[cpu] = 1;
-        return 0;
-    }
-    void* mapped = mmap(NULL, (size_t)page, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-    if (mapped == MAP_FAILED) { ambient_sh2_disabled[cpu] = 1; return 0; }
-    memcpy(mapped, optimized, words*sizeof(uint32_t));
-    __builtin___clear_cache((char*)mapped, (char*)mapped + words*sizeof(uint32_t));
-    if (mprotect(mapped, (size_t)page, PROT_READ|PROT_EXEC) != 0) {
-        munmap(mapped, (size_t)page);
-        ambient_sh2_disabled[cpu] = 1;
-        return 0;
-    }
-    block->code = mapped;
-    block->bytes = (size_t)page;
+    void* mapped=ambient_sh2_install_code(cpu,block,optimized,words);
+    if(!mapped){ambient_sh2_disabled[cpu]=1;return 0;}
+    block->code=mapped;
     block->count = count;
     block->cycles = cycles;
     ambient_sh2_build_spans(block,fetch);

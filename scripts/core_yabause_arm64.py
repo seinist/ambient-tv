@@ -37,6 +37,10 @@ static const void* ambient_sh2_source_view(SH2_struct* context,fetchfunc fetch,u
         "             !ambient_sh2_native_one(context, context->instruction))\n"
         "   " + dispatch
     ) + source[end+len(dispatch):]
+    reset = "void SH2InterpreterReset(UNUSED SH2_struct *context)\n{"
+    if source.count(reset) != 1:
+        raise ValueError("Yabause reset layout changed")
+    source = source.replace(reset, reset + "\n   ambient_sh2_note_bulk_write();")
     path.write_text(source)
     shutil.copyfile(Path(__file__).parent / "native_core_candidates/sh2_arm64.h",
                     path.with_name("ambient_sh2_arm64.h"))
@@ -63,6 +67,7 @@ extern "C" {
 #endif
 extern u8 *HighWram;
 void ambient_sh2_note_t2_write(unsigned bank,u32 offset,unsigned size);
+void ambient_sh2_note_bulk_write(void);
 #ifdef __cplusplus
 }
 #endif
@@ -113,7 +118,18 @@ static INLINE void ambient_sh2_t2_written(u8* mem,u32 addr,unsigned size)
             body += "         #endif\n         "
             body += "return target(sh, addr);" if direction == "Read" else "target(sh, addr, val);"
             code = code.replace(anchor, body)
-    memory.write_text(code)
+    bulk = "   MemStateRead((void *)LowWram, 0x100000, 1, stream);"
+    if code.count(bulk) != 1:
+        raise ValueError("Yabause savestate memory layout changed")
+    memory.write_text(code.replace(bulk, bulk + "\n   ambient_sh2_note_bulk_write();"))
+    # The upstream DMA notifier's second argument is not consistently a
+    # length. Conservatively invalidate all validation epochs here.
+    sh2core = root / "yabause/src/sh2core.c"
+    source = sh2core.read_text()
+    anchor = "void SH2WriteNotify(u32 start, u32 length) {"
+    if source.count(anchor) != 1:
+        raise ValueError("Yabause DMA notification changed")
+    sh2core.write_text(source.replace(anchor, anchor + "\n   ambient_sh2_note_bulk_write();"))
     makefile = root / "yabause/src/libretro/jni/Android.mk"
     source = makefile.read_text()
     marker = "COREFLAGS := $(FLAGS)"

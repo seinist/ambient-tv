@@ -109,6 +109,11 @@ static void test_scoped_page_invalidation(void) {
     if(ambient_sh2_validate(trace,&got,FetchBios,scope))abort();
     program[16]=0x7101;
     if(!ambient_sh2_validate(trace,&got,FetchBios,scope))abort();
+    program[3]=0xe180;
+    ambient_sh2_note_bulk_write();
+    if(ambient_sh2_validate(trace,&got,FetchBios,scope))abort();
+    program[3]=0x7101;
+    if(!ambient_sh2_validate(trace,&got,FetchBios,scope))abort();
     /* Raw savestate/cheat-style write without a notification is caught at
        the next scope boundary, even if all page generations are unchanged. */
     program[3]=0xe180;
@@ -247,6 +252,34 @@ static void test_direct_native_pair(void) {
     ambient_sh2_clear();
     puts("SH2 direct ARM64 tail-linked block pair: target state, budget and stale-successor guards passed");
 }
+static void test_conditional_native_loops(void) {
+    const u32 base=0x06000100u;
+    for(unsigned bt=0;bt<2;++bt) {
+        u16 program[8]={0x4110,0x8bfd,0x0009,0x0009,0x0009,0x0009,0x0009,0x0009};
+        if(bt){program[0]=0x4011; /* CMP/PZ R0 */ program[1]=0x89fd;}
+        SH2_struct prepared,got,want;
+        setup_program(&prepared,program,8,base);
+        AmbientSh2Block* executed=NULL;
+        for(unsigned i=0;i<AMBIENT_SH2_HOT;++i)
+            if(ambient_sh2_try_block(&prepared,1000,NULL,&executed))abort();
+        AmbientSh2Block* trace=ambient_sh2_lookup(0,base,0);
+        if(!trace||!trace->conditional_loop||trace->cycles!=4)abort();
+        for(unsigned n=1;n<80;++n) {
+            got=want=prepared;
+            got.regs.R[1]=want.regs.R[1]=n;
+            got.regs.R[0]=want.regs.R[0]=(n&1)?0u:0xffffffffu;
+            const unsigned cap=n%64+1;
+            const u32 budget=4*cap;
+            unsigned steps=0;
+            while(want.regs.PC==base && steps++<cap){reference_step(&want);reference_step(&want);}
+            if(!ambient_sh2_try_block_scoped(&got,budget,NULL,&executed,ambient_sh2_new_scope(0)) ||
+               got.cycles!=want.cycles||got.instruction!=want.instruction||
+               memcmp(&got.regs,&want.regs,sizeof(got.regs)))abort();
+        }
+        ambient_sh2_clear();
+    }
+    puts("SH2 conditional BT/BF native loops: exact early exits and cycle accounting passed");
+}
 static void test_native_loop_budget(void) {
     u16 program[8]={0x7101,0x312c,0x312e,0x7103,0x312a,0x0009,0xaff8,0x0018};
     /* Branch at index six to index zero; slot writes T. */
@@ -323,6 +356,7 @@ int main(void) {
     test_scoped_page_invalidation();
     test_resident_cache_traces();
     test_direct_native_pair();
+    test_conditional_native_loops();
     test_native_loop_budget();
     benchmark_native_trace();
     unsigned legal=0, illegal=0, delayed=0;
