@@ -154,7 +154,7 @@ class GameLibraryBrowseLayoutTest {
     }
 
     private fun assertHandheldAlphabetTracksViewport(list: Boolean) {
-        val games = ('A'..'Z').flatMap { letter ->
+        val games = List(6) { index -> game("number-$index", if (index % 2 == 0) "1942 $index" else "~Game $index") } + ('A'..'Z').flatMap { letter ->
             List(6) { index -> game("$letter-$index", "$letter Game $index") }
         }
         val parkedFocus = FocusRequester()
@@ -181,7 +181,7 @@ class GameLibraryBrowseLayoutTest {
         }
         rule.waitForIdle()
         rule.runOnIdle { assertTrue(parkedFocus.requestFocus()) }
-        rule.onNodeWithTag("alphabet-letter-A").assertIsSelected()
+        rule.onNodeWithTag("alphabet-letter-#").assertIsSelected()
 
         rule.onNodeWithTag("alphabet-letter-M").performClick()
         rule.waitForIdle()
@@ -190,10 +190,13 @@ class GameLibraryBrowseLayoutTest {
         rule.onNodeWithTag("parked-focus").assertIsFocused()
 
         rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
-            .performScrollToIndex(6)
+             .performScrollToIndex(12)
         rule.waitForIdle()
         // The last jump was M and the saved game focus is A; only the visible viewport is B.
         rule.onNodeWithTag("alphabet-letter-B").assertIsSelected()
+        rule.onNodeWithTag("alphabet-letter-#").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("alphabet-letter-#").assertIsSelected()
         rule.onNodeWithTag("parked-focus").assertIsFocused()
     }
 

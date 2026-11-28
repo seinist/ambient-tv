@@ -40,13 +40,20 @@ internal fun gameSearchKey(value: String): String = buildString(value.length) {
     }
 }
 
-/** Preserve the previous Locale.ROOT + String.compareTo ordering, including UTF-16 surrogates. */
+/** The same bucket drives title ordering, the visible index and all alphabet jumps. */
+internal fun gameIndexLetter(title: String): Char {
+    val initial = title.trimStart().firstOrNull()
+    return initial?.takeIf { it.isLetter() }?.uppercaseChar() ?: '#'
+}
+
+/** Group digits/symbols before letters, preserving ROOT lowercase UTF-16 order within each group. */
 internal fun gameSortKey(value: String): ByteArray {
     val lower = value.lowercase(Locale.ROOT)
-    return ByteArray(lower.length * 2).also { bytes ->
+    return ByteArray(1 + lower.length * 2).also { bytes ->
+        bytes[0] = if (gameIndexLetter(value) == '#') 0 else 1
         lower.forEachIndexed { index, character ->
-            bytes[index * 2] = (character.code ushr 8).toByte()
-            bytes[index * 2 + 1] = character.code.toByte()
+            bytes[1 + index * 2] = (character.code ushr 8).toByte()
+            bytes[2 + index * 2] = character.code.toByte()
         }
     }
 }

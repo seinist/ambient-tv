@@ -9,22 +9,31 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GameNameDatabasesTest {
-    @Test fun everyDatabaseBelongsToAPlayableCartridgeSystem() {
+    @Test fun everyDatabaseBelongsToASupportedSystem() {
         assertTrue(GameNameDatabases.systems.isNotEmpty())
         for (system in GameNameDatabases.systems) {
             assertTrue(system, GameSystems.byId(system) != null)
             for (path in GameNameDatabases.files(system)) {
-                assertTrue(path, path.startsWith("metadat/no-intro/") || path.startsWith("metadat/headered/"))
+                assertTrue(path, path.startsWith("metadat/no-intro/") || path.startsWith("metadat/headered/") || path.startsWith("metadat/redump/") || path.startsWith("metadat/tosec/") || path == "dat/Nintendo - Wii U.dat")
                 assertTrue(path, path.endsWith(".dat"))
             }
         }
-        // Disc images are never hashed, so a checksum database could not name them.
-        for (disc in listOf("psx", "ps2", "saturn", "dreamcast", "gamecube", "wii", "psp")) {
-            assertTrue(disc, GameNameDatabases.files(disc).isEmpty())
+        // Disc release catalogs supply title candidates, never full-image checksums.
+        for (disc in listOf("psx", "ps2", "saturn", "dreamcast", "gamecube", "wii", "wiiu", "psp")) {
+            assertTrue(disc, GameNameDatabases.files(disc).isNotEmpty())
+            assertFalse(disc, GameNameDatabases.usesChecksums(disc))
         }
+        assertEquals(2, GameNameDatabases.files("nds").size)
+        assertTrue(GameNameDatabases.usesChecksums("nds"))
         // Combined systems take every console they play.
         assertEquals(2, GameNameDatabases.files("gb").size)
         assertEquals(4, GameNameDatabases.files("megadrive").size)
+    }
+
+    @Test fun allSupportedSystemsHaveCatalogsExceptExplicitUpstreamGaps() {
+        assertEquals(setOf("c128", "cbm2"), GameSystems.all.map { it.id }.toSet() - GameNameDatabases.systems)
+        assertTrue(GameNameDatabases.usesChecksums("pet"))
+        assertFalse(GameNameDatabases.usesChecksums("wiiu"))
     }
 
     @Test fun onlyLibretroDatabaseFilesMayBeFetched() {
@@ -39,6 +48,10 @@ class GameNameDatabasesTest {
             "https://raw.githubusercontent.com/someone/else/master/metadat/x.dat".toHttpUrl()))
         assertFalse(allowedGameProviderHost(GameMetadataProviderIds.LIBRETRO_DATABASE,
             "https://raw.githubusercontent.com/libretro/libretro-database/master/scripts/x.sh".toHttpUrl()))
+        assertTrue(allowedGameProviderHost(GameMetadataProviderIds.LIBRETRO_DATABASE,
+            "https://raw.githubusercontent.com/libretro/libretro-database/master/dat/Nintendo%20-%20Wii%20U.dat".toHttpUrl()))
+        assertFalse(allowedGameProviderHost(GameMetadataProviderIds.LIBRETRO_DATABASE,
+            "https://raw.githubusercontent.com/libretro/libretro-database/master/dat/unapproved.dat".toHttpUrl()))
         // Name databases are not artwork: an image URL there is never accepted for Libretro.
         assertFalse(allowedGameProviderHost(GameMetadataProviderIds.LIBRETRO, url))
     }

@@ -134,7 +134,8 @@ fun applyLibraryFilters(items: List<MediaItem>, filters: LibraryFilters): List<M
 
 fun sortLibraryItems(items: List<MediaItem>, sort: SectionSort, order: SectionSortOrder): List<MediaItem> {
     val comparator = when (sort) {
-        SectionSort.TITLE -> compareBy<MediaItem, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
+        SectionSort.TITLE -> compareBy<MediaItem> { libraryIndexLetter(it.title) != '#' }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
         SectionSort.YEAR -> compareBy<MediaItem> { it.year ?: Int.MIN_VALUE }
         SectionSort.RELEASE_DATE -> compareBy<MediaItem> { it.originallyAvailableAt ?: it.year?.toString().orEmpty() }
         SectionSort.RECENTLY_ADDED -> compareBy<MediaItem> { it.addedAt ?: 0L }

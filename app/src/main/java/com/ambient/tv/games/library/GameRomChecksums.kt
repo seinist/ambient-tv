@@ -12,8 +12,20 @@ internal object GameRomChecksums {
     private val EXCLUDED = setOf("zip", "7z", "rar", "gz", "cue", "m3u", "gdi", "chd",
         "iso", "cso", "zso", "wbfs", "rvz", "ciso", "pbp")
 
-    fun canHash(filename: String, size: Long): Boolean = size in 1..128L * 1024 * 1024 &&
-        filename.substringAfterLast('.', "").lowercase(Locale.ROOT) !in EXCLUDED
+    fun canHash(filename: String, size: Long): Boolean {
+        val extension = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val limit = when (extension) {
+            "nds", "dsi", "ids" -> 512L
+            "3ds", "cci", "cxi" -> 4096L
+            else -> 128L
+        }
+        return extension !in EXCLUDED && size in 1..limit * 1024 * 1024
+    }
+
+    /** Small cartridge ROMs are still verified over NAS. Large raw dumps are matched by
+     * filename/DAT and bounded header reads instead; local scans retain full verification. */
+    fun canHashDuringScan(filename: String, size: Long, remote: Boolean): Boolean =
+        canHash(filename, size) && (!remote || size <= 16L * 1024 * 1024)
 
     /** One bounded streaming pass over a raw ROM, never an in-memory ROM or cache copy. */
     fun read(systemId: String, size: Long, readAt: (Long, ByteArray, Int) -> Int): Result {
@@ -43,10 +55,42 @@ internal object GameRomChecksums {
      */
     fun forRom(systemId: String, size: Long, prefix: ByteArray?, crc32: String?): Result {
         val raw = crc32?.takeIf { it.matches(CRC) }?.uppercase(Locale.ROOT)
+        if (raw != null && systemId == "nds") return Result(raw, ndsPaddedCrc(size, prefix, raw))
         if (raw == null || systemId != "snes" || size < 32 * 1024 + 512 ||
             size % (32 * 1024) != 512L || prefix == null || prefix.size < 512) return Result(raw)
         val header = CRC32().apply { update(prefix, 0, 512) }.value
         return Result(raw, hex(raw.toLong(16) xor shift(header, size - 512)))
+    }
+
+    /**
+     * A trimmed DS dump omits trailing cartridge padding. Try its nominal capacity with
+     * erased (FF) bytes as a second checksum, never replacing the actual ROM identity.
+     * Only an exact DAT CRC match can confirm this hypothesis; no ROM bytes are synthesized.
+     */
+    private fun ndsPaddedCrc(size: Long, prefix: ByteArray?, raw: String): String? {
+        if (prefix == null || prefix.size < 0x84 || size < 0x200) return null
+        // Only standard DS cartridges. DSi has additional layout/size rules.
+        if (prefix[0x12].toInt() != 0) return null
+        if ((0x0c..0x0f).any { (prefix[it].toInt() and 255).let { c -> c !in 48..57 && c !in 65..90 } }) return null
+        val capacity = prefix[0x14].toInt() and 255
+        if (capacity !in 0..12) return null
+        val nominal = 128L * 1024 shl capacity
+        val used = (0..3).fold(0L) { acc, i -> acc or ((prefix[0x80 + i].toLong() and 255) shl (8 * i)) }
+        if (used < 0x200 || used > size || size >= nominal) return null
+        var remaining = nominal - size
+        var blockLength = 1L
+        var blockCrc = CRC32().apply { update(255) }.value
+        var result = raw.toLong(16)
+        // CRC concatenation by powers of two: bounded memory and no padding-sized IO.
+        while (remaining > 0) {
+            if (remaining and 1L != 0L) result = shift(result, blockLength) xor blockCrc
+            remaining = remaining ushr 1
+            if (remaining > 0) {
+                blockCrc = shift(blockCrc, blockLength) xor blockCrc
+                blockLength *= 2
+            }
+        }
+        return hex(result)
     }
 
     fun hex(crc: Long): String = crc.toString(16).uppercase(Locale.ROOT).padStart(8, '0')

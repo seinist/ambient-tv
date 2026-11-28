@@ -107,6 +107,20 @@ class GameLibraryPresentationTest {
         return actions
     }
 
+    @Test fun handheldScanCloseInvokesCancelThroughRealTouch() {
+        var cancellations = 0
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    GameScanCancelButton { cancellations++ }
+                }
+            }
+        }
+        rule.onNode(hasContentDescription(rule.activity.getString(R.string.game_library_scan_cancel)))
+            .assertIsDisplayed().performTouchInput { click() }
+        rule.runOnIdle { assertEquals(1, cancellations) }
+    }
+
     @Test fun gridAcceptsNativeActivationOnceAndKeepsInfoSeparate() {
         val actions = mountItem(handheld = false)
         rule.runOnIdle { actions.requester.requestFocus() }

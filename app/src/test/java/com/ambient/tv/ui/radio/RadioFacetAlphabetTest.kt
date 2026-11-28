@@ -62,6 +62,16 @@ class RadioFacetAlphabetTest {
         assertEquals('B', rows.firstOrNull { it.facet.id == "b" }?.letter?.singleOrNull())
     }
 
+    @Test fun numericAndSymbolFacetsShareTheFirstBucketInAscendingOrder() {
+        val facets = listOf(facet("z", "Zulu"), facet("a", "Ambient"),
+            facet("s", "~Special"), facet("n", "80s"))
+        val ascending = radioAlphabetFacets(RadioSection.GENRES, facets, Locale.GERMAN)
+        val descending = radioAlphabetFacets(RadioSection.GENRES, facets, Locale.GERMAN, descending = true)
+        assertEquals(listOf("#", "#"), ascending.take(2).map { it.letter })
+        assertEquals(RadioAlphabetJump("#", 0), radioAlphabetJumps(ascending).first())
+        assertEquals(ascending.reversed(), descending)
+    }
+
     @Test fun categoryOverviewAlwaysUsesListWhileStationViewsRetainUserPreference() {
         val facet = facet("r", "Rock")
         assertEquals(RadioViewMode.LIST,
