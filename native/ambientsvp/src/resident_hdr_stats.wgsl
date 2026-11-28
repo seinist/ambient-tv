@@ -127,10 +127,10 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
         if atomicLoad(&words[o+55u])==1u&&atomicLoad(&words[o+60u])==1u{
             let gx=vec2f(bitcast<f32>(atomicLoad(&words[o+56u])),bitcast<f32>(atomicLoad(&words[o+57u])));
             let gy=vec2f(bitcast<f32>(atomicLoad(&words[o+58u])),bitcast<f32>(atomicLoad(&words[o+59u])));
-            let half=(vec2f(rect.zw)-vec2f(rect.xy))*0.5;
+            let half_size=(vec2f(rect.zw)-vec2f(rect.xy))*0.5;
             let x=vec2f(1.0,0.0)+gx*fade*0.5;
             let y=vec2f(0.0,1.0)+gy*fade*0.5;
-            let extent=abs(x)*half.x+abs(y)*half.y;
+            let extent=abs(x)*half_size.x+abs(y)*half_size.y;
             let mid=center+vec2f(shift);
             let lo=vec2u(clamp(floor(mid-extent),vec2f(0.0),vec2f(params.xy)-vec2f(1.0)));
             let hi=vec2u(clamp(ceil(mid+extent),vec2f(lo)+vec2f(1.0),vec2f(params.xy)));
