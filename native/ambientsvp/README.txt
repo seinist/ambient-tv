@@ -1746,3 +1746,29 @@ https://dvb.org/specifications/verification-validation/hdr-test-content/
 (EBU content under CC BY 4.0; see the original attribution).
 Those downloads require the DVB request procedure. No commercial
 stream or physical device has been certified by these tests.
+
+
+Additional replay and parser integrity checks
+---------------------------------------------
+Both scene reducers now validate the histogram's exact maximum and
+population, and independently bound the accumulated 1e-9 linear sum
+using the quantization intervals of all occupied bins. The bound
+allows one fixed-point unit of independent LUT rounding at each
+half-bin edge. A contradictory frame is rejected before aggregation.
+
+Legacy replay signatures are revised to G2. They include the actual
+selected scanline spans, pixel population, quantized channel peaks,
+percentiles, brightest-bin population, and fixed-point MaxRGB sum,
+in addition to the geometry. The verifier checks the span population
+against the statistics. This is stronger than geometry-only G records,
+but is not a cryptographic digest of all image pixels. Old caches must
+be regenerated and are rejected by both the Android and native readers.
+
+The shared registered-data parser checks Average MaxRGB and actual
+percentile values against the channel maxima (excluding reserved v1
+marker entries). It retains syntactically valid but inconsistent
+payloads as explicitly nonconforming. A separate Python bit writer
+generates valid and invalid v0/v1 data, including all three legacy
+window counts, optional grids, valid nonascending Bezier anchors,
+reserved markers and every byte truncation. These tests run against
+the real C parser before any network-dependent FATE download.
