@@ -66,6 +66,11 @@ struct PendingReadback {
     deadline: std::time::Instant,
 }
 
+fn experimental_motion_budget(software_correctness: bool) -> Duration {
+    if cfg!(test) && software_correctness { Duration::from_secs(20) }
+    else { Duration::from_millis(250) }
+}
+
 pub struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -84,6 +89,7 @@ pub struct Gpu {
     pub(super) cross_pair_submissions: u64,
     compact_fields: bool,
     readback_timeout: Duration,
+    motion_timeout: Duration,
     motion_search: Option<crate::motion_search::MotionSearch>,
     sources: BTreeMap<i32, Source>,
     recycled_sources: Vec<Source>,
@@ -302,6 +308,10 @@ impl Gpu {
             readback_timeout: if software_test && info.device_type == wgpu::DeviceType::Cpu {
                 Duration::from_secs(20)
             } else { Duration::from_secs(3) },
+            // The same CPU-only correctness gate applies to the complete
+            // hierarchical search, whose first dispatch may JIT shaders.
+            // Physical Vulkan and all non-test builds retain 250 ms.
+            motion_timeout: experimental_motion_budget(software_test && info.device_type == wgpu::DeviceType::Cpu),
             motion_search: None,
             sources: BTreeMap::new(),
             recycled_sources: Vec::new(),
@@ -431,7 +441,7 @@ impl Gpu {
         }
         self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let search=self.motion_search.get_or_insert_with(||crate::motion_search::MotionSearch::new(&self.device));
-        let result=search.analyse(&self.device,&self.queue,builder,current,next,header,Duration::from_millis(250),source_index);
+        let result=search.analyse(&self.device,&self.queue,builder,current,next,header,self.motion_timeout,source_index);
         if let Some(error)=pollster::block_on(self.device.pop_error_scope()){
             return Err(error.to_string());
         }
@@ -889,6 +899,12 @@ fn params_bytes(p: &GpuParams, base: u32, stride: u32) -> [u8; 96] {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn experimental_motion_budget_preserves_physical_device_deadline() {
+        assert_eq!(super::experimental_motion_budget(false), std::time::Duration::from_millis(250));
+        assert_eq!(super::experimental_motion_budget(true), std::time::Duration::from_secs(20));
+    }
+
     use super::*;
 
     #[test]
