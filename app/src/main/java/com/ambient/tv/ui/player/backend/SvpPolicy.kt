@@ -166,7 +166,8 @@ internal fun svpMpvHdrResident(source: com.ambient.tv.ui.player.HdrStandard?, de
 
 internal fun svpResidentRequested(options: SvpOptions, width: Int? = null, height: Int? = null): Boolean =
     options.hardwareResident && options.normalized().backend != 1 &&
-        (width == null || width in 32..1920) && (height == null || height in 32..1080)
+        (width == null || width in 32..(if (options.hdrTwoPass && options.maxHeight == 2160) 3840 else 1920)) &&
+        (height == null || height in 32..(if (options.hdrTwoPass && options.maxHeight == 2160) 2160 else 1080))
 
 /** Probe and recovery must use the same cheap analysis, even with explicit quality overrides. */
 internal fun svpProbeOptions(options: SvpOptions): SvpOptions = SvpOptions(
