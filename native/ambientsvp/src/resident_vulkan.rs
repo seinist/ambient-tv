@@ -671,6 +671,7 @@ impl VulkanPair{
         self.descriptors(set,&[(0,ay,sampled),(1,au,sampled),(2,av,sampled),
             (3,by,sampled),(4,bu,sampled),(5,bv,sampled),(7,output,vk::DescriptorType::STORAGE_IMAGE)],6);
         let c=&self.core;
+        let phase=if c.algorithm.load(Ordering::Acquire)!=0{(phase*256.0).round()/256.0}else{phase};
         let flags=if self.a.rgb(){64}else{self.a.nv12|(self.b.nv12<<1)|(self.a.chroma_location<<2)|(self.b.chroma_location<<4)};
         let algo=unsafe{self.prepare_masks(phase)};
         unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),flags|algo,matrix,c.width|(c.height<<16)],
@@ -694,6 +695,7 @@ impl VulkanPair{
             (7,outputs[0],storage),(8,outputs[1],storage),(9,outputs.get(2).copied().unwrap_or(vk::ImageView::null()),storage)];
         self.descriptors(set,&images[..6+outputs.len()],6);
         let c=&self.core;
+        let phase=if c.algorithm.load(Ordering::Acquire)!=0{(phase*256.0).round()/256.0}else{phase};
         let algo=unsafe{self.prepare_masks(phase)};
         unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),algo,0,c.width|(c.height<<16)],
             c.width.div_ceil(8),c.height.div_ceil(8));}
