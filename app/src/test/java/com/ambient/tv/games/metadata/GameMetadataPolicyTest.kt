@@ -22,6 +22,44 @@ class GameMetadataPolicyTest {
         assertEquals("1942 - Joint Strike", gameCatalogFilename("psp", "1942 - Joint Strike.iso"))
     }
 
+    @Test fun releaseAnnotationsBeforeAndAfterTitleAreSearchOnly() {
+        for (system in listOf("snes", "nds", "psp", "n64", "psx", "saturn", "gba", "c64")) {
+            val name = gameCatalogFilename(system, "[Release] (Europe) Ridge Racer [!] (Rev 1).zip")
+            assertEquals("Ridge Racer", gameMetadataSearchName(name))
+            assertEquals(listOf("Ridge Racer (Europe)"), matchingGameCatalogTitles(name,
+                listOf("Ridge Racer (Europe)", "Ridge Racer (USA)", "Ridge Racer 2 (Europe)")))
+        }
+        assertEquals("Game (Part II) - Adventure", gameMetadataSearchName("Game (Part II) - Adventure (USA)"))
+        assertEquals("[!]", gameMetadataSearchName("[!]"))
+        assertEquals("Game (The Lost Levels)", gameMetadataCatalogBase("Game (The Lost Levels) (Europe) (Rev 1)"))
+        assertEquals(listOf("Ridge Racer (Europe) (Rev 1)"), matchingGameCatalogTitles(
+            "[Release] (Europe) Ridge Racer [!]", listOf("Ridge Racer (Europe) (Rev 1)", "Ridge Racer (USA)")))
+        assertEquals(listOf("Game (Part II)"), matchingGameCatalogTitles("Game (Part II)",
+            listOf("Game (Part I)", "Game (Part II)")))
+    }
+
+    @Test fun localCatalogNamesDoNotDependOnArtworkOrClaimChecksumVerification() {
+        val rom = game().copy(customTitle = null, verifiedTitle = null)
+        val european = "Original (Europe)"
+        val american = "Original (USA)"
+        val metadata = catalogDisplayMetadata(rom, null, listOf(european))!!
+        assertEquals(european, metadata.title)
+        assertEquals(european, metadata.canonicalTitle)
+        assertEquals("", metadata.providerGameId)
+        assertFalse(metadata.matchLocked)
+        val shared = catalogDisplayMetadata(rom, null, listOf(european, american))!!
+        assertEquals("Original", shared.title)
+        assertEquals("", shared.canonicalTitle)
+        assertNull(catalogDisplayMetadata(rom, null, listOf(european, "Different Game")))
+        assertNull(catalogDisplayMetadata(game(), null, listOf(european)))
+        assertNull(catalogDisplayMetadata(rom, metadata.copy(matchLocked = true), listOf(american)))
+        assertNull(catalogDisplayMetadata(rom, metadata.copy(lockedFields = setOf("title")), listOf(american)))
+        val guessed = GameMetadata(title = rom.internalTitle!!, provider = "libretro", canonicalTitle = rom.internalTitle!!)
+        val corrected = catalogDisplayMetadata(rom, guessed, listOf(european))!!
+        assertEquals(european, corrected.title)
+        assertEquals(guessed.canonicalTitle, corrected.canonicalTitle)
+    }
+
     @Test fun manualRenameNeverBecomesAutomaticSearchOrCoverIdentity() {
         val query = gameMetadataQuery(game(), null, "de", "eu", "0123ABCD")
         assertEquals("Original (Europe)", query.title)
