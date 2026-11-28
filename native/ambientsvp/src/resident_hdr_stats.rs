@@ -590,10 +590,25 @@ impl LegacyScene{
 // All frames must be captured in presentation order. The cache is create-only
 // and is published atomically only on successful explicit completion.
 const PASS_P:[u32;9]=[1,5,10,25,50,75,90,95,99];
+fn valid_v1_schema(p:&[u32;9])->bool{p.iter().all(|&v|v<=100)&&p.windows(2).all(|x|x[0]<x[1])}
+fn valid_v1_values(r:&SceneResult,p:&[u32;9])->bool{
+    if !valid_v1_schema(p)||!(1..=1000).contains(&r.fraction)||r.maxscl.iter().any(|&v|v>100000){return false;}
+    let peak=*r.maxscl.iter().max().unwrap_or(&0);
+    if r.average>peak{return false;}
+    let reserved=p[1]==5&&p[2]==10;
+    if reserved&&(r.percentiles[1]!=0||r.percentiles[2]!=255){return false;}
+    let mut last=0;
+    for (i,&v) in r.percentiles.iter().enumerate(){
+        if reserved&&(i==1||i==2){continue;}
+        if v<last||v>peak{return false;}
+        last=v;
+    }
+    true
+}
 const MAX_SCENES:usize=100_000;
 pub(super) struct TwoPass{
     mode:u32,version:u32,key:String,profile:String,width:u32,height:u32,ends:Vec<u64>,
-    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,legacy_results:Vec<LegacySceneResult>,legacy_current:Option<LegacyScene>,failed:bool,
+    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,legacy_results:Vec<LegacySceneResult>,legacy_current:Option<LegacyScene>,schemas:Vec<[u32;9]>,current_schema:Option<[u32;9]>,failed:bool,
 }
 fn read_bounded(path:&std::path::Path,max:u64)->Result<String>{
     use std::io::Read;
@@ -631,7 +646,7 @@ impl TwoPass{
         }
         if ends.is_empty(){return Err("empty scene plan".into());}
         let mut s=Self{mode,version,key:key.into(),profile:profile.into(),width:w,height:h,ends,path:cache.into(),
-            next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,failed:false};
+            next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,schemas:Vec::new(),current_schema:None,failed:false};
         if mode==2{s.read_cache()?;}
         else if cache.exists(){return Err("scene cache already exists".into());}
         Ok(s)
@@ -676,14 +691,18 @@ impl TwoPass{
             let average=parse_num(fields.next())?;
             let mut percentiles=[0;9];for v in &mut percentiles{*v=parse_num(fields.next())?;}
             let fraction=parse_num(fields.next())?;
-            if fields.next().is_some()||end!=self.ends[self.results.len()]{return Err("scene cache plan mismatch".into());}
+            let mut schema=PASS_P;
+            if let Some(first)=fields.next(){
+                schema[0]=parse_num(Some(first))?;
+                for v in &mut schema[1..]{*v=parse_num(fields.next())?;}
+            }
+            if fields.next().is_some()||end!=self.ends[self.results.len()]||!valid_v1_schema(&schema){return Err("scene cache plan mismatch".into());}
+            self.schemas.push(schema);
             self.results.push(SceneResult{first,end,brightest_frame,maxscl,average,percentiles,fraction});
         }
-        if self.results.iter().any(|r|{
-            let peak=*r.maxscl.iter().max().unwrap_or(&0);
-            let actual=[r.percentiles[0],r.percentiles[3],r.percentiles[4],r.percentiles[5],r.percentiles[6],r.percentiles[7],r.percentiles[8]];
-            r.percentiles[1]!=0||r.percentiles[2]!=255||actual.iter().any(|&v|v>peak)||actual.windows(2).any(|p|p[0]>p[1])
-        }){return Err("invalid cached version-1 distribution".into());}
+        if self.results.iter().zip(&self.schemas).any(|(r,p)|!valid_v1_values(r,p)){
+            return Err("invalid cached version-1 distribution".into());
+        }
         if self.results.len()!=self.ends.len()||!validate_scene_sequence(0,*self.ends.last().unwrap(),&self.results,&self.results){
             return Err("incomplete or invalid scene cache".into());
         }
@@ -719,23 +738,31 @@ impl TwoPass{
         self.next+=1;Ok(result)
     }
     pub(super) fn capture(&mut self,index:u64,frame:SceneFrame)->Result<()>{
+        self.capture_v1(index,frame,PASS_P)
+    }
+    pub(super) fn capture_v1(&mut self,index:u64,frame:SceneFrame,schema:[u32;9])->Result<()>{
         if self.version!=1||self.mode!=1||self.failed||index!=self.next||self.results.len()>=self.ends.len(){
             self.abort();return Err("out of order scene capture".into());
         }
         let end=self.ends[self.results.len()];
-        if self.current.is_none(){self.current=Some(HdrScene::new(index,end,self.width,self.height,PASS_P)?);}
+        if !valid_v1_schema(&schema)||self.current_schema.is_some_and(|p|p!=schema){self.abort();return Err("scene distribution schema changed".into());}
+        if self.current.is_none(){self.current=Some(HdrScene::new(index,end,self.width,self.height,schema)?);self.current_schema=Some(schema);}
         if let Err(e)=self.current.as_mut().unwrap().push(index,frame){self.abort();return Err(e);}
         self.next+=1;
         if self.next==end{
-            self.results.push(self.current.take().unwrap().finish()?);
+            let result=self.current.take().unwrap().finish()?;
+            if !valid_v1_values(&result,&schema){self.abort();return Err("invalid measured scene values".into());}
+            self.results.push(result);self.schemas.push(schema);self.current_schema=None;
         }
         Ok(())
     }
-    pub(super) fn lookup(&mut self,index:u64)->Result<SceneResult>{
+    pub(super) fn lookup(&mut self,index:u64)->Result<SceneResult>{self.lookup_v1(index,PASS_P)}
+    pub(super) fn lookup_v1(&mut self,index:u64,schema:[u32;9])->Result<SceneResult>{
         if self.version!=1||self.mode!=2||self.failed||index!=self.next||index>=*self.ends.last().unwrap(){
             self.abort();return Err("out of order second pass".into());
         }
         let i=self.ends.partition_point(|&v|v<=index);
+        if self.schemas.get(i)!=Some(&schema){self.abort();return Err("scene replay schema mismatch".into());}
         let result=*self.results.get(i).ok_or("missing scene result")?;
         self.next+=1;
         Ok(result)
@@ -750,13 +777,15 @@ impl TwoPass{
         if self.mode==2{return Ok(());}
         if self.mode!=1{return Err("already finalized".into());}
         let mut data=self.header();
-        for r in &self.results{
+        for (r,schema) in self.results.iter().zip(&self.schemas){
             use std::fmt::Write as _;
             write!(&mut data,"{} {} {}",r.first,r.end,r.brightest_frame).map_err(|_|"cache formatting")?;
             for v in r.maxscl{write!(&mut data," {}",v).map_err(|_|"cache formatting")?;}
             write!(&mut data," {}",r.average).map_err(|_|"cache formatting")?;
             for v in r.percentiles{write!(&mut data," {}",v).map_err(|_|"cache formatting")?;}
-            writeln!(&mut data," {}",r.fraction).map_err(|_|"cache formatting")?;
+            write!(&mut data," {}",r.fraction).map_err(|_|"cache formatting")?;
+            if schema!=&PASS_P{for v in schema{write!(&mut data," {}",v).map_err(|_|"cache formatting")?;}}
+            data.push('\n');
         }
         for r in &self.legacy_results{
             use std::fmt::Write as _;
@@ -769,6 +798,7 @@ impl TwoPass{
             }
             data.push('\n');
         }
+        if data.len()>32_000_000{return Err("scene cache exceeds read limit".into());}
         // Unique create-new sibling; hard-link publication never overwrites
         // an existing cache and never exposes a partially written file.
         static SERIAL:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
