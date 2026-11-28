@@ -424,6 +424,9 @@ android {
         resources {
             // Signed JVM crypto jars contain metadata that Android does not load as code.
             excludes += setOf("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/versions/**")
+            // dnsjava's multi-release desktop JDK resolver provider is absent on Android.
+            // Do not exclude other service descriptors: SLF4J and other providers need them.
+            excludes += "META-INF/services/java.net.spi.InetAddressResolverProvider"
             merges += setOf("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/LICENSE.md", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/NOTICE.md")
         }
         jniLibs {

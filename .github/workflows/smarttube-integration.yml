@@ -57,9 +57,16 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_maven_updates.py'
           ./gradlew :app:checkDebugDuplicateClasses :app:checkReleaseDuplicateClasses \
             -PAPK_ABI=arm64 --no-configuration-cache --stacktrace --continue
+      - name: Verify release R8 with actual dependency classes
+        run: |
+          ./gradlew :app:minifyReleaseWithR8 -PAPK_ABI=arm64 -PADB_DEPLOY=false \
+            --no-configuration-cache --stacktrace
+      - name: Test DNS provider compatibility
+        run: |
+          ./gradlew :sharedutils:testDebugUnitTest -PAPK_ABI=arm64 --stacktrace
       - name: Test the patched SmartTube account and format paths
         run: |
-          ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' --tests '*SmartTubeFormatBridgeTest' -PAPK_ABI=arm64
+          ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' --tests '*SmartTubeFormatBridgeTest' --tests '*SmartTubeJsonPathCompatibilityTest' -PAPK_ABI=arm64
       - name: Verify the application runtime dependency graph
         run: |
           set -euo pipefail
@@ -81,5 +88,7 @@ jobs:
           name: smarttube-test-reports
           path: |
             smarttube_wrappers/youtubeapi/build/test-results/
+            smarttube_wrappers/sharedutils/build/test-results/
+            app/build/outputs/mapping/release/
             app/build/test-results/
           if-no-files-found: warn

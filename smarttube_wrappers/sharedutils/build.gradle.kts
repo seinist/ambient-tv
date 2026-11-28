@@ -72,6 +72,7 @@ dependencies {
     // Keep SLF4J API and the no-op provider on the same catalog release.
     implementation(libs.smarttube.slf4jApi)
     implementation(libs.smarttube.slf4j)
+    testImplementation(libs.junit4)
 }
 
 

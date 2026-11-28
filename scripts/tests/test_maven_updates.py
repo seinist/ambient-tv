@@ -238,6 +238,19 @@ class MavenUpdatesTest(unittest.TestCase):
                     cli.main()
             self.assertEqual(catalog.read_text(), FIXTURE)
 
+    def test_android_r8_rules_keep_only_supported_runtime_services(self):
+        root = cli.CATALOG.parents[1]
+        rules = (root / "app/proguard-rules.pro").read_text()
+        app = (root / "app/build.gradle.kts").read_text()
+        self.assertIn("-dontwarn com.sun.jna.platform.win32.Guid$GUID", rules)
+        self.assertIn("-dontwarn javax.naming.directory.InitialDirContext", rules)
+        self.assertIn("-dontwarn lombok.Generated", rules)
+        self.assertIn("-keep,allowshrinking class com.jayway.jsonpath.**", rules)
+        self.assertNotIn("-keep class com.jayway.jsonpath.**", rules)
+        self.assertNotIn("-dontwarn com.sun.jna.**", rules)
+        self.assertIn('excludes += "META-INF/services/java.net.spi.InetAddressResolverProvider"', app)
+        self.assertNotIn('excludes += "META-INF/services/**"', app)
+
     def test_root_compat_template_and_recovery_share_cronet_substitution(self):
         root = cli.CATALOG.parents[1]
         canonical = (root / "build.gradle.kts").read_text(encoding="utf-8")

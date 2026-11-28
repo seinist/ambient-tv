@@ -570,7 +570,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val parts = runCatching {
             val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
             val network = cm?.activeNetwork
-            val caps = network?.let { cm?.getNetworkCapabilities(it) }
+            val caps = network?.let { cm.getNetworkCapabilities(it) }
             monogramNativePipelineParts(
                 metered = cm?.isActiveNetworkMetered != false,
                 downstreamKbps = caps?.linkDownstreamBandwidthKbps ?: 0,
