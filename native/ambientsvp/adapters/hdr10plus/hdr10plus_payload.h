@@ -255,12 +255,21 @@ static inline bool ambient_hdrplus_parse(const uint8_t *data, size_t size, struc
             READ(6); p->saturation_weight = v;
         }
     }
-    if (r.bits - r.pos > 7) return false;
+    /* Registered data can be byte-aligned by the enclosing HEVC SEI
+     * payload stop bit or by zero fill from a T.35 serializer. Accept
+     * exactly those two sub-byte patterns. Historical encoders also
+     * append whole zero bytes; preserve their metadata for playback
+     * but do not describe the oversized payload as conforming.
+     * Arbitrary extensions/nonzero padding remain unsupported. */
+    const size_t remaining = r.bits - r.pos;
+    const unsigned align = (8u - (unsigned)(r.pos & 7u)) & 7u;
+    bool canonical_padding = remaining == align;
+    if (remaining && align) { READ(1); /* zero fill or one stop bit */ }
     while (r.pos < r.bits) { READ(1); if (v) return false; }
 #undef READ
     // Syntax compatibility is independent of checkable metadata validity.
     // Statistics derived from the source pixels cannot be verified here.
-    m.metadata_constraints_ok=true;
+    m.metadata_constraints_ok=canonical_padding;
     m.version0_recommended_fraction=m.version==0;
     for(unsigned i=0;i<m.window_count;i++){
         const struct ambient_hdrplus_window *w=&m.windows[i];
