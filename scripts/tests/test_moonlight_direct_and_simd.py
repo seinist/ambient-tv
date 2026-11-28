@@ -44,25 +44,74 @@ typedef struct JNITable {
     jint (*GetArrayLength)(const struct JNITable **env, jbyteArray obj);
     void (*SetByteArrayRegion)(const struct JNITable **env, jbyteArray obj, jint start, jint length, const jbyte *src);
     jboolean (*ExceptionCheck)(const struct JNITable **env);
+    void (*ExceptionClear)(const struct JNITable **env);
 } const *JNIEnv;
 static void *address(JNIEnv *env, jobject obj) { (void)env; return ((Buffer*)obj)->address; }
 static jlong capacity(JNIEnv *env, jobject obj) { (void)env; return ((Buffer*)obj)->capacity; }
-static bool failWrite, callbackFailed;
+static bool failWrite;
 static jint arrayLength(JNIEnv *env, jbyteArray obj) { (void)env; return (jint)((Buffer*)obj)->capacity; }
 static void arrayWrite(JNIEnv *env, jbyteArray obj, jint start, jint length, const jbyte *src) {
     (void)env;
     if (!failWrite) memcpy(((Buffer*)obj)->address + start, src, (size_t)length);
 }
 static jboolean exceptionCheck(JNIEnv *env) { (void)env; return failWrite; }
-static void recordCallbackFailure(JNIEnv *env) { (void)env; callbackFailed = true; failWrite = false; }
-static struct JNITable table = { address, capacity, arrayLength, arrayWrite, exceptionCheck };
+static void exceptionClear(JNIEnv *env) { (void)env; failWrite = false; }
+static struct JNITable table = { address, capacity, arrayLength, arrayWrite, exceptionCheck, exceptionClear };
 static JNIEnv mock = &table;
+#define JNI_OK 0
+#define JNI_VERSION_1_4 0x00010004
+typedef struct VMTable {
+    int (*GetEnv)(const struct VMTable **, void **, int);
+    int (*AttachCurrentThread)(const struct VMTable **, JNIEnv **, void *);
+    int (*DetachCurrentThread)(const struct VMTable **);
+} const *JavaVM;
+static __thread bool attached, rejectAttach;
+static unsigned attaches, detaches;
+static int getEnv(JavaVM *vm, void **out, int version) {
+    (void)vm; (void)version;
+    if (!attached) return -2;
+    *out = &mock;
+    return JNI_OK;
+}
+static int attachThread(JavaVM *vm, JNIEnv **out, void *arg) {
+    (void)vm; (void)arg;
+    if (rejectAttach) return -1;
+    attached = true; *out = &mock; __atomic_add_fetch(&attaches, 1, __ATOMIC_RELAXED); return JNI_OK;
+}
+static int detachThread(JavaVM *vm) {
+    (void)vm; attached = false; __atomic_add_fetch(&detaches, 1, __ATOMIC_RELAXED); return JNI_OK;
+}
+static struct VMTable vmTable = { getEnv, attachThread, detachThread };
+static JavaVM mockVM = &vmTable;
+static JavaVM *JVM = &mockVM;
+static pthread_key_t JniEnvKey;
+static pthread_once_t JniEnvKeyInitOnce = PTHREAD_ONCE_INIT;
 #define MAX_RTP_HEADER_SIZE 32
 """
 TEST = r"""
 static void *otherThread(void *target) {
     assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(&mock, NULL, target, 5));
     return NULL;
+}
+static void *jniThread(void *unused) {
+    (void)unused;
+    rejectAttach = true;
+    assert(GetThreadEnv() == NULL);
+    assert(Java_com_limelight_nvstream_jni_MoonBridge_consumeCallbackFailure(&mock, NULL));
+    rejectAttach = false;
+    assert(GetThreadEnv() == &mock);
+    assert(GetThreadEnv() == &mock);
+    return NULL;
+}
+static void testJniOwnership(void) {
+    // Java-owned callers never attach or arm a destructor.
+    attached = true;
+    assert(GetThreadEnv() == &mock && attaches == 0 && detaches == 0);
+    attached = false;
+    pthread_t thread;
+    assert(!pthread_create(&thread, NULL, jniThread, NULL));
+    assert(!pthread_join(thread, NULL));
+    assert(attaches == 1 && detaches == 1);
 }
 static void testCopy(void) {
     struct LENTRY second = { NULL, "de", 2, BUFFER_TYPE_PICDATA };
@@ -94,7 +143,8 @@ static void testCopy(void) {
     target.capacity = sizeof(output);
     failWrite = true;
     assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureArray(&mock, NULL, &target, 5));
-    assert(callbackFailed && !failWrite);
+    assert(!failWrite && Java_com_limelight_nvstream_jni_MoonBridge_consumeCallbackFailure(&mock, NULL));
+    assert(!Java_com_limelight_nvstream_jni_MoonBridge_consumeCallbackFailure(&mock, NULL));
     second.length = 6;
     assert(!Java_com_limelight_nvstream_jni_MoonBridge_copyActivePictureData(&mock, NULL, &target, 5));
     activePictureUnit = NULL;
@@ -146,6 +196,7 @@ static void testNetworkBounds(void) {
     assert(adaptiveVideoBufferTier == 2);
 }
 int main(void) {
+    testJniOwnership();
     testCopy();
     testDownmix();
     testNetworkBounds();
@@ -160,13 +211,14 @@ def main():
     args = parser.parse_args()
     c = (args.root / "callbacks.c").read_text()
     v = (args.root / "moonlight-common-c/src/VideoStream.c").read_text()
+    attach = c[c.index("static __thread JNIEnv* bridgeThreadEnv;"):c.index("JNIEXPORT void JNICALL\nJava_com_limelight_nvstream_jni_MoonBridge_init")]
     copy = c[c.index("static __thread PDECODE_UNIT activePictureUnit;"):c.index("static bool ensureFrameArray")]
     simd = c[c.index("// Keep scalar and SIMD operations"):c.index("int BridgeArInit(")]
     video = v[v.index("#define RTP_RECV_PACKETS_BUFFERED"):v.index("// Initialize the video stream")]
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         source = root / "native.c"
-        source.write_text(PRELUDE + copy + simd + video + TEST)
+        source.write_text(PRELUDE + attach + copy + simd + video + TEST)
         common = ["-std=gnu11", "-O2", "-ffp-contract=off", "-Wall", "-Wextra", "-Werror", "-pthread", str(source)]
         exe = root / "native"
         subprocess.run([os.environ.get("CC", "cc"), *common, "-o", str(exe)], check=True)
