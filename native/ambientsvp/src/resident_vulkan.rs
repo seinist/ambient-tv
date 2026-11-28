@@ -1364,8 +1364,11 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_capture(pass:*mut TwoPass,pair:*co
             let Ok(frames)=job.scene_frames()else{return -1;};
             return (&mut *pass).capture_legacy(index,frames).map_or(-1,|_|1);
         }
-        let Ok(frame)=job.scene_frame()else{return -1;};
-        (&mut *pass).capture(index,frame).map_or(-1,|_|1)
+        let Ok(mut frames)=job.scene_frames()else{return -1;};
+        if frames.len()!=1||frames[0].count!=9{return -1;}
+        let frame=frames.remove(0);
+        let schema:[u32;9]=frame.percentages[..9].try_into().unwrap();
+        (&mut *pass).capture_v1(index,frame.frame,schema).map_or(-1,|_|1)
     })).unwrap_or(-1)
 }
 #[unsafe(no_mangle)]
@@ -1373,6 +1376,13 @@ pub unsafe extern "C" fn ambient_svp_hdr_pass_lookup(pass:*mut TwoPass,index:u64
     if pass.is_null()||out.is_null(){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
         let Ok(result)=(&mut *pass).lookup(index)else{return -1;};*out=result;1
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_lookup_v1(pass:*mut TwoPass,index:u64,schema:*const [u32;9],out:*mut SceneResult)->i32{
+    if pass.is_null()||schema.is_null()||out.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let Ok(result)=(&mut *pass).lookup_v1(index,*schema)else{return -1;};*out=result;1
     })).unwrap_or(-1)
 }
 #[unsafe(no_mangle)]
