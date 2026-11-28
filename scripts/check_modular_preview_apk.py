@@ -5,15 +5,15 @@ from pathlib import Path
 import zipfile
 import struct
 import re
-from export_monogram_adapter import owns
+from export_monogram_adapter import owns, owns_smarttube
 
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
 EXTERNAL = {"libprojectM-4.so", "libambientprojectm.so",
-            "libmpv.so", "libambientmpv.so", "libspotify_receiver_core.so", "libmonogram_mtproto.so", "libjnidispatch.so"}
+            "libmpv.so", "libambientmpv.so", "libspotify_receiver_core.so", "libmonogram_mtproto.so", "libjnidispatch.so", "libj2v8.so"}
 SHARED = {"libc++_shared.so", "libavcodec.so", "libavutil.so", "libswresample.so"}
 
 
-def verify_no_monogram_classes(data):
+def verify_no_optional_classes(data):
     """Check defined classes, not reference strings (host ports still refer to adapters)."""
     if len(data) < 112 or data[:4] != b"dex\n":
         raise ValueError("invalid APK DEX")
@@ -52,8 +52,12 @@ def verify_no_monogram_classes(data):
         if end < 0:
             raise ValueError("unterminated DEX descriptor")
         descriptor = data[offset:end].decode("utf-8", errors="replace")
-        if descriptor.startswith("L") and descriptor.endswith(";") and owns(descriptor[1:-1] + ".class"):
-            raise ValueError(f"bundled Monogram adapter class: {descriptor}")
+        if descriptor.startswith("L") and descriptor.endswith(";"):
+            name = descriptor[1:-1] + ".class"
+            if owns(name):
+                raise ValueError(f"bundled Monogram adapter class: {descriptor}")
+            if owns_smarttube(name):
+                raise ValueError(f"bundled SmartTube adapter class: {descriptor}")
 
 
 def verify(apk):
@@ -61,7 +65,7 @@ def verify(apk):
         names = archive.namelist()
         for name in names:
             if re.fullmatch(r"classes([2-9]|[1-9][0-9]+)?[.]dex", name):
-                verify_no_monogram_classes(archive.read(name))
+                verify_no_optional_classes(archive.read(name))
     if len(names) != len(set(names)):
         raise ValueError(f"{apk}: duplicate APK entries")
     libraries = {}
