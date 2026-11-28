@@ -60,9 +60,13 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
             print(f"  MANUAL: {name} remains at {core['commit']}: JIT preflight failed for {revision} ({error}).")
             return False
         return True
-    if name not in SUPPORTED:
+    # Build-system recipes are independent of source-level hotpath patches.
+    recipe_cores = {"mupen64plus_next_gles3", "snes9x2010", "panda3ds", "swanstation"}
+    if name not in SUPPORTED and name not in recipe_cores:
         return True
-    if name in PATCHES:
+    if name not in SUPPORTED:
+        files = set()
+    elif name in PATCHES:
         files = {path for path, _, _ in PATCHES[name]}
     elif name == "bsnes":
         files = {"bsnes/target-libretro/libretro.cpp", "bsnes/target-libretro/program.cpp", "libco/arm.c"}
@@ -91,7 +95,8 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 url = f"https://raw.githubusercontent.com/{upstream}/{revision}/{urllib.parse.quote(relative, safe='/')}"
                 path.write_bytes(get_bytes(url))
-            prepare_hotpaths(root, name)
+            if name in SUPPORTED:
+                prepare_hotpaths(root, name)
             if name in {"mupen64plus_next_gles3", "snes9x2010"}:
                 prepare_ndk(root / core["jni"], name, "optimized")
             elif name in {"panda3ds", "swanstation"}:

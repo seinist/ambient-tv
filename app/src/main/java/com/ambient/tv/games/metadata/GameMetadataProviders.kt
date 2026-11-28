@@ -456,7 +456,8 @@ internal fun allowedGameProviderHost(provider: String, url: HttpUrl): Boolean =
         GameMetadataProviderIds.SCREENSCRAPER -> url.host in setOf("api.screenscraper.fr", "www.screenscraper.fr", "screenscraper.fr", "media.screenscraper.fr")
         GameMetadataProviderIds.THEGAMESDB -> url.host in setOf("api.thegamesdb.net", "cdn.thegamesdb.net", "images.thegamesdb.net")
         GameMetadataProviderIds.LIBRETRO_DATABASE -> url.host == GameMetadataProviders.LIBRETRO_DATABASE_HOST &&
-            url.encodedPath.startsWith("/" + GameMetadataProviders.LIBRETRO_DATABASE_ROOT + "/metadat/")
+            (url.encodedPath.startsWith("/" + GameMetadataProviders.LIBRETRO_DATABASE_ROOT + "/metadat/") ||
+                url.pathSegments == listOf("libretro", "libretro-database", "master", "dat", "Nintendo - Wii U.dat"))
         else -> false
     }
 

@@ -21,6 +21,7 @@ import com.ambient.tv.games.metadata.GameArtworkFile
 import com.ambient.tv.games.metadata.GameArtworkFiles
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameMetadata
+import com.ambient.tv.games.metadata.GameNameDatabases
 import com.ambient.tv.games.metadata.GameMetadataProviderIds
 import com.ambient.tv.games.metadata.GameMetadataStorage
 import com.ambient.tv.games.metadata.GameMetadataTicket
@@ -443,7 +444,7 @@ class GameLibraryRepository @Inject constructor(
                     )
                     // Reuse checksums already collected for these files before asking their
                     // source for anything. Manual title/metadata locks remain untouched.
-                    writable.execSQL(
+                    if (GameNameDatabases.usesChecksums(systemId)) writable.execSQL(
                         """UPDATE game_entries SET verified_title=COALESCE(
                             (SELECT title FROM game_dat_entries d WHERE d.system_id=game_entries.system_id
                                 AND d.crc32=game_entries.archive_crc),
@@ -454,6 +455,12 @@ class GameLibraryRepository @Inject constructor(
                             WHERE system_id=?""",
                         arrayOf<Any>(previous + 1, systemId)
                     )
+                    if (!GameNameDatabases.usesChecksums(systemId)) {
+                        // Title-only catalogs still change lookup identity, so old negative
+                        // artwork cache entries must not hide newly available release names.
+                        writable.execSQL("UPDATE game_entries SET dat_version=? WHERE system_id=?",
+                            arrayOf<Any>(previous + 1, systemId))
+                    }
                     val affected = writable.rawQuery("SELECT file_id FROM game_entries WHERE system_id=?",
                         arrayOf(systemId)).use { rows -> buildSet { while (rows.moveToNext()) add(rows.getString(0)) } }
                     refreshQueryFiles(affected, configuration, updateVerifiedMetadata = true)
@@ -1372,7 +1379,7 @@ class GameLibraryRepository @Inject constructor(
                                     last.modified == entry.modified && entry.modified != 0L
                                 val needsArchiveChecksum = needsArchiveDatChecksum(entry.name, last,
                                     last?.let { datVersions[it.systemId] } ?: 0L)
-                                val cachedProbe = unchanged && last.probeVersion == PROBE_VERSION &&
+                                val cachedProbe = unchanged && last.probeVersion == probeVersion(last.systemId) &&
                                     (folder.systemId == "auto" || folder.systemId == last.systemId) && !needsArchiveChecksum
                                 val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
                                     if (ext == "rar") {
@@ -1383,7 +1390,7 @@ class GameLibraryRepository @Inject constructor(
                                     } else {
                                         val probed = runCatching {
                                             reader().open(entry.path).use {
-                                                GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = datVersions.keys)
+                                                GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = datVersions.keys.filter(GameNameDatabases::usesChecksums).toSet())
                                             }
                                         }
                                         // Network/decoder errors must NOT silently delete a
@@ -1414,18 +1421,20 @@ class GameLibraryRepository @Inject constructor(
                                         cachedProbe && (last.archiveCrc != null || version == 0L) ->
                                             GameRomChecksums.Result(last.archiveCrc, last.datCrc)
                                         archive != null -> GameRomChecksums.Result(archive.crc32, archive.datCrc32)
-                                        version > 0L -> datChecksums(reader(), entry, system.id)
+                                        version > 0L && GameNameDatabases.usesChecksums(system.id) -> datChecksums(reader(), entry, system.id)
                                         else -> GameRomChecksums.Result(null)
                                     }
                                     val verified = when {
+                                        !GameNameDatabases.usesChecksums(system.id) -> last?.verifiedTitle?.takeIf { unchanged }
                                         version == 0L -> null
-                                        cachedProbe && last.datVersion == version -> last.verifiedTitle
+                                        cachedProbe && last.datVersion == version &&
+                                            checksums.crc32 == last.archiveCrc && checksums.datCrc32 == last.datCrc -> last.verifiedTitle
                                         else -> checksums.crc32?.let { datNameFromCrc(system.id, it) }
                                             ?: checksums.datCrc32?.let { datNameFromCrc(system.id, it) }
                                     }
                                     indexed += IndexedGame(entry, system.id, internal,
                                         last?.favorite ?: false, last?.lastPlayed ?: 0L,
-                                        last?.customTitle, verified, PROBE_VERSION, version,
+                                        last?.customTitle, verified, probeVersion(system.id), version,
                                         checksums.crc32, checksums.datCrc32)
                                 }
                                 val count = processed.incrementAndGet()
@@ -1553,12 +1562,15 @@ class GameLibraryRepository @Inject constructor(
         const val PROBE_VERSION = 3
     }
 
+    // Invalidate only DS, 3DS and PSP probes so existing libraries recover new titles and alternate CRCs.
+    private fun probeVersion(systemId: String): Int = if (systemId in setOf("nds", "n3ds", "psp")) PROBE_VERSION + 1 else PROBE_VERSION
+
     private fun extractTitle(entry: FileEntry, session: GameScanFileSession, system: String): String? {
         if (entry.size <= 0 || system !in setOf("gb", "gba", "nds", "snes", "megadrive",
                 "n64", "gamecube", "wii", "psp")) return null
         val ext = GameSystems.extension(entry.name)
         if (ext in GameSystems.archiveExtensions || ext in setOf("cue", "m3u", "gdi", "chd",
-                "cso", "zso", "wbfs", "rvz", "ciso")) return null
+                "wbfs", "rvz", "ciso") || (ext in setOf("cso", "zso") && system != "psp")) return null
         return runCatching {
             session.open(entry.path).use { media ->
                 GameRomTitles.extract(system, entry.name) { offset, count ->

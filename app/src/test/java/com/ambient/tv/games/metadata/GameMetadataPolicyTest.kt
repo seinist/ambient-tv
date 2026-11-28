@@ -12,6 +12,16 @@ class GameMetadataPolicyTest {
         customTitle = "My nickname", verifiedTitle = "Original (Europe)",
     )
 
+    @Test fun catalogFallbackUsesExactReleaseNamesAndDoesNotGuessDifferentGames() {
+        val titles = listOf("Ridge Racer (Europe)", "Ridge Racer (USA)", "Ridge Racer 2 (Europe)")
+        assertEquals(titles.take(2), matchingGameCatalogTitles("Ridge Racer", titles))
+        assertEquals(listOf(titles.first()), matchingGameCatalogTitles("Ridge Racer (Europe)", titles))
+        assertTrue(matchingGameCatalogTitles("Ridge", titles).isEmpty())
+        assertTrue(matchingGameCatalogTitles("Ridge Racer (Japan)", titles).isEmpty())
+        assertEquals("Mario Kart DS (Europe)", gameCatalogFilename("nds", "0123 - Mario Kart DS (Europe).nds"))
+        assertEquals("1942 - Joint Strike", gameCatalogFilename("psp", "1942 - Joint Strike.iso"))
+    }
+
     @Test fun manualRenameNeverBecomesAutomaticSearchOrCoverIdentity() {
         val query = gameMetadataQuery(game(), null, "de", "eu", "0123ABCD")
         assertEquals("Original (Europe)", query.title)

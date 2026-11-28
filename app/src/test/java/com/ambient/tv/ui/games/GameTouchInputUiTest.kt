@@ -15,9 +15,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -93,6 +95,37 @@ class GameTouchInputUiTest {
         rule.waitForIdle()
         fixture.aTransitions.clear() // Disposal/initial neutral notifications are not presses.
         return fixture
+    }
+
+    @Test fun coreActionDescriptionsDoNotAddVisibleLabelsToConsoleButtons() {
+        var presentation by mutableStateOf(gameTouchPresentation("nds"))
+        val action = "Core-specific action"
+        rule.setContent {
+            AmbientTvTheme {
+                GameTouchControls(
+                    mode = GameTouchMode.DPAD,
+                    onButton = { _, _ -> },
+                    onStick = { _, _, _ -> },
+                    portrait = true,
+                    applySafeInsets = false,
+                    presentation = presentation,
+                    coreActions = mapOf(RetroPadButton.A to action, RetroPadButton.L to action),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        for (system in listOf("nds", "snes", "psx")) {
+            val current = gameTouchPresentation(system)
+            rule.runOnIdle { presentation = current }
+            for (button in listOf(RetroPadButton.A, RetroPadButton.L)) {
+                val label = current.labels.getValue(button)
+                rule.onNodeWithTag("game-touch-${button.key}", useUnmergedTree = true)
+                    .assertIsDisplayed()
+                    .assertContentDescriptionEquals("$label: $action")
+                rule.onNodeWithText(label, useUnmergedTree = true).assertIsDisplayed()
+            }
+            rule.onNodeWithText(action, useUnmergedTree = true).assertDoesNotExist()
+        }
     }
 
     @Test fun buttonHapticsAreOptInAndNeverFollowDpadStickOrHeldMovement() {

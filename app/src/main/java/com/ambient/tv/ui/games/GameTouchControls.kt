@@ -3,10 +3,8 @@ package com.ambient.tv.ui.games
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -45,7 +43,6 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -318,14 +315,11 @@ private fun GameTouchButton(button: RetroPadButton, pressed: Boolean, modifier: 
             .border(2.dp, if (pressed) accent else Color.White.copy(alpha = .74f), shape),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(1.dp),
-            modifier = Modifier.padding(horizontal = 3.dp)) {
-            Text(label, fontSize = if (face) 23.sp else 16.sp,
-                fontWeight = FontWeight.Medium, style = labelStyle, color = ink, maxLines = 1)
-            if (caption != null) Text(caption, fontSize = 9.sp, lineHeight = 10.sp, style = labelStyle,
-                color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+        // Keep the original console's printed label centered. Core-specific action descriptions
+        // remain available through accessibility semantics without adding a second visible label.
+        Text(label, fontSize = if (face) 23.sp else 16.sp,
+            fontWeight = FontWeight.Medium, style = labelStyle, color = ink, maxLines = 1,
+            modifier = Modifier.padding(horizontal = 3.dp))
     }
 }
 
