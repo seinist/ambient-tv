@@ -3,6 +3,7 @@ import java.security.MessageDigest
 import java.net.URI
 import java.util.Properties
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 import com.android.build.api.artifact.ScopedArtifact
 import com.android.build.api.variant.ScopedArtifacts
 import org.gradle.api.file.Directory
@@ -164,6 +165,19 @@ val modulePackaging = providers.gradleProperty("MODULE_PACKAGING")
     .orElse(providers.environmentVariable("MODULE_PACKAGING")).orElse("full").get()
 require(modulePackaging in setOf("full", "modular-preview")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
 val modularPreview = modulePackaging == "modular-preview"
+// An older custom AAR or Maven fallback must remain bundled until its Java
+// load sites support the same absolute path as the system module host.
+val vlcModuleBinding = if (vulkanVlcAar.isFile) ZipFile(vulkanVlcAar).use { aar ->
+    val classes = aar.getEntry("classes.jar")?.let { aar.getInputStream(it).use { input -> input.readBytes() } }
+        ?: error("LibVLC AAR has no Java bindings")
+    val patched = ZipInputStream(classes.inputStream()).use { jar ->
+        generateSequence { jar.nextEntry }.any { it.name == "org/videolan/libvlc/AmbientNativeLibraryLoader.class" }
+    }
+    if (patched) MessageDigest.getInstance("SHA-256").digest(classes)
+        .joinToString("") { "%02x".format(it.toInt() and 255) } else ""
+} else ""
+val vlcModuleSupported = vlcModuleBinding.isNotEmpty()
+val vlcBundled = !modularPreview || !vlcModuleSupported
 val smartTubeHostResources = rootProject.findProject(":youtubeapi") != null
 val smartTubeBundled = smartTubeHostResources && !modularPreview
 val smartTubeAdapterInputs = fileTree("src/main/java/com/ambient/tv/youtube") { include("**/*.kt") }.files +
@@ -392,6 +406,8 @@ android {
         // Only the app's own VLC 4 build (scripts/build_vlc_vulkan.sh) carries the ambientsvp
         // filter; the Maven libVLC fallback cannot interpolate, so SVP is hidden there.
         buildConfigField("boolean", "VLC_SVP", vulkanVlcAar.isFile.toString())
+        buildConfigField("boolean", "VLC_BUNDLED", vlcBundled.toString())
+        buildConfigField("String", "VLC_MODULE_BINDING_SHA256", quotedBuildConfigString(vlcModuleBinding))
         buildConfigField("String", "LIBVLC_VERSION", quotedBuildConfigString(if (vulkanVlcAar.isFile) "4.0.0-dev-vulkan+c84ef1e" else libs.versions.libvlc.get()))
         buildConfigField("String", "MEDIA3_VERSION", quotedBuildConfigString(libs.versions.media3.get()))
         buildConfigField("String", "COMPOSE_BOM_VERSION", quotedBuildConfigString(libs.versions.composeBom.get()))
@@ -517,6 +533,7 @@ android {
                 "**/libmpv.so", "**/libambientmpv.so", "**/libj2v8.so",
             )
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
+            if (modularPreview && vlcModuleSupported) excludes += setOf("**/libvlc.so", "**/libvlcjni.so")
             if (!spotifyEnabled || modularPreview) excludes += "**/libspotify_receiver_core.so"
             if (modularPreview) excludes += "**/libmonogram_mtproto.so"
             // An earlier full Vulkan build may leave a 6+ MB native library in
