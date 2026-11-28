@@ -1,11 +1,8 @@
 package com.ambient.tv.youtube
 
-import android.content.Context
 import com.ambient.tv.modules.SystemModule
 import com.ambient.tv.modules.SystemModuleAvailability
-import com.ambient.tv.modules.SystemModuleEntrypoint
 import com.ambient.tv.modules.SystemModuleHost
-import java.io.File
 
 /**
  * Select once on a worker, before any upstream class initializes.
@@ -20,6 +17,7 @@ internal object SmartTubeModuleRuntime {
         if (attempted) return loader != null
         var external = false
         try {
+            if (SystemModule.SMARTTUBE !in SystemModuleHost.supported) return false
             val module = SystemModuleHost.loadSelected(SystemModule.SMARTTUBE)
             external = module != null
             val selected = if (module != null) {
@@ -45,14 +43,11 @@ internal object SmartTubeModuleRuntime {
     }
 
     /** UI callers must not trigger disk or native work. */
-    val available: Boolean get() = loader != null
+    val available: Boolean get() = loader != null && SystemModuleAvailability.smartTubeOffered
 
     fun type(name: String): Class<*> {
         val selected = loader ?: throw IllegalStateException("SmartTube runtime not ready")
         return Class.forName(name, true, selected)
     }
 
-    fun fail() {
-        SystemModuleAvailability.reportFailure(SystemModule.SMARTTUBE)
-    }
 }
