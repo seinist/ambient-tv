@@ -60,7 +60,7 @@ struct svp_vk_mpv {
     int (*scene_stats)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,uint32_t);
     int (*scene_interval)(const AmbientSvpHdrPass *,uint64_t,uint64_t *);
     int (*scene_capture)(AmbientSvpHdrPass *,const AmbientSvpVkPair *,uint32_t,uint64_t);
-    int (*scene_lookup)(AmbientSvpHdrPass *,uint64_t,AmbientSvpHdrSceneResult *);
+    int (*scene_lookup)(AmbientSvpHdrPass *,uint64_t,const uint32_t (*)[9],AmbientSvpHdrSceneResult *);
     int (*scene_finish)(AmbientSvpHdrPass *);
     void (*scene_destroy)(AmbientSvpHdrPass *);
     int (*seal)(AmbientSvpVkPair *,VkFence);
@@ -447,8 +447,7 @@ static void svp_vk_hdrplus_affine(AVHDRPlusColorTransformParams *p,const float g
 }
 static bool svp_vk_scene_metadata(struct mp_image *img,const AmbientSvpHdrSceneResult *r)
 {
-    static const unsigned percentages[9]={1,5,10,25,50,75,90,95,99};
-    if(!r||!svp_hdr_scene_values(r->maxscl,r->average,r->percentiles,r->fraction))return false;
+    if(!r)return false;
     for(int i=0;i<img->num_ff_side_data;i++){
         if(img->ff_side_data[i].type!=AV_FRAME_DATA_DYNAMIC_HDR_PLUS)continue;
         AVBufferRef *ref=img->ff_side_data[i].buf;
@@ -458,7 +457,8 @@ static bool svp_vk_scene_metadata(struct mp_image *img,const AmbientSvpHdrSceneR
             m->mastering_display_actual_peak_luminance_flag||m->params[0].color_saturation_mapping_flag)return false;
         AVHDRPlusColorTransformParams *p=&m->params[0];
         if(p->num_distribution_maxrgb_percentiles!=9)return false;
-        for(unsigned j=0;j<9;j++)if(p->distribution_maxrgb[j].percentage!=percentages[j])return false;
+        uint32_t schema[9];for(unsigned j=0;j<9;j++)schema[j]=p->distribution_maxrgb[j].percentage;
+        if(!svp_hdr_scene_values_schema(r->maxscl,r->average,r->percentiles,r->fraction,schema))return false;
         uint32_t peak=0;
         for(unsigned j=0;j<3;j++){p->maxscl[j]=(AVRational){r->maxscl[j],100000};if(r->maxscl[j]>peak)peak=r->maxscl[j];}
         p->average_maxrgb=(AVRational){r->average,100000};
@@ -482,7 +482,6 @@ static bool svp_vk_scene_metadata(struct mp_image *img,const AmbientSvpHdrSceneR
 }
 static bool svp_vk_scene_compatible(const struct mp_image *img)
 {
-    static const unsigned percentages[9]={1,5,10,25,50,75,90,95,99};
     const AVBufferRef *ref=svp_vk_hdr10plus(img);
     if(!ref||!ref->data||ref->size!=sizeof(AVDynamicHDRPlus)||img->dovi||
         img->params.color.transfer!=PL_COLOR_TRC_PQ||img->params.color.primaries!=PL_COLOR_PRIM_BT_2020)return false;
@@ -491,7 +490,8 @@ static bool svp_vk_scene_compatible(const struct mp_image *img)
     if(!svp_hdrplus_lerp(&checked,ref,ref,0,img->w,img->h))return false;
     if(m->application_version==0)return true;
     if(m->application_version!=1||m->num_windows!=1||m->params[0].num_distribution_maxrgb_percentiles!=9)return false;
-    for(unsigned j=0;j<9;j++)if(m->params[0].distribution_maxrgb[j].percentage!=percentages[j])return false;
+    for(unsigned j=0;j<9;j++)if(m->params[0].distribution_maxrgb[j].percentage>100||
+        (j&&m->params[0].distribution_maxrgb[j].percentage<=m->params[0].distribution_maxrgb[j-1].percentage))return false;
     return true;
 }
 static bool svp_vk_scene_version(const struct mp_image *img,unsigned version)
@@ -841,7 +841,7 @@ static bool svp_vk_scene_open(struct svp_vk_mpv *s,void *lib,const struct mp_ima
     s->scene_stats=dlsym(lib,"ambient_svp_vk_hdr_stats_scene");
     s->scene_interval=dlsym(lib,"ambient_svp_hdr_pass_interval");
     s->scene_capture=dlsym(lib,"ambient_svp_hdr_pass_capture");
-    s->scene_lookup=dlsym(lib,"ambient_svp_hdr_pass_lookup");
+    s->scene_lookup=dlsym(lib,"ambient_svp_hdr_pass_lookup_v1");
     s->scene_finish=dlsym(lib,"ambient_svp_hdr_pass_finish");
     s->scene_destroy=dlsym(lib,"ambient_svp_hdr_pass_destroy");
     if(!open||!s->scene_stats_legacy||!s->scene_lookup_legacy||!s->scene_stats||!s->scene_interval||!s->scene_capture||!s->scene_lookup||!s->scene_finish||!s->scene_destroy)return false;
@@ -1149,7 +1149,11 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
                     AmbientSvpHdrLegacyScene legacy;
                     if(s->scene_lookup_legacy(s->scene_pass,s->tick+i,&legacy)!=1||
                         !svp_vk_scene_legacy_metadata(outputs[i],&legacy))goto submitted_fail;
-                }else if(s->scene_lookup(s->scene_pass,s->tick+i,&result)!=1||!svp_vk_scene_metadata(outputs[i],&result))goto submitted_fail;
+                }else{
+                    const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)svp_vk_hdr10plus(outputs[i])->data;
+                    uint32_t schema[9];for(unsigned k=0;k<9;k++)schema[k]=m->params[0].distribution_maxrgb[k].percentage;
+                    if(s->scene_lookup(s->scene_pass,s->tick+i,&schema,&result)!=1||!svp_vk_scene_metadata(outputs[i],&result))goto submitted_fail;
+                }
             }
         }
         for(unsigned i=0;i<count;i++)if(hdr_counts[i]){
