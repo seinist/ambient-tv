@@ -13,6 +13,7 @@ typedef struct {
     uint64_t previous_id,tick;
     vlc_tick_t origin;
     double source,target;
+    AmbientSvpQuality quality;
 } SvpHdrSchedule;
 static atomic_uint_fast64_t svp_hdr_next_id=1;
 static inline uint64_t svp_hdr_new_id(void){return atomic_fetch_add(&svp_hdr_next_id,1);}
@@ -71,7 +72,7 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
         if(count==8||phase<-.25||phase>1.)goto fail;
         picture_t *out=picture_Clone(s->previous);
         if(!out)goto fail;
-        if(!ambient_svp_attach_pair(out,s->previous,pic?pic:s->previous,s->previous_id,id,(float)fmax(0.,phase))){
+        if(!ambient_svp_attach_pair(out,s->previous,pic?pic:s->previous,s->previous_id,id,(float)fmax(0.,phase),&s->quality)){
             picture_Release(out);goto fail;
         }
         out->date=time;out->p_next=NULL;
@@ -108,6 +109,11 @@ static int svp_android_open(filter_t *f)
     s->source=(double)v->i_frame_rate/v->i_frame_rate_base;
     s->target=var_InheritFloat(f,"ambientsvp-fps");
     if(!(s->target>s->source&&s->target/s->source<=8)||!svp_load(&s->api))return VLC_EGENERIC;
+    s->quality=(AmbientSvpQuality){.preset=var_InheritInteger(f,"ambientsvp-preset"),
+        .block=var_InheritInteger(f,"ambientsvp-block"),.overlap=var_InheritInteger(f,"ambientsvp-overlap"),
+        .pel=var_InheritInteger(f,"ambientsvp-pel"),.search=var_InheritInteger(f,"ambientsvp-search"),
+        .artifacts=var_InheritInteger(f,"ambientsvp-artifacts"),.scene=var_InheritInteger(f,"ambientsvp-scene"),
+        .algorithm=var_InheritInteger(f,"ambientsvp-algo")};
     f->p_sys=s;f->vctx_out=f->vctx_in;vlc_video_context_Hold(f->vctx_out);
     f->fmt_out.video.i_frame_rate=llround(s->target*1000.0);
     f->fmt_out.video.i_frame_rate_base=1000;f->ops=&svp_hdr_ops;
