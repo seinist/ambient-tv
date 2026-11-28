@@ -1,0 +1,102 @@
+diff --git a/src/RtpAudioQueue.c b/src/RtpAudioQueue.c
+--- a/src/RtpAudioQueue.c
++++ b/src/RtpAudioQueue.c
+@@ -656,7 +656,7 @@
+     return queueHasPacketReady(queue) ? RTPQ_RET_PACKET_READY : 0;
+ }
+ 
+-PRTP_PACKET RtpaGetQueuedPacket(PRTP_AUDIO_QUEUE queue, uint16_t customHeaderLength, uint16_t* length) {
++PRTP_PACKET RtpaGetQueuedPacketWithAllocator(PRTP_AUDIO_QUEUE queue, uint16_t customHeaderLength, uint16_t* length, void* (*allocate)(size_t)) {
+     validateFecBlockState(queue);
+ 
+     // If we're returning audio data even with discontinuities, we'll fill in blank entries
+@@ -669,7 +669,7 @@
+         if (nextBlock->marks[nextBlock->nextDataPacketIndex]) {
+             // This packet is missing. Return an empty entry to let the caller
+             // know to perform packet loss concealment for this frame.
+-            lostPacket = malloc(customHeaderLength);
++            lostPacket = allocate(customHeaderLength);
+             if (lostPacket == NULL) {
+                 return NULL;
+             }
+@@ -702,7 +702,7 @@
+     // Return the next RTP sequence number by indexing into the most recent FEC block
+     if (queueHasPacketReady(queue)) {
+         PRTPA_FEC_BLOCK nextBlock = queue->blockHead;
+-        PRTP_PACKET packet = malloc(customHeaderLength + sizeof(RTP_PACKET) + nextBlock->blockSize);
++        PRTP_PACKET packet = allocate(customHeaderLength + sizeof(RTP_PACKET) + nextBlock->blockSize);
+         if (packet == NULL) {
+             return NULL;
+         }
+@@ -724,5 +724,9 @@
+         return packet;
+     }
+ 
+-    return NULL;
+-}
++    return NULL;
++}
++
++PRTP_PACKET RtpaGetQueuedPacket(PRTP_AUDIO_QUEUE queue, uint16_t customHeaderLength, uint16_t* length) {
++    return RtpaGetQueuedPacketWithAllocator(queue, customHeaderLength, length, malloc);
++}
+diff --git a/src/RtpAudioQueue.h b/src/RtpAudioQueue.h
+--- a/src/RtpAudioQueue.h
++++ b/src/RtpAudioQueue.h
+@@ -78,4 +78,5 @@
+ void RtpaInitializeQueue(PRTP_AUDIO_QUEUE queue);
+ void RtpaCleanupQueue(PRTP_AUDIO_QUEUE queue);
+ int RtpaAddPacket(PRTP_AUDIO_QUEUE queue, PRTP_PACKET packet, uint16_t length);
+-PRTP_PACKET RtpaGetQueuedPacket(PRTP_AUDIO_QUEUE queue, uint16_t customHeaderLength, uint16_t* length);
++PRTP_PACKET RtpaGetQueuedPacket(PRTP_AUDIO_QUEUE queue, uint16_t customHeaderLength, uint16_t* length);
++PRTP_PACKET RtpaGetQueuedPacketWithAllocator(PRTP_AUDIO_QUEUE queue, uint16_t customHeaderLength, uint16_t* length, void* (*allocate)(size_t));
+diff --git a/src/AudioStream.c b/src/AudioStream.c
+--- a/src/AudioStream.c
++++ b/src/AudioStream.c
+@@ -52,7 +52,16 @@
+     return packet;
+ }
+ 
+-static void releaseAudioPacket(PQUEUED_AUDIO_PACKET packet) {
++// FEC output uses the same fixed-size storage as received packets, including
++// zero-length PLC placeholders. Preserve a correctly sized heap fallback.
++static void* acquireFecAudioPacket(size_t size) {
++    if (size <= sizeof(QUEUED_AUDIO_PACKET)) return acquireReceivePacket();
++    PQUEUED_AUDIO_PACKET packet = malloc(size);
++    if (packet != NULL) packet->header.pooled = false;
++    return packet;
++}
++
++static void releaseAudioPacket(PQUEUED_AUDIO_PACKET packet) {
+     if (packet->header.pooled) {
+         pthread_mutex_lock(&audioPoolLock);
+         if (audioPoolCount < AUDIO_RECEIVE_POOL_LIMIT) {
+@@ -396,15 +405,14 @@
+                 // If packets are ready, pull them and send them to the decoder
+                 uint16_t length;
+                 PQUEUED_AUDIO_PACKET queuedPacket;
+-                while ((queuedPacket = (PQUEUED_AUDIO_PACKET)RtpaGetQueuedPacket(&rtpAudioQueue, sizeof(QUEUED_AUDIO_PACKET_HEADER), &length)) != NULL) {
+-                    // Populate header data (not preserved in queued packets)
+-                    queuedPacket->header.size = length;
+-                    queuedPacket->header.pooled = false;
++                while ((queuedPacket = (PQUEUED_AUDIO_PACKET)RtpaGetQueuedPacketWithAllocator(&rtpAudioQueue, sizeof(QUEUED_AUDIO_PACKET_HEADER), &length, acquireFecAudioPacket)) != NULL) {
++                    // Preserve the allocator's ownership tag.
++                    queuedPacket->header.size = length;
+ 
+                     if (!directSubmit) {
+                         if (!queuePacketToLbq(&queuedPacket)) {
+                             // An exit signal was received
+-                            free(queuedPacket);
++                            releaseAudioPacket(queuedPacket);
+                             break;
+                         }
+                         else {
+@@ -414,7 +422,7 @@
+                     }
+                     else {
+                         decodeInputData(queuedPacket);
+-                        free(queuedPacket);
++                        releaseAudioPacket(queuedPacket);
+                     }
+                 }
+ 
