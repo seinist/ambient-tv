@@ -734,6 +734,13 @@ native J2V8/V8 source correspondence; that remains explicitly unverified.
 Resolved ASM artifacts are included in the Java source inventory without
 changing host class ownership.
 
+VLC source candidates now inventory the downloaded contrib tarballs from
+the actual build tree, recording hashes and available upstream SHA-512 or
+Git archive marker evidence. FFmpeg must match the pinned commit marker;
+libplacebo must match its recipe checksum. The final source archive is
+stream-checked against the tarball inventory. Unmatched recipe evidence is
+explicitly marked for review, not claimed to be verified source correspondence.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

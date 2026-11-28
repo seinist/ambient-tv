@@ -153,6 +153,29 @@ class CorrespondingSourceTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "executable text differs"):
                     sources.collect_j2v8_provenance(shared, dist, root / "bad")
 
+    def test_vlc_contrib_source_inventory_checks_recipe_and_git_pins(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            contrib = root / "contrib"
+            tarballs = contrib / "tarballs"
+            tarballs.mkdir(parents=True)
+            pin = "a" * 40
+            ffmpeg = tarballs / f"ffmpeg-{pin}.tar.xz"
+            ffmpeg.write_bytes(b"ffmpeg")
+            ffmpeg.with_name(f"ffmpeg-{pin}.githash").write_text(f"{pin} {ffmpeg}\n")
+            placebo = tarballs / "libplacebo-v1.tar.bz2"
+            placebo.write_bytes(b"placebo")
+            sums = contrib / "src/libplacebo/SHA512SUMS"
+            sums.parent.mkdir(parents=True)
+            sums.write_text(f"{hashlib.sha512(b'placebo').hexdigest()}  {placebo.name}\n")
+            output = sources.collect_vlc_contrib_provenance(contrib, root / "inventory", pin)
+            rows = json.loads((output / "vlc-contrib-inventory.json").read_text())["archives"]
+            self.assertEqual({row["recipeVerification"] for row in rows}, {"git-marker", "sha512"})
+            placebo.write_bytes(b"changed")
+            with self.assertRaisesRegex(ValueError, "SHA512 mismatch"):
+                sources.collect_vlc_contrib_provenance(contrib, root / "bad", pin)
+
     def test_all_modules_have_explicit_roots(self):
         self.assertEqual(10, len(sources.ROOTS))
         self.assertTrue(all(paths for paths in sources.ROOTS.values()))

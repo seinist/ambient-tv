@@ -109,6 +109,8 @@ def validate_source_archive(path, descriptor):
     total = 0
     inventory = None
     j2v8 = None
+    vlc_contrib = None
+    vlc_archives = {}
     with gzip.open(path, "rb") as stream, tarfile.open(fileobj=stream, mode="r|") as archive:
         for member in archive:
             name = member.name
@@ -135,6 +137,14 @@ def validate_source_archive(path, descriptor):
                     if j2v8 is not None or not 0 < member.size <= MAX_INVENTORY_BYTES:
                         raise ValueError("Invalid J2V8 provenance member")
                     j2v8 = json.load(archive.extractfile(member))
+                if module == "vlc":
+                    prefix = "upstream/.native/libvlcjni/vlc/contrib/tarballs/"
+                    if name.startswith(prefix) and "/" not in name[len(prefix):] and is_vlc_source_tarball(name[len(prefix):]):
+                        vlc_archives[name[len(prefix):]] = (member.size, hashlib.file_digest(archive.extractfile(member), "sha256").hexdigest())
+                    if root.endswith("/resolved-vlc-contrib") and name == f"upstream/{root}/vlc-contrib-inventory.json":
+                        if vlc_contrib is not None or not 0 < member.size <= MAX_INVENTORY_BYTES:
+                            raise ValueError("Invalid VLC contrib inventory member")
+                        vlc_contrib = json.load(archive.extractfile(member))
                 if NOTICE.match(name.rsplit("/", 1)[-1]) and 0 < member.size <= 4 * 1024 * 1024:
                     actual[root][1] += 1
         # Consume the remaining gzip stream, including its checksum, rather
@@ -158,6 +168,19 @@ def validate_source_archive(path, descriptor):
         for row in rows:
             if not all(re.fullmatch(r"[a-f0-9]{64}", row.get(key, "")) for key in ("inputSha256", "textSha256", "apkSha256")) or not re.fullmatch(r"[a-f0-9]{40}", row.get("gitBlob", "")):
                 raise ValueError("Invalid J2V8 binary fingerprints")
+    if module == "vlc":
+        if not isinstance(vlc_contrib, dict) or vlc_contrib.get("schema") != 1 or vlc_contrib.get("reviewRequired") is not True:
+            raise ValueError("Missing VLC contrib provenance")
+        ffmpeg = vlc_contrib.get("ffmpegCommit", "")
+        rows = vlc_contrib.get("archives", [])
+        if not re.fullmatch(r"[a-f0-9]{40}", ffmpeg) or not isinstance(rows, list) or not rows:
+            raise ValueError("Invalid VLC contrib provenance")
+        recorded = {row["file"]: (row["size"], row["sha256"]) for row in rows}
+        if len(recorded) != len(rows) or recorded != vlc_archives:
+            raise ValueError("VLC contrib archive inventory mismatch")
+        if not any(row["file"] == f"ffmpeg-{ffmpeg}.tar.xz" and row.get("gitCommit") == ffmpeg for row in rows) or not any(
+                row["file"].startswith("libplacebo-") and row.get("recipeVerification") == "sha512" for row in rows):
+            raise ValueError("Missing pinned VLC contrib source evidence")
     return j2v8
 
 
@@ -353,6 +376,68 @@ def collect_j2v8_provenance(shared, dist, destination):
     return destination
 
 
+def is_vlc_source_tarball(name):
+    return name.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".zip", ".tar", ".gz", ".bz2", ".xz"))
+
+
+def collect_vlc_contrib_provenance(contrib, destination, ffmpeg_commit):
+    """Inventory the exact downloaded inputs, not merely VLC recipe versions."""
+    if not re.fullmatch(r"[a-f0-9]{40}", ffmpeg_commit):
+        raise ValueError("Invalid FFmpeg source pin")
+    tarballs = contrib / "tarballs"
+    if not tarballs.is_dir() or tarballs.is_symlink():
+        raise ValueError("Missing VLC contrib source tarballs")
+    checksums = {}
+    for checksum in sorted((contrib / "src").glob("*/SHA512SUMS")):
+        for line in checksum.read_text().splitlines():
+            match = re.fullmatch(r"([a-fA-F0-9]{128})\s+\*?([^/\\]+)", line.strip())
+            if match:
+                value, filename = match.groups()
+                checksums.setdefault(filename, set()).add(value.lower())
+    rows = []
+    ffmpeg_found = False
+    placebo_found = False
+    for path in sorted(tarballs.iterdir()):
+        if not is_vlc_source_tarball(path.name):
+            continue
+        if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= MAX_SOURCE_BYTES:
+            raise ValueError("Invalid VLC contrib source tarball")
+        with path.open("rb") as stream:
+            sha512 = hashlib.file_digest(stream, "sha512").hexdigest()
+        row = {"file": path.name, "size": path.stat().st_size, "sha256": digest(path),
+               "sha512": sha512, "recipeVerification": "unmatched"}
+        expected = checksums.get(path.name)
+        if expected:
+            if sha512 not in expected:
+                raise ValueError(f"VLC contrib SHA512 mismatch: {path.name}")
+            row["recipeVerification"] = "sha512"
+        if path.name.endswith(".tar.xz"):
+            pin_file = path.with_name(path.name.removesuffix(".tar.xz") + ".githash")
+            if pin_file.exists():
+                if pin_file.is_symlink() or not pin_file.is_file() or pin_file.stat().st_size > 8192:
+                    raise ValueError("Invalid VLC contrib Git archive marker")
+                pin = re.fullmatch(r"([a-fA-F0-9]{40})\s+(.+)", pin_file.read_text().strip())
+                if not pin or Path(pin.group(2)).name != path.name:
+                    raise ValueError("Invalid VLC contrib Git archive marker")
+                row["gitCommit"] = pin.group(1).lower()
+                row["recipeVerification"] = "git-marker"
+        if path.name == f"ffmpeg-{ffmpeg_commit}.tar.xz":
+            if row.get("gitCommit") != ffmpeg_commit:
+                raise ValueError("VLC FFmpeg archive does not match pinned commit")
+            ffmpeg_found = True
+        if path.name.startswith("libplacebo-") and row["recipeVerification"] == "sha512":
+            placebo_found = True
+        rows.append(row)
+    if not ffmpeg_found or not placebo_found:
+        raise ValueError("Missing verified FFmpeg or libplacebo contrib archive")
+    destination.mkdir(parents=True, exist_ok=False)
+    (destination / "vlc-contrib-inventory.json").write_text(json.dumps({
+        "schema": 1, "ffmpegCommit": ffmpeg_commit, "archives": rows,
+        "reviewRequired": True,
+    }, sort_keys=True) + "\n")
+    return destination
+
+
 def fetch_moonlight_source_dependencies(destination):
     notice = ROOT / "third_party/moonlight-android/app/protocol-only-assets/moonlight-licenses/SOURCE-NOTICE.txt"
     content = notice.read_text()
@@ -476,6 +561,13 @@ def main():
         extra_roots.append(collect_smarttube_maven_sources(
             ROOT / "app/build/outputs/system-modules/smarttube-maven-inputs",
             args.output.parent / "resolved-smarttube-maven-source"))
+    if args.module == "vlc":
+        pins = (ROOT / "gradle/external-versions.properties").read_text()
+        matches = re.findall(r"(?m)^FFMPEG_COMMIT=([a-f0-9]{40})$", pins)
+        if len(matches) != 1:
+            raise ValueError("Missing FFmpeg pin")
+        extra_roots.append(collect_vlc_contrib_provenance(ROOT / ".native/libvlcjni/vlc/contrib",
+            args.output.parent / "resolved-vlc-contrib", matches[0]))
     if args.module == "moonlight":
         extra_roots.append(fetch_moonlight_source_dependencies(args.output.parent / "pinned-moonlight-dependencies"))
     collect(args.module, args.sha, args.output, args.notices, extra_roots)
