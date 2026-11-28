@@ -76,6 +76,7 @@ private fun ModuleDialog(dismiss: () -> Unit) {
                     SystemModule.SHADERS -> stringResource(R.string.module_settings_shaders)
                     SystemModule.PROJECTM -> "ProjectM"
                     SystemModule.MPV -> "MPV"
+                    SystemModule.VLC -> "VLC"
                     SystemModule.SPOTIFY -> "Spotify (Rusty)"
                     SystemModule.MONOGRAM -> "Monogram"
                     else -> module.id
