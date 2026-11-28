@@ -26,11 +26,12 @@
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
-#   ./build.sh check-deps [key]  # check Gradle Maven catalog pins (stable by default)
-#   ./build.sh update-deps [key] # update Maven pins only (no build)
-#   ./build.sh libs-check [svp|monogram|libretro|cores]  # check managed libraries, or only one
-#   ./build.sh libs-update [svp|monogram|libretro|cores] # update pins/assets/lockfile (no native build)
-#                               # includes Monogram, LibretroDroid and cores/cores.json; lib-check / lib-update are aliases
+#   ./build.sh deps-check [key]  # check Gradle Maven catalog pins (stable by default)
+#   ./build.sh deps-update [key] # update Maven pins only (no build)
+#   ./build.sh libs-check [svp|monogram|libretro]  # check native libraries
+#   ./build.sh libs-update [svp|monogram|libretro] # update native library pins/assets/lockfile
+#   ./build.sh cores-check [id[,id...]]  # check emulator core pins only
+#   ./build.sh cores-update [id[,id...]] # update emulator core pins only (no native build)
 #
 # Environment overrides:
 #   MONOGRAM_NATIVE=1         Include Monogram in debug or single-ABI APKs (GPL distribution).
@@ -85,6 +86,7 @@ SPOTIFY_ENGINE_SCRIPT="$ROOT_DIR/scripts/build_spotify_engine.sh"
 MONOGRAM_BUILD_SCRIPT="$ROOT_DIR/scripts/build_monogram_native.sh"
 EXTERNAL_VERSIONS="$ROOT_DIR/gradle/external-versions.properties"
 LIB_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_external_libraries.py"
+CORE_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_cores.py"
 MAVEN_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_maven_dependencies.py"
 NNEDI3_VENDOR_SCRIPT="$ROOT_DIR/scripts/vendor_nnedi3_quality_ladder.py"
 
@@ -1418,11 +1420,13 @@ Android: debug, release, arm64, armv7, x86, x86_64, all, clean, gen-keystore
 Deploy: arm64-adb, armv7-adb, x86-adb, x86_64-adb [adb-ip[:port]]
 Native: youtube-engine, spotify, clean-spotify, mpv, clean-mpv, svp,
         nnedi3-shaders, projectm, clean-projectm, monogram
-Maven: check-deps [key], update-deps [key] (stable by default; no native build)
+Maven: deps-check [key], deps-update [key] (stable by default; no native build)
+       check-deps / update-deps are legacy aliases
        MAVEN_CHANNEL=prerelease, MEDIA3_CHANNEL=prerelease, MAVEN_ALLOW_MAJOR=1
-Libraries: libs-check [svp|monogram|libretro|cores], libs-update [svp|monogram|libretro|cores],
+Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretro],
            monogram-check, monogram-update, monogram-size [abi|all]
-           libs-check cores / libs-update cores: only all catalog core pins (including new cores)
+Core pins: cores-check [id[,id...]], cores-update [id[,id...]] (all by default; no native build)
+           LibretroDroid is a library, not a core.
 
 Libretro cores on GitHub Actions (main):
   cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths|citra-arm64-jit|yabause-arm64-jit] [--abis ABI[,ABI...]]
@@ -1454,32 +1458,51 @@ case "$MODE" in
         ;;
 esac
 
-if [[ "$MODE" == "check-deps" || "$MODE" == "update-deps" ]]; then
+if [[ "$MODE" == "deps-check" || "$MODE" == "deps-update" || "$MODE" == "check-deps" || "$MODE" == "update-deps" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$MAVEN_UPDATE_SCRIPT" ]] || fail "Missing Maven updater: $MAVEN_UPDATE_SCRIPT"
     [[ $# -le 2 ]] || fail "Usage: $0 $MODE [key]"
     dep_args=()
     [[ $# -eq 1 ]] || dep_args=("$2")
-    if [[ "$MODE" == "check-deps" ]]; then
+    if [[ "$MODE" == "deps-check" || "$MODE" == "check-deps" ]]; then
         python3 "$MAVEN_UPDATE_SCRIPT" --check "${dep_args[@]}"
     else
         python3 "$MAVEN_UPDATE_SCRIPT" --apply "${dep_args[@]}"
     fi
     exit 0
 fi
-if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-check" || "$MODE" == "libraries-check" ]]; then
+# Explicit previous core-only spelling remains a compatibility alias.
+if [[ "$MODE" == "cores-check" || "$MODE" == "cores-update" ||
+      ( ( "$MODE" == "libs-check" || "$MODE" == "libs-update" ) && "${2:-}" == cores ) ]]; then
+    command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+    [[ -f "$CORE_UPDATE_SCRIPT" ]] || fail "Missing core updater: $CORE_UPDATE_SCRIPT"
+    core_args=()
+    if [[ "$MODE" == cores-* ]]; then
+        [[ $# -le 2 ]] || fail "Usage: $0 $MODE [id[,id...]]"
+        [[ $# -eq 1 ]] || core_args=("$2")
+    else
+        [[ $# -eq 2 ]] || fail "Usage: $0 $MODE cores"
+    fi
+    if [[ "$MODE" == *-check ]]; then
+        python3 "$CORE_UPDATE_SCRIPT" --check "${core_args[@]}"
+    else
+        python3 "$CORE_UPDATE_SCRIPT" --apply "${core_args[@]}"
+    fi
+    exit 0
+fi
+if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "libraries-check" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
-    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro|cores]"
+    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro]"
     library_args=()
     [[ $# -eq 1 ]] || library_args=(--only "$2")
     python3 "$LIB_UPDATE_SCRIPT" --check "${library_args[@]}"
     exit 0
 fi
-if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "deps-update" || "$MODE" == "libraries-update" ]]; then
+if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "libraries-update" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
-    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro|cores]"
+    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro]"
     library_args=()
     [[ $# -eq 1 ]] || library_args=(--only "$2")
     python3 "$LIB_UPDATE_SCRIPT" --apply "${library_args[@]}"

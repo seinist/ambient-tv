@@ -255,14 +255,14 @@ memory segment bounds, rejects malformed alignments and requires congruent
 file/virtual addresses in addition to the 16 KiB minimum. Build evidence
 retains each report's exact UTF-8 representation for independent hash checks.
 
-## Core updater
+## Separate update processes
 
-`./build.sh libs-check cores` checks the complete core catalog; `./build.sh
-libs-update cores` updates compatible core pins without changing LibretroDroid
-or other libraries. The existing libretro scope checks both. Yabause and
-YabaSanshiro follow explicit independent upstream branches. Native JIT updates
-must pass the production source-patch preflight on a disposable exact checkout;
-CI uses the catalog's Yabause pin for differential testing, not a stale literal.
-Incompatible candidates retain their previous pin. Use `./build.sh cores
---profile citra-arm64-jit` or `--profile yabause-arm64-jit` for artifact builds;
-main-only experimental signing still requires the dedicated validation gate.
+- `./build.sh deps-check` / `deps-update [key]`: Maven catalog dependencies.
+- `./build.sh libs-check` / `libs-update [svp|monogram|libretro]`: external libraries, including LibretroDroid, but no emulator cores.
+- `./build.sh cores-check` / `cores-update [id[,id...]]`: all emulator core pins or a selected upstream group. This never updates other libraries.
+
+Yabause and YabaSanshiro follow independent upstream branches. Native JIT
+updates must pass production patch preflight on an exact disposable checkout;
+CI tests the catalog pin. Incompatible candidates keep their existing pin.
+Use `./build.sh cores --profile citra-arm64-jit` or `--profile yabause-arm64-jit`
+to build artifacts. Main-only signing still requires the dedicated validation gate.

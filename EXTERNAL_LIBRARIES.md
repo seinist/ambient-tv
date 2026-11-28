@@ -5,10 +5,10 @@ Ambient TV keeps external media engines pinned so normal builds are reproducible
 ## Maven / Gradle dependencies (independent of external engines)
 
 ```bash
-./build.sh check-deps          # read-only: all catalog pins
-./build.sh update-deps         # update eligible Maven pins, without building
-./build.sh check-deps media3   # check one shared version key
-./build.sh update-deps media3  # update Media3 alone
+./build.sh deps-check          # read-only: all catalog pins
+./build.sh deps-update         # update eligible Maven pins, without building
+./build.sh deps-check media3   # check one shared version key
+./build.sh deps-update media3  # update Media3 alone
 ```
 
 Requires Python 3.11+. The updater reads `gradle/libs.versions.toml` (including
@@ -25,9 +25,9 @@ default; snapshots and unknown qualifiers are ignored. Versions are sorted numer
 RC stages when explicitly enabled. No downgrades are performed.
 
 ```bash
-MAVEN_CHANNEL=prerelease ./build.sh check-deps
-MEDIA3_CHANNEL=prerelease ./build.sh check-deps media3
-MAVEN_ALLOW_MAJOR=1 ./build.sh update-deps okhttp
+MAVEN_CHANNEL=prerelease ./build.sh deps-check
+MEDIA3_CHANNEL=prerelease ./build.sh deps-check media3
+MAVEN_ALLOW_MAJOR=1 ./build.sh deps-update okhttp
 ```
 
 The same options are available with `update-deps`. Media3 stays on the stable

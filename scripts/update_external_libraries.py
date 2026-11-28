@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import os
 import json
 import re
 import subprocess
 import sys
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -250,130 +248,6 @@ def git_tag_for(repo: str, sha: str) -> str:
     return ""
 
 
-def cores_path() -> Path:
-    return ROOT / "cores" / "cores.json"
-
-
-def remote_head(repo: str, ref: str = "HEAD") -> str:
-    # git ls-remote instead of the GitHub API: one call per core would exhaust the 60/h limit.
-    if ref != "HEAD" and not re.fullmatch(r"refs/heads/[A-Za-z0-9._/-]+", ref):
-        raise ValueError(f"Invalid core update ref: {ref}")
-    out = subprocess.run(["git", "ls-remote", "--exit-code", repo, ref], capture_output=True, text=True, timeout=120,
-                         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-    lines = [line.split() for line in out.stdout.splitlines() if line.strip()]
-    sha = lines[0][0] if out.returncode == 0 and len(lines) == 1 and len(lines[0]) == 2 and lines[0][1] == ref else ""
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise RuntimeError(f"Could not resolve {ref} of {repo}: {out.stderr.strip() or 'no unique matching ref'}")
-    return sha
-
-
-def core_candidate_compatible(core: dict, revision: str) -> bool:
-    """Check all reviewed source anchors before moving a public core pin.
-
-    Only source text is fetched; never execute unreviewed upstream code.
-    Native JIT candidates additionally run the exact production source
-    patchers on a disposable checkout, without compiling or executing it.
-    CI must still build and differentially test the resulting catalog pin.
-    """
-    from core_hotpath_patches import prepare_hotpaths, SUPPORTED
-    from core_hotpath_remaining import PATCHES
-
-    name = core["core"]
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ValueError("Invalid candidate core revision")
-    if name in {"citra2018", "yabause"}:
-        try:
-            preflight_jit_core(core, revision)
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            print(f"  MANUAL: {name} remains at {core['commit']}: JIT preflight failed for {revision} ({error}).")
-            return False
-        return True
-    if name not in SUPPORTED:
-        return True
-    if name in PATCHES:
-        files = {path for path, _, _ in PATCHES[name]}
-    elif name == "bsnes":
-        files = {"bsnes/target-libretro/libretro.cpp", "bsnes/target-libretro/program.cpp", "libco/arm.c"}
-    elif name == "mesen":
-        files = {"Libretro/libretro.cpp"}
-    elif name == "sameboy":
-        files = {"libretro/libretro.c"}
-    elif name in {"mednafen_pce_fast", "mednafen_supergrafx"}:
-        files = {"libretro.c" if name == "mednafen_pce_fast" else "libretro.cpp"}
-    else:
-        files = {"mednafen/state.h", "mednafen/state.cpp" if name == "mednafen_lynx" else "mednafen/state.c",
-                 "libretro.cpp" if name in {"mednafen_vb", "mednafen_lynx"} else "libretro.c"}
-    upstream = github_repo(core["repo"])
-    try:
-        with tempfile.TemporaryDirectory(prefix="ambient-core-update-") as directory:
-            root = Path(directory)
-            for relative in sorted(files):
-                path = root / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                url = f"https://raw.githubusercontent.com/{upstream}/{revision}/{urllib.parse.quote(relative, safe='/')}"
-                path.write_bytes(get_bytes(url))
-            prepare_hotpaths(root, name)
-    except (OSError, ValueError) as error:
-        print(f"  MANUAL: {name} remains at {core['commit']}: candidate {revision} source preflight failed ({error}).")
-        return False
-    return True
-
-
-def preflight_jit_core(core: dict, revision: str) -> None:
-    from core_hotpath_patches import prepare_hotpaths
-    from core_yabause_arm64 import prepare as prepare_yabause
-    from core_citra_arm64 import prepare as prepare_citra
-
-    github_repo(core["repo"])
-    with tempfile.TemporaryDirectory(prefix="ambient-jit-update-") as directory:
-        root = Path(directory)
-        def run(*args):
-            return subprocess.check_output(
-                ["git", "-c", "core.hooksPath=/dev/null", "-C", str(root), *args],
-                text=True, timeout=180, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}).strip()
-        run("init", "-q")
-        run("remote", "add", "origin", core["repo"])
-        run("fetch", "--depth", "1", "origin", revision)
-        run("checkout", "--detach", "FETCH_HEAD")
-        if run("rev-parse", "HEAD") != revision:
-            raise ValueError("Candidate checkout pin mismatch")
-        prepare_hotpaths(root, core["core"])
-        (prepare_citra if core["core"] == "citra2018" else prepare_yabause)(root)
-
-
-def cores_latest(cores: list[dict]) -> dict[str, str]:
-    # Resolve each explicit branch separately; shared same-branch variants
-    # (VICE) keep one snapshot. Never collapse independently pinned variants.
-    def source(c):
-        return c["repo"], c.get("update_ref", "HEAD")
-    sources = list(dict.fromkeys(source(c) for c in cores))
-    def resolve(item):
-        repo, ref = item
-        return remote_head(repo) if ref == "HEAD" else remote_head(repo, ref)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        heads = dict(zip(sources, pool.map(resolve, sources)))
-    pins = {}
-    for c in cores:
-        pins.setdefault(source(c), set()).add(c["commit"])
-    for item, revisions in pins.items():
-        if len(revisions) > 1:
-            print(f"  MANUAL: {item[0]} {item[1]} has different pins; specify separate update_ref values.")
-    candidates = [c for c in cores if len(pins[source(c)]) == 1
-                  and c["commit"] != heads[source(c)]]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        compatible = list(pool.map(lambda c: core_candidate_compatible(c, heads[source(c)]), candidates))
-    blocked = {source(c) for c, ok in zip(candidates, compatible) if not ok}
-    return {c["core"]: c["commit"] if len(pins[source(c)]) > 1 or source(c) in blocked
-            else heads[source(c)] for c in cores}
-
-
-def render_cores(data: dict, commits: dict[str, str]) -> bytes:
-    data = json.loads(json.dumps(data))
-    for core in data["cores"]:
-        core["commit"] = commits.get(core["core"], core["commit"])
-    return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode()
-
-
 def prepare_libretrodroid() -> bool:
     """Fetch the pinned module and apply our patches; False when a patch no longer applies."""
     return subprocess.run([str(ROOT / "scripts" / "fetch_libretrodroid.sh")]).returncode == 0
@@ -393,17 +267,14 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true")
     group.add_argument("--apply", action="store_true")
-    parser.add_argument("--only", choices=("svp", "monogram", "libretro", "cores"),
-                        help="Check/update Open-SVPFlow, Monogram, LibretroDroid plus cores, or cores only")
+    parser.add_argument("--only", choices=("svp", "monogram", "libretro"),
+                        help="Check/update only Open-SVPFlow, Monogram or LibretroDroid (cores have a separate updater)")
     args = parser.parse_args()
     include_rest = args.only is None
     include_svp = args.only in (None, "svp")
     include_monogram = args.only in (None, "monogram")
     include_libretro = args.only in (None, "libretro")
-    include_cores = args.only in (None, "libretro", "cores")
-
     current = load_props()
-    cores_data = json.loads(cores_path().read_text(encoding="utf-8")) if include_cores else None
     if include_svp:
         svp.verify(ROOT / "native/ambientsvp", svp.pinned_revision(ROOT))
     managed = [PROPS]
@@ -411,8 +282,6 @@ def main() -> int:
         managed.extend(ROOT / "native/ambientsvp" / name for name in svp.UPDATE_FILES)
     if include_rest:
         managed.append(CATALOG)
-    if include_cores:
-        managed.append(cores_path())
     originals = {path: path.read_bytes() for path in managed}
     latest: dict[str, str] = {}
     current_libvlc = latest_libvlc = None
@@ -428,11 +297,8 @@ def main() -> int:
         latest.update(svp_latest())
     if include_monogram:
         latest.update(monogram_latest())
-    latest_cores: dict[str, str] = {}
     if include_libretro:
         latest.update(libretrodroid_latest(current))
-    if include_cores:
-        latest_cores = cores_latest(cores_data["cores"])
 
     labels = [
         ("SmartTube", "SMARTTUBE_VERSION"),
@@ -482,13 +348,6 @@ def main() -> int:
         marker = "UPDATE" if current_libvlc != latest_libvlc else "ok"
         changed |= current_libvlc != latest_libvlc
         print(f"  {'libVLC':22} {current_libvlc:44} -> {latest_libvlc:44} [{marker}]")
-    cores_changed = []
-    for core in (cores_data or {}).get("cores", []):
-        old, new = core["commit"], latest_cores[core["core"]]
-        if old != new:
-            cores_changed.append(core["core"])
-        print(f"  {'core ' + core['core']:22} {old:44} -> {new:44} [{'ok' if old == new else 'UPDATE'}]")
-    changed |= bool(cores_changed)
     libretrodroid_changed = ("LIBRETRODROID_COMMIT" in latest
                              and current.get("LIBRETRODROID_COMMIT") != latest["LIBRETRODROID_COMMIT"])
 
@@ -506,14 +365,11 @@ def main() -> int:
         old_libretrodroid = current.get("LIBRETRODROID_COMMIT", "")
         old_libretrodroid_pins = {key: current.get(key, "") for key in LIBRETRODROID_KEYS}
         updates = {}
-        if cores_changed:
-            updates[cores_path()] = render_cores(cores_data, latest_cores)
         if "SVPFLOW_REF" in latest and current["SVPFLOW_REF"] != latest["SVPFLOW_REF"]:
             print("Preparing matching SVP Rust pins, Cargo.lock, Vulkan shader and notices...")
             updates.update(svp.stage_update(ROOT, latest["SVPFLOW_REF"], get_bytes))
         current.update(safe_latest)
-        if args.only != "cores":
-            updates[PROPS] = render_props(current).encode()
+        updates[PROPS] = render_props(current).encode()
         if latest_libvlc is not None:
             updates[CATALOG] = render_catalog_version("libvlc", latest_libvlc).encode()
         if updates:
@@ -529,9 +385,6 @@ def main() -> int:
                 print(f"WARNING: LibretroDroid kept at {old_libretrodroid}: a patch does not apply to "
                       f"{latest['LIBRETRODROID_COMMIT']}. Rebase scripts/patches/libretrodroid, then set "
                       "LIBRETRODROID_COMMIT by hand.")
-        if cores_changed:
-            print(f"Libretro cores updated ({', '.join(cores_changed)}). Pushing cores/cores.json to main "
-                  "builds and publishes them; or run ./build.sh cores " + ",".join(cores_changed) + ".")
         if include_svp:
             print("\nUpdated managed pins and matching SVP source assets (no native build).")
             print("The next normal build detects changed native inputs and rebuilds affected runtimes automatically.")

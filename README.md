@@ -211,12 +211,16 @@ PRIVATE_KEYS=1 ./build.sh release
 ./build.sh x86_64
 
 # Check / update Gradle Maven dependencies (stable releases)
-./build.sh check-deps
-./build.sh update-deps
-./build.sh update-deps media3  # optional single pin
+./build.sh deps-check
+./build.sh deps-update
+./build.sh deps-update media3  # optional single pin
 # Check / update pinned external engines
 ./build.sh libs-check
 ./build.sh libs-update
+# Check / update emulator core pins independently
+./build.sh cores-check
+./build.sh cores-update
+./build.sh cores-update ppsspp
 ```
 
 Artifacts land under `dist/` (e.g. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`). Pre-release suffixes such as `beta`, `alpha` or `rc` keep the suffix and insert the build number before it (`ambient-tv-arm64-1.0.270-beta.apk`).

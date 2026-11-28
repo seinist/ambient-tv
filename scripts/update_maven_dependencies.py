@@ -63,7 +63,7 @@ def main() -> int:
         apply_catalog(CATALOG, original, updated)
         print(f"\nUpdated {len(updates)} catalog pin(s). Review the diff and rebuild/test before committing.")
     elif updates:
-        print("\nApply with ./build.sh update-deps" + (f" {args.key}" if args.key else ""))
+        print("\nApply with ./build.sh deps-update" + (f" {args.key}" if args.key else ""))
     else:
         print("\nNo automatically applicable updates.")
     if any(f.status in ("MANUAL", "UNAVAILABLE") for f in findings):
