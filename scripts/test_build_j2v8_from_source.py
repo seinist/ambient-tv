@@ -29,6 +29,13 @@ class SourceBuildTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Missing legacy"):
                     build.verify_candidate(candidate, legacy, "arm64-v8a")
 
+    def test_staging_rejects_missing_abi_before_writing_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)
+            with self.assertRaisesRegex(ValueError, "Missing source-build evidence"):
+                build.stage_candidates(path, path / "staged", path)
+            self.assertFalse((path / "staged").exists())
+
     def test_source_build_verification_does_not_claim_legacy_match(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)

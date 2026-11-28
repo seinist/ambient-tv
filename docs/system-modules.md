@@ -852,6 +852,18 @@ library. The historical build tools, full source builds and Android Java/JNI
 runtime compatibility require CI and device validation; the evidence is
 explicitly marked experimental and not approved for publication.
 
+First native source builds reached Ninja compilation on all four ABIs,
+then failed in the historical Inspector generator's Jinja import of
+collections.Mapping under Python 3.10. The isolated source-build workflow
+now uses Python 3.9 and a compatible streaming hash implementation.
+A separate dependent Android test job revalidates all four same-run native
+artifacts and stages them outside the legacy checkout. It executes real
+V8 runtime lifecycle, JavaScript, objects, ArrayBuffer and Java callback
+tests on an x86_64 Android emulator through the J2V8 wrapper. The override
+disables the release variant of the wrapper, so no experimental binary
+can enter a normal release through this test path. ARM device tests and
+productive publication/source-package integration remain gated.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

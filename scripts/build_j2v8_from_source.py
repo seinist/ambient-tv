@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 from j2v8_source_audit import SOURCE_PINS, MAX_SO
 from module_corresponding_source import elf_text_digest
@@ -58,8 +59,13 @@ def checkout(path, url, commit):
 
 
 def sha(path):
+    # The 2021 V8 inspector generator needs Python <= 3.9. Keep this
+    # driver compatible instead of mixing modern and legacy interpreters.
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def jni_exports(path, readelf="readelf"):
@@ -95,6 +101,8 @@ def verify_candidate(candidate, legacy, abi):
 
 
 def build(work, output, shared, abi, jobs):
+    if sys.version_info[:2] != (3, 9):
+        raise ValueError("Use isolated Python 3.9 for the pinned V8 9.3 source build")
     work, output, shared = work.resolve(), output.resolve(), shared.resolve()
     if work.exists() or output.exists() or not 1 <= jobs <= 64:
         raise ValueError("Use fresh source/build/output directories and 1-64 jobs")
@@ -145,21 +153,72 @@ def build(work, output, shared, abi, jobs):
     (output / "source-build.json").write_text(json.dumps({
         "schema": 1, "kind": "experimental-source-build", "j2v8Commit": SOURCE_PINS["j2v8"][1],
         "v8Commit": SOURCE_PINS["v8"][1], "depotToolsCommit": DEPOT_COMMIT,
+        "pythonVersion": sys.version.split()[0],
         "depsSha256": sha(output / "V8-DEPS"), "resolvedDepsSha256": sha(output / "v8-deps.txt"),
         "argsSha256": sha(output / "args.gn"), "bridgeSha256": sha(output / "bridge.gn"),
         "native": row, "deviceValidated": False, "publicationApproved": False,
     }, indent=2, sort_keys=True) + "\n")
 
 
+def stage_candidates(inputs, output, shared):
+    """Prepare an isolated JNI directory from all four same-run candidates.
+
+    Never modify the legacy source checkout. Repeat validation instead of
+    trusting artifact filenames or their self-reported ABI and hashes.
+    """
+    if output.exists():
+        raise ValueError("Candidate staging directory must be fresh")
+    verified = {}
+    for abi in ABI_CONFIGS:
+        root = inputs / f"experimental-j2v8-source-{abi}"
+        evidence_path = root / "source-build.json"
+        if not evidence_path.is_file() or evidence_path.is_symlink() or evidence_path.stat().st_size > 512 * 1024:
+            raise ValueError(f"Missing source-build evidence for {abi}")
+        evidence = json.loads(evidence_path.read_text())
+        if (evidence.get("schema") != 1 or evidence.get("kind") != "experimental-source-build"
+                or evidence.get("j2v8Commit") != SOURCE_PINS["j2v8"][1]
+                or evidence.get("v8Commit") != SOURCE_PINS["v8"][1]
+                or evidence.get("depotToolsCommit") != DEPOT_COMMIT
+                or evidence.get("deviceValidated") is not False
+                or evidence.get("publicationApproved") is not False):
+            raise ValueError(f"Invalid source-build identity for {abi}")
+        for name, field in (("V8-DEPS", "depsSha256"), ("v8-deps.txt", "resolvedDepsSha256"),
+                            ("args.gn", "argsSha256"), ("bridge.gn", "bridgeSha256")):
+            path = root / name
+            if (not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= 16 * 1024**2
+                    or sha(path) != evidence.get(field)):
+                raise ValueError(f"Build evidence mismatch: {abi}/{name}")
+        if (root / "bridge.gn").read_text() != BRIDGE:
+            raise ValueError(f"Unexpected JNI build recipe: {abi}")
+        candidate = root / "libj2v8.so"
+        legacy = shared / f"j2v8/src/main/jniLibs/{abi}/libj2v8.so"
+        if verify_candidate(candidate, legacy, abi) != evidence.get("native"):
+            raise ValueError(f"J2V8 candidate differs from build evidence: {abi}")
+        verified[abi] = candidate
+    output.mkdir(parents=True)
+    for abi, candidate in verified.items():
+        dest = output / abi
+        dest.mkdir()
+        shutil.copyfile(candidate, dest / "libj2v8.so")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--abi", choices=ABI_CONFIGS, required=True)
-    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--abi", choices=ABI_CONFIGS)
+    parser.add_argument("--work", type=Path)
+    parser.add_argument("--stage", type=Path, help="Directory containing all four CI artifacts")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--shared", type=Path, required=True)
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
-    build(args.work, args.output, args.shared, args.abi, args.jobs)
+    if args.stage:
+        if args.work or args.abi:
+            parser.error("--stage is exclusive with --work and --abi")
+        stage_candidates(args.stage, args.output, args.shared)
+    else:
+        if not args.work or not args.abi:
+            parser.error("build requires --work and --abi")
+        build(args.work, args.output, args.shared, args.abi, args.jobs)
 
 
 if __name__ == "__main__":
