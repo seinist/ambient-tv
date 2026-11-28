@@ -110,7 +110,6 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.ambient.tv.BuildConfig
 import com.ambient.tv.R
 import com.ambient.tv.games.GameAspect
 import com.ambient.tv.games.GameCheat
