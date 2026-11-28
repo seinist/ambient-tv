@@ -36,7 +36,7 @@ export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0 \
 
 PATCH_DIR="$ROOT/scripts/patches/moonlight"
 shopt -s nullglob
-PATCHES=("$PATCH_DIR"/*.patch "$PATCH_DIR"/common-c/*.patch)
+PATCHES=("$PATCH_DIR"/*.patch "$PATCH_DIR"/common-c/*.patch "$PATCH_DIR"/common-c/enet/*.patch)
 shopt -u nullglob
 [[ ${#PATCHES[@]} -gt 0 ]] || die "reviewed Moonlight patches missing in $PATCH_DIR"
 PATCH_SHA="$( { cat "${PATCHES[@]}" "$ROOT/scripts/moonlight/native-artifacts.git-blobs" "$ROOT/scripts/moonlight/licenses/"*.txt; printf 'staging=%s\n' "$STAGING_VERSION"; } | git hash-object --stdin)"
@@ -108,7 +108,11 @@ done < "$ROOT/scripts/moonlight/native-artifacts.git-blobs"
 # protects: stop instead of building an unreviewed client.
 for patch in "${PATCHES[@]}"; do
     patch_root="$WORK"
-    if [[ "$patch" == "$PATCH_DIR"/common-c/* ]]; then patch_root="$WORK/$SUBMODULE"; fi
+    if [[ "$patch" == "$PATCH_DIR"/common-c/enet/* ]]; then
+        patch_root="$WORK/$SUBMODULE/enet"
+    elif [[ "$patch" == "$PATCH_DIR"/common-c/* ]]; then
+        patch_root="$WORK/$SUBMODULE"
+    fi
     git -C "$patch_root" apply --check "$patch" || die "upstream changed; patch needs review: $(basename "$patch")"
     git -C "$patch_root" apply "$patch"
 done
