@@ -8,9 +8,18 @@
 const BINS:u32=100001u;
 const STRIDE:u32=72u;
 @group(0) @binding(3) var<storage,read> motion:array<vec4i>;
+@group(0) @binding(4) var<storage,read> pq_table:array<vec4u>;
+fn pq_index(v:f32)->u32{
+    return min(pack2x16float(vec2f(clamp(v,0.0,1.0),0.0))&65535u,15360u);
+}
 fn pq(v:vec3f)->vec3f{
-    let p=pow(clamp(v,vec3f(0.0),vec3f(1.0)),vec3f(1.0/78.84375));
-    return pow(max(p-vec3f(0.8359375),vec3f(0.0))/max(vec3f(18.8515625)-18.6875*p,vec3f(0.000001)),vec3f(1.0/0.1593017578125));
+    return vec3f(bitcast<f32>(pq_table[pq_index(v.x)].z),bitcast<f32>(pq_table[pq_index(v.y)].z),bitcast<f32>(pq_table[pq_index(v.z)].z));
+}
+fn pq_bin(v:vec3f)->vec3u{
+    return vec3u(pq_table[pq_index(v.x)].x,pq_table[pq_index(v.y)].x,pq_table[pq_index(v.z)].x);
+}
+fn pq_linear_max(v:vec3f)->u32{
+    return max(pq_table[pq_index(v.x)].y,max(pq_table[pq_index(v.y)].y,pq_table[pq_index(v.z)].y));
 }
 // Window tracking stays on the resident motion field. For each endpoint
 // use only blocks whose forward/reverse displacement agrees at the
@@ -175,7 +184,7 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
 @compute @workgroup_size(8,8)
 fn collect(@builtin(global_invocation_id) id:vec3u){
     if any(id.xy>=params.xy){return;}
-    let c=vec3u(round(clamp(pq(textureLoad(source,vec2i(id.xy),0).rgb),vec3f(0.0),vec3f(1.0))*100000.0));
+    let c=pq_bin(textureLoad(source,vec2i(id.xy),0).rgb);
     let bin=max(c.x,max(c.y,c.z));
     for(var w=0u;w<params.z;w++){
         let o=w*STRIDE;
@@ -320,8 +329,7 @@ fn scene_linear_sum(@builtin(global_invocation_id) id:vec3u,@builtin(local_invoc
     let valid=all(id.xy<params.xy);
     var linear=0u;
     if valid{
-        let rgb=clamp(pq(textureLoad(source,vec2i(id.xy),0).rgb),vec3f(0.0),vec3f(1.0));
-        linear=u32(round(max(rgb.x,max(rgb.y,rgb.z))*1000000000.0));
+        linear=pq_linear_max(textureLoad(source,vec2i(id.xy),0).rgb);
     }
     for(var w=0u;w<params.z;w++){
         let o=w*STRIDE;
