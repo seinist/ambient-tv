@@ -22,6 +22,10 @@ vlc_module_begin()
     set_subcategory(SUBCAT_VIDEO_VFILTER)
     add_shortcut("ambientsvp")
     add_bool("ambientsvp-hwresident", false, N_("Experimental Android GPU-resident transport"), NULL)
+    add_integer_with_range("ambientsvp-hdr-pass", 0, 0, 2, N_("HDR scene pass (0 off, 1 capture, 2 replay)"), NULL)
+    add_string("ambientsvp-hdr-plan", NULL, N_("HDR scene plan"), NULL)
+    add_string("ambientsvp-hdr-cache", NULL, N_("HDR scene cache"), NULL)
+    add_string("ambientsvp-hdr-key", NULL, N_("HDR source SHA256"), NULL)
     add_float_with_range("ambientsvp-fps", 60., 5., 120., N_("Target frame rate"), NULL)
     add_integer_with_range("ambientsvp-preset", 0, 0, 4, N_("Quality preset"), NULL)
     add_integer_with_range("ambientsvp-backend", 0, 0, 2, N_("Compute backend"), NULL)
@@ -219,7 +223,7 @@ static int Open(filter_t *f) {
     const video_format_t *v = &f->fmt_in.video;
 #ifdef __ANDROID__
     if (v->i_chroma == VLC_CODEC_ANDROID_OPAQUE) {
-        static const char *const resident_options[]={"fps","hwresident",NULL};
+        static const char *const resident_options[]={"fps","hwresident","preset","block","overlap","pel","search","artifacts","scene","algo","hdr-pass","hdr-plan","hdr-cache","hdr-key",NULL};
         config_ChainParse(f,"ambientsvp-",resident_options,f->p_cfg);
         return svp_android_open(f);
     }
