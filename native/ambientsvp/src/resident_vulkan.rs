@@ -226,7 +226,7 @@ fn mask_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
 fn tuned_synthesis(source:&str,t:ResidentTuning)->Result<String>{
     let family=include_str!("resident_synthesis_family.wgsl")
         .replace("SVP_STEP",&t.step().to_string())
-        .replace("SVP_ORIGIN",&(t.block/2).to_string())
+        .replace("SVP_ORIGIN",&(t.overlap/2).to_string())
         .replace("SVP_AREA_BLEND",if t.artifacts==3{"0.7"}else{"0.4"});
     let entry=source.find("@compute @workgroup_size(8,8)").ok_or("tuned synthesis entry")?;
     let threshold=match t.artifacts{1=>64,2=>48,3=>32,_=>48};
