@@ -25,6 +25,7 @@ on:
       - 'scripts/update_external_libraries.py'
       - 'scripts/fetch_moonlight_sources.sh'
       - 'scripts/tests/test_moonlight_fec_pool.py'
+      - 'scripts/tests/test_moonlight_enet_packets.py'
       - 'scripts/patches/moonlight/**'
       - 'gradle/external-versions.properties'
       - 'settings.gradle.kts'
@@ -81,6 +82,10 @@ jobs:
         if: matrix.abi == 'arm64-v8a'
         shell: bash
         run: python3 scripts/tests/test_moonlight_fec_pool.py third_party/moonlight-android/app/src/main/jni/moonlight-core/moonlight-common-c/src/ControlStream.c
+      - name: Test native ENet packet allocation and resize
+        if: matrix.abi == 'arm64-v8a'
+        shell: bash
+        run: python3 scripts/tests/test_moonlight_enet_packets.py third_party/moonlight-android/app/src/main/jni/moonlight-core/moonlight-common-c/enet
       - name: Verify upstream GameStream native dependencies
         shell: bash
         run: |
@@ -94,6 +99,9 @@ jobs:
       - name: Compile pinned native Moonlight protocol module
         shell: bash
         run: ./gradlew :moonlight_native:assembleDebug -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
+      - name: Compile optimized native release for this ABI
+        shell: bash
+        run: ./gradlew :moonlight_native:assembleRelease -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
       - name: Check Moonlight JNI alignment
         shell: bash
         run: |
