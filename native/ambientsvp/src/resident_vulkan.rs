@@ -892,9 +892,18 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_hdr(s:*const VulkanResident,
     images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
     value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
     results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],n:u32)->i32{
+    unsafe{ambient_svp_vk_render_held_pass(s,queue,family,images,count,waits,signal,value,phase,
+        windows,tracks,axes,results,rects,ellipses,shifts,n,ptr::null_mut(),0)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_render_held_pass(s:*const VulkanResident,queue:vk::Queue,family:u32,
+    images:*const vk::Image,count:u32,waits:*const vk::Semaphore,signal:vk::Semaphore,
+    value:u64,phase:f32,windows:*const HdrWindow,tracks:*const HdrTrack,axes:*const [u32;3],
+    results:*mut HdrResult,rects:*mut [u32;4],ellipses:*mut [u32;3],shifts:*mut [i32;2],n:u32,pass:*mut TwoPass,index:u64)->i32{
     if s.is_null()||queue==vk::Queue::null()||images.is_null()||waits.is_null()||
-        !matches!(count,3|5)||signal==vk::Semaphore::null()||value==0||
+        !matches!(count,2|3|5)||count==2&&phase!=0.0||signal==vk::Semaphore::null()||value==0||
         !phase.is_finite()||!(0.0..=1.0).contains(&phase){return -1;}
+    if !pass.is_null()&&n!=1{return -1;}
     if n>3||n>0&&(windows.is_null()||results.is_null()||rects.is_null()||ellipses.is_null()||shifts.is_null()||n>1&&(tracks.is_null()||axes.is_null())){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{
         let core=&(*s).0;
@@ -924,14 +933,15 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_hdr(s:*const VulkanResident,
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
             let picture=|i:usize|VulkanPicture{y:views[i],u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0};
-            let a=picture(0);let b=picture(1);
+            let a=picture(0);let b=picture(if count==2{0}else{1});
             if count==5{pair=ambient_svp_vk_begin_extended(s,cmd,&picture(2),&a,&b,&picture(3));}
             if pair.is_null(){pair=ambient_svp_vk_begin(s,cmd,&a,&b);}
             if pair.is_null()||ambient_svp_vk_render(pair,phase,3,views[count as usize-1])!=0{
                 return Err("held renderer pair rejected".into());
             }
             if n>0{
-                let rc=if n==1{ambient_svp_vk_hdr_stats(pair,0,windows,n)}
+                let rc=if !pass.is_null(){ambient_svp_vk_hdr_stats_scene(pair,0,windows,n)}
+                    else if n==1{ambient_svp_vk_hdr_stats(pair,0,windows,n)}
                     else{ambient_svp_vk_hdr_stats_ellipse(pair,0,windows,tracks,axes,phase,n)};
                 if rc!=0{return Err("held HDR stats rejected".into());}
             }
@@ -954,6 +964,7 @@ pub unsafe extern "C" fn ambient_svp_vk_render_held_hdr(s:*const VulkanResident,
                     return Err("held HDR stats readback failed".into());
                 }
             }
+            if !pass.is_null()&&ambient_svp_hdr_pass_capture(pass,pair,0,index)!=1{return Err("scene pass capture failed".into());}
             Ok(())
         })();
         if submitted{
