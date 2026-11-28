@@ -19,7 +19,12 @@ if [[ "${1:-}" == "--hash" ]]; then
         sha256sum native/vlc-aar/build.gradle.kts native/vlc-aar/settings.gradle.kts native/vlc-aar/consumer-rules.pro gradle/libs.versions.toml gradle/wrapper/gradle-wrapper.properties
         if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
             sha256sum scripts/prepare_vlc_ahb_experimental.sh
-            find native/vlc-aar/experimental -type f -print0 | sort -z | xargs -0 sha256sum
+            # Native staging consumes headers, C/C++ sources, shaders and patches.
+            # Host-only tests/reference documents must not invalidate an AAR.
+            find native/vlc-aar/experimental -type f \
+                \( -name '*.h' -o -name '*.c' -o -name '*.cpp' -o -name '*.vert' -o -name '*.frag' -o -name '*.patch' \) \
+                ! -name 'test_*' ! -name 'export_*' ! -name 'extract_profile7_audit.c' \
+                -print0 | sort -z | xargs -0 sha256sum
         fi
     ) | sha256sum | cut -d ' ' -f1
     exit 0

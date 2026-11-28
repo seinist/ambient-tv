@@ -94,13 +94,16 @@ internal class VlcTimedMetadataInbox {
         return generation
     }
     internal data class SeekFence(val session: Long, val epoch: Long, val previous: Long,
-        val previousTargetUs: Long?, val previousId: Long, val serial: Long)
+        val previousTargetUs: Long?, val previousId: Long, val serial: Long,
+        val previousEvents: List<VlcTimedMetadata>, val previousBytes: Int, val changed: Boolean)
 
     @Synchronized fun clearForSeek(targetUs: Long? = null, requestId: Long = 0L): SeekFence {
-        val fence = SeekFence(generation, epoch, discardedThroughEpoch, requestedTargetUs, requestedId, ++fenceSerial)
         // A retry of the same tagged native request must not erase a
         // barrier or events that arrived while its playback clock settles.
-        if (requestId != 0L && requestId == requestedId && targetUs == requestedTargetUs) return fence
+        val changed = requestId == 0L || requestId != requestedId || targetUs != requestedTargetUs
+        val fence = SeekFence(generation, epoch, discardedThroughEpoch, requestedTargetUs, requestedId,
+            ++fenceSerial, mutable.value, bytes, changed)
+        if (!changed) return fence
         requestedTargetUs = targetUs
         requestedId = requestId
         // The native worker may already be sending one packet from the retired epoch.
@@ -113,10 +116,12 @@ internal class VlcTimedMetadataInbox {
 
     @Synchronized fun rejectSeek(fence: SeekFence) {
         // Do not undo a new media session or a native epoch observed during the call.
-        if (generation == fence.session && epoch == fence.epoch && fence.serial == fenceSerial) {
+        if (fence.changed && generation == fence.session && epoch == fence.epoch && fence.serial == fenceSerial) {
             discardedThroughEpoch = fence.previous
             requestedTargetUs = fence.previousTargetUs
             requestedId = fence.previousId
+            bytes = fence.previousBytes
+            mutable.value = fence.previousEvents
         }
     }
 

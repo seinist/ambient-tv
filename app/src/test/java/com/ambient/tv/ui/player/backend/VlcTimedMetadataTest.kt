@@ -178,7 +178,6 @@ class VlcTimedMetadataTest {
         val old = readEvent(packet(3).inputStream())
         inbox.offer(session, old)
         inbox.rejectSeek(inbox.clearForSeek())
-        inbox.offer(session, old)
         assertEquals(listOf(old), inbox.events.value)
         val fence = inbox.clearForSeek()
         val current = old.copy(seekEpoch = 4)
@@ -192,6 +191,33 @@ class VlcTimedMetadataTest {
         val initial = old.copy(seekEpoch = 0)
         inbox.offer(next, initial)
         assertEquals(listOf(initial), inbox.events.value)
+    }
+
+    @Test fun rejectedRetryDoesNotOverwriteAnEventReceivedDuringNativeCall() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        inbox.clearForSeek(1000000, 41)
+        val first = readEvent(packet(1).inputStream()).copy(seekTargetUs = 1000000, seekRequestId = 41)
+        inbox.offer(session, first)
+        val retry = inbox.clearForSeek(1000000, 41)
+        val second = first.copy(presentationTimeUs = first.presentationTimeUs + 100000)
+        inbox.offer(session, second)
+        inbox.rejectSeek(retry)
+        assertEquals(listOf(first, second), inbox.events.value)
+    }
+
+    @Test fun rejectedNewSeekRestoresHistoryAndByteBudget() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        val event = readEvent(packet(1, VlcTimedMetadataPacket.MAX_BOX).inputStream())
+        repeat(4) { inbox.offer(session, event.copy(presentationTimeUs = it.toLong())) }
+        val history = inbox.events.value
+        val fence = inbox.clearForSeek(1000000, 41)
+        assertTrue(inbox.events.value.isEmpty())
+        inbox.rejectSeek(fence)
+        assertEquals(history, inbox.events.value)
+        inbox.offer(session, event.copy(presentationTimeUs = 4))
+        assertEquals(history.drop(1).map { it.presentationTimeUs } + 4L, inbox.events.value.map { it.presentationTimeUs })
     }
 
     @Test fun isolatesMediaSessionsSeekEpochsAndBoundsHistory() {

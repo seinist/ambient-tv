@@ -42,6 +42,10 @@ with zipfile.ZipFile(sys.argv[1]) as a, zipfile.ZipFile(sys.argv[2]) as p:
         assert hashlib.sha256(linked).hexdigest() == expected[name], name + " receipt"
         assert linked == p.read("lib/"+sys.argv[3]+"/"+name), name + " APK"
 PY
+if [[ "$mode" != --run-prepared ]]; then
+    (cd "$AUDIT/build"; sha256sum outputs/apk/debug/seek-audit-debug.apk seek-fixture.mp4 > seek-audit.sha256)
+fi
+(cd "$AUDIT/build"; sha256sum --strict -c seek-audit.sha256)
 [[ "$mode" == --prepare-only ]] && exit 0
 adb get-state
 [[ ",$(adb shell getprop ro.product.cpu.abilist | tr -d '\r')," == *",$ABI,"* ]]
