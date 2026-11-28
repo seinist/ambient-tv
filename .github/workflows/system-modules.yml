@@ -11,6 +11,8 @@ on:
       - 'scripts/test_module_corresponding_source.py'
       - 'scripts/j2v8_source_audit.py'
       - 'scripts/test_j2v8_source_audit.py'
+      - 'scripts/build_j2v8_from_source.py'
+      - 'scripts/test_build_j2v8_from_source.py'
       - 'scripts/native_cache_keys.py'
       - 'scripts/test_native_cache_keys.py'
       - 'scripts/verify_paired_apk_release.py'
@@ -90,6 +92,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_prepare_native_module_release.py
           python3 -m unittest discover -s scripts -p test_module_corresponding_source.py
           python3 -m unittest discover -s scripts -p test_j2v8_source_audit.py
+          python3 -m unittest discover -s scripts -p test_build_j2v8_from_source.py
           python3 -m unittest discover -s scripts -p test_native_cache_keys.py
           python3 -m unittest discover -s scripts -p test_verify_paired_apk_release.py
           python3 -m unittest discover -s scripts -p test_verify_release_draft.py

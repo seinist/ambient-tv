@@ -840,6 +840,18 @@ remains unverified until the exact producer's build inputs or an
 independent source build can establish correspondence. No shipped
 binary is silently replaced.
 
+A separate experimental source-build workflow now builds J2V8 JNI and
+V8 from their pinned source commits using V8's DEPS-pinned depot_tools
+a806594b95a39141fdbf1f359087a44ffb2deaaf. It uses the original per-ABI GN
+arguments and links the JNI bridge with the V8 monolith inside the same
+GN toolchain. Candidate artifacts require the legacy JNI export surface,
+16 KiB ELF load alignment and platform-only dependencies. Build records
+include resolved dependencies and the exact bridge and GN arguments.
+The workflow is not part of publication and does not replace the legacy
+library. The historical build tools, full source builds and Android Java/JNI
+runtime compatibility require CI and device validation; the evidence is
+explicitly marked experimental and not approved for publication.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

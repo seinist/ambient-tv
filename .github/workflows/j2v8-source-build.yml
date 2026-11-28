@@ -1,0 +1,46 @@
+name: Experimental J2V8 source build
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/build_j2v8_from_source.py'
+      - '.github/workflows/j2v8-source-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: j2v8-source-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install source build prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git curl ca-certificates binutils build-essential python3 python-is-python3 xz-utils unzip
+          df -h
+      - name: Fetch pinned SmartTube Java and legacy JNI inputs
+        run: bash scripts/fetch_smarttube_engine.sh
+      - name: Compile pinned J2V8 and V8 native sources
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          set -euo pipefail
+          python3 scripts/build_j2v8_from_source.py --abi "$ABI" \
+            --work "$RUNNER_TEMP/j2v8-source" --output j2v8-source-candidate \
+            --shared third_party/smarttube/SharedModules --jobs 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-j2v8-source-${{ matrix.abi }}
+          path: j2v8-source-candidate/
+          if-no-files-found: error
