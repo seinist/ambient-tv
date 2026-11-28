@@ -76,6 +76,12 @@ internal fun ScheduledPlaybackDialog(entry: LiveTvReminder, store: LiveTvReminde
                 if (scheduledPlaybackIdentity(context, plan.provider, plan.targetId) == plan.sourceIdentity &&
                     store.putPlan(candidate)) onClose() else error = true
             }, enabled = valid, selected = true)
+            if (exists) TvActionButton(stringResource(R.string.programme_reminder_play), onClick = {
+                val saved = store.find(entry.id)
+                if (saved != null && scheduledPlaybackIdentity(context, initial.provider, initial.targetId) == initial.sourceIdentity) {
+                    store.snooze(saved.id); LiveTvReminderPrompt.launchPlan(saved); onClose()
+                } else error = true
+            })
             if (exists) TvActionButton(stringResource(R.string.reminder_remove), onClick = { store.remove(entry.id); onClose() })
             TvActionButton(stringResource(R.string.common_back), onClick = onClose)
         }) {
