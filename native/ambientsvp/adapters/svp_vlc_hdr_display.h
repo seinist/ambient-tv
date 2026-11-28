@@ -322,7 +322,7 @@ static inline bool ambient_svp_hdr_scene_compatible(const struct ambient_hdrplus
 }
 static inline bool ambient_svp_hdr_apply_scene(struct ambient_hdrplus *m,const AmbientSvpHdrSceneResult *r)
 {
-    if(!ambient_svp_hdr_scene_compatible(m)||!r->fraction||r->fraction>1000)return false;
+    if(!ambient_svp_hdr_scene_compatible(m)||!r||!svp_hdr_scene_values(r->maxscl,r->average,r->percentiles,r->fraction))return false;
     struct ambient_hdrplus_window *p=&m->windows[0];
     uint32_t peak=0;
     for(unsigned j=0;j<3;j++){if(r->maxscl[j]>100000)return false;p->maxscl[j]=r->maxscl[j]/100000.f;if(r->maxscl[j]>peak)peak=r->maxscl[j];}
