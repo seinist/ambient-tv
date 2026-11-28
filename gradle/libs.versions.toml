@@ -1,7 +1,7 @@
 [versions]
-agp = "9.4.1"
+agp = "9.5.3"
 kotlin = "2.4.21"
-ksp = "2.3.12"
+ksp = "2.3.14"
 coreKtx = "1.19.1"
 lifecycle = "2.11.1"
 activityCompose = "1.13.0"
@@ -15,7 +15,7 @@ okhttp = "5.5.1"
 commons-compress = "1.28.0"
 commons-io = "2.22.0"
 xz = "1.12"
-junrar = "7.6.1"
+junrar = "8.1.2"
 kotlinxSerialization = "1.13.0"
 hilt = "2.60.1"
 hiltNavigationCompose = "1.4.0"
@@ -31,11 +31,11 @@ smbj = "0.15.0"
 jcifsNg = "2.1.10"
 sshj = "0.41.2"
 zxing = "3.5.4"
-bouncycastle = "1.85.2"
+bouncycastle = "1.87"
 
-# Host application and SmartTube wrapper Maven pins (unchanged versions).
+# Host application and SmartTube wrapper Maven pins.
 playServicesCronet = "18.1.1"
-chromiumCronet = "143.7445.0"
+chromiumCronet = "500.1.0"
 jna = "5.19.1"
 legacySupport = "1.0.0"
 robolectric = "4.18.1"
@@ -43,13 +43,11 @@ rxjava2 = "2.2.21"
 rxandroid2 = "2.1.1"
 androidxAnnotation = "1.11.0"
 jsr305 = "3.0.2"
-smarttubeCoreKtx = "1.12.0"
-smarttubeCoroutines = "1.9.0"
 smarttubeAppcompat = "1.8.0"
 smarttubePreference = "1.2.1"
 smarttubeWebkit = "1.18.0"
 gson = "2.15.0"
-smarttubeJsonPath = "2.4.0"
+smarttubeJsonPath = "3.0.0"
 jsonSmart = "2.6.1"
 smarttubeCronetAdapter = "0.1.2"
 smarttubeRegex = "1.1.11"
@@ -57,15 +55,15 @@ nanojson = "1.10"
 okhttpProfiler = "1.0.8"
 disklrucache = "2.0.2"
 netcipher = "2.1.0"
-smarttubeDnsjava = "2.1.9"
-smarttubeSlf4j = "1.7.36"
+smarttubeDnsjava = "3.7.1"
+smarttubeSlf4j = "2.0.20"
 
 [libraries]
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 jcifs-ng = { module = "eu.agno3.jcifs:jcifs-ng", version.ref = "jcifsNg" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 bouncycastle-prov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
-bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version = "1.85" }
+bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
 sshj = { module = "com.hierynomus:sshj", version.ref = "sshj" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
@@ -139,8 +137,8 @@ rxjava2 = { module = "io.reactivex.rxjava2:rxjava", version.ref = "rxjava2" }
 rxandroid2 = { module = "io.reactivex.rxjava2:rxandroid", version.ref = "rxandroid2" }
 androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "androidxAnnotation" }
 jsr305 = { module = "com.google.code.findbugs:jsr305", version.ref = "jsr305" }
-smarttube-core-ktx = { module = "androidx.core:core-ktx", version.ref = "smarttubeCoreKtx" }
-smarttube-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "smarttubeCoroutines" }
+smarttube-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+smarttube-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 smarttube-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "smarttubeAppcompat" }
 smarttube-preference = { module = "androidx.preference:preference", version.ref = "smarttubePreference" }
 smarttube-webkit = { module = "androidx.webkit:webkit", version.ref = "smarttubeWebkit" }
@@ -158,6 +156,7 @@ disklrucache = { module = "com.jakewharton:disklrucache", version.ref = "disklru
 netcipher = { module = "info.guardianproject.netcipher:netcipher", version.ref = "netcipher" }
 smarttube-dnsjava = { module = "dnsjava:dnsjava", version.ref = "smarttubeDnsjava" }
 smarttube-slf4j = { module = "org.slf4j:slf4j-nop", version.ref = "smarttubeSlf4j" }
+smarttube-slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "smarttubeSlf4j" }
 androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 

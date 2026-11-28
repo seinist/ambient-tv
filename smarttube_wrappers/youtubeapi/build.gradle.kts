@@ -56,11 +56,9 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.smarttube.json.path)
     constraints {
-        // json-path 2.4.0 (pinned to match SmartTube upstream) pulls json-smart 2.3, which has
-        // known denial-of-service bugs on malformed or deeply nested JSON (e.g. CVE-2023-1370).
-        // Raise only json-smart; json-path keeps its upstream version and 2.x API.
+        // Keep json-smart independently security-updateable, including for JSON Path 3.x.
         implementation(libs.json.smart) {
-            because("json-smart 2.3 from json-path 2.4.0 has known DoS vulnerabilities")
+            because("Prevent vulnerable transitive json-smart versions (e.g. CVE-2023-1370)")
         }
     }
     implementation(libs.rxandroid2)

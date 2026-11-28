@@ -120,11 +120,11 @@ class MavenUpdatesTest(unittest.TestCase):
         with mock.patch.object(external, "get_bytes", return_value=metadata("3.8.0", "4.0.0")):
             self.assertEqual(external.libvlc_latest_stable("3.8.0-rc01"), "3.8.0")
 
-    def test_no_downgrade_and_manual_toolchain(self):
+    def test_no_downgrade_and_major_review(self):
         pins = maven.catalog_pins(FIXTURE)
         preview = maven.Pin("media3", "1.12.0-rc01", pins["media3"].artifacts)
         self.assertEqual(maven.find_update(preview, {"1.11.1"}, "stable").candidate, "1.12.0-rc01")
-        self.assertEqual(maven.find_update(pins["agp"], {"9.5.0"}, "stable", True).status, "MANUAL")
+        self.assertEqual(maven.find_update(pins["agp"], {"9.5.0"}, "stable").status, "UPDATE")
         self.assertEqual(maven.find_update(pins["libvlc"], {"4.0.0"}, "stable", True).status, "MANUAL")
         self.assertEqual(maven.find_update(pins["okhttp"], {"6.0.0"}, "stable").status, "MANUAL")
         self.assertEqual(maven.find_update(pins["okhttp"], {"6.0.0", "5.6.0"}, "stable").candidate, "5.6.0")
@@ -136,13 +136,14 @@ class MavenUpdatesTest(unittest.TestCase):
         updates = [
             maven.Finding(pins["media3"], "1.12.0", "UPDATE"),
             maven.Finding(pins["okhttp"], "5.6.0", "UPDATE"),
-            maven.Finding(pins["agp"], "9.5.0", "MANUAL"),
+            maven.Finding(pins["agp"], "9.5.0", "UPDATE"),
             maven.Finding(pins["libraries.inline"], "1.4", "UPDATE"),
             maven.Finding(pins["libraries.shorthand"], "1.5", "UPDATE"),
         ]
         actual = maven.render_catalog(FIXTURE, updates)
         expected = (FIXTURE.replace('media3 = "1.11.1"', 'media3 = "1.12.0"')
                     .replace('okhttp = "5.5.0"', 'okhttp = "5.6.0"')
+                    .replace('agp = "9.4.1"', 'agp = "9.5.0"')
                     .replace('version = "1.2"', 'version = "1.4"')
                     .replace('example:shorthand:1.3', 'example:shorthand:1.5'))
         self.assertEqual(actual, expected)
@@ -200,7 +201,19 @@ class MavenUpdatesTest(unittest.TestCase):
         self.assertEqual({a.name for a in pins["okhttp"].artifacts}, {
             "okhttp", "logging-interceptor", "okhttp-dnsoverhttps", "okhttp-brotli",
         })
-        self.assertIn("chromiumCronet", maven.MANUAL)
+        self.assertEqual({a.name for a in pins["bouncycastle"].artifacts}, {
+            "bcprov-jdk18on", "bcpkix-jdk18on",
+        })
+        self.assertEqual({a.name for a in pins["smarttubeSlf4j"].artifacts}, {
+            "slf4j-api", "slf4j-nop",
+        })
+        self.assertNotIn("smarttubeCoreKtx", pins)
+        self.assertNotIn("smarttubeCoroutines", pins)
+        for key in ("agp", "ksp", "bouncycastle", "chromiumCronet", "junrar",
+                    "smarttubeDnsjava", "smarttubeJsonPath", "smarttubeSlf4j"):
+            self.assertNotIn(key, maven.MANUAL)
+        cronet = maven.Pin("chromiumCronet", "143.7445.0", pins["chromiumCronet"].artifacts)
+        self.assertEqual(maven.find_update(cronet, {"500.1.0"}, "stable").status, "UPDATE")
         self.assertIn("hilt", maven.MANUAL)
         self.assertIn("jna", maven.MANUAL)
 

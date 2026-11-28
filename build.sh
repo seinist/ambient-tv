@@ -296,8 +296,6 @@ subprojects {
     configurations.configureEach {
         resolutionStrategy.force(
             "org.chromium.net:cronet-api:$ambientChromiumCronetVersion",
-            "org.chromium.net:cronet-common:$ambientChromiumCronetVersion",
-            "org.chromium.net:cronet-embedded:$ambientChromiumCronetVersion",
         )
     }
 }
@@ -381,12 +379,14 @@ verify_build_toolchain_matrix() {
     local wrapper="$ROOT_DIR/gradle/wrapper/gradle-wrapper.properties"
     [[ -f "$catalog" ]] || fail "Missing Gradle version catalog: $catalog"
     [[ -f "$wrapper" ]] || fail "Missing Gradle wrapper properties: $wrapper"
-    grep -F 'agp = "9.4.1"' "$catalog" >/dev/null || fail "Unsupported AGP configuration. Expected AGP 9.4.1 for Kotlin 2.4.21."
+    # AGP and KSP are checked by Gradle plugin resolution/compilation; do not pin
+    # their versions a second time here and block Maven catalog updates.
+    grep -Eq '^agp[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid AGP catalog pin."
     grep -F 'kotlin = "2.4.21"' "$catalog" >/dev/null || fail "Unexpected Kotlin plugin version. Expected Kotlin 2.4.21."
-    grep -F 'ksp = "2.3.12"' "$catalog" >/dev/null || fail "Expected KSP 2.3.12."
+    grep -Eq '^ksp[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid KSP catalog pin."
     grep -F 'hilt = "2.60.1"' "$catalog" >/dev/null || fail "Expected Hilt 2.60.1."
     grep -F 'gradle-9.8.1-bin.zip' "$wrapper" >/dev/null || fail "Unexpected Gradle wrapper. Expected Gradle 9.8.1."
-    grep -F 'alias(libs.plugins.android.library) apply false' "$ROOT_DIR/build.gradle.kts" >/dev/null || fail "Android library plugin is not aligned to AGP 9.4.1."
+    grep -F 'alias(libs.plugins.android.library) apply false' "$ROOT_DIR/build.gradle.kts" >/dev/null || fail "Android library plugin is not aligned to the AGP catalog pin."
 }
 
 require_project() {
@@ -396,7 +396,7 @@ require_project() {
     ensure_root_build_kts
     rm -rf "$ROOT_DIR/.gradle"
     verify_build_toolchain_matrix
-    log "Build toolchain: AGP 9.4.1 / Kotlin 2.4.21 / Gradle 9.8.1 / JVM bytecode 17"
+    log "Build toolchain: $(grep -E '^(agp|kotlin|ksp|hilt) = ' "$ROOT_DIR/gradle/libs.versions.toml" | paste -sd ' ' -) / Gradle 9.8.1 / JVM bytecode 17"
     [[ -f "$APP_GRADLE" ]] || fail "Run this script from the Ambient TV project root. Missing app/build.gradle.kts."
     [[ -x "$ROOT_DIR/gradlew" ]] || chmod +x "$ROOT_DIR/gradlew"
     [[ -x "$ROOT_DIR/gradlew" ]] || fail "gradlew is not executable."
@@ -596,7 +596,7 @@ ensure_youtube_engine() {
            "$ROOT_DIR/smarttube_wrappers/j2v8/build"
     "$YOUTUBE_ENGINE_SCRIPT"
     youtube_engine_ready || fail "SmartTube live-patch integration did not validate after preparation."
-    log "SmartTube live-patch integration ready (AGP 9.4.1/Kotlin 2.4.21/JVM 17)"
+    log "SmartTube live-patch integration ready (catalog AGP/Kotlin/JVM 17)"
 }
 
 
