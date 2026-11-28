@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 import re
 import subprocess
+import struct
 import tempfile
 import zipfile
 
@@ -81,9 +82,64 @@ def owns_libretrodroid(path):
     )
 
 
+def boundary_bytes(name, data):
+    """The ownership policy names the forbidden types as string constants.
+
+    Only that exact policy class may contain those literals. Its actual JVM
+    class, member and method-type descriptors remain subject to the same
+    boundary checks, even when a UTF-8 entry is shared with a string literal.
+    """
+    if name != "com/ambient/tv/modules/ModuleDexOwnership.class":
+        return data
+    # Parse constant pool rather than blanket-allowlisting the policy class.
+    if len(data) < 10:
+        raise ValueError("Invalid ownership policy class")
+    count = struct.unpack_from(">H", data, 8)[0]
+    offset, index = 10, 1
+    strings, structural, utf8 = set(), set(), {}
+    widths = {3: 4, 4: 4, 5: 8, 6: 8, 7: 2, 8: 2, 9: 4, 10: 4,
+              11: 4, 12: 4, 15: 3, 16: 2, 17: 4, 18: 4, 19: 2, 20: 2}
+    try:
+        while index < count:
+            tag = data[offset]
+            offset += 1
+            if tag == 1:
+                length = struct.unpack_from(">H", data, offset)[0]
+                offset += 2
+                if offset + length > len(data):
+                    raise ValueError("Truncated ownership policy constant")
+                utf8[index] = data[offset:offset + length]
+                offset += length
+            elif tag in widths:
+                if offset + widths[tag] > len(data):
+                    raise ValueError("Truncated ownership policy constant")
+                if tag == 8:
+                    strings.add(struct.unpack_from(">H", data, offset)[0])
+                elif tag in (7, 16):
+                    structural.add(struct.unpack_from(">H", data, offset)[0])
+                elif tag == 12:
+                    structural.add(struct.unpack_from(">H", data, offset + 2)[0])
+                offset += widths[tag]
+                if tag in (5, 6):
+                    index += 1
+            else:
+                raise ValueError("Unknown ownership policy constant")
+            index += 1
+    except (IndexError, struct.error) as error:
+        raise ValueError("Invalid ownership policy class") from error
+    if not strings | structural <= utf8.keys():
+        raise ValueError("Invalid ownership policy string reference")
+    # Field/method declarations and signatures can reference UTF-8 directly
+    # without a CONSTANT_Class/NameAndType. Keep descriptor-shaped entries.
+    return b"\xca\xfe\xba\xbe" + b"\x00".join(
+        value for key, value in utf8.items()
+        if key not in strings or key in structural or re.search(rb"L[A-Za-z0-9_/$-]+[;<]", value))
+
+
 def validate_libretro_boundary(name, data):
     if not data.startswith(b"\xca\xfe\xba\xbe"):
         return
+    data = boundary_bytes(name, data)
     matches = re.findall(rb"com/swordfish/libretrodroid/[A-Za-z0-9_/$-]+", data)
     if any(owns_libretrodroid(match.decode("ascii") + ".class") for match in matches):
         raise ValueError(f"host class references private LibretroDroid type: {name}")
@@ -100,6 +156,7 @@ def ownership(module):
 def validate_vlc_boundary(name, data):
     if not data.startswith(b"\xca\xfe\xba\xbe"):
         return
+    data = boundary_bytes(name, data)
     matches = re.findall(rb"org/videolan/libvlc/[A-Za-z0-9_/$-]+", data)
     if any(owns_vlc(match.decode("ascii") + ".class") for match in matches):
         raise ValueError(f"host class references private VLC type: {name}")
@@ -131,6 +188,7 @@ def validate_private_boundary(name, data):
     # Scan only actual class files (test fixtures use opaque dummy bytes).
     if not data.startswith(b"\xca\xfe\xba\xbe"):
         return
+    data = boundary_bytes(name, data)
     for prefix in SMARTTUBE_PRIVATE_PREFIXES:
         internal = prefix.encode()
         dotted = prefix.replace("/", ".").encode()

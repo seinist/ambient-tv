@@ -1,4 +1,5 @@
 import tempfile
+import struct
 import unittest
 from pathlib import Path
 import zipfile
@@ -6,7 +7,31 @@ import zipfile
 import export_monogram_adapter as exporter
 
 
+def ownership_policy_fixture(value, structural=False):
+    # Minimal constant pool with a UTF-8 entry and a string referencing it.
+    # An additional CONSTANT_Class sharing that entry must remain forbidden.
+    constants = b"\x01" + struct.pack(">H", len(value)) + value + b"\x08\x00\x01"
+    if structural:
+        constants += b"\x07\x00\x01"
+    return b"\xca\xfe\xba\xbe\x00\x00\x00\x34" + struct.pack(">H", 4 if structural else 3) + constants
+
+
 class MonogramDexExportTest(unittest.TestCase):
+    def test_policy_literals_are_not_host_linkages(self):
+        name = "com/ambient/tv/modules/ModuleDexOwnership.class"
+        for validate, value in (
+            (exporter.validate_private_boundary, b"com/jayway/jsonpath/JsonPath"),
+            (exporter.validate_vlc_boundary, b"org/videolan/libvlc/LibVLC"),
+            (exporter.validate_libretro_boundary, b"com/swordfish/libretrodroid/GLRetroView"),
+        ):
+            validate(name, ownership_policy_fixture(value))
+            with self.assertRaises(ValueError):
+                validate(name, ownership_policy_fixture(value, structural=True))
+            with self.assertRaises(ValueError):
+                validate(name, ownership_policy_fixture(b"L" + value + b";"))
+            with self.assertRaises(ValueError):
+                validate("host/Other.class", ownership_policy_fixture(value))
+
     def make_inputs(self, root, extra=None):
         classes = {
             name: b"test" for name in exporter.REQUIRED

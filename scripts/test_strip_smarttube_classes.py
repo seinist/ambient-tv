@@ -4,6 +4,7 @@ from pathlib import Path
 import zipfile
 
 from export_monogram_adapter import SMARTTUBE_REQUIRED
+from test_export_monogram_adapter import ownership_policy_fixture
 from strip_smarttube_classes import strip
 
 
@@ -38,6 +39,17 @@ class StripSmartTubeTest(unittest.TestCase):
                     "com/ambient/tv/modules/SystemModuleEntrypoint.class",
                     "okhttp3/OkHttpClient.class",
                 })
+
+    def test_ownership_policy_literals_survive_stripping(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = "com/ambient/tv/modules/ModuleDexOwnership.class"
+            data = ownership_policy_fixture(b"com/jayway/jsonpath/JsonPath")
+            source = self.source(root, {name: data})
+            output = root / "stripped.jar"
+            strip([source], output)
+            with zipfile.ZipFile(output) as jar:
+                self.assertEqual(jar.read(name), data)
 
     def test_host_reference_to_private_library_blocks_stripping(self):
         with tempfile.TemporaryDirectory() as temp:

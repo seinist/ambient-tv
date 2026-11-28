@@ -864,6 +864,15 @@ disables the release variant of the wrapper, so no experimental binary
 can enter a normal release through this test path. ARM device tests and
 productive publication/source-package integration remain gated.
 
+CI regression fixes: fetch and patch SmartTube with the runner's modern
+Python before selecting Python 3.9 for V8's historic code generator.
+The DEX host boundary recognizes the exact ModuleDexOwnership policy's
+constant-pool string literals without exempting structural class and
+descriptor references. The native shader audit verifies both the neutral
+host shader dispatcher and the bundled Libretro conversion, including
+the vendor CUT2/CUT3 constructors, instead of asserting obsolete direct
+host-to-vendor calls.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

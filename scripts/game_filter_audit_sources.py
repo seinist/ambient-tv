@@ -65,9 +65,14 @@ def write_audit_header(destination):
     native = {"SHARP": "SHADER_SHARP", "PIXEL": "SHADER_DEFAULT", "SMOOTH": "SHADER_UPSCALE_CUT3",
               "CUT2": "SHADER_UPSCALE_CUT2", "CRT": "SHADER_CRT", "LCD": "SHADER_LCD"}
     config_source = (GAMES / "GameShaderConfig.kt").read_text()
-    for name, kotlin in {"SHARP": "Sharp", "PIXEL": "Pixel", "SMOOTH": "CUT3()",
-                         "CUT2": "CUT2()", "CRT": "CRT", "LCD": "LCD"}.items():
+    adapter_source = (GAMES / "BundledRetroShaderAdapter.kt").read_text()
+    assert "import com.ambient.tv.games.RetroShaderConfig as ShaderConfig" in config_source
+    assert "import com.swordfish.libretrodroid.ShaderConfig" in adapter_source
+    for name, kotlin in {"SHARP": "Sharp", "PIXEL": "Pixel", "SMOOTH": "CUT3",
+                         "CUT2": "CUT2", "CRT": "CRT", "LCD": "LCD"}.items():
         assert f"GameShader.{name} -> ShaderConfig.{kotlin}" in config_source
+        vendor = kotlin + "()" if kotlin in ("CUT2", "CUT3") else kotlin
+        assert f"RetroShaderConfig.{kotlin} -> ShaderConfig.{vendor}" in adapter_source
     assert "GameShader.BICUBIC -> GamePictureShaders.bicubic()" in config_source
     assert "GameShader.ADAPTIVE -> GamePictureShaders.adaptiveSharpen()" in config_source
     upstream = presets()

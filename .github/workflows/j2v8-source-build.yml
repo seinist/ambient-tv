@@ -31,11 +31,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends git curl ca-certificates binutils build-essential python3 python-is-python3 xz-utils unzip
           df -h
+      - name: Fetch pinned SmartTube Java and legacy JNI inputs
+        run: bash scripts/fetch_smarttube_engine.sh
       - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-      - name: Fetch pinned SmartTube Java and legacy JNI inputs
-        run: bash scripts/fetch_smarttube_engine.sh
       - name: Compile pinned J2V8 and V8 native sources
         env:
           ABI: ${{ matrix.abi }}
