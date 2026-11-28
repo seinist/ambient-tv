@@ -620,6 +620,8 @@ android {
             // dnsjava's multi-release desktop JDK resolver provider is absent on Android.
             // Do not exclude other service descriptors: SLF4J and other providers need them.
             excludes += "META-INF/services/java.net.spi.InetAddressResolverProvider"
+            // The legacy JDK NameService SPI is also unavailable on Android.
+            excludes += "META-INF/services/sun.net.spi.nameservice.NameServiceDescriptor"
             merges += setOf("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/LICENSE.md", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/NOTICE.md")
         }
         jniLibs {

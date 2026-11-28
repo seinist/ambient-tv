@@ -47,8 +47,13 @@
 -dontwarn com.sun.jna.WString
 -dontwarn com.sun.jna.ptr.IntByReference
 -dontwarn com.sun.jna.win32.W32APIOptions
-# Lombok's generated-code marker is build-time metadata, not a runtime API.
+# Lombok annotations are build-time metadata, not runtime APIs.
 -dontwarn lombok.Generated
+-dontwarn lombok.NonNull
+# dnsjava retains the legacy desktop JDK NameService SPI for older Java
+# releases. Android does not implement it; its descriptor is not packaged.
+-dontwarn sun.net.spi.nameservice.NameService
+-dontwarn sun.net.spi.nameservice.NameServiceDescriptor
 # The Java 18+ InetAddressResolver SPI is not an Android API. Its multi-release
 # service descriptor is excluded by Android packaging (see app/build.gradle.kts).
 -dontwarn java.net.spi.InetAddressResolverProvider
@@ -160,7 +165,8 @@
 # JsonPath is module-owned, not a shared host ABI. The allowshrinking rule
 # above keeps names without rooting optional unsupported provider classes.
 -keep class net.minidev.** { *; }
--keep class org.xbill.DNS.** { *; }
+# Preserve the shared Android DNS ABI, not unused desktop resolver SPI.
+-keep class !org.xbill.DNS.spi.**,org.xbill.DNS.** { *; }
 -keep class org.slf4j.** { *; }
 -keep class androidx.webkit.** { *; }
 -keep class androidx.preference.** { *; }
