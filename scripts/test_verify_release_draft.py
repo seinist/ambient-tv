@@ -18,6 +18,33 @@ class ReleaseDraftTest(unittest.TestCase):
     def check(self, release):
         draft.verify(release, "modules-test-v1", self.expected, self.target)
 
+    def test_discovery_uses_authenticated_list_and_numeric_id(self):
+        release = {**self.release, "id": 42}
+        calls = []
+        def fetch(endpoint):
+            calls.append(endpoint)
+            if endpoint.endswith("page=1"):
+                return [{"tag_name": f"other-{i}", "id": i + 100} for i in range(100)]
+            if endpoint.endswith("page=2"):
+                return [release]
+            if endpoint.endswith("/releases/42"):
+                return release
+            self.fail(f"Unexpected endpoint {endpoint}")
+        self.check(draft.get_draft("owner/repo", "modules-test-v1", fetch))
+        self.assertEqual(calls, ["repos/owner/repo/releases?per_page=100&page=1",
+                                 "repos/owner/repo/releases?per_page=100&page=2",
+                                 "repos/owner/repo/releases/42"])
+
+    def test_discovery_rejects_missing_ambiguous_or_published_release(self):
+        release = {**self.release, "id": 42}
+        for rows in ([], [release, {**release, "id": 43}], [release, release],
+                     [{**release, "draft": False}], [{**release, "id": True}]):
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                draft.get_draft("owner/repo", "modules-test-v1", lambda _: rows)
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            draft.get_draft("owner/repo", "modules-test-v1",
+                            lambda endpoint: [release] if "?" in endpoint else {**release, "id": 43})
+
     def test_exact_draft(self):
         self.check(self.release)
 

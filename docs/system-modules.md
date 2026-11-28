@@ -763,6 +763,11 @@ failure, and APK drafts remain subject to manual review. Paired APK releases
 also revalidate the signed APK pair and current main immediately before
 draft creation. This does not substitute for device or license review.
 
+Draft verification uses the authenticated release listing followed by
+the unique numeric release ID, rather than the published-release tag lookup.
+Ambiguous, missing, published or changing identities fail closed. Discovery
+is bounded to ten pages; exceeding that limit requires review.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 import re
 import subprocess
-from urllib.parse import quote
 
 
 def expected_assets(paths):
@@ -48,6 +47,41 @@ def verify(release, tag, expected, target=None):
         raise ValueError("Missing release draft asset")
 
 
+def get_draft(repo, tag, fetch):
+    """Drafts are visible to an authenticated writer in the release list.
+
+    The release-by-tag endpoint is for published releases. Resolve a draft
+    to its numeric ID and fetch that exact resource before checking assets.
+    """
+    matches = set()
+    for page in range(1, 11):
+        rows = fetch(f"repos/{repo}/releases?per_page=100&page={page}")
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise ValueError("Invalid release discovery page")
+        for release in rows:
+            if not isinstance(release, dict):
+                raise ValueError("Invalid release discovery entry")
+            if release.get("tag_name") != tag:
+                continue
+            release_id = release.get("id")
+            if release.get("draft") is not True or type(release_id) is not int or release_id <= 0:
+                raise ValueError("Expected a unique unpublished release")
+            if release_id in matches:
+                raise ValueError("Duplicate draft during release discovery")
+            matches.add(release_id)
+        if len(rows) < 100:
+            break
+    else:
+        raise ValueError("Release discovery exceeds search limit")
+    if len(matches) != 1:
+        raise ValueError("Expected exactly one release draft")
+    release_id = next(iter(matches))
+    release = fetch(f"repos/{repo}/releases/{release_id}")
+    if not isinstance(release, dict) or release.get("id") != release_id:
+        raise ValueError("Release draft identity changed")
+    return release
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
@@ -60,8 +94,9 @@ def main():
     if args.target is not None and not re.fullmatch(r"[a-f0-9]{40}", args.target):
         raise ValueError("Invalid release target")
     expected = expected_assets(args.assets)
-    raw = subprocess.check_output(["gh", "api", f"repos/{args.repo}/releases/tags/{quote(args.tag, safe='')}"], text=True)
-    verify(json.loads(raw), args.tag, expected, args.target)
+    def fetch(endpoint):
+        return json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+    verify(get_draft(args.repo, args.tag, fetch), args.tag, expected, args.target)
     print(f"Verified draft: {args.tag}, {len(expected)} exact uploaded assets")
 
 
