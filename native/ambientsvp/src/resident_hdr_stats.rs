@@ -21,13 +21,15 @@ pub struct HdrResult{
 #[repr(C)]
 #[derive(Clone,Copy,Debug,Default)]
 pub struct HdrTrack{pub a:[u32;4],pub b:[u32;4],pub ellipse:[u32;2]}
-pub(super) struct StatsPipelines{collect:Pipeline,reduce:Pipeline,track:Pipeline}
+pub(super) struct StatsPipelines{collect:Pipeline,reduce:Pipeline,track:Pipeline,proxy:Pipeline,bright:Pipeline}
 impl StatsPipelines{
     pub(super) fn new(core:&Core)->Result<Self>{
         let types=[vk::DescriptorType::SAMPLED_IMAGE,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER];
         Ok(Self{collect:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"collect")?,c"collect")?,
             reduce:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"summarize")?,c"summarize")?,
-            track:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"track")?,c"track")?})
+            track:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"track")?,c"track")?,
+            proxy:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"bright_proxy")?,c"bright_proxy")?,
+            bright:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"bright_reduce")?,c"bright_reduce")?})
     }
 }
 struct Buffer{device:ash::Device,buffer:vk::Buffer,memory:vk::DeviceMemory,size:u64}
@@ -56,7 +58,7 @@ impl Buffer{
 }
 pub(super) struct StatsJob{
     device:ash::Device,pool:vk::DescriptorPool,
-    hist:Buffer,summary:Buffer,windows:Vec<HdrWindow>,
+    hist:Buffer,summary:Buffer,scene_hist:Option<Buffer>,windows:Vec<HdrWindow>,
     pipelines:Arc<StatsPipelines>,set:vk::DescriptorSet,
     tracking:bool,affine:bool,width:u32,height:u32,step:u32,
 }
@@ -65,7 +67,7 @@ impl Drop for StatsJob{
 }
 impl StatsJob{
     pub(super) fn new(core:&Core,view:vk::ImageView,field:vk::Buffer,windows:&[HdrWindow],
-        tracking:Option<(&[HdrTrack],f32,bool)>, ellipses:Option<&[[u32;3]]>)->Result<Self>{
+        tracking:Option<(&[HdrTrack],f32,bool)>, ellipses:Option<&[[u32;3]]>, scene:bool)->Result<Self>{
         if !core.stats_supported || !(1..=3).contains(&windows.len()) ||
             windows[0].rect!=[0,0,core.width,core.height] ||
             windows.iter().any(|w|w.rect[0]>=w.rect[2]||w.rect[1]>=w.rect[3]||
@@ -91,11 +93,15 @@ impl StatsJob{
             if slot.is_none(){*slot=Some(Arc::new(StatsPipelines::new(core)?));}
             slot.as_ref().unwrap().clone()
         };
-        let hist=Buffer::new(core,BINS*4*windows.len() as u64,
-            vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+        if scene&&windows.len()!=1{return Err("scene statistics require version 1 global window".into());}
+        let proxy_count=if scene{u64::from(core.width.div_ceil(5))*u64::from(core.height.div_ceil(5))}else{0};
+        let hist=Buffer::new(core,(BINS*windows.len() as u64+proxy_count)*4,
+            vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+        let scene_hist=if scene{Some(Buffer::new(core,BINS*4,vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?)}else{None};
         let summary=Buffer::new(core,(STRIDE*4*windows.len()) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
-        let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,windows:windows.to_vec(),
+        let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
             pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
         let mut config=vec![0u32;STRIDE*windows.len()];
         for (i,w) in windows.iter().enumerate(){
@@ -152,10 +158,46 @@ impl StatsJob{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::DependencyFlags::empty(),&between,&[],&[]);
             self.pipelines.reduce.dispatch(cmd,self.set,params,self.windows.len() as u32,1);
+            if let Some(hist)=&self.scene_hist{
+                self.pipelines.proxy.dispatch(cmd,self.set,params,w.div_ceil(5).div_ceil(8),h.div_ceil(5).div_ceil(8));
+                d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::DependencyFlags::empty(),&between,&[],&[]);
+                self.pipelines.bright.dispatch(cmd,self.set,params,1,1);
+                let transfer=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ)];
+                d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),&transfer,&[],&[]);
+                d.cmd_copy_buffer(cmd,self.hist.buffer,hist.buffer,&[vk::BufferCopy::default().size(BINS*4)]);
+                let host=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ)];
+                d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                    vk::DependencyFlags::empty(),&host,&[],&[]);
+            }
             let after=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ)];
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::HOST,
                 vk::DependencyFlags::empty(),&after,&[],&[]);
         }
+    }
+    pub(super) fn scene_frame(&self)->Result<SceneFrame>{
+        let hist=self.scene_hist.as_ref().ok_or("scene capture not recorded")?;
+        let mut row=[0u32;STRIDE];
+        let mut bins=vec![0u32;BINS as usize];
+        unsafe{
+            let mapped=self.summary.map()?;
+            std::ptr::copy_nonoverlapping(mapped,row.as_mut_ptr(),row.len());
+            self.device.unmap_memory(self.summary.memory);
+            let mapped=hist.map()?;
+            std::ptr::copy_nonoverlapping(mapped,bins.as_mut_ptr(),bins.len());
+            self.device.unmap_memory(hist.memory);
+        }
+        let average=f32::from_bits(row[61]);let fraction=f32::from_bits(row[62]);
+        if row[63]!=self.width.div_ceil(5)*self.height.div_ceil(5)||
+            !average.is_finite()||!(0.0..=1.0).contains(&average)||
+            !fraction.is_finite()||!(0.0..=1.0).contains(&fraction)||
+            row[39]!=self.width*self.height||bins.iter().map(|&v|u64::from(v)).sum::<u64>()!=u64::from(row[39])||
+            row[20..23].iter().any(|&v|v>100000){
+            return Err("invalid scene frame statistics".into());
+        }
+        Ok(SceneFrame{width:self.width,height:self.height,maxscl:[row[20],row[21],row[22]],bins,average,fraction})
     }
     pub(super) fn ellipses(&self,out:&mut[[u32;3]])->Result<()>{
         if !self.affine||out.len()!=self.windows.len(){return Err("HDR ellipse read contract".into());}
@@ -245,7 +287,7 @@ impl StatsJob{
 #[cfg(test)]
 #[test]
 fn hdr_statistics_shaders_compile(){
-    for entry in ["collect","summarize","track"]{assert_eq!(spirv(SHADER,UNIFORM,entry).unwrap()[0],0x07230203);}
+    for entry in ["collect","summarize","track","bright_proxy","bright_reduce"]{assert_eq!(spirv(SHADER,UNIFORM,entry).unwrap()[0],0x07230203);}
 }
 
 // ST 2094-40:2020 section 10.4. Scene-level reducer. A caller must
@@ -289,4 +331,9 @@ fn bright_scene_selects_latest_highest_average_and_weighted_band(){
     scene.push_proxy(&[1.0,1.0-3.0/255.0,0.0]).unwrap();
     assert_eq!(scene.finish(),Some(500));
     assert_eq!(BrightScene::default().finish(),None);
+}
+
+pub(super) struct SceneFrame{
+    pub width:u32,pub height:u32,pub maxscl:[u32;3],
+    pub bins:Vec<u32>,pub average:f32,pub fraction:f32,
 }
