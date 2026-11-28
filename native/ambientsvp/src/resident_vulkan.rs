@@ -1095,7 +1095,7 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats(pair:*mut VulkanPair,phase:u32
         if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,None)else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,None,None)else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
@@ -1125,7 +1125,7 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_track(pair:*mut VulkanPair,pha
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
         let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,false)))else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,false)),None)else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
@@ -1140,7 +1140,22 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_affine(pair:*mut VulkanPair,ph
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
         let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,true)))else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,true)),None)else{return -1;};
+        unsafe{job.record(p.command,p.core.width,p.core.height);}
+        p.hdr_jobs[i]=Some(job);0
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_ellipse(pair:*mut VulkanPair,phase:u32,
+    windows:*const HdrWindow,tracks:*const HdrTrack,ellipses:*const [u32;3],t:f32,count:u32)->i32{
+    if pair.is_null()||windows.is_null()||tracks.is_null()||ellipses.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&mut *pair};let i=phase as usize;
+        if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
+            p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
+        let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
+        let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t,true)),Some(unsafe{std::slice::from_raw_parts(ellipses,count as usize)}))else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
