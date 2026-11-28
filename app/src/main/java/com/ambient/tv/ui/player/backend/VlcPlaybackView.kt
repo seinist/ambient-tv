@@ -1309,6 +1309,10 @@ class VlcPlaybackController(
     /** Native playing flag for UI snapshots; false once released (the native player may be gone). */
     fun isPlayingNow(): Boolean = !released && runCatching { player.isPlaying }.getOrDefault(false)
 
+    /** Read-only native diagnostics; do not expose the replaceable engine port. */
+    internal fun nativePlaybackTimeMs(): Long = if (released) -1L else player.time
+    internal fun nativePlaybackVolume(): Int = if (released) -1 else player.volume
+
     /** A transcoded HTTP response may have no VLC seek index despite having a server start offset. */
     override fun canSeekNow(): Boolean = !released && prepared && !openingOrRestarting && player.isSeekable
 

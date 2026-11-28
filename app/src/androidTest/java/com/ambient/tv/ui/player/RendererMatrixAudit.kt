@@ -51,7 +51,7 @@ internal class RendererMatrixAudit(private val instrumentation: Instrumentation,
             "media3 format=${h.player.videoFormat} rendered=${c?.renderedOutputBufferCount} dropped=${c?.droppedBufferCount} audio=${h.player.audioFormat}"
         }
         is MpvPlaybackController -> "mpv output=${h.configuredVideoOutput()} decoder=${h.decoder()} drops=${h.frameDropCount()} decodeDrops=${h.decoderFrameDropCount()} hdr=${h.sourceHdrStandard} audio=${h.audioOutputDriver()}/${h.audioOutputFormat()} fallback=${h.accelerationFallback}"
-        is VlcPlaybackController -> "vlc output=${h.videoOutputDescription} stats=${h.runtimeStats()} fallback=${h.accelerationFallback} pendingSeek=${h.hasPendingSeek()} nativeTime=${h.player.time}"
+        is VlcPlaybackController -> "vlc output=${h.videoOutputDescription} stats=${h.runtimeStats()} fallback=${h.accelerationFallback} pendingSeek=${h.hasPendingSeek()} nativeTime=${h.nativePlaybackTimeMs()}"
         else -> "no active engine"
     }
 
@@ -297,14 +297,14 @@ internal class RendererMatrixAudit(private val instrumentation: Instrumentation,
             main { BackgroundPlaybackSession.activeHandle()?.seekTo(seekTarget) }
             await("native seek") {
                 val h = BackgroundPlaybackSession.activeHandle()
-                if (h is VlcPlaybackController) !h.hasPendingSeek() && h.player.time in (seekTarget - 1_000)..(seekTarget + 3_000)
+                if (h is VlcPlaybackController) !h.hasPendingSeek() && h.nativePlaybackTimeMs() in (seekTarget - 1_000)..(seekTarget + 3_000)
                 else BackgroundPlaybackSession.snapshot.value.status.positionMs in (seekTarget - 1_000)..(seekTarget + 3_000)
             }
             assertPlaybackVideoMoves(instrumentation, "$backend seek/reattach")
             await("resume primer restores audio") {
                 when (val h = BackgroundPlaybackSession.activeHandle()) {
                     is MpvPlaybackController -> h.isMuted() == false
-                    is VlcPlaybackController -> !h.hasPendingSeek() && h.player.volume > 0
+                    is VlcPlaybackController -> !h.hasPendingSeek() && h.nativePlaybackVolume() > 0
                     else -> true
                 }
             }
@@ -331,7 +331,7 @@ internal class RendererMatrixAudit(private val instrumentation: Instrumentation,
                         val status = BackgroundPlaybackSession.currentStatus()
                         status != null && status.playing == !pauseSwitch && kotlin.math.abs(status.positionMs - position) < 2_500 &&
                             (h !is VlcPlaybackController || (!h.hasPendingSeek() &&
-                                kotlin.math.abs(h.player.time - position) < 2_500 && h.player.isPlaying == !pauseSwitch))
+                                kotlin.math.abs(h.nativePlaybackTimeMs() - position) < 2_500 && h.isPlayingNow() == !pauseSwitch))
                     }
                     Thread.sleep(750)
                     if (pauseSwitch) check(main { !checkNotNull(BackgroundPlaybackSession.activeHandle()).wantsToPlay() })

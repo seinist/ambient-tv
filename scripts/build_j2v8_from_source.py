@@ -34,7 +34,8 @@ if (is_android && current_toolchain == default_toolchain) {
       "ambient_j2v8/com_eclipsesource_v8_V8Impl.cpp",
       "ambient_j2v8/com_eclipsesource_v8_V8Impl.h",
     ]
-    configs += [ ":external_config" ]
+    configs -= [ "//build/config/android:hide_all_but_jni_onload" ]
+    configs += [ ":external_config", "//build/config/android:hide_all_but_jni" ]
     deps = [ ":v8_monolith" ]
     cflags_cc = [ "-Wno-error", "-Wno-unknown-pragmas" ]
     ldflags = [ "-Wl,-z,max-page-size=16384", "-Wl,-z,common-page-size=16384" ]
@@ -77,7 +78,23 @@ def modernize_bridge(source):
     updated, count = re.subn(r"\bHandle(?=\s*<)", "Local", source)
     if count != 122:
         raise ValueError(f"Unexpected pinned J2V8 Handle alias count: {count}")
+    # The original bridge has unconditional MSVC linker pragmas; Clang
+    # accepts them and emits dependent-library directives even on ELF.
+    pattern = r'(?m)^#pragma comment\s*\(\s*lib\s*,\s*"[^"\n]+[.]lib"\s*\)\s*$'
+    updated, pragmas = re.subn(pattern, "", updated)
+    if pragmas != 5:
+        raise ValueError(f"Unexpected pinned Windows pragma count: {pragmas}")
     return updated
+
+
+def patch_android_page_alignment(source):
+    # The Chromium compiler config appends a 4096-byte arm64 max-page-size
+    # AFTER target-local flags. Preserve the host setting, override Android.
+    old = 'ldflags += [ "-Wl,-z,max-page-size=4096" ]'
+    new = 'ldflags += [ is_android ? "-Wl,-z,max-page-size=16384" : "-Wl,-z,max-page-size=4096" ]'
+    if source.count(old) != 1:
+        raise ValueError("Unexpected pinned arm64 linker page-size config")
+    return source.replace(old, new)
 
 
 def jni_exports(path, readelf="readelf"):
@@ -150,6 +167,8 @@ def build(work, output, shared, abi, jobs):
                     bridge / "com_eclipsesource_v8_V8Impl.h")
     build_file = v8 / "BUILD.gn"
     build_file.write_text(build_file.read_text() + BRIDGE)
+    compiler_config = v8 / "build/config/compiler/BUILD.gn"
+    compiler_config.write_text(patch_android_page_alignment(compiler_config.read_text()))
     out = v8 / "out" / abi
     out.mkdir(parents=True)
     args = (j2v8 / "v8" / ABI_CONFIGS[abi] / "args.gn").read_text()
@@ -163,6 +182,7 @@ def build(work, output, shared, abi, jobs):
     shutil.copyfile(candidate, output / "libj2v8.so")
     (output / "args.gn").write_text(args)
     (output / "bridge.gn").write_text(BRIDGE)
+    shutil.copyfile(compiler_config, output / "compiler-config.gn")
     shutil.copyfile(bridge / cpp, output / cpp)
     shutil.copyfile(bridge / "com_eclipsesource_v8_V8Impl.h", output / "com_eclipsesource_v8_V8Impl.h")
     (output / "v8-deps.txt").write_text(actual_deps)
@@ -175,7 +195,8 @@ def build(work, output, shared, abi, jobs):
         "argsSha256": sha(output / "args.gn"), "bridgeSha256": sha(output / "bridge.gn"),
         "jniSourceSha256": sha(output / cpp),
         "jniHeaderSha256": sha(output / "com_eclipsesource_v8_V8Impl.h"),
-        "jniCompatibilityPatch": "v8-handle-to-local-122",
+        "jniCompatibilityPatch": "v8-handle-to-local-122-windows-pragmas-5",
+        "compilerConfigSha256": sha(output / "compiler-config.gn"),
         "native": row, "deviceValidated": False, "publicationApproved": False,
     }, indent=2, sort_keys=True) + "\n")
 
@@ -205,12 +226,13 @@ def stage_candidates(inputs, output, shared):
         for name, field in (("V8-DEPS", "depsSha256"), ("v8-deps.txt", "resolvedDepsSha256"),
                             ("args.gn", "argsSha256"), ("bridge.gn", "bridgeSha256"),
                             ("com_eclipsesource_v8_V8Impl.cpp", "jniSourceSha256"),
-                            ("com_eclipsesource_v8_V8Impl.h", "jniHeaderSha256")):
+                            ("com_eclipsesource_v8_V8Impl.h", "jniHeaderSha256"),
+                            ("compiler-config.gn", "compilerConfigSha256")):
             path = root / name
             if (not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= 16 * 1024**2
                     or sha(path) != evidence.get(field)):
                 raise ValueError(f"Build evidence mismatch: {abi}/{name}")
-        if (evidence.get("jniCompatibilityPatch") != "v8-handle-to-local-122"
+        if (evidence.get("jniCompatibilityPatch") != "v8-handle-to-local-122-windows-pragmas-5"
                 or re.search(r"\bHandle\s*<", (root / "com_eclipsesource_v8_V8Impl.cpp").read_text())):
             raise ValueError(f"Unexpected JNI source compatibility patch: {abi}")
         if (root / "bridge.gn").read_text() != BRIDGE:

@@ -15,12 +15,22 @@ class SourceBuildTest(unittest.TestCase):
 
     def test_v8_handle_alias_migration_keeps_strict_gn_options(self):
         old = "v8::Handle<v8::Context> a;\n" + "Handle<Value> b;\n" * 121 + "HandleScope scope;"
+        old += '\n' + '#pragma comment(lib, "userenv.lib")\n' * 5
         new = build.modernize_bridge(old)
+        self.assertNotIn(".lib", new)
         self.assertIn("v8::Local<v8::Context>", new)
         self.assertEqual(new.count("Local<"), 122)
         self.assertIn("HandleScope scope;", new)
         with self.assertRaisesRegex(ValueError, "alias count"):
             build.modernize_bridge("Handle<Value> value;")
+
+    def test_arm64_page_alignment_preserves_host_default(self):
+        old = 'ldflags += [ "-Wl,-z,max-page-size=4096" ]'
+        self.assertIn('is_android ? "-Wl,-z,max-page-size=16384" : "-Wl,-z,max-page-size=4096"',
+                      build.patch_android_page_alignment(old))
+        with self.assertRaises(ValueError):
+            build.patch_android_page_alignment("changed")
+        self.assertIn("hide_all_but_jni", build.BRIDGE)
 
     def test_missing_jni_and_private_dependencies_fail(self):
         with tempfile.TemporaryDirectory() as temp:

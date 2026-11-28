@@ -311,7 +311,17 @@ class SettingsNavigationTest {
             youtubeSupportedFeedKeys = setOf("home"),
         )))
         assertFalse(homeRowSourceAddable(HomeRowDefinition.SYSTEM_SPOTIFY, "liked", empty.copy(spotifyEnabled = true)))
-        assertTrue(homeRowSourceAddable(HomeRowDefinition.SYSTEM_SPOTIFY, "liked", empty.copy(spotifyEnabled = true, spotifyWebAuthorized = true)))
+        val spotify = empty.copy(spotifyEnabled = true, spotifyWebAuthorized = true)
+        val modules = com.ambient.tv.modules.SystemModuleAvailability
+        val spotifyModule = com.ambient.tv.modules.SystemModule.SPOTIFY
+        modules.reportFailure(spotifyModule)
+        assertFalse(homeRowSourceAddable(HomeRowDefinition.SYSTEM_SPOTIFY, "liked", spotify))
+        try {
+            modules.reportProbe(spotifyModule, external = true, success = true)
+            assertTrue(homeRowSourceAddable(HomeRowDefinition.SYSTEM_SPOTIFY, "liked", spotify))
+        } finally {
+            modules.reportFailure(spotifyModule)
+        }
     }
     @Test fun refreshKeepsDraftAndAcceptsUneditedPlayerDefaults() {
         val baseline = SettingsUiState()

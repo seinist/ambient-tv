@@ -880,6 +880,16 @@ migrates the 122 pinned JNI alias uses to the equivalent Local<T> without
 relaxing V8's build options. Both patched JNI source and header are included
 and hashed in candidate evidence and rechecked during staging.
 
+CI fixes after all four native V8 builds reached their final stages:
+strip five unconditional Windows linker pragmas from the Android JNI
+source, use the JNI export version script rather than the JNI_OnLoad-only
+script, override the later arm64 4 KiB compiler config for Android only,
+and install the host's i386 libatomic runtime for 32-bit snapshot tools.
+The exact patched compiler config is retained in build evidence.
+VLC instrumentation uses read-only native diagnostics, renderer and
+Spotify tests explicitly model module probe success, and Monogram
+Central HTTP 429 retries can use the HTTPS Central mirror.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

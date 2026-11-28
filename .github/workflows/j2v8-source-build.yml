@@ -30,6 +30,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends git curl ca-certificates binutils build-essential python3 python-is-python3 xz-utils unzip
+          # 32-bit host mksnapshot executables for arm/x86 need libatomic.
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libatomic1 libatomic1:i386 libstdc++6:i386
           df -h
       - name: Fetch pinned SmartTube Java and legacy JNI inputs
         run: bash scripts/fetch_smarttube_engine.sh
