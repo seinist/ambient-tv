@@ -462,7 +462,9 @@ android {
                 signingConfig = signingConfigs.getByName("debug")
             }
             isMinifyEnabled = true
-            isShrinkResources = true
+            // Downloadable SmartTube references resources which are invisible to R8.
+            // Preserve the host resource table in resource-only preview builds.
+            isShrinkResources = !modularPreview
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         // Baseline profile capture (scripts/capture_baseline_profile.sh): release code, but not
