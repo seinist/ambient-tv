@@ -1,6 +1,5 @@
 import contextlib
 import io
-import json
 from pathlib import Path
 import shutil
 import sys
@@ -8,91 +7,52 @@ import tempfile
 import unittest
 from unittest import mock
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import update_external_libraries as updater
 
 NEW = "b" * 40
 
-
 class LibretroUpdateTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="libretro-update-test-")
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
         (self.root / "gradle").mkdir()
         (self.root / "cores").mkdir()
         self.props = self.root / "gradle/external-versions.properties"
+        self.catalog = self.root / "cores/cores.json"
         shutil.copyfile(updater.PROPS, self.props)
-        self.cores = self.root / "cores/cores.json"
-        shutil.copyfile(updater.ROOT / "cores/cores.json", self.cores)
-        self.old_commit = updater.load_props()["LIBRETRODROID_COMMIT"]
+        self.catalog.write_text('{"cores": []}\n')
+        self.original = self.props.read_bytes()
 
-    def run_updater(self, mode, heads, prepare=True):
+    def run_updater(self, mode, prepare=True):
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.object(updater, "ROOT", self.root))
             stack.enter_context(mock.patch.object(updater, "PROPS", self.props))
-            stack.enter_context(mock.patch.object(updater, "libretrodroid_latest",
-                                                  return_value={"LIBRETRODROID_COMMIT": NEW}))
-            stack.enter_context(mock.patch.object(updater, "remote_head", side_effect=heads))
-            self.prepare = stack.enter_context(mock.patch.object(
-                updater, "prepare_libretrodroid", side_effect=lambda: prepare or self.reverted()))
-            stack.enter_context(mock.patch.object(updater, "smarttube_latest", side_effect=AssertionError("scope")))
+            stack.enter_context(mock.patch.object(updater, "libretrodroid_latest", return_value={"LIBRETRODROID_COMMIT": NEW}))
+            self.prepare = stack.enter_context(mock.patch.object(updater, "prepare_libretrodroid", side_effect=[prepare, True]))
             stack.enter_context(mock.patch.object(sys, "argv", ["updater", mode, "--only", "libretro"]))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             return updater.main()
 
-    def reverted(self):
-        # The second preparation (after rollback) runs against the old pin and succeeds.
-        return f"LIBRETRODROID_COMMIT={self.old_commit}" in self.props.read_text()
-
-    def test_check_is_read_only(self):
-        before = (self.props.read_bytes(), self.cores.read_bytes())
-        self.assertEqual(self.run_updater("--check", lambda repo: NEW), 0)
-        self.assertEqual(before, (self.props.read_bytes(), self.cores.read_bytes()))
+    def test_library_check_is_read_only(self):
+        self.assertEqual(self.run_updater("--check"), 0)
+        self.assertEqual(self.props.read_bytes(), self.original)
         self.prepare.assert_not_called()
 
-    def test_apply_moves_every_core_and_keeps_format(self):
-        original = json.loads(self.cores.read_text())
-        self.assertEqual(self.run_updater("--apply", lambda repo: NEW), 0)
-        updated = json.loads(self.cores.read_text())
-        self.assertTrue(all(c["commit"] == NEW for c in updated["cores"]))
-        for before, after in zip(original["cores"], updated["cores"]):
-            self.assertEqual({**before, "commit": NEW}, after)
-        self.assertEqual(self.cores.read_text(), json.dumps(updated, indent=2, ensure_ascii=False) + "\n")
+    def test_library_update_never_updates_core_catalog(self):
+        before = self.catalog.read_bytes()
+        self.assertEqual(self.run_updater("--apply"), 0)
+        self.assertEqual(self.catalog.read_bytes(), before)
         self.assertIn(f"LIBRETRODROID_COMMIT={NEW}", self.props.read_text())
         self.prepare.assert_called_once()
 
-    def test_unchanged_cores_are_not_rewritten(self):
-        pins = {c["repo"]: c["commit"] for c in json.loads(self.cores.read_text())["cores"]}
-        before = self.cores.read_bytes()
-        self.assertEqual(self.run_updater("--apply", pins.__getitem__), 0)
-        self.assertEqual(before, self.cores.read_bytes())
-
-    def test_patch_failure_keeps_old_libretrodroid_but_updates_cores(self):
-        self.assertEqual(self.run_updater("--apply", lambda repo: NEW, prepare=False), 0)
-        self.assertIn(f"LIBRETRODROID_COMMIT={self.old_commit}", self.props.read_text())
+    def test_library_patch_failure_keeps_old_pin(self):
+        before = self.catalog.read_bytes()
+        self.assertEqual(self.run_updater("--apply", False), 0)
+        self.assertEqual(self.props.read_bytes(), self.original)
+        self.assertEqual(self.catalog.read_bytes(), before)
         self.assertEqual(self.prepare.call_count, 2)
-        self.assertTrue(all(c["commit"] == NEW for c in json.loads(self.cores.read_text())["cores"]))
-
-    def test_unresolvable_core_aborts_without_changes(self):
-        before = (self.props.read_bytes(), self.cores.read_bytes())
-
-        def head(repo):
-            if repo.endswith("/snes9x"):
-                raise RuntimeError("Could not resolve HEAD")
-            return NEW
-
-        with self.assertRaisesRegex(RuntimeError, "Could not resolve"):
-            self.run_updater("--apply", head)
-        self.assertEqual(before, (self.props.read_bytes(), self.cores.read_bytes()))
-
-    def test_github_repo_parsing(self):
-        self.assertEqual(updater.github_repo("https://github.com/rommapp/argosy-launcher"), "rommapp/argosy-launcher")
-        self.assertEqual(updater.github_repo("https://github.com/a/b.git"), "a/b")
-        with self.assertRaises(RuntimeError):
-            updater.github_repo("https://gitlab.com/a/b")
-
 
 if __name__ == "__main__":
     unittest.main()

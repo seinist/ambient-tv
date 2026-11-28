@@ -157,6 +157,30 @@ class GameCoreChannelTest {
         assertEquals(listOf(GameCoreSource.AMBIENT), GameCoreSource.AMBIENT.preferredSources(core, "arm64-v8a"))
     }
 
+    @Test fun installedBuildbotIsLastResortForNormalOptimizedPlayback() = kotlinx.coroutines.runBlocking {
+        val core = GameCore("fixture", "Fixture", "MIT")
+        for (source in GameCoreSource.publicExperiments) {
+            val signed = source.preferredSources(core, "arm64-v8a")
+            val playback = source.preferredSources(core, "arm64-v8a", includeInstalledBuildbot = true)
+            assertEquals(signed + GameCoreSource.BUILDBOT, playback)
+            assertEquals(GameCoreSource.BUILDBOT, firstAvailableCoreSource(playback) {
+                it == GameCoreSource.BUILDBOT
+            })
+            assertEquals(GameCoreSource.AMBIENT, firstAvailableCoreSource(playback) {
+                it == GameCoreSource.AMBIENT || it == GameCoreSource.BUILDBOT
+            })
+            assertNull(firstAvailableCoreSource(playback) { false })
+            val failure = runCatching {
+                firstAvailableCoreSource(playback) {
+                    if (it == GameCoreSource.BUILDBOT) true else throw GameCoreSignatureException("invalid signature")
+                }
+            }.exceptionOrNull()
+            org.junit.Assert.assertTrue(failure is GameCoreSignatureException)
+        }
+        assertEquals(listOf(GameCoreSource.AMBIENT),
+            GameCoreSource.AMBIENT.preferredSources(core, "arm64-v8a", includeInstalledBuildbot = true))
+    }
+
     @Test fun preferenceResolutionFallsBackOnlyOnAbsence() = kotlinx.coroutines.runBlocking {
         val candidates = listOf(GameCoreSource.OPTIMIZED_A57, GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT)
         val seen = mutableListOf<GameCoreSource>()

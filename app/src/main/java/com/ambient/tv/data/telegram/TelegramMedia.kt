@@ -26,6 +26,8 @@ data class TelegramMedia(
     val height: Int = 0,
     /** Original file name of a document, audio or video; null when Telegram has none. */
     val fileName: String? = null,
+    /** Native document identity, not a file reference or credential. */
+    val nativeMediaKey: String? = null,
 ) {
     /** A linked YouTube video is a separate media card, even inside a post with an attachment. */
     val youtubeIds: List<String>
@@ -153,6 +155,12 @@ fun TelegramMedia.playerMetadata(): PlaybackMetadata = PlaybackMetadata(
     hasVideo = kind == TelegramMediaKind.VIDEO,
     artworkUrl = cardImageUrl ?: thumbnailUrl,
     durationMs = durationMs,
+    // Use the original video geometry before any decoded frame is visible, not the
+    // independently sized preview artwork. The renderer remains authoritative for DAR.
+    sourceAspectRatioHint = if (kind == TelegramMediaKind.VIDEO)
+        com.ambient.tv.ui.player.sourceAspectRatioHint(width, height) else null,
+    sourceWidth = width.takeIf { kind == TelegramMediaKind.VIDEO && it > 0 && height > 0 },
+    sourceHeight = height.takeIf { kind == TelegramMediaKind.VIDEO && it > 0 && width > 0 },
 )
 
 /** Parse only actual youtube.com / youtu.be hosts. Do not mistake lookalike domains for YouTube. */
@@ -200,11 +208,28 @@ fun parseMonogramThumbModel(value: String): MonogramThumbRef? {
         ?: value.removePrefix("$MONOGRAM_PHOTO_SCHEME://").takeIf { it != value } ?: return null
     val path = rest.substringBefore('?')
     val fallback = rest.substringAfter('?', "").takeIf { it.startsWith("fallback=") }
-        ?.removePrefix("fallback=")?.let { java.net.URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
+        ?.removePrefix("fallback=")?.let { encoded ->
+            runCatching { java.net.URLDecoder.decode(encoded, "UTF-8") }.getOrNull()
+        }?.takeIf { it.isNotBlank() }
     val parts = path.split('/')
     if (parts.size != 2) return null
     val chatId = parts[0].toLongOrNull()?.takeIf { it != 0L } ?: return null
     // Message 0 is the channel's own avatar.
     val messageId = parts[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
     return MonogramThumbRef(chatId, messageId, fallback)
+}
+
+/** Stable for identical sharp art even if the embedded local fallback URL changes. */
+internal fun monogramSharpCacheKey(model: String, accountEpoch: Long, mediaRevision: Long): String? {
+    if (!model.startsWith("$MONOGRAM_THUMB_SCHEME://")) return null
+    val ref = parseMonogramThumbModel(model) ?: return null
+    return "monogram-sharp-v1:$accountEpoch:$mediaRevision:${ref.chatId}:${ref.messageId}"
+}
+
+/** Full photos and sharp thumbnails must never alias, even at the same decode size. */
+internal fun monogramArtworkCacheKey(model: String, accountEpoch: Long, mediaRevision: Long): String? {
+    if (!model.startsWith("$MONOGRAM_PHOTO_SCHEME://")) return monogramSharpCacheKey(model, accountEpoch, mediaRevision)
+    val ref = parseMonogramThumbModel(model) ?: return null
+    if (ref.messageId == 0) return null
+    return "monogram-photo-v1:$accountEpoch:$mediaRevision:${ref.chatId}:${ref.messageId}"
 }

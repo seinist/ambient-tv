@@ -26,11 +26,14 @@
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
-#   ./build.sh check-deps [key]  # check Gradle Maven catalog pins (stable by default)
-#   ./build.sh update-deps [key] # update Maven pins only (no build)
+#   ./build.sh deps-check [key]  # check Gradle Maven catalog pins (stable by default)
+#   ./build.sh build-deps [key]  # update Maven pins, compile/test, rollback on failure
+#   ./build.sh deps-update [key] # alias for validated Maven update
+#   ./build.sh cores-check [id[,id...]]  # check emulator core pins only
+#   ./build.sh cores-update [id[,id...]] # update emulator core pins only
 #   ./build.sh libs-check [svp|monogram|libretro]  # check managed libraries, or only one
 #   ./build.sh libs-update [svp|monogram|libretro] # update pins/assets/lockfile (no native build)
-#                               # includes Monogram, LibretroDroid and cores/cores.json; lib-check / lib-update are aliases
+#                               #                               # includes Monogram and LibretroDroid; cores use their own updater
 #
 # Environment overrides:
 #   MONOGRAM_NATIVE=1         Include Monogram in debug or single-ABI APKs (GPL distribution).
@@ -85,6 +88,7 @@ SPOTIFY_ENGINE_SCRIPT="$ROOT_DIR/scripts/build_spotify_engine.sh"
 MONOGRAM_BUILD_SCRIPT="$ROOT_DIR/scripts/build_monogram_native.sh"
 EXTERNAL_VERSIONS="$ROOT_DIR/gradle/external-versions.properties"
 LIB_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_external_libraries.py"
+CORE_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_cores.py"
 MAVEN_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_maven_dependencies.py"
 NNEDI3_VENDOR_SCRIPT="$ROOT_DIR/scripts/vendor_nnedi3_quality_ladder.py"
 
@@ -277,9 +281,14 @@ ensure_android_sdk() {
 write_canonical_root_build_kts() {
     local target="$1"
     cat > "$target" <<'EOF_ROOT_BUILD'
-// AMBIENT_TV_ROOT_BUILD_V038
+// AMBIENT_TV_ROOT_BUILD_V039
 buildscript {
-    dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
+    // The catalog is the single source of truth, including this early classpath.
+    val kotlinPin = file("gradle/libs.versions.toml").readLines()
+        .single { it.substringBefore('=').trim() == "kotlin" }
+        .substringAfter('=').substringBefore('#').trim().removeSurrounding("\"")
+    require(kotlinPin.isNotBlank())
+    dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinPin") }
 }
 
 plugins {
@@ -294,11 +303,19 @@ plugins {
 val ambientChromiumCronetVersion = libs.versions.chromiumCronet.get()
 subprojects {
     configurations.configureEach {
-        resolutionStrategy.force(
-            "org.chromium.net:cronet-api:$ambientChromiumCronetVersion",
-            "org.chromium.net:cronet-common:$ambientChromiumCronetVersion",
-            "org.chromium.net:cronet-embedded:$ambientChromiumCronetVersion",
-        )
+        resolutionStrategy.force("org.chromium.net:cronet:$ambientChromiumCronetVersion")
+        // Cronet 500 replaces the old API artifact. Redirect legacy transitive
+        // requests from Media3 / Play Services without shipping duplicate classes.
+        resolutionStrategy.dependencySubstitution {
+            for (legacy in listOf("cronet-api", "cronet-common", "cronet-fallback", "cronet-shared", "httpengine-native-provider")) {
+                substitute(module("org.chromium.net:$legacy"))
+                    .using(module("org.chromium.net:cronet:$ambientChromiumCronetVersion"))
+                    // Explicit @aar selectors retain the old artifact name even
+                    // after module substitution. Resolve the new module's default AAR.
+                    .withoutArtifactSelectors()
+                    .because("Cronet 500+ replaces the deprecated transitional artifact")
+            }
+        }
     }
 }
 
@@ -365,12 +382,12 @@ ensure_root_build_kts() {
     local template="$ROOT_DIR/gradle/root.build.compat.gradle.kts"
     local target="$ROOT_DIR/build.gradle.kts"
 
-    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V038' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
+    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V039' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
         log "Repairing canonical root Gradle build preflight"
         write_canonical_root_build_kts "$template"
     fi
 
-    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V038' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
+    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V039' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
         log "Restoring canonical root Gradle build preflight"
         cp "$template" "$target"
     fi
@@ -381,12 +398,14 @@ verify_build_toolchain_matrix() {
     local wrapper="$ROOT_DIR/gradle/wrapper/gradle-wrapper.properties"
     [[ -f "$catalog" ]] || fail "Missing Gradle version catalog: $catalog"
     [[ -f "$wrapper" ]] || fail "Missing Gradle wrapper properties: $wrapper"
-    grep -F 'agp = "9.4.1"' "$catalog" >/dev/null || fail "Unsupported AGP configuration. Expected AGP 9.4.1 for Kotlin 2.4.21."
-    grep -F 'kotlin = "2.4.21"' "$catalog" >/dev/null || fail "Unexpected Kotlin plugin version. Expected Kotlin 2.4.21."
-    grep -F 'ksp = "2.3.12"' "$catalog" >/dev/null || fail "Expected KSP 2.3.12."
-    grep -F 'hilt = "2.60.1"' "$catalog" >/dev/null || fail "Expected Hilt 2.60.1."
+    # AGP and KSP are checked by Gradle plugin resolution/compilation; do not pin
+    # their versions a second time here and block Maven catalog updates.
+    grep -Eq '^agp[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid AGP catalog pin."
+    grep -Eq '^kotlin[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid Kotlin catalog pin."
+    grep -Eq '^ksp[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid KSP catalog pin."
+    grep -Eq '^hilt[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"' "$catalog" || fail "Invalid Hilt catalog pin."
     grep -F 'gradle-9.8.1-bin.zip' "$wrapper" >/dev/null || fail "Unexpected Gradle wrapper. Expected Gradle 9.8.1."
-    grep -F 'alias(libs.plugins.android.library) apply false' "$ROOT_DIR/build.gradle.kts" >/dev/null || fail "Android library plugin is not aligned to AGP 9.4.1."
+    grep -F 'alias(libs.plugins.android.library) apply false' "$ROOT_DIR/build.gradle.kts" >/dev/null || fail "Android library plugin is not aligned to the AGP catalog pin."
 }
 
 require_project() {
@@ -396,7 +415,7 @@ require_project() {
     ensure_root_build_kts
     rm -rf "$ROOT_DIR/.gradle"
     verify_build_toolchain_matrix
-    log "Build toolchain: AGP 9.4.1 / Kotlin 2.4.21 / Gradle 9.8.1 / JVM bytecode 17"
+    log "Build toolchain: $(grep -E '^(agp|kotlin|ksp|hilt) = ' "$ROOT_DIR/gradle/libs.versions.toml" | paste -sd ' ' -) / Gradle 9.8.1 / JVM bytecode 17"
     [[ -f "$APP_GRADLE" ]] || fail "Run this script from the Ambient TV project root. Missing app/build.gradle.kts."
     [[ -x "$ROOT_DIR/gradlew" ]] || chmod +x "$ROOT_DIR/gradlew"
     [[ -x "$ROOT_DIR/gradlew" ]] || fail "gradlew is not executable."
@@ -596,7 +615,7 @@ ensure_youtube_engine() {
            "$ROOT_DIR/smarttube_wrappers/j2v8/build"
     "$YOUTUBE_ENGINE_SCRIPT"
     youtube_engine_ready || fail "SmartTube live-patch integration did not validate after preparation."
-    log "SmartTube live-patch integration ready (AGP 9.4.1/Kotlin 2.4.21/JVM 17)"
+    log "SmartTube live-patch integration ready (catalog AGP/Kotlin/JVM 17)"
 }
 
 
@@ -1422,10 +1441,13 @@ Android: debug, release, arm64, armv7, x86, x86_64, all, clean, gen-keystore
 Deploy: arm64-adb, armv7-adb, x86-adb, x86_64-adb [adb-ip[:port]]
 Native: youtube-engine, spotify, clean-spotify, mpv, clean-mpv, svp,
         nnedi3-shaders, projectm, clean-projectm, monogram
-Maven: check-deps [key], update-deps [key] (stable by default; no native build)
+Maven: deps-check [key], deps-update [key], build-deps [key]
+       check-deps / update-deps remain legacy aliases
+       build-deps validates changes and restores the previous catalog on failure.
        MAVEN_CHANNEL=prerelease, MEDIA3_CHANNEL=prerelease, MAVEN_ALLOW_MAJOR=1
 Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretro],
            monogram-check, monogram-update, monogram-size [abi|all]
+Core pins: cores-check [id[,id...]], cores-update [id[,id...]] (all by default; no native build)
 
 Libretro cores on GitHub Actions (main):
   cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths] [--abis ABI[,ABI...]]
@@ -1457,20 +1479,39 @@ case "$MODE" in
         ;;
 esac
 
-if [[ "$MODE" == "check-deps" || "$MODE" == "update-deps" ]]; then
+if [[ "$MODE" == "deps-check" || "$MODE" == "deps-update" || "$MODE" == "check-deps" || "$MODE" == "update-deps" || "$MODE" == "build-deps" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$MAVEN_UPDATE_SCRIPT" ]] || fail "Missing Maven updater: $MAVEN_UPDATE_SCRIPT"
     [[ $# -le 2 ]] || fail "Usage: $0 $MODE [key]"
     dep_args=()
     [[ $# -eq 1 ]] || dep_args=("$2")
-    if [[ "$MODE" == "check-deps" ]]; then
+    if [[ "$MODE" == "deps-check" || "$MODE" == "check-deps" ]]; then
         python3 "$MAVEN_UPDATE_SCRIPT" --check "${dep_args[@]}"
     else
-        python3 "$MAVEN_UPDATE_SCRIPT" --apply "${dep_args[@]}"
+        python3 "$MAVEN_UPDATE_SCRIPT" --apply --validate "${dep_args[@]}"
     fi
     exit 0
 fi
-if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-check" || "$MODE" == "libraries-check" ]]; then
+# Explicit previous core-only spelling remains a compatibility alias.
+if [[ "$MODE" == "cores-check" || "$MODE" == "cores-update" ||
+      ( ( "$MODE" == "libs-check" || "$MODE" == "libs-update" ) && "${2:-}" == cores ) ]]; then
+    command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+    [[ -f "$CORE_UPDATE_SCRIPT" ]] || fail "Missing core updater: $CORE_UPDATE_SCRIPT"
+    core_args=()
+    if [[ "$MODE" == cores-* ]]; then
+        [[ $# -le 2 ]] || fail "Usage: $0 $MODE [id[,id...]]"
+        [[ $# -eq 1 ]] || core_args=("$2")
+    else
+        [[ $# -eq 2 ]] || fail "Usage: $0 $MODE cores"
+    fi
+    if [[ "$MODE" == *-check ]]; then
+        python3 "$CORE_UPDATE_SCRIPT" --check "${core_args[@]}"
+    else
+        python3 "$CORE_UPDATE_SCRIPT" --apply "${core_args[@]}"
+    fi
+    exit 0
+fi
+if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "libraries-check" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
     [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro]"
@@ -1479,7 +1520,7 @@ if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-chec
     python3 "$LIB_UPDATE_SCRIPT" --check "${library_args[@]}"
     exit 0
 fi
-if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "deps-update" || "$MODE" == "libraries-update" ]]; then
+if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "libraries-update" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
     [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro]"

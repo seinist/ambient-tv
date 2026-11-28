@@ -78,6 +78,9 @@ internal fun MonogramArtwork(
     prioritizeUncached: Boolean = false,
 ) {
     val imageUrl = mediaTileImageUrl(item, style)
+    val inline = remember(imageUrl) {
+        imageUrl?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }?.fallback
+    }
     if (item.ratingKey.startsWith("telegram-channel:")) {
         Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)),
             contentAlignment = Alignment.Center) {
@@ -87,6 +90,7 @@ internal fun MonogramArtwork(
                 ContentScale.Crop,
                 staggerUncached = staggerUncached,
                 prioritizeUncached = prioritizeUncached,
+                progressivePreview = inline,
             ) else Icon(
                 Icons.Filled.AccountCircle, contentDescription = item.title,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -102,24 +106,17 @@ internal fun MonogramArtwork(
     } else {
         // The post's inline preview is on disk already: show it at once and let the sharp
         // thumbnail cover it when loaded, instead of an empty pulsing card meanwhile.
-        val inline = remember(imageUrl) {
-            imageUrl?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }?.fallback
-        }
         if (inline == null) ArtworkImage(
             imageUrl, item.title, modifier, ContentScale.Crop,
             staggerUncached = staggerUncached,
             prioritizeUncached = prioritizeUncached,
-        ) else Box(modifier) {
-            // Inline preview is already local: never defer it. Only the sharper remote/native
-            // thumbnail is admitted through the browse limiter.
-            ArtworkImage(inline, item.title, Modifier.matchParentSize(), ContentScale.Crop)
-            ArtworkImage(
-                imageUrl, item.title, Modifier.matchParentSize(), ContentScale.Crop,
-                placeholder = false,
-                staggerUncached = staggerUncached,
-                prioritizeUncached = prioritizeUncached,
-            )
-        }
+        ) else ArtworkImage(
+            imageUrl, item.title, modifier, ContentScale.Crop,
+            placeholder = false,
+            staggerUncached = staggerUncached,
+            prioritizeUncached = prioritizeUncached,
+            progressivePreview = inline,
+        )
     }
 }
 

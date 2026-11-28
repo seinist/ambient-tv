@@ -52,3 +52,18 @@ internal fun flatMonogramItems(rows: List<ContentRowData>, sort: MonogramBrowseS
     }
     return entries.sortedWith(if (descending) order.reversed() else order)
 }
+
+/** Visible cards first, then a short forward window and finally a few previous cards. */
+internal fun <T> monogramViewportItems(
+    items: List<T>, first: Int, last: Int, ahead: Int, behind: Int,
+): List<T> {
+    if (first !in items.indices || last < first) return emptyList()
+    val end = last.coerceAtMost(items.lastIndex)
+    val forward = end + minOf(ahead.coerceAtLeast(0), items.lastIndex - end)
+    val backward = first - minOf(behind.coerceAtLeast(0), first)
+    return buildList {
+        addAll(items.subList(first, end + 1))
+        addAll(items.subList(end + 1, forward + 1))
+        addAll(items.subList(backward, first).asReversed())
+    }
+}

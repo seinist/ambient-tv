@@ -61,6 +61,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.IntSize
@@ -448,6 +449,11 @@ private class ArtworkRequestContinuity {
 /** Recent memory-cache keys per artwork model, one index per loader; see [ArtworkMemoryKeyIndex]. */
 private val CardArtworkKeys = ArtworkMemoryKeyIndex()
 
+/** Called on the composition dispatcher by the bounded Monogram ahead decoder. */
+internal fun rememberPrefetchedMonogramArtwork(model: String, key: coil3.memory.MemoryCache.Key) {
+    CardArtworkKeys.remember(model, key)
+}
+
 /** An OSD card is small enough to reuse the guide's already-decoded TMDb landscape. */
 internal fun preferCachedTmdbCardVariant(context: android.content.Context, url: String?): String? {
     val prefix = "https://image.tmdb.org/t/p/w780/"
@@ -513,19 +519,25 @@ fun ArtworkImage(
     cacheOnly: Boolean = false,
     /** A caller can defer offscreen requests; memory hits and already-admitted work remain usable. */
     loadUncached: Boolean = true,
+    /** Local low-resolution preview while the primary image loads/fades; removed on success. */
+    progressivePreview: String? = null,
 ) {
     val context = LocalContext.current
-    val candidates = remember(model, fallbackModels) {
+    val candidates = remember(model, fallbackModels, progressivePreview) {
         // An HD Telegram thumbnail that downloads but cannot be decoded must still fall back
         // to the post's inline preview instead of the title card.
         val monogramFallback = (model as? String)
             ?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }?.fallback
-        (listOf(model, monogramFallback) + fallbackModels)
+        (listOf(model, monogramFallback.takeIf { progressivePreview == null }) + fallbackModels)
             .filter { it != null && (it !is String || it.isNotBlank()) }
             .distinct()
     }
     val primaryNetwork = rememberArtworkNetworkAccess(candidates.firstOrNull(), artworkHeadersForModel(candidates.firstOrNull(), headers))
-    var candidateIndex by remember(candidates, primaryNetwork.recovery) { mutableStateOf(0) }
+    val sharpModel = (candidates.firstOrNull() as? String)?.takeIf {
+        it.startsWith(com.ambient.tv.data.telegram.MONOGRAM_THUMB_SCHEME + "://")
+    }
+    val sharpKey = rememberMonogramArtworkKey(sharpModel)
+    var candidateIndex by remember(candidates, primaryNetwork.recovery, sharpKey) { mutableStateOf(0) }
     val currentModel = candidates.getOrNull(candidateIndex)
     val effectiveHeaders = remember(currentModel, headers) { artworkHeadersForModel(currentModel, headers) }
     val network = rememberArtworkNetworkAccess(currentModel, effectiveHeaders)
@@ -537,10 +549,12 @@ fun ArtworkImage(
     }
     val cacheIdentity = address?.let { refresh?.cachedIdentity(it) }
     val refreshRevision = rememberArtworkRefresh(currentModel, refresh, address)
-    val hasModel = currentModel != null
+    val hasModel = currentModel != null && (sharpModel == null || sharpKey != null)
+    val scopedSharpKey = sharpKey.takeIf { currentModel == sharpModel }
+    val indexModel = scopedSharpKey ?: currentModel
     val continuity = remember { ArtworkRequestContinuity() }
-    val requestIdentity = remember(currentModel, refreshRevision, address?.imageKey, headerKey) {
-        listOf(com.ambient.tv.data.browse.artworkRequestIdentity(currentModel), address?.imageKey, headerKey, refreshRevision)
+    val requestIdentity = remember(currentModel, refreshRevision, address?.imageKey, headerKey, sharpKey) {
+        listOf(scopedSharpKey ?: com.ambient.tv.data.browse.artworkRequestIdentity(currentModel), address?.imageKey, headerKey, refreshRevision, sharpKey)
     }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     val constrainDecode = LocalPerformanceProfile.current.constrainImageDecodeSize
@@ -549,6 +563,7 @@ fun ArtworkImage(
     // the last successful load is served as placeholder before the size is resolved.
     val imageLoader = if (backdrop) com.ambient.tv.backdropImageLoader(context) else coil3.SingletonImageLoader.get(context)
     fun currentMemoryKey(key: coil3.memory.MemoryCache.Key): Boolean =
+        (sharpModel == null || sharpKey != null) && (scopedSharpKey == null || key.key == scopedSharpKey) &&
         (if (address != null) com.ambient.tv.network.mediaArtworkMemoryKeyMatches(key.extras, cacheIdentity)
          else key.extras[com.ambient.tv.network.MEDIA_ARTWORK_IDENTITY_EXTRA] == null &&
              key.extras[com.ambient.tv.network.MEDIA_ARTWORK_HEADERS_EXTRA] == headerKey) &&
@@ -562,8 +577,8 @@ fun ArtworkImage(
             currentMemoryKey(key)
     }
     val keyIndex = if (backdrop) BackdropArtworkKeys else CardArtworkKeys
-    val cachedKey = remember(currentModel, continuityKey, backdrop, refreshRevision, cacheIdentity, headerKey) {
-        currentModel?.let { model -> keyIndex.cachedKey(model, ::currentMemoryKey) }
+    val cachedKey = remember(indexModel, sharpKey, continuityKey, backdrop, refreshRevision, cacheIdentity, headerKey) {
+        indexModel?.let { model -> keyIndex.cachedKey(model, ::currentMemoryKey) }
             ?: continuityKey
     }
     // The key can outlive the bitmap. A miss must still show the pulse; Coil's placeholder
@@ -576,10 +591,10 @@ fun ArtworkImage(
         !com.ambient.tv.ui.mobile.LocalHandheldUi.current && hasModel && !shownFromMemory
     // Keep admission once granted. A focus change restarts only a request still waiting in the
     // gate, which lets the newly focused card jump ahead without restarting an active load.
-    var loadAdmitted by remember(currentModel) {
+    var loadAdmitted by remember(currentModel, sharpKey) {
         mutableStateOf(shownFromMemory || loadUncached && !staggerThisLoad)
     }
-    LaunchedEffect(currentModel, staggerThisLoad, prioritizeUncached, loadUncached, shownFromMemory) {
+    LaunchedEffect(currentModel, sharpKey, staggerThisLoad, prioritizeUncached, loadUncached, shownFromMemory) {
         if (shownFromMemory) {
             loadAdmitted = true
         } else if (!loadAdmitted && loadUncached) {
@@ -602,18 +617,23 @@ fun ArtworkImage(
     val cap1080 = !backdrop && density > CARD_IMAGE_1080_DENSITY &&
         remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context).cardImages1080 }
     val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
+    val monogramDecodeHint = LocalMonogramDecodeHint.current.takeIf {
+        sharpModel != null && !backdrop && !cap1080 && contentScale == ContentScale.Crop && headers.isEmpty()
+    }
     // A successful painter keeps its request during an outage/recovery. Only failed/in-flight
     // images retry; otherwise every visible poster would briefly re-enter its loading state.
-    var successfulNetwork by remember(currentModel, refreshRevision, address?.imageKey, headerKey) {
+    var successfulNetwork by remember(currentModel, sharpKey, refreshRevision, address?.imageKey, headerKey) {
         mutableStateOf<com.ambient.tv.network.ArtworkNetworkState?>(null)
     }
     val requestNetwork = successfulNetwork ?: network
+    var sharpRetry by remember(sharpKey) { mutableIntStateOf(0) }
+    var sharpRetriedThisFocus by remember(sharpKey, prioritizeUncached, primaryNetwork.recovery) { mutableStateOf(false) }
     val fadeMillis = artworkLoadFadeMillis(
         requested = crossfadeOnLoad,
         reducedEffects = LocalPerformanceProfile.current.reducedEffects,
         cachedInMemory = shownFromMemory,
     )
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize, fadeMillis, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
+    val request = remember(currentModel, sharpKey, sharpRetry, context, headers, constrainDecode, cardSize, fadeMillis, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
         ImageRequest.Builder(context).data(currentModel)
             .apply { if (fadeMillis > 0) crossfade(fadeMillis) else crossfade(false) }
             .placeholderMemoryCacheKey(cachedKey)
@@ -622,6 +642,11 @@ fun ArtworkImage(
                 // identical layout constraints; global URL aliases could incorrectly reuse a
                 // small tile bitmap for a large detail/backdrop request.
                 if (continuityKey != null) memoryCacheKey(continuityKey)
+                // Changes to the sharp key must restart the painter even for the same URL.
+                scopedSharpKey?.let {
+                    memoryCacheKey(it)
+                    if (sharpRetry != 0) memoryCacheKeyExtra(com.ambient.tv.data.telegram.MONOGRAM_RETRY_EXTRA, sharpRetry.toString())
+                }
                 artworkRefreshRevision(refreshRevision)
                 memoryCacheKeyExtra(com.ambient.tv.network.MEDIA_ARTWORK_IDENTITY_EXTRA, address?.imageKey)
                 memoryCacheKeyExtra(com.ambient.tv.network.MEDIA_ARTWORK_HEADERS_EXTRA, headerKey)
@@ -637,17 +662,29 @@ fun ArtworkImage(
             .artworkNetworkAccess(requestNetwork, cacheOnly)
             .build()
     }
-    var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
+    var loading by remember(currentModel, sharpKey) { mutableStateOf(hasModel && !shownFromMemory) }
     // Keep the existing pulse *behind* the newly decoded image while Coil fades it in.
     // Otherwise dismissing the pulse on success exposes a dark frame at fade alpha = 0.
-    var fadeBackground by remember(currentModel, refreshRevision, address?.imageKey, headerKey) { mutableStateOf(false) }
+    var fadeBackground by remember(currentModel, sharpKey, refreshRevision, address?.imageKey, headerKey) { mutableStateOf(false) }
     if (fadeBackground) {
         LaunchedEffect(currentModel, fadeMillis) {
             delay(fadeMillis.toLong())
             fadeBackground = false
         }
     }
-    var failed by remember(candidates) { mutableStateOf(false) }
+    var failed by remember(candidates, sharpKey, primaryNetwork.recovery) { mutableStateOf(false) }
+    // One retry per focus session, after the repository's short miss suppression expires.
+    // Offscreen cards, offline and cache-only requests never start a retry timer.
+    LaunchedEffect(sharpKey, prioritizeUncached, failed, primaryNetwork.blocked, cacheOnly, sharpRetriedThisFocus) {
+        if (sharpKey != null && prioritizeUncached && failed && !primaryNetwork.blocked && !cacheOnly && !sharpRetriedThisFocus) {
+            delay(5_500L)
+            sharpRetriedThisFocus = true
+            candidateIndex = 0
+            loading = true
+            failed = false
+            sharpRetry++
+        }
+    }
     var visibleFraction by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<Float?>(null) }
     var focusRevision by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<String?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
@@ -655,7 +692,10 @@ fun ArtworkImage(
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
-            if (loadAdmitted && placeholder && (loading || fadeBackground)) PulsingArtworkPlaceholder()
+            if (progressivePreview != null && showProgressiveArtworkPreview(loadAdmitted, loading, fadeBackground, failed)) {
+                ArtworkImage(progressivePreview, title, Modifier.matchParentSize(), contentScale,
+                    alignment = alignment, crossfadeOnLoad = false)
+            } else if (loadAdmitted && placeholder && (loading || fadeBackground)) PulsingArtworkPlaceholder()
             if (loadAdmitted) AsyncImage(
                 model = request,
                 contentDescription = title,
@@ -663,11 +703,14 @@ fun ArtworkImage(
                 contentScale = contentScale,
                 alignment = focus?.alignment ?: alignment,
                 colorFilter = hdrFilter,
-                modifier = Modifier.fillMaxSize().then(cardSize?.modifier() ?: Modifier),
+                modifier = Modifier.fillMaxSize().then(cardSize?.modifier() ?: Modifier)
+                    .then(if (monogramDecodeHint != null) Modifier.onSizeChanged {
+                        monogramDecodeHint.record(it, constrainDecode)
+                    } else Modifier),
                 onLoading = { loading = !shownFromMemory; fadeBackground = false; failed = false },
                 onSuccess = {
                     val source = it.result.dataSource
-                    fadeBackground = placeholder && fadeMillis > 0 &&
+                    fadeBackground = (placeholder || progressivePreview != null) && fadeMillis > 0 &&
                         source != coil3.decode.DataSource.MEMORY_CACHE && source != coil3.decode.DataSource.MEMORY
                     loading = false
                     failed = false
@@ -678,7 +721,7 @@ fun ArtworkImage(
                     val pictureIdentity = (currentModel as? String)?.substringBefore('?') ?: requestIdentity
                     if (!backdrop && source != coil3.decode.DataSource.MEMORY_CACHE &&
                         source != coil3.decode.DataSource.MEMORY) {
-                        val known = keyIndex.keys(currentModel)
+                        val known = keyIndex.keys(indexModel ?: currentModel)
                         val urlChanged = keyIndex.modelChanged(pictureIdentity, currentModel)
                         if (known.isNotEmpty() || urlChanged) {
                             val cache = imageLoader.memoryCache
@@ -694,7 +737,7 @@ fun ArtworkImage(
                         }
                     } else keyIndex.modelChanged(pictureIdentity, currentModel)
                     if (key != null) {
-                        keyIndex.remember(currentModel, key)
+                        keyIndex.remember(indexModel ?: currentModel, key)
                         continuity.model = currentModel
                         continuity.identity = requestIdentity
                         continuity.memoryKey = key
@@ -716,7 +759,7 @@ fun ArtworkImage(
                 },
             )
         }
-        if (placeholder && (!hasModel || failed)) {
+        if (placeholder && (!hasModel || failed) && (progressivePreview == null || !hasModel)) {
             when {
                 fallbackContent != null -> fallbackContent()
                 fallbackIcon == null -> ArtworkFallback(fallbackText)
@@ -1055,6 +1098,7 @@ fun TvChip(
         val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
         if (iconOnly && (icon != null || leadingContent != null)) {
             val buttonModifier = chipModifier
+                .focusProperties { canFocus = enabled }
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                 .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE)
@@ -1087,7 +1131,7 @@ fun TvChip(
         ProvideControlContent(foreground) {
             androidx.compose.material3.FilterChip(
                 selected = selected, onClick = activate, enabled = enabled,
-                modifier = chipModifier.sizeIn(minHeight = 48.dp)
+                modifier = chipModifier.focusProperties { canFocus = enabled }.sizeIn(minHeight = 48.dp)
                     .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE),
                 shape = shape,
@@ -1107,7 +1151,7 @@ fun TvChip(
                     selectedLeadingIconColor = foreground,
                     selectedTrailingIconColor = foreground,
                 ),
-                label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
+                label = { androidx.compose.material3.Text(text, color = foreground, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = if (showLoading) {
                     { ButtonProgress(foreground, Modifier.size(18.dp)) }
                 } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
@@ -1650,7 +1694,8 @@ fun TvActionButton(
         ProvideControlContent(foreground) {
             androidx.compose.material3.FilledTonalButton(
                 onClick = activate, enabled = visuallyEnabled,
-                modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
+                modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier)
+                    .focusProperties { canFocus = visuallyEnabled }.sizeIn(minHeight = 48.dp)
                     .appControlSurface(focused, selected, visuallyEnabled, shape, prominent = prominent, pressed = pressed,
                         selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE),
                 shape = shape,
@@ -1664,7 +1709,7 @@ fun TvActionButton(
             ) {
                 if (loading) ButtonProgress(foreground, Modifier.padding(end = 6.dp).size(20.dp))
                 else if (icon != null) androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp).padding(end = if (text.isEmpty()) 0.dp else 4.dp))
-                if (text.isNotEmpty()) androidx.compose.material3.Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (text.isNotEmpty()) androidx.compose.material3.Text(text, color = foreground, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         return

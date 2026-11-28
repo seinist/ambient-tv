@@ -47,14 +47,15 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
         fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: AUTO
     }
 
-    /** Ordered signed preferences for normal playback; explicit experiments use their exact source. */
-    fun preferredSources(core: GameCore, abi: String): List<GameCoreSource> {
+    /** Ordered signed preferences; optionally consider an already installed buildbot as the last resort. */
+    fun preferredSources(core: GameCore, abi: String, includeInstalledBuildbot: Boolean = false): List<GameCoreSource> {
         val candidates = when (this) {
             OPTIMIZED_A57 -> listOf(OPTIMIZED_A57, OPTIMIZED, AMBIENT)
             OPTIMIZED -> listOf(OPTIMIZED, AMBIENT)
             else -> listOf(this)
         }
-        return candidates.filter { it.experimentalProfile == null || it.supportsExperiment(core, abi) }
+        val signed = candidates.filter { it.experimentalProfile == null || it.supportsExperiment(core, abi) }
+        return if (includeInstalledBuildbot && this in publicExperiments) signed + BUILDBOT else signed
     }
 
     fun supportsExperiment(core: GameCore, abi: String): Boolean =

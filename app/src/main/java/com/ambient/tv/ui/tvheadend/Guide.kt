@@ -35,6 +35,7 @@ import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -159,7 +160,9 @@ internal fun LiveTvChannelBrowser(
         }
         // Center the whole sender row once on entry. Retargeting preserves the current glide;
         // lateral moves between its header and programmes must not start another vertical move.
-        focusedGuideRow.collectLatest { id ->
+        focusedGuideRow.combine(snapshotFlow { filterFocusState.allowContentAutoFocus }) { id, allowed ->
+            id.takeIf { allowed }
+        }.collectLatest { id ->
             val index = id?.let(channelIndices::get)
             if (index != null) {
                 if (skipReturnCentering && id == returnCenteringRow) {
