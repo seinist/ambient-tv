@@ -423,6 +423,33 @@ mod scene_tests{
         assert!(s.push(12,frame(100,100,0.3,1.0)).is_err());
     }
     #[test]
+    fn uhd_scene_exact_average_and_percentile_rank(){
+        // 4K contains enough samples to exercise the 99.98% rank above
+        // 32-bit multiplication limits. The mean is derived from the
+        // pre-quantization sum, not the rounded histogram bins.
+        let w=3840u32;let h=2160u32;let n=u64::from(w)*u64::from(h);
+        let mut scene=HdrScene::new(0,1,w,h,P).unwrap();
+        let mut bins=vec![0;BINS as usize];
+        bins[100]=(n-n/5000) as u32;bins[900]=(n/5000) as u32;
+        let linear_sum=n*1_000_000 + n/2 + n/5000*8_000_000;
+        scene.push(0,SceneFrame{width:w,height:h,maxscl:[900;3],bins,average:0.1,fraction:0.75,linear_sum}).unwrap();
+        let result=scene.finish().unwrap();
+        assert_eq!(result.average,100);
+        assert_eq!(result.percentiles[8],100);
+        assert_eq!(result.fraction,750);
+        assert!(HdrScene::new(0,1,4096,2160,P).is_err());
+    }
+    #[test]
+    fn mean_quantizes_once_after_full_scene(){
+        let mut scene=HdrScene::new(0,1,2,1,P).unwrap();
+        let mut f=frame(100,101,0.2,0.5);
+        // Both actual pixels round to these histogram bins, but the
+        // unrounded average is 100.1 rather than 100.5 metadata units.
+        f.linear_sum=2_002_000;
+        scene.push(0,f).unwrap();
+        assert_eq!(scene.finish().unwrap().average,100);
+    }
+    #[test]
     fn scene_boundaries_and_percentiles(){
         assert!(HdrScene::new(1,1,2,1,P).is_err());
         assert!(HdrScene::new(0,1,2,1,[1;9]).is_err());
