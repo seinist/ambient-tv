@@ -1,0 +1,13 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+--- a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
++++ b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+@@ -134,3 +134,9 @@ public class NvHTTP {
+             }
+             public void checkServerTrusted(X509Certificate[] certs, String authType) throws CertificateException {
++                if (NvHTTP.this.serverCert != null) {
++                    if (certs.length != 1 || !certs[0].equals(NvHTTP.this.serverCert)) {
++                        throw new CertificateException("Pinned host certificate changed");
++                    }
++                    return;
++                }
+                 try {

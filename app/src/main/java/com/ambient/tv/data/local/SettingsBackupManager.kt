@@ -329,6 +329,8 @@ class SettingsBackupManager @Inject constructor(
     private val smartTube: com.ambient.tv.youtube.SmartTubeEngine? = null,
     /** Live TV reminders keep their lead time in their own preferences file (read by the alarm receiver). */
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context? = null,
+    private val moonlightTrust: com.ambient.tv.moonlight.MoonlightHostTrust? = null,
+    private val moonlightStore: com.ambient.tv.moonlight.MoonlightLibraryStore? = null,
 ) {
     /** Kept for pure preference tests and small tools that do not install Hilt. */
     constructor(preferences: AppPreferences, tokenStore: TokenStore) : this(preferences, tokenStore, null)
@@ -649,6 +651,12 @@ class SettingsBackupManager @Inject constructor(
                     gameLibraryOverrides = preferences.gameLibraryOverrides,
                     gameLibraryFolders = preferences.gameLibraryFolders,
                     gameMetadataOptions = preferences.gameMetadataOptions,
+                    moonlightStreamProfile = preferences.moonlightStreamProfile,
+                    moonlightLibraryView = preferences.moonlightLibraryView,
+                    moonlightGridColumns = preferences.moonlightGridColumns,
+                    moonlightListRows = preferences.moonlightListRows,
+                    moonlightSortKey = preferences.moonlightSortKey,
+                    moonlightSortDescending = preferences.moonlightSortDescending,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -659,6 +667,9 @@ class SettingsBackupManager @Inject constructor(
                     rommEnabled = preferences.rommEnabled,
                     rommServerUrl = preferences.rommServerUrl.takeIf(String::isNotBlank),
                     rommUsername = preferences.rommUsername.takeIf(String::isNotBlank),
+                    moonlightEnabled = preferences.moonlightEnabled,
+                    moonlightHosts = preferences.moonlightHosts,
+                    moonlightHostProfiles = preferences.moonlightHostProfiles,
                 ),
                 credentials = if (includeCredentials) tokenStore.exportGameMetadataCredentials()?.let {
                     CredentialSettingsExtras(gameMetadata = it)
@@ -677,6 +688,16 @@ class SettingsBackupManager @Inject constructor(
         validateAccountBackup(backup)
         backup.smartTubeAccounts?.let { smartTube?.validateAccounts(it) }
         backup.fileSources.filter { it.kind in com.ambient.tv.data.files.FileKinds.ALL }.forEach { it.validated() }
+        backup.extras?.portable?.moonlightStreamProfile?.validated()
+        backup.extras?.connections?.moonlightHostProfiles?.let { profiles ->
+            require(profiles.size <= 16 && profiles.keys.all { com.ambient.tv.moonlight.validMoonlightHostId(it) })
+            profiles.values.forEach { it.validated() }
+        }
+        backup.extras?.connections?.moonlightHosts?.let { hosts ->
+            require(hosts.size <= 16) { "Too many Moonlight hosts in backup" }
+            hosts.forEach { it.validated() } // reject malformed profiles before any settings change
+            require(hosts.map { it.id }.distinct().size == hosts.size) { "Duplicate Moonlight host IDs" }
+        }
         backup.extras?.portable?.gameLibraryOverrides?.let { overrides ->
             require(overrides.size <= 5000)
             require(overrides.distinctBy { it.sourceId to it.path }.size == overrides.size)
@@ -1183,6 +1204,12 @@ class SettingsBackupManager @Inject constructor(
             settings.mousePointerHideSeconds?.let { preferences.mousePointerHideSeconds = it }
             settings.gameLibraryOptions?.let { preferences.gameLibraryOptions = it }
             settings.gameMetadataOptions?.let { preferences.gameMetadataOptions = it }
+            settings.moonlightStreamProfile?.let { preferences.moonlightStreamProfile = it.validated() }
+            settings.moonlightLibraryView?.let { preferences.moonlightLibraryView = it }
+            settings.moonlightGridColumns?.let { preferences.moonlightGridColumns = it }
+            settings.moonlightListRows?.let { preferences.moonlightListRows = it }
+            settings.moonlightSortKey?.let { preferences.moonlightSortKey = it }
+            settings.moonlightSortDescending?.let { preferences.moonlightSortDescending = it }
             settings.gameLibraryOverrides?.let { preferences.gameLibraryOverrides = it.filter { row ->
                 row.sourceId in preferences.fileSources.map { source -> source.id }
             }.takeLast(5000) }
@@ -1235,11 +1262,34 @@ class SettingsBackupManager @Inject constructor(
                 preferences.rommUsername = name
             }
             connections.rommEnabled?.let { preferences.rommEnabled = it }
+            connections.moonlightHosts?.let { profiles ->
+                val restored = profiles.map { it.validated() }.distinctBy { it.host to it.port }.take(16)
+                val old = preferences.moonlightHosts.associateBy { it.id }
+                val next = restored.associateBy { it.id }
+                // Never carry trust across a removed, newly restored or redirected host ID.
+                (old.keys + next.keys).forEach { id ->
+                    val before = old[id]
+                    val after = next[id]
+                    if (before == null || after == null || before.host != after.host || before.port != after.port) {
+                        moonlightTrust?.clear(id)
+                        moonlightStore?.clearHost(id)
+                    }
+                }
+                val retainedProfiles = preferences.moonlightHostProfiles.filterKeys { id ->
+                    val before = old[id]
+                    val after = next[id]
+                    before != null && after != null && before.host == after.host && before.port == after.port
+                }
+                preferences.moonlightHosts = restored
+                preferences.moonlightHostProfiles = retainedProfiles
+            }
+            connections.moonlightHostProfiles?.let { preferences.moonlightHostProfiles = it }
+            connections.moonlightEnabled?.let { preferences.moonlightEnabled = it }
         }
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 84
+        const val CURRENT_SCHEMA_VERSION = 87
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

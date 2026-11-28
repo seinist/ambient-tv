@@ -47,6 +47,7 @@ class BrowseReconnects @Inject constructor(
     private val trailers: Provider<TmdbTrailerRepository>,
     private val resumeConnectivity: Provider<ResumeConnectivityMonitor>,
     private val wireGuard: Provider<WireGuardRouteController>,
+    private val moonlightStore: Provider<com.ambient.tv.moonlight.MoonlightLibraryStore>,
 ) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -125,7 +126,7 @@ class BrowseReconnects @Inject constructor(
                 )
                 val sources = hosts.endpoints().filter {
                     it.machine in restored && it.system !in activeProfiles && ':' in it.system &&
-                        it.system.substringBefore(':') in setOf("files", "dlna", "plex", "jellyfin", "emby")
+                        it.system.substringBefore(':') in setOf("files", "dlna", "plex", "jellyfin", "emby", "moonlight")
                 }.map { it.system }.toSet()
                 request(sources)
             }
@@ -195,6 +196,9 @@ class BrowseReconnects @Inject constructor(
         if (includes("jellyfin") && preferences.jellyfinEnabled) safely { jellyfin.get().let { it.restoreCache(); it.refreshCaches() } }
         if (includes("emby") && preferences.embyEnabled) safely { emby.get().let { it.restoreCache(); it.refreshCaches() } }
         if (includes("trailers")) safely { trailers.get().refreshCaches() }
+        if (includes("moonlight") && com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && preferences.hasMoonlightHosts)
+            preferences.moonlightHosts.filter { host -> sources.any { browseSourceMatches(it, setOf("moonlight:" + host.id)) } }
+                .forEach { moonlightStore.get().markOffline(it.id) }
         if (listOf("plex", "jellyfin", "emby", "tvheadend", "iptv").any(::includes)) {
             safely {
                 liveTv.get().configured().filter { repo ->

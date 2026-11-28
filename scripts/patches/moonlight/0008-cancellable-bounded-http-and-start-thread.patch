@@ -1,0 +1,257 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+--- a/app/src/main/java/com/limelight/nvstream/NvConnection.java
++++ b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+@@ -51,6 +51,8 @@
+     private static Semaphore connectionAllowed = new Semaphore(1);
+     private final AtomicBoolean nativeSlotHeld = new AtomicBoolean(false);
+     private volatile boolean stopping = false;
++    private volatile NvHTTP activeHttp;
++    private Thread startThread;
+     private final boolean isMonkey;
+     private final Context appContext;
+ 
+@@ -92,24 +94,37 @@
+     }
+ 
+     public void stop() {
+-        // A stop before the native start took ownership must not release the global connection
+-        // semaphore; the start thread sees this flag and releases its own count.
+-        stopping = true;
+-        // Interrupt any pending connection. This is thread-safe.
+-        MoonBridge.interruptConnection();
+-
+-        // Moonlight-core start and stop are serialized here, so a stop can never fall between the
+-        // start thread's 'stopping' check and its ownership of the native connection slot.
++        final Thread worker;
++        synchronized (this) {
++            stopping = true;
++            worker = startThread;
++        }
++        NvHTTP http = activeHttp;
++        if (http != null) http.cancelPendingRequests();
++        // Only the connection that owns the global native slot may interrupt it.
++        if (nativeSlotHeld.get()) MoonBridge.interruptConnection();
++        if (worker != null && worker != Thread.currentThread()) {
++            worker.interrupt();
++            try {
++                worker.join();
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++                throw new IllegalStateException("Interrupted while stopping Moonlight", e);
++            }
++        }
+         synchronized (MoonBridge.class) {
+             if (nativeSlotHeld.compareAndSet(true, false)) {
+-                MoonBridge.stopConnection();
+-                MoonBridge.cleanupBridge();
+-                // Now a pending connection can be processed
+-                connectionAllowed.release();
++                try {
++                    MoonBridge.stopConnection();
++                    MoonBridge.cleanupBridge();
++                } finally {
++                    connectionAllowed.release();
++                }
+             }
+         }
+     }
+ 
++
+     private InetAddress resolveServerAddress() throws IOException {
+         // Try to find an address that works for this host
+         InetAddress[] addrs = InetAddress.getAllByName(context.serverAddress.address);
+@@ -230,9 +245,13 @@
+     
+     private boolean startApp() throws XmlPullParserException, IOException
+     {
++        if (stopping) return false;
+         NvHTTP h = new NvHTTP(context.serverAddress, context.httpsPort, uniqueId, context.serverCert, cryptoProvider);
++        activeHttp = h;
++        if (stopping) { h.cancelPendingRequests(); return false; }
+ 
+         String serverInfo = h.getServerInfo(true);
++        if (stopping) return false;
+         
+         context.serverAppVersion = h.getServerVersion(serverInfo);
+         if (context.serverAppVersion == null) {
+@@ -316,11 +335,12 @@
+             }
+         }
+         
++        if (stopping) return false;
+         // If there's a game running, resume it
+         if (h.getCurrentGame(serverInfo) != 0) {
+             try {
+                 if (h.getCurrentGame(serverInfo) == app.getAppId()) {
+-                    if (!h.launchApp(context, "resume", app.getAppId(), context.negotiatedHdr)) {
++                    if (stopping || !h.launchApp(context, "resume", app.getAppId(), context.negotiatedHdr)) {
+                         context.connListener.displayMessage("Failed to resume existing session");
+                         return false;
+                     }
+@@ -381,7 +401,7 @@
+     private boolean launchNotRunningApp(NvHTTP h, ConnectionContext context)
+             throws IOException, XmlPullParserException {
+         // Launch the app since it's not running
+-        if (!h.launchApp(context, "launch", context.streamConfig.getApp().getAppId(), context.negotiatedHdr)) {
++        if (stopping || !h.launchApp(context, "launch", context.streamConfig.getApp().getAppId(), context.negotiatedHdr)) {
+             context.connListener.displayMessage("Failed to launch application");
+             return false;
+         }
+@@ -391,10 +411,12 @@
+         return true;
+     }
+ 
+-    public void start(final AudioRenderer audioRenderer, final VideoDecoderRenderer videoDecoderRenderer, final NvConnectionListener connectionListener)
++    public synchronized void start(final AudioRenderer audioRenderer, final VideoDecoderRenderer videoDecoderRenderer, final NvConnectionListener connectionListener)
+     {
+-        new Thread(new Runnable() {
++        if (stopping || startThread != null) return;
++        startThread = new Thread(new Runnable() {
+             public void run() {
++                if (stopping) return;
+                 context.connListener = connectionListener;
+                 context.videoCapabilities = videoDecoderRenderer.getCapabilities();
+ 
+@@ -403,7 +425,7 @@
+                 context.connListener.stageStarting(appName);
+ 
+                 try {
+-                    if (!startApp()) {
++                    if (!startApp() || stopping) {
+                         context.connListener.stageFailed(appName, 0, 0);
+                         return;
+                     }
+@@ -420,6 +442,7 @@
+                     return;
+                 }
+ 
++                if (stopping) return;
+                 ByteBuffer ib = ByteBuffer.allocate(16);
+                 ib.putInt(context.riKeyId);
+ 
+@@ -442,6 +465,11 @@
+                         return;
+                     }
+                     nativeSlotHeld.set(true);
++                    if (stopping) {
++                        nativeSlotHeld.set(false);
++                        connectionAllowed.release();
++                        return;
++                    }
+                     MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener);
+                     int ret = MoonBridge.startConnection(context.serverAddress.address,
+                             context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,
+@@ -469,7 +497,8 @@
+                     }
+                 }
+             }
+-        }).start();
++        }, "ambient-moonlight-start");
++        startThread.start();
+     }
+     
+     public void sendMouseMove(final short deltaX, final short deltaY)
+diff --git a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+--- a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
++++ b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+@@ -2,6 +2,7 @@
+ 
+ import android.os.Build;
+ 
++import java.io.ByteArrayOutputStream;
+ import java.io.FileNotFoundException;
+ import java.io.IOException;
+ import java.io.InputStream;
+@@ -52,6 +53,7 @@
+ import com.limelight.nvstream.http.PairingManager.PairState;
+ import com.limelight.nvstream.jni.MoonBridge;
+ 
++import okhttp3.Call;
+ import okhttp3.ConnectionPool;
+ import okhttp3.HttpUrl;
+ import okhttp3.OkHttpClient;
+@@ -63,7 +65,14 @@
+ public class NvHTTP {
+     private String uniqueId;
+     private PairingManager pm;
++    private boolean ambientCancelled;
++    private Call ambientCall;
+ 
++    public synchronized void cancelPendingRequests() {
++        ambientCancelled = true;
++        if (ambientCall != null) ambientCall.cancel();
++    }
++
+     private static final int DEFAULT_HTTPS_PORT = 47984;
+     public static final int DEFAULT_HTTP_PORT = 47989;
+     public static final int SHORT_CONNECTION_TIMEOUT = 3000;
+@@ -71,7 +80,8 @@
+     public static final int READ_TIMEOUT = 7000;
+ 
+     // Print URL and content to logcat on debug builds
+-    private static boolean verbose = BuildConfig.DEBUG;
++    // Never print pairing challenges, certificates, session keys or host URLs.
++    private static boolean verbose = false;
+ 
+     private HttpUrl baseUrlHttp;
+ 
+@@ -183,6 +193,8 @@
+                 .hostnameVerifier(hv)
+                 .readTimeout(READ_TIMEOUT, TimeUnit.MILLISECONDS)
+                 .connectTimeout(LONG_CONNECTION_TIMEOUT, TimeUnit.MILLISECONDS)
++                .followRedirects(false)
++                .followSslRedirects(false)
+                 .proxy(Proxy.NO_PROXY)
+                 .fastFallback(false)
+                 .build();
+@@ -193,6 +205,7 @@
+ 
+         httpClientLongConnectNoReadTimeout = httpClientLongConnectTimeout.newBuilder()
+                 .readTimeout(120, TimeUnit.SECONDS)
++                .callTimeout(130, TimeUnit.SECONDS)
+                 .build();
+     }
+ 
+@@ -436,7 +449,13 @@
+     private ResponseBody openHttpConnection(OkHttpClient client, HttpUrl baseUrl, String path, String query) throws IOException {
+         HttpUrl completeUrl = getCompleteUrl(baseUrl, path, query);
+         Request request = new Request.Builder().url(completeUrl).get().build();
+-        Response response = performAndroidTlsHack(client).newCall(request).execute();
++        final Call call;
++        synchronized (this) {
++            if (ambientCancelled) throw new IOException("Moonlight request cancelled");
++            call = performAndroidTlsHack(client).newCall(request);
++            ambientCall = call;
++        }
++        Response response = call.execute();
+ 
+         ResponseBody body = response.body();
+         
+@@ -463,9 +482,24 @@
+ 
+     private String openHttpConnectionToString(OkHttpClient client, HttpUrl baseUrl, String path, String query) throws IOException {
+         try {
+-            ResponseBody resp = openHttpConnection(client, baseUrl, path, query);
+-            String respString = resp.string();
+-            resp.close();
++            final int limit = path.equals("applist") ? 1024 * 1024 :
++                    path.equals("serverinfo") ? 64 * 1024 : 256 * 1024;
++            final String respString;
++            try (ResponseBody resp = openHttpConnection(client, baseUrl, path, query);
++                 InputStream input = resp.byteStream()) {
++                if (resp.contentLength() > limit) throw new IOException("Moonlight response exceeds limit");
++                ByteArrayOutputStream output = new ByteArrayOutputStream();
++                byte[] buffer = new byte[8192];
++                int count;
++                while ((count = input.read(buffer)) != -1) {
++                    if (output.size() + count > limit) throw new IOException("Moonlight response exceeds limit");
++                    output.write(buffer, 0, count);
++                }
++                respString = new String(output.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
++                if (respString.toUpperCase(java.util.Locale.ROOT).contains("<!DOCTYPE") ||
++                        respString.toUpperCase(java.util.Locale.ROOT).contains("<!ENTITY"))
++                    throw new IOException("Moonlight XML declaration denied");
++            }
+ 
+             if (verbose && !path.equals("serverinfo")) {
+                 LimeLog.info(getCompleteUrl(baseUrl, path, query)+" -> "+respString);

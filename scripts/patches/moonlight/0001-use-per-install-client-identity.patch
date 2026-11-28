@@ -1,0 +1,15 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+--- a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
++++ b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+@@ -200,8 +200,8 @@ public class NvHTTP {
+     }
+     
+     public NvHTTP(ComputerDetails.AddressTuple address, int httpsPort, String uniqueId, X509Certificate serverCert, LimelightCryptoProvider cryptoProvider) throws IOException {
+-        // Use the same UID for all Moonlight clients so we can quit games
+-        // started by other Moonlight clients.
+-        this.uniqueId = "0123456789ABCDEF";
++        // Ambient TV uses its own persistent, per-installation GameStream identity.
++        // Do not borrow the identity shared by official Moonlight clients.
++        this.uniqueId = uniqueId;
+ 
+         this.serverCert = serverCert;

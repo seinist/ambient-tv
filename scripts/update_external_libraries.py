@@ -248,6 +248,60 @@ def git_tag_for(repo: str, sha: str) -> str:
     return ""
 
 
+MOONLIGHT_TAG = re.compile(r"v\d+\.\d+(?:\.\d+)?")
+
+
+def _version_tuple(tag: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in tag.lstrip("v").split("."))
+
+
+def moonlight_latest(current: dict[str, str]) -> dict[str, str]:
+    """Newest stable Moonlight Android release (vX.Y[.Z]) and the commit its tag points to."""
+    repo = github_repo(current["MOONLIGHT_ANDROID_REPO"])
+    try:
+        releases = github(f"/repos/{repo}/releases?per_page=30")
+        tags = [r["tag_name"] for r in releases if not r.get("draft") and not r.get("prerelease")
+                and MOONLIGHT_TAG.fullmatch(r.get("tag_name", ""))]
+        if not tags:
+            raise RuntimeError("No published Moonlight release")
+        tag = max(tags, key=_version_tuple)
+        return {"MOONLIGHT_ANDROID_TAG": tag, "MOONLIGHT_ANDROID_REF": resolve_tag_commit(repo, tag)}
+    except (RuntimeError, urllib.error.URLError) as exc:
+        # The GitHub API can be rate limited or unreachable; the tags themselves are public git refs.
+        print(f"  NOTE: GitHub releases for {repo} unavailable ({exc}); using the newest release tag instead.")
+    out = subprocess.run(["git", "ls-remote", "--tags", current["MOONLIGHT_ANDROID_REPO"]],
+                         capture_output=True, text=True, timeout=120,
+                         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    if out.returncode != 0:
+        raise RuntimeError(f"Could not list Moonlight tags: {out.stderr.strip() or 'no output'}")
+    commits: dict[str, str] = {}
+    for line in out.stdout.splitlines():
+        sha, _, ref = line.partition("\t")
+        name = ref.removeprefix("refs/tags/")
+        peeled = name.endswith("^{}")
+        name = name.removesuffix("^{}")
+        if not MOONLIGHT_TAG.fullmatch(name):
+            continue
+        # An annotated tag lists the tag object and, peeled, the commit; keep the commit.
+        if peeled or name not in commits:
+            commits[name] = sha
+    if not commits:
+        raise RuntimeError("No Moonlight release tags found")
+    tag = max(commits, key=_version_tuple)
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", commits[tag]):
+        raise RuntimeError("Invalid Moonlight release commit")
+    return {"MOONLIGHT_ANDROID_TAG": tag, "MOONLIGHT_ANDROID_REF": commits[tag]}
+
+
+def prepare_moonlight() -> bool:
+    """Fetch the pinned release and apply scripts/patches/moonlight; False when a patch no longer applies."""
+    try:
+        return subprocess.run(["bash", str(ROOT / "scripts" / "fetch_moonlight_sources.sh")],
+                              timeout=600).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def prepare_libretrodroid() -> bool:
     """Fetch the pinned module and apply our patches; False when a patch no longer applies."""
     return subprocess.run([str(ROOT / "scripts" / "fetch_libretrodroid.sh")]).returncode == 0
@@ -267,13 +321,14 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true")
     group.add_argument("--apply", action="store_true")
-    parser.add_argument("--only", choices=("svp", "monogram", "libretro"),
-                        help="Check/update only Open-SVPFlow, Monogram or LibretroDroid (cores have a separate updater)")
+    parser.add_argument("--only", choices=("svp", "monogram", "libretro", "moonlight"),
+                        help="Check/update only Open-SVPFlow, Monogram, LibretroDroid or Moonlight (cores have a separate updater)")
     args = parser.parse_args()
     include_rest = args.only is None
     include_svp = args.only in (None, "svp")
     include_monogram = args.only in (None, "monogram")
     include_libretro = args.only in (None, "libretro")
+    include_moonlight = args.only in (None, "moonlight")
     current = load_props()
     if include_svp:
         svp.verify(ROOT / "native/ambientsvp", svp.pinned_revision(ROOT))
@@ -299,6 +354,8 @@ def main() -> int:
         latest.update(monogram_latest())
     if include_libretro:
         latest.update(libretrodroid_latest(current))
+    if include_moonlight:
+        latest.update(moonlight_latest(current))
 
     labels = [
         ("SmartTube", "SMARTTUBE_VERSION"),
@@ -321,6 +378,8 @@ def main() -> int:
         ("LibretroDroid", "LIBRETRODROID_COMMIT"),
         ("LibretroDroid rcheevos", "LIBRETRODROID_RCHEEVOS_VERSION"),
         ("rcheevos commit", "LIBRETRODROID_RCHEEVOS_COMMIT"),
+        ("Moonlight Android", "MOONLIGHT_ANDROID_TAG"),
+        ("Moonlight commit", "MOONLIGHT_ANDROID_REF"),
     ]
     changed = False
     monogram_changed = False
@@ -351,6 +410,10 @@ def main() -> int:
     libretrodroid_changed = ("LIBRETRODROID_COMMIT" in latest
                              and current.get("LIBRETRODROID_COMMIT") != latest["LIBRETRODROID_COMMIT"])
 
+    moonlight_changed = ("MOONLIGHT_ANDROID_REF" in latest
+                         and not same_pin(current.get("MOONLIGHT_ANDROID_REF", ""), latest["MOONLIGHT_ANDROID_REF"],
+                                          "MOONLIGHT_ANDROID_REF"))
+
     if manual_rusty_update:
         print("  NOTE: Spotify/Rusty is not auto-updated: its JNI contract (dev.rusty.app.NativeBridge, SpotifyService, audio/PcmOutput) must be checked against the new release.")
         print("        When moving SPOTIFY_RUSTY_REF, also set SPOTIFY_RUSTY_COMMIT and the SPOTIFY_CORE_SHA256_* pins; fetch_spotify_engine.sh refuses unverified prebuilt cores.")
@@ -364,6 +427,7 @@ def main() -> int:
             safe_latest["SPOTIFY_RUSTY_REF"] = current.get("SPOTIFY_RUSTY_REF", safe_latest["SPOTIFY_RUSTY_REF"])
         old_libretrodroid = current.get("LIBRETRODROID_COMMIT", "")
         old_libretrodroid_pins = {key: current.get(key, "") for key in LIBRETRODROID_KEYS}
+        old_moonlight = {key: current.get(key, "") for key in ("MOONLIGHT_ANDROID_TAG", "MOONLIGHT_ANDROID_REF")}
         updates = {}
         if "SVPFLOW_REF" in latest and current["SVPFLOW_REF"] != latest["SVPFLOW_REF"]:
             print("Preparing matching SVP Rust pins, Cargo.lock, Vulkan shader and notices...")
@@ -385,6 +449,28 @@ def main() -> int:
                 print(f"WARNING: LibretroDroid kept at {old_libretrodroid}: a patch does not apply to "
                       f"{latest['LIBRETRODROID_COMMIT']}. Rebase scripts/patches/libretrodroid, then set "
                       "LIBRETRODROID_COMMIT by hand.")
+        if moonlight_changed:
+            # The reviewed patches (identity, certificate pinning, stop/quit safety) target exact
+            # upstream lines: keep the new release only if every patch still applies.
+            print("\nPreparing Moonlight Android at the new release to check scripts/patches/moonlight...")
+            if not prepare_moonlight():
+                current.update(old_moonlight)
+                # Do not overwrite an unrelated concurrent edit during rollback.
+                # Preserve every other successfully applied pin, including manual Rusty.
+                attempted = render_props({**current, **{k: latest[k] for k in old_moonlight}}).encode()
+                # render_props reads current file layout; compare the exact Moonlight attempt.
+                if load_props() != {**current, **{k: latest[k] for k in old_moonlight}}:
+                    raise RuntimeError("Concurrent edit during Moonlight rollback")
+                svp.apply_files({PROPS: render_props(current).encode()}, {PROPS: attempted})
+                if not prepare_moonlight():
+                    raise RuntimeError("Moonlight pins restored, but old sources could not be prepared")
+                print(f"WARNING: Moonlight kept at {old_moonlight['MOONLIGHT_ANDROID_TAG']} "
+                      f"({old_moonlight['MOONLIGHT_ANDROID_REF']}): a patch does not apply to "
+                      f"{latest['MOONLIGHT_ANDROID_TAG']}. Rebase scripts/patches/moonlight, then set "
+                      "MOONLIGHT_ANDROID_TAG/MOONLIGHT_ANDROID_REF by hand.")
+            else:
+                print(f"Moonlight Android updated to {latest['MOONLIGHT_ANDROID_TAG']}. Build with "
+                      "MOONLIGHT_NATIVE=1 and test pairing, streaming and input before committing.")
         if include_svp:
             print("\nUpdated managed pins and matching SVP source assets (no native build).")
             print("The next normal build detects changed native inputs and rebuilds affected runtimes automatically.")

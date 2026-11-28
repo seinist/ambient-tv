@@ -1,0 +1,68 @@
+diff --git a/rs.c b/rs.c
+--- a/rs.c
++++ b/rs.c
+@@ -68,7 +68,41 @@
+     }
+ }
+ 
+-static int invert_mat(reed_solomon *rs, u8 *src, u8 *wrk, u8 **dst, int V0, int K, int T, u8 *c, u8 *d)
++static inline u8 fieldProduct(u8 a, u8 b)
++{
++    return a && b ? GF2_8_EXP[GF2_8_LOG[a] + GF2_8_LOG[b]] : 0;
++}
++
++// Solve two missing shards directly. Form the two residual parity equations,
++// then eliminate one unknown with existing SIMD axpy/scal kernels. If a
++// custom parity matrix has a zero pivot, leave the general solver in charge.
++static int recoverTwo(reed_solomon *rs, u8 **data, const u8 *missing,
++                      const u8 *rows, int bs)
++{
++    int x = missing[0], y = missing[1];
++    const u8 *r0 = rs->p + rows[0] * rs->ds;
++    const u8 *r1 = rs->p + rows[1] * rs->ds;
++    u8 a = r0[x], b = r0[y], c = r1[x], d = r1[y];
++    if (!a) return 0;
++    u8 invA = GF2_8_INV[a];
++    u8 ratio = fieldProduct(c, invA);
++    u8 pivot = d ^ fieldProduct(ratio, b);
++    if (!pivot) return 0;
++    memcpy(data[x], data[rs->ds + rows[0]], bs);
++    memcpy(data[y], data[rs->ds + rows[1]], bs);
++    for (int i = 0; i < rs->ds; i++) {
++        if (i == x || i == y) continue;
++        axpy(rs, data[x], data[i], r0[i], bs);
++        axpy(rs, data[y], data[i], r1[i], bs);
++    }
++    axpy(rs, data[y], data[x], ratio, bs);
++    scal(rs, data[y], GF2_8_INV[pivot], bs);
++    axpy(rs, data[x], data[y], b, bs);
++    scal(rs, data[x], invA, bs);
++    return 1;
++}
++
++static int invert_mat(reed_solomon *rs, u8 *src, u8 *wrk, u8 **dst, int V0, int K, int T, u8 *c, u8 *d)
+ {
+     int V0b = V0, W = K - V0;
+     u8 u = 0;
+@@ -90,7 +124,8 @@
+         scal(rs, dst[c[V0b + x]], u, T);
+         for (int row = x + 1; row < W; row++) {
+             u = wrk[row * W + x];
+-            axpy(rs, wrk + row * W, wrk + x * W, u, W);
++            // Earlier columns are eliminated; do not reread or rewrite them.
++            axpy(rs, wrk + row * W + x, wrk + x * W + x, u, W - x);
+             axpy(rs, dst[c[V0b + row]], dst[c[V0b + x]], u, T);
+         }
+     }
+@@ -241,7 +276,10 @@
+         return 0;
+     }
+ 
+-    for (int i = 0, j = 0; i < rs->ds - gaps; i++, j++) {
++    if (gaps == 2 && recoverTwo(rs, data, erasures, rowperm, bs))
++        return 0;
++
++    for (int i = 0, j = 0; i < rs->ds - gaps; i++, j++) {
+         while (marks[j])
+             j++;
+         colperm[i] = j;

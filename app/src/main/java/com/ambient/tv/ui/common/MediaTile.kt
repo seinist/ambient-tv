@@ -131,14 +131,16 @@ internal fun mediaTileWidth(style: MediaTileStyle): Dp {
 fun mediaTileImageUrl(item: MediaItem, style: MediaTileStyle): String? = when {
     // Game Home rows may mix box formats. Their artwork is always the cover, never a
     // gameplay backdrop. Older cached rows used android.resource as a fallback marker.
-    item.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX) ->
+    isGameHomeTile(item) ->
         item.thumbUrl?.takeUnless { it.startsWith("android.resource:") }
     style == MediaTileStyle.POSTER || style == MediaTileStyle.AUTO -> item.posterArtUrl
     else -> item.landscapeArtUrl
 }
 
 internal fun mediaTileGameCoverRatio(item: MediaItem): Float? {
-    if (!item.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)) return null
+    if (!isGameHomeTile(item)) return null
+    if (item.ratingKey.startsWith(com.ambient.tv.ui.home.MOONLIGHT_HOME_ITEM_PREFIX))
+        return item.gameCoverAspectRatio?.takeIf { it.isFinite() && it > 0f } ?: 2f / 3f
     return item.gameCoverAspectRatio?.takeIf { it.isFinite() && it > 0f }
         ?: com.ambient.tv.games.library.GameCoverFormats.aspectRatio(
             systemId = item.ratingKey.substringAfterLast('|', ""), filename = item.title,

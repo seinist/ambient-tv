@@ -53,6 +53,7 @@ internal open class InPlaceSectionSelection {
 
 internal object TelegramSectionSelection : InPlaceSectionSelection()
 internal object RadioSectionSelection : InPlaceSectionSelection()
+internal object MoonlightSectionSelection : InPlaceSectionSelection()
 
 /**
  * Reports [shownKey] as the live section while this screen is composed and applies sidebar
@@ -98,3 +99,9 @@ internal fun sectionSwitchesInPlace(currentRoute: String?, liveRoutes: Set<Strin
 
 internal val TELEGRAM_SECTION_ROUTES = setOf(Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION)
 internal val RADIO_SECTION_ROUTES = setOf(Destinations.RADIO, Destinations.RADIO_SECTION)
+internal val MOONLIGHT_SECTION_ROUTES = setOf(Destinations.MOONLIGHT, Destinations.MOONLIGHT_SECTION)
+internal fun moonlightSectionKeyOfRoute(route: String): String? =
+    runCatching { sectionKeyOfRoute(route, Destinations.MOONLIGHT, "all", "moonlight/") }.getOrNull()?.takeIf {
+        it in setOf("all", "favorites", "recent") ||
+            it.startsWith("host:") && com.ambient.tv.moonlight.validMoonlightHostId(it.removePrefix("host:"))
+    }

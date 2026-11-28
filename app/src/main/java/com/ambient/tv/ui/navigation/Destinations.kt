@@ -49,6 +49,13 @@ object Destinations {
     fun tmdbTrailers(mediaType: String, tmdbId: Int) = "trailers/tmdb/${Uri.encode(mediaType)}/$tmdbId"
     const val YOUTUBE_FEED = "youtube_feed/{feedKey}"
     const val SPOTIFY = "spotify"
+    const val MOONLIGHT = "moonlight"
+    const val MOONLIGHT_SECTION = "moonlight/{sectionKey}"
+    fun moonlightSection(section: String) = if (section == "all") MOONLIGHT
+        else "moonlight/" + Uri.encode(section)
+    const val MOONLIGHT_DETAIL = "moonlight_detail/{hostId}/{appId}"
+    fun moonlightDetail(hostId: String, appId: Int) =
+        "moonlight_detail/" + Uri.encode(hostId) + "/" + appId
     const val ROMM = "romm"
     const val ROMM_SECTION = "romm/{sectionKey}"
     fun rommSection(key: String) = if (key == "all") ROMM else "romm/${Uri.encode(key)}"

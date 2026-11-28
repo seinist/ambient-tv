@@ -1,0 +1,199 @@
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -3,7 +3,11 @@
+ #include <pthread.h>
+ #include <string.h>
+ #include <stdlib.h>
+-#include <limits.h>
++#include <limits.h>
++#include <stdint.h>
++#if defined(__aarch64__) && defined(__ARM_NEON)
++#include <arm_neon.h>
++#endif
+ 
+ #include <Limelight.h>
+ 
+@@ -43,7 +47,9 @@
+ static jbyteArray DecodedFrameBuffer;
+ static jshortArray DecodedAudioBuffer;
+ static jshort* DecodedAudioScratch;
+-static int DecodedAudioSamples;
++static int DecodedAudioSamples;
++static jshort* DecodedStereoScratch;
++static jmethodID BridgeArWantsNativeStereoMethod;
+ static int DecodedFrameCapacity;
+ static jmethodID BridgeDrSupportsDirectPictureMethod;
+ static jmethodID BridgeDrSubmitPictureMethod;
+@@ -96,7 +102,8 @@
+     BridgeDrSubmitDecodeUnitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrSubmitDecodeUnit", "([BIIIICJJ)I");
+     BridgeDrSupportsDirectPictureMethod = (*env)->GetStaticMethodID(env, GlobalBridgeClass, "bridgeDrSupportsDirectPicture", "()Z");
+     BridgeDrSubmitPictureMethod = (*env)->GetStaticMethodID(env, GlobalBridgeClass, "bridgeDrSubmitPicture", "(IIICJJ)I");
+-    BridgeArInitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArInit", "(III)I");
++    BridgeArInitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArInit", "(III)I");
++    BridgeArWantsNativeStereoMethod = (*env)->GetStaticMethodID(env, GlobalBridgeClass, "bridgeArWantsNativeStereoDownmix", "()Z");
+     BridgeArStartMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStart", "()V");
+     BridgeArStopMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStop", "()V");
+     BridgeArCleanupMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArCleanup", "()V");
+@@ -259,7 +266,77 @@
+     return ret;
+ }
+ 
+-int BridgeArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int flags) {
++// Keep scalar and SIMD operations in the same order as the Java fallback.
++#if defined(__clang__)
++#pragma clang fp contract(off)
++#endif
++static int16_t clampStereoSample(float sample) {
++    int32_t n = (int32_t)(sample * .5f);
++    return n < -32768 ? -32768 : n > 32767 ? 32767 : (int16_t)n;
++}
++
++#if defined(__aarch64__) && defined(__ARM_NEON)
++static float32x4_t pcmToFloat(int16x4_t v) {
++    return vcvtq_f32_s32(vmovl_s16(v));
++}
++static int16x4_t evenSamples(int16x8_t v) {
++    return vuzp1_s16(vget_low_s16(v), vget_high_s16(v));
++}
++static int16x4_t oddSamples(int16x8_t v) {
++    return vuzp2_s16(vget_low_s16(v), vget_high_s16(v));
++}
++#endif
++
++static void downmixStereo(const int16_t* input, int16_t* output, int frames, int channels) {
++    int frame = 0;
++#if defined(__aarch64__) && defined(__ARM_NEON)
++    for (; frame + 4 <= frames; frame += 4) {
++        const int16_t* p = input + frame * channels;
++        int16x4_t fl, fr, fc, lfe, rl, rr, sl = vdup_n_s16(0), sr = vdup_n_s16(0);
++        if (channels == 6) {
++            int16x8x3_t v = vld3q_s16(p);
++            fl = evenSamples(v.val[0]); lfe = oddSamples(v.val[0]);
++            fr = evenSamples(v.val[1]); rl = oddSamples(v.val[1]);
++            fc = evenSamples(v.val[2]); rr = oddSamples(v.val[2]);
++        }
++        else {
++            int16x8x4_t v = vld4q_s16(p);
++            fl = evenSamples(v.val[0]); rl = oddSamples(v.val[0]);
++            fr = evenSamples(v.val[1]); rr = oddSamples(v.val[1]);
++            fc = evenSamples(v.val[2]); sl = oddSamples(v.val[2]);
++            lfe = evenSamples(v.val[3]); sr = oddSamples(v.val[3]);
++        }
++        float32x4_t center = vmulq_n_f32(pcmToFloat(fc), .707f);
++        float32x4_t bass = vmulq_n_f32(pcmToFloat(lfe), .25f);
++        float32x4_t left = vaddq_f32(vaddq_f32(vaddq_f32(pcmToFloat(fl), center), bass),
++                                        vmulq_n_f32(pcmToFloat(rl), .707f));
++        float32x4_t right = vaddq_f32(vaddq_f32(vaddq_f32(pcmToFloat(fr), center), bass),
++                                         vmulq_n_f32(pcmToFloat(rr), .707f));
++        if (channels == 8) {
++            left = vaddq_f32(left, vmulq_n_f32(pcmToFloat(sl), .5f));
++            right = vaddq_f32(right, vmulq_n_f32(pcmToFloat(sr), .5f));
++        }
++        int16x4x2_t stereo;
++        stereo.val[0] = vqmovn_s32(vcvtq_s32_f32(vmulq_n_f32(left, .5f)));
++        stereo.val[1] = vqmovn_s32(vcvtq_s32_f32(vmulq_n_f32(right, .5f)));
++        vst2_s16(output + frame * 2, stereo);
++    }
++#endif
++    for (; frame < frames; frame++) {
++        const int16_t* p = input + frame * channels;
++        float center = p[2] * .707f, bass = p[3] * .25f;
++        float left = p[0] + center + bass + p[4] * .707f;
++        float right = p[1] + center + bass + p[5] * .707f;
++        if (channels == 8) { left += p[6] * .5f; right += p[7] * .5f; }
++        output[frame * 2] = clampStereoSample(left);
++        output[frame * 2 + 1] = clampStereoSample(right);
++    }
++}
++#if defined(__clang__)
++#pragma clang fp contract(on)
++#endif
++
++int BridgeArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int flags) {
+     JNIEnv* env = GetThreadEnv();
+     int err;
+ 
+@@ -284,13 +361,20 @@
+         // Decode into native session storage, never pin the Java heap across Opus.
+         DecodedAudioSamples = opusConfig->channelCount * opusConfig->samplesPerFrame;
+         DecodedAudioScratch = malloc((size_t)DecodedAudioSamples * sizeof(*DecodedAudioScratch));
+-        jshortArray local = (*env)->NewShortArray(env, DecodedAudioSamples);
++        bool nativeStereo = (*env)->CallStaticBooleanMethod(env, GlobalBridgeClass, BridgeArWantsNativeStereoMethod);
++        if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); nativeStereo = false; }
++        if (nativeStereo && (opusConfig->channelCount == 6 || opusConfig->channelCount == 8))
++            DecodedStereoScratch = malloc((size_t)opusConfig->samplesPerFrame * 2 * sizeof(*DecodedStereoScratch));
++        int outputSamples = DecodedStereoScratch != NULL ? opusConfig->samplesPerFrame * 2 : DecodedAudioSamples;
++        jshortArray local = (*env)->NewShortArray(env, outputSamples);
+         DecodedAudioBuffer = local != NULL ? (*env)->NewGlobalRef(env, local) : NULL;
+         if (local != NULL) (*env)->DeleteLocalRef(env, local);
+         if (DecodedAudioScratch == NULL || DecodedAudioBuffer == NULL) {
+             if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+-            free(DecodedAudioScratch);
+-            DecodedAudioScratch = NULL;
++            free(DecodedAudioScratch);
++            DecodedAudioScratch = NULL;
++            free(DecodedStereoScratch);
++            DecodedStereoScratch = NULL;
+             if (DecodedAudioBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
+             DecodedAudioBuffer = NULL;
+             opus_multistream_decoder_destroy(Decoder);
+@@ -322,9 +406,11 @@
+ 
+     (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
+     DecodedAudioBuffer = NULL;
+-    free(DecodedAudioScratch);
+-    DecodedAudioScratch = NULL;
+-    DecodedAudioSamples = 0;
++    free(DecodedAudioScratch);
++    DecodedAudioScratch = NULL;
++    free(DecodedStereoScratch);
++    DecodedStereoScratch = NULL;
++    DecodedAudioSamples = 0;
+ 
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArCleanupMethod);
+ }
+@@ -347,7 +433,11 @@
+         if (validSamples > DecodedAudioSamples) return;
+         if (validSamples < DecodedAudioSamples)
+             memset(decodedData + validSamples, 0, (size_t)(DecodedAudioSamples - validSamples) * sizeof(*decodedData));
+-        (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, DecodedAudioSamples, decodedData);
++        if (DecodedStereoScratch != NULL) {
++            downmixStereo(decodedData, DecodedStereoScratch, OpusConfig.samplesPerFrame, OpusConfig.channelCount);
++            (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, OpusConfig.samplesPerFrame * 2, DecodedStereoScratch);
++        }
++        else (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, DecodedAudioSamples, decodedData);
+         if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return; }
+ 
+         (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod, DecodedAudioBuffer);
+diff --git a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+--- a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
++++ b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+@@ -252,7 +252,11 @@
+         }
+     }
+ 
+-    public static void bridgeArStart() {
++    public static boolean bridgeArWantsNativeStereoDownmix() {
++        return audioRenderer != null && audioRenderer.wantsNativeStereoDownmix();
++    }
++
++    public static void bridgeArStart() {
+         if (audioRenderer != null) {
+             audioRenderer.start();
+         }
+diff --git a/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java b/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
+--- a/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
++++ b/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
+@@ -9,7 +9,10 @@
+ 
+     void stop();
+     
+-    void playDecodedAudio(short[] audioData);
++    void playDecodedAudio(short[] audioData);
++
++    // Opt in only when the sink has negotiated a stereo fallback for surround input.
++    default boolean wantsNativeStereoDownmix() { return false; }
+     
+     void cleanup();
+ }

@@ -1,6 +1,9 @@
 package com.ambient.tv.ui.games
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import com.ambient.tv.domain.model.GameBrowseItem
+import kotlinx.coroutines.flow.Flow
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -27,6 +30,23 @@ import com.ambient.tv.ui.common.isActiveNavigationDestination
 
 internal val LocalGameArtworkPriority = staticCompositionLocalOf<GameArtworkPriority> { SharedGameArtworkPriority }
 
+/** A stable library list may publish image changes independently for each composed card. */
+internal data class GameArtworkPresentation(val cover: Any?, val aspectRatio: Float)
+internal fun interface GameArtworkSource {
+    fun artwork(fileId: String): Flow<GameArtworkPresentation?>
+}
+internal val LocalGameArtworkSource = staticCompositionLocalOf<GameArtworkSource?> { null }
+
+@Composable
+internal fun gameArtworkPresentation(game: GameBrowseItem): GameArtworkPresentation {
+    val source = LocalGameArtworkSource.current
+    val live = if (source != null) {
+        val flow = remember(source, game.fileId) { source.artwork(game.fileId) }
+        flow.collectAsState(initial = null).value
+    } else null
+    return live ?: GameArtworkPresentation(game.coverModel, game.coverAspectRatio)
+}
+
 /** The caller reserves the cover's geometry before loading. Neither success nor fallback changes it. */
 @Composable
 fun GameCoverArtwork(
@@ -37,6 +57,7 @@ fun GameCoverArtwork(
     focused: Boolean = false,
     /** Browse cards supply their indexed ID. A detail's standalone artwork needs no queue demand. */
     fileId: String? = null,
+    systemIcon: Int? = null,
 ) {
     val priority = LocalGameArtworkPriority.current
     val owner = remember(fileId) { Any() }
@@ -69,8 +90,11 @@ fun GameCoverArtwork(
             // the system emblem replaces nothing, it only adds which console the game is for.
             ArtworkFallback(
                 title = title,
-                icon = painterResource(GameSystemIcons.drawable(systemId)),
+                icon = painterResource(systemIcon ?: GameSystemIcons.drawable(systemId)),
                 iconModifier = Modifier.testTag("game-cover-fallback"),
+                preserveIconColors = systemIcon != null && com.ambient.tv.ui.common.MediaSystem.entries.any {
+                    it.logo == systemIcon && it.preserveLogoColors
+                },
             )
         },
     )

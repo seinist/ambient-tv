@@ -125,6 +125,7 @@ data class SettingsUiState(
     val rommEnabled: Boolean = false,
     /** RomM has an address and a stored sign-in. */
     val rommConfigured: Boolean = false,
+    val moonlightConfigured: Boolean = false,
     val spotifyClientId: String = "",
     val fanartApiKey: String = "",
     val spotifyWebAuthorized: Boolean = false,

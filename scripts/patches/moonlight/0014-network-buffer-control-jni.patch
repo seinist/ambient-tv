@@ -1,0 +1,38 @@
+diff --git a/app/src/main/jni/moonlight-core/simplejni.c b/app/src/main/jni/moonlight-core/simplejni.c
+--- a/app/src/main/jni/moonlight-core/simplejni.c
++++ b/app/src/main/jni/moonlight-core/simplejni.c
+@@ -201,8 +201,19 @@
+     return (*env)->NewStringUTF(env, outputBuffer);
+ }
+ 
+-JNIEXPORT jlong JNICALL
+-Java_com_limelight_nvstream_jni_MoonBridge_getEstimatedRttInfo(JNIEnv *env, jclass clazz) {
++// Values are bounds, not packet timestamps; each receive owner reads its own atomic target.
++extern void AmbientSetAudioReorderWaitMs(unsigned int ms);
++extern void AmbientSetVideoBufferTier(unsigned int tier);
++JNIEXPORT void JNICALL
++Java_com_limelight_nvstream_jni_MoonBridge_setNetworkBufferTargets(JNIEnv *env, jclass clazz, jint audioMs, jint videoTier) {
++    (void)env;
++    (void)clazz;
++    AmbientSetAudioReorderWaitMs(audioMs < 4 ? 4 : (unsigned int)audioMs);
++    AmbientSetVideoBufferTier(videoTier < 0 ? 0 : (unsigned int)videoTier);
++}
++
++JNIEXPORT jlong JNICALL
++Java_com_limelight_nvstream_jni_MoonBridge_getEstimatedRttInfo(JNIEnv *env, jclass clazz) {
+     uint32_t rtt, variance;
+ 
+     if (!LiGetEstimatedRttInfo(&rtt, &variance)) {
+diff --git a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+--- a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
++++ b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+@@ -426,7 +426,8 @@
+     public static native String stringifyPortFlags(int portFlags, String separator);
+ 
+     // The RTT is in the top 32 bits, and the RTT variance is in the bottom 32 bits
+-    public static native long getEstimatedRttInfo();
++    public static native long getEstimatedRttInfo();
++    public static native void setNetworkBufferTargets(int audioReorderMs, int videoBufferTier);
+ 
+     public static native String getLaunchUrlQueryParameters();
+ 

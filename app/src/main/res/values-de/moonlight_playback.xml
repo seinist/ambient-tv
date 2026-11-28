@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="moonlight_player_settings">Wiedergabeeinstellungen</string>
+    <string name="moonlight_player_input">Tastatur / Texteingabe</string>
+    <string name="moonlight_player_input_hint">Text an den verbundenen PC senden. Android-Navigation und Systemtasten werden nicht weitergeleitet.</string>
+    <string name="moonlight_player_input_placeholder">Text für den PC</string>
+    <string name="moonlight_player_send_text">Text senden</string>
+    <string name="moonlight_player_info">Stream-Informationen</string>
+    <string name="moonlight_player_apply_next">Änderungen an Auflösung, FPS, Codec, HDR, Audio und Bitrate gelten ab der nächsten Stream-Verbindung.</string>
+    <string name="moonlight_player_no_seek">Für PC-Game-Streaming gibt es keine Medien-Suchleiste, Episodenwechsel oder Zeitachsen-Pause.</string>
+    <string name="moonlight_player_options">Optionen</string>
+    <string name="moonlight_player_input_short">Text</string>
+    <string name="moonlight_player_info_short">Info</string>
+    <string name="moonlight_retry_connection">Neu verbinden</string>
+    <string name="moonlight_other_app_running">Auf dem PC läuft ein anderes Spiel. Beende es ausdrücklich, bevor du dieses Spiel startest.</string>
+    <string name="moonlight_stats_video">%1$s · %2$dx%3$d · %4$d FPS · %5$s</string>
+    <string name="moonlight_stats_output">Decoder-Ausgabe: %1$.1f FPS</string>
+    <string name="moonlight_stats_drops">Fehlend: %1$d · verworfen: %2$d Frames</string>
+    <string name="moonlight_stats_decode">Mittlere Decoderzeit: %1$.1f ms</string>
+    <string name="moonlight_stats_host">Mittlere Host-Verarbeitung: %1$.1f ms</string>
+    <string name="moonlight_stats_network">RTT: %1$d ms · Varianz: %2$d ms</string>
+    <string name="moonlight_stats_audio">Audio: %1$d Kanäle · %2$.1f ms Puffer · %3$d Underruns · %4$d verworfene Samples</string>
+    <string name="moonlight_stats_hdr">HDR10</string>
+    <string name="moonlight_stats_sdr">SDR</string>
+    <string name="moonlight_stats_presented">Anzeigebestätigte Frames: %1$.1f FPS</string>
+    <string name="moonlight_stats_audio_queue">Geschätzte Audio-Warteschlange: %1$.1f ms</string>
+    <string name="moonlight_player_paste_text">Zwischenablage in Textfeld einfügen</string>
+    <string name="moonlight_stats_decoder">Decoder: %1$s</string>
+    <string name="moonlight_stats_color">Decoder-Farbe: Standard %1$s · Transfer %2$s · Bereich %3$s · HDR-Metadatenbytes %4$s</string>
+    <string name="moonlight_stats_hdr_verification">HDR-Decoder-Nachweis: %1$s</string>
+    <string name="moonlight_hdr_output_confirmed">BT.2020 / PQ gemeldet</string>
+    <string name="moonlight_hdr_output_mismatch">Farbmetadaten widersprüchlich</string>
+    <string name="moonlight_hdr_output_unknown">Nicht gemeldet / SDR</string>
+    <string name="moonlight_copy_diagnostics">Diagnose-Snapshot kopieren</string>
+</resources>

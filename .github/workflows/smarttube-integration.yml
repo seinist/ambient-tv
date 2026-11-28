@@ -27,7 +27,8 @@ concurrency:
 jobs:
   smarttube:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Allow bounded dependency-resolution retries without hiding test failures.
+    timeout-minutes: 65
     env:
       SKIP_MPV_NATIVE: '1'
       ROBOLECTRIC_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
@@ -55,23 +56,23 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s scripts/tests -p 'test_maven_updates.py'
-          ./gradlew :app:checkDebugDuplicateClasses :app:checkReleaseDuplicateClasses \
+          bash scripts/ci_gradle_rate_limit_retry.sh :app:checkDebugDuplicateClasses :app:checkReleaseDuplicateClasses \
             -PAPK_ABI=arm64 --no-configuration-cache --stacktrace --continue
       - name: Verify release R8 with actual dependency classes
         run: |
-          ./gradlew :app:minifyReleaseWithR8 -PAPK_ABI=arm64 -PADB_DEPLOY=false \
+          bash scripts/ci_gradle_rate_limit_retry.sh :app:minifyReleaseWithR8 -PAPK_ABI=arm64 -PADB_DEPLOY=false \
             --no-configuration-cache --stacktrace
       - name: Test DNS provider compatibility
         run: |
-          ./gradlew :sharedutils:testDebugUnitTest -PAPK_ABI=arm64 --stacktrace
+          bash scripts/ci_gradle_rate_limit_retry.sh :sharedutils:testDebugUnitTest -PAPK_ABI=arm64 --stacktrace
       - name: Test the patched SmartTube account and format paths
         run: |
-          ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' --tests '*SmartTubeFormatBridgeTest' --tests '*SmartTubeJsonPathCompatibilityTest' -PAPK_ABI=arm64
+          bash scripts/ci_gradle_rate_limit_retry.sh :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' --tests '*SmartTubeFormatBridgeTest' --tests '*SmartTubeJsonPathCompatibilityTest' -PAPK_ABI=arm64
       - name: Verify the application runtime dependency graph
         run: |
           set -euo pipefail
           for variant in debug release; do
-            ./gradlew :app:dependencies --configuration "${variant}RuntimeClasspath" -PAPK_ABI=arm64 | tee "cronet-${variant}-graph.log"
+            bash scripts/ci_gradle_rate_limit_retry.sh :app:dependencies --configuration "${variant}RuntimeClasspath" -PAPK_ABI=arm64 | tee "cronet-${variant}-graph.log"
             if grep -Eq ' FAILED([[:space:]]|$)' "cronet-${variant}-graph.log"; then
               echo "::error::Unresolved runtime dependency"
               exit 1
@@ -79,7 +80,7 @@ jobs:
           done
       - name: Test SmartTube playback, relay and reflection
         run: |
-          ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 \
+          bash scripts/ci_gradle_rate_limit_retry.sh :app:testDebugUnitTest -PAPK_ABI=arm64 \
             --tests '*SmartTube*' --tests '*YouTube*' \
             --tests '*ChunkedStreamRelayTest' --tests '*RenewingMedia3DataSourceTest'
       - uses: actions/upload-artifact@v4

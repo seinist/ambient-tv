@@ -10,6 +10,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -111,6 +113,8 @@ internal fun GameLibraryHeader(
     title: String? = null,
     /** Provider identity for a server library, including its platform sections. */
     system: MediaSystem? = null,
+    itemCount: Int = state.games.size,
+    onSettings: (() -> Unit)? = null,
 ) {
     PageHeader(focusChain = controls.focusChain, actions = {
         // RomM has no folders to manage here: its library is the server's.
@@ -126,6 +130,8 @@ internal fun GameLibraryHeader(
                 iconOnly = true, loading = state.busy, loadingOnlyAfterClick = true, onClick = onRefresh)
             ViewOptionsChip(0, modifier = Modifier.focusRequester(controls.optionsFocus),
                 onClick = controls::openOptions)
+            if (onSettings != null) TvChip(text = stringResource(R.string.moonlight_open_settings),
+                icon = Icons.Filled.Settings, iconOnly = true, onClick = onSettings)
         }
     }) {
         val heading = if (managing) stringResource(R.string.game_library_manage)
@@ -135,7 +141,7 @@ internal fun GameLibraryHeader(
         if (system != null) SystemPageTitle(system, title = heading)
         else Text(heading,
             style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(stringResource(R.string.game_library_count, state.games.size),
+        Text(stringResource(R.string.game_library_count, itemCount),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -147,6 +153,7 @@ internal fun GameLibrarySections(
     controls: GameLibraryBrowseControls,
     /** Name and console of a section that is not a console of its own (a RomM platform). */
     platform: (String) -> Pair<String, String>? = { null },
+    sectionIcon: @Composable (String) -> ImageVector? = { null },
     onSelect: (String) -> Unit,
 ) {
     PageChipRow(controls.focusChain, Modifier.fillMaxWidth(), selectedIndex = sections.indexOf(selected)) {
@@ -164,7 +171,7 @@ internal fun GameLibrarySections(
                     "all" -> Icons.Filled.Apps
                     "favorites" -> Icons.Filled.Favorite
                     "recent" -> Icons.Filled.History
-                    else -> gameSystemVector(custom?.second ?: key)
+                    else -> sectionIcon(key) ?: gameSystemVector(custom?.second ?: key)
                 }, onClick = { onSelect(key) })
         }
     }
@@ -217,7 +224,7 @@ internal fun GameLibraryViewOptionsPanel(
     onListRows: (Int) -> Unit,
     onSort: (String) -> Unit,
     onSortDescending: (Boolean) -> Unit,
-    onTitleStyle: (String) -> Unit,
+    onTitleStyle: ((String) -> Unit)?,
 ) {
     if (!controls.showOptions) return
     CompositionLocalProvider(LocalFilterFocusState provides controls.filterFocus) {
@@ -241,6 +248,7 @@ internal fun GameLibraryViewOptionsPanel(
                 title = stringResource(R.string.game_library_title), onClose = controls::closeOptions,
                 extraContent = {
                     // The same section and choice rows as the other libraries' extra options.
+                    if (onTitleStyle != null) {
                     com.ambient.tv.ui.common.RightPanelDivider()
                     com.ambient.tv.ui.common.RightPanelSectionTitle(stringResource(R.string.game_library_titles))
                     listOf("auto" to R.string.game_library_title_auto, "internal" to R.string.game_library_title_internal,
@@ -251,6 +259,7 @@ internal fun GameLibraryViewOptionsPanel(
                             onClick = { onTitleStyle(key) },
                             modifier = Modifier.fillMaxWidth(),
                         )
+                    }
                     }
                 },
             )

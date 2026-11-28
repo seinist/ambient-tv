@@ -138,6 +138,7 @@ fun ReferencePlayerHeader(
     subtitleTrailingText: String? = null,
     /** Optional content summary below the subtitle/metadata row. */
     description: String? = null,
+    contextSystem: com.ambient.tv.ui.common.MediaSystem? = null,
 ) {
     // The bubble occupies the area above the timeline. Fade only the header's pixels,
     // never its measured height: the seekbar, badges and actions must not jump.
@@ -169,11 +170,14 @@ fun ReferencePlayerHeader(
                 // Keep the line composed during exit; otherwise a pause-only header
                 // would vanish instantly when playback resumes.
                 AnimatedVisibility(
-                    visible = contextValue != null || contextTrailing != null || showPaused,
+                    visible = contextValue != null || contextTrailing != null || showPaused || contextSystem != null,
                     enter = expandVertically(animationSpec = tween(180)) + fadeIn(tween(180)),
                     exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(180)),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        contextSystem?.let {
+                            com.ambient.tv.ui.common.SystemLogo(it, Modifier.padding(end = 6.dp), size = deviceDp(20.dp, 16.dp), tint = Color.White)
+                        }
                         contextValue?.let {
                             Text(
                                 text = it,

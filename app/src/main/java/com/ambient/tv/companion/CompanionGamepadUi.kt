@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -59,7 +60,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 /** Initial layout follows the console but never changes the TV's authoritative core mapping. */
 internal fun companionDefaultTouchMode(systemId: String?): GameTouchMode = when (systemId) {
     "n64", "nds", "wii" -> GameTouchMode.HYBRID
-    "psx", "ps2", "psp", "n3ds", "gamecube", "wiiu", "dreamcast", "saturn" -> GameTouchMode.DUAL
+    "psx", "ps2", "psp", "n3ds", "gamecube", "wiiu", "dreamcast", "saturn", "moonlight" -> GameTouchMode.DUAL
     else -> GameTouchMode.DPAD
 }
 
@@ -112,6 +113,24 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val transmitting = playing && resumed
+    val phoneContext = LocalContext.current
+    var rumbleEnabled by rememberSaveable(state.target?.fingerprint) { mutableStateOf(true) }
+    val vibrator = remember(phoneContext) {
+        if (android.os.Build.VERSION.SDK_INT >= 31)
+            phoneContext.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+        else @Suppress("DEPRECATION") phoneContext.getSystemService(android.os.Vibrator::class.java)
+    }
+    val rumble = info?.rumble
+    LaunchedEffect(transmitting, rumbleEnabled, info?.sessionId, rumble) {
+        if (!transmitting || !rumbleEnabled || rumble == null || info?.systemId != "moonlight") {
+            runCatching { vibrator?.cancel() }
+        } else {
+            val level = (maxOf(rumble.low, rumble.high).coerceIn(0, 65535) * 255L / 65535L).toInt()
+            if (level > 0 && vibrator?.hasVibrator() == true)
+                runCatching { vibrator.vibrate(android.os.VibrationEffect.createOneShot(160L, level.coerceAtLeast(1))) }
+        }
+    }
+    DisposableEffect(vibrator) { onDispose { runCatching { vibrator?.cancel() } } }
     val navigating = claimed && resumed && info.acceptsNavigation
     val renderedInfo by rememberUpdatedState(info)
     val confirmHold = remember(manager) { CompanionGamepadHold(rewind = false, manager::sendGamepadCommand) }
@@ -303,18 +322,21 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         if (state.gamepadPanel && state.online && info != null) manager.claimGamepad()
     }
 
-    // Press edges are sent immediately below. Axis, pointer and gyro snapshots are sampled
-    // at ~60Hz; an idle heartbeat at 500ms keeps TV deadman state and buttons alive.
-    LaunchedEffect(transmitting, info?.sessionId, motionEnabled) {
+    // Button/neutral edges remain immediate. Moonlight may sample continuous inputs at 120 Hz
+    // on high-refresh phones with a healthy ACK path; Libretro retains its 60 Hz cadence.
+    val ackP95 by rememberUpdatedState(state.inputLatencyP95Ms)
+    val sourceRefresh by rememberUpdatedState(view.display?.refreshRate ?: 60f)
+    LaunchedEffect(transmitting, info?.sessionId, info?.systemId, motionEnabled) {
         if (transmitting) {
             var last: CompanionGamepadState? = null
-            var ticks = 0
+            var lastHeartbeat = 0L
             while (true) {
                 val next = padFrame.value.copy(motion = if (motionEnabled) motion.snapshot() else null)
-                if (next != last || ticks >= 30) {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (next != last || now - lastHeartbeat >= 500L) {
                     if (manager.gamepadInput(next)) {
                         last = next
-                        ticks = 0
+                        lastHeartbeat = now
                         // Mouse deltas are relative, not a held position. A successful
                         // enqueue consumes them once, never repeating them on the heartbeat.
                         if (next.pointer?.kind == "mouse" &&
@@ -329,8 +351,9 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                         }
                     }
                 }
-                ticks++
-                delay(16)
+                val fast = info?.systemId == "moonlight" && sourceRefresh >= 100f &&
+                    ackP95?.let { it <= 20L } == true
+                delay(if (fast) 8L else 16L)
             }
         }
     }
@@ -437,6 +460,9 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                     "right" -> R.string.companion_gamepad_region_right
                     else -> R.string.companion_gamepad_region_full
                 }))
+            }
+            if (info?.systemId == "moonlight") TextButton(onClick = { rumbleEnabled = !rumbleEnabled }) {
+                Text(stringResource(if (rumbleEnabled) R.string.moonlight_companion_rumble_on else R.string.moonlight_companion_rumble_off))
             }
             if (motion.availableMask != 0) TextButton(onClick = { motionEnabled = !motionEnabled }) {
                 Text(stringResource(if (motionEnabled) R.string.companion_gamepad_motion_on

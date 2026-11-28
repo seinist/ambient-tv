@@ -1,0 +1,29 @@
+diff --git a/src/AudioStream.c b/src/AudioStream.c
+--- a/src/AudioStream.c
++++ b/src/AudioStream.c
+@@ -243,6 +243,7 @@
+     bool useSelect;
+     uint32_t packetsToDrop;
+     int waitingForAudioMs;
++    const bool directSubmit = (AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) != 0;
+ 
+     packet = NULL;
+     packetsToDrop = 500 / AudioPacketDuration;
+@@ -324,7 +325,7 @@
+ 
+         queueStatus = RtpaAddPacket(&rtpAudioQueue, (PRTP_PACKET)&packet->data[0], (uint16_t)packet->header.size);
+         if (RTPQ_HANDLE_NOW(queueStatus)) {
+-            if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
++            if (!directSubmit) {
+                 if (!queuePacketToLbq(&packet)) {
+                     // An exit signal was received
+                     break;
+@@ -352,7 +353,7 @@
+                     // Populate header data (not preserved in queued packets)
+                     queuedPacket->header.size = length;
+ 
+-                    if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
++                    if (!directSubmit) {
+                         if (!queuePacketToLbq(&queuedPacket)) {
+                             // An exit signal was received
+                             free(queuedPacket);

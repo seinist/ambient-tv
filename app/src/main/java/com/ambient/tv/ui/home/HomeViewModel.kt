@@ -67,6 +67,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -220,6 +221,8 @@ class HomeViewModel @Inject constructor(
     private val launcherPublisher: com.ambient.tv.launcher.LauncherPublisher,
     private val loadCoordinator: BrowseLoadCoordinator,
     private val rommLibrary: com.ambient.tv.romm.RommLibrary,
+    private val moonlightStore: com.ambient.tv.moonlight.MoonlightLibraryStore,
+    private val moonlightCatalog: com.ambient.tv.moonlight.MoonlightCatalogRepository,
 ) : ViewModel() {
 
     val homeHeroStyleKey: String get() = appPreferences.homeHeroStyleKey
@@ -296,6 +299,11 @@ class HomeViewModel @Inject constructor(
     /** RomM rows come from the catalog copy on this device; Home never asks the server. */
     private var rommRows: List<ContentRowData> = emptyList()
     private var rommRowsJob: Job? = null
+    /** Cached GameStream covers and titles only; no Sunshine network call from Home. */
+    private var moonlightRows: List<ContentRowData> = emptyList()
+    private var moonlightRowsJob: Job? = null
+    private var moonlightPrefetchJob: Job? = null
+    private var moonlightRowsGeneration = 0
     /** Independent of row refreshes, so publishing migrated covers cannot cancel its own work. */
     private var gameGeometryJob: Job? = null
     private var gameRowsGeneration = 0
@@ -587,6 +595,54 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        viewModelScope.launch {
+            combine(moonlightStore.metadataRevisions, moonlightStore.trustRevisions, appPreferences.changes().onStart { emit(Unit) }) { revision, trustRevision, _ ->
+                Triple(revision to trustRevision, appPreferences.moonlightEnabled to appPreferences.moonlightHosts,
+                    appPreferences.homeRows.filter { it.enabled &&
+                        it.system == HomeRowDefinition.SYSTEM_MOONLIGHT })
+            }.distinctUntilChanged().drop(1).collectLatest {
+                delay(150)
+                if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) loadMoonlightRows()
+            }
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            var seen = moonlightStore.artworkRevisions.value
+            moonlightStore.artworkChanges.collectLatest { changes ->
+                val changedKeys = changes.filterValues { it > seen }.keys
+                if (changedKeys.isEmpty()) return@collectLatest
+                delay(200)
+                val displayed = moonlightRows.flatMap { row -> row.items.mapNotNull { parseMoonlightHomeKey(it.ratingKey) } }
+                    .map { (host, app) -> "$host:$app" }.toSet()
+                if (hasEntered && displayed.any { it in changedKeys }) {
+                    val snapshot = moonlightRows
+                    val updated = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        snapshot.map { row ->
+                            val items = row.items.map { item ->
+                                val key = parseMoonlightHomeKey(item.ratingKey)
+                                if (key == null || "${key.first}:${key.second}" !in changedKeys) item
+                                else {
+                                    val art = moonlightStore.artworkInfo(key.first, key.second)
+                                    item.copy(thumbUrl = art?.file?.let { android.net.Uri.fromFile(it).toString() },
+                                        gameCoverAspectRatio = art?.aspectRatio ?: 2f / 3f)
+                                }
+                            }
+                            if (items == row.items) row else row.copy(items = items)
+                        }
+                    }
+                    if (moonlightRows === snapshot && updated != snapshot) {
+                        moonlightRows = updated
+                        if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
+                seen = changes.values.maxOrNull() ?: seen
+            }
+        }
+    }
+
+    init {
         var favoriteIds = appPreferences.radioFavorites.map(RadioStation::id)
         var recentIds = appPreferences.recentRadioStations.map(RadioStation::id)
         viewModelScope.launch {
@@ -730,6 +786,9 @@ class HomeViewModel @Inject constructor(
         loadRadioRows(forceRefresh = refreshing)
         loadGameRows()
         loadRommRows()
+        loadMoonlightRows()
+        if (!plexOnly && !jellyfinOnly && !embyOnly) prefetchMoonlightCatalogs(refreshing)
+        else moonlightPrefetchJob?.cancel()
         loadYouTubeRows(youtubeMode)
         loadTelegramRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
@@ -2121,6 +2180,56 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** Low-priority catalog prefetch does not delay Home or trigger WOL. */
+    private fun prefetchMoonlightCatalogs(force: Boolean) {
+        if (!com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences)) return
+        moonlightPrefetchJob?.cancel()
+        moonlightPrefetchJob = viewModelScope.launch {
+            kotlinx.coroutines.coroutineScope {
+                appPreferences.moonlightHosts.forEach { host -> launch {
+                    try {
+                        if (moonlightStore.peerIdentity(host.id) != null && (force || !moonlightStore.isCatalogFresh(host.id) || !moonlightStore.isRecentlyOnline(host.id)))
+                            moonlightCatalog.refresh(host, com.ambient.tv.data.browse.BrowseLoadPriority.HOME, forceCatalog = force)
+                    } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                    catch (_: Exception) { /* Cached rows remain usable offline. */ }
+                } }
+            }
+        }
+    }
+
+    /** Saved Sunshine titles, never synchronous network discovery or WOL during Home paint. */
+    private fun loadMoonlightRows() {
+        val generation = ++moonlightRowsGeneration
+        moonlightRowsJob?.cancel()
+        val definitions = appPreferences.homeRows.filter {
+            it.enabled && it.system == HomeRowDefinition.SYSTEM_MOONLIGHT
+        }
+        if (plexOnly || jellyfinOnly || embyOnly || definitions.isEmpty() ||
+            !com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences)) {
+            val changed = moonlightRows.isNotEmpty()
+            moonlightRows = emptyList()
+            if (changed && !_uiState.value.isFailurePage())
+                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            return
+        }
+        moonlightRowsJob = viewModelScope.launch {
+            val rows = try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    moonlightHomeRows(context, definitions, appPreferences.moonlightHosts,
+                        moonlightStore, HOME_ROW_LIMIT)
+                }
+            } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+            catch (error: Exception) {
+                timber.log.Timber.w(error, "Moonlight Home cache unavailable")
+                return@launch
+            }
+            if (generation != moonlightRowsGeneration) return@launch
+            moonlightRows = rows
+            if (!_uiState.value.isFailurePage())
+                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+        }
+    }
+
     /** RomM's Recent, Favorites and All from the catalog on this device, in the game cards. */
     private fun loadRommRows() {
         rommRowsJob?.cancel()
@@ -2390,7 +2499,7 @@ class HomeViewModel @Inject constructor(
         val offlineSystems = unreachableServers.current().offline
         publishRowsInternal(
             withAllContinueRow(applyOverviewStyle(rows), offlineSystems),
-            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || gameRows.isNotEmpty() || rommRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
+            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || gameRows.isNotEmpty() || rommRows.isNotEmpty() || moonlightRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
             offlineSystems = offlineSystems,
         )
     }
@@ -2548,8 +2657,8 @@ class HomeViewModel @Inject constructor(
         val combinedRows = visibleMediaRows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
                 it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || it.id.startsWith("games.") ||
-                it.id.startsWith("romm.")
-        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + rommRows + youtubeRows + telegramRows
+                it.id.startsWith("romm.") || it.id.startsWith("moonlight.")
+        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + rommRows + moonlightRows + youtubeRows + telegramRows
         val playedRow = trailerPlaybackReturn.source?.takeIf {
             playbackRowEnabled(it) || (it.items.none { item -> homeTrailerVideoId(item.ratingKey) != null ||
                 homeYouTubeVideoId(item.ratingKey) != null || item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) })
@@ -2869,6 +2978,7 @@ class HomeViewModel @Inject constructor(
         radioReady = appPreferences.radioEnabled,
         gamesReady = gameLibrary.hasConfiguredFolders(),
         rommReady = appPreferences.isRommConfigured,
+        moonlightReady = com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences),
         telegramReady = appPreferences.telegramEnabled && telegramRepository.available,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),

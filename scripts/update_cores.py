@@ -56,13 +56,17 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
     if name in {"citra2018", "yabause"}:
         try:
             preflight_jit_core(core, revision)
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
+        except (ImportError, OSError, ValueError, subprocess.SubprocessError) as error:
             print(f"  MANUAL: {name} remains at {core['commit']}: JIT preflight failed for {revision} ({error}).")
             return False
         return True
-    if name not in SUPPORTED:
+    # Build-system recipes are independent of source-level hotpath patches.
+    recipe_cores = {"mupen64plus_next_gles3", "snes9x2010", "panda3ds", "swanstation"}
+    if name not in SUPPORTED and name not in recipe_cores:
         return True
-    if name in PATCHES:
+    if name not in SUPPORTED:
+        files = set()
+    elif name in PATCHES:
         files = {path for path, _, _ in PATCHES[name]}
     elif name == "bsnes":
         files = {"bsnes/target-libretro/libretro.cpp", "bsnes/target-libretro/program.cpp", "libco/arm.c"}
@@ -91,7 +95,8 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 url = f"https://raw.githubusercontent.com/{upstream}/{revision}/{urllib.parse.quote(relative, safe='/')}"
                 path.write_bytes(get_bytes(url))
-            prepare_hotpaths(root, name)
+            if name in SUPPORTED:
+                prepare_hotpaths(root, name)
             if name in {"mupen64plus_next_gles3", "snes9x2010"}:
                 prepare_ndk(root / core["jni"], name, "optimized")
             elif name in {"panda3ds", "swanstation"}:
@@ -103,10 +108,19 @@ def core_candidate_compatible(core: dict, revision: str) -> bool:
 
 
 def preflight_jit_core(core: dict, revision: str) -> None:
-    from core_hotpath_patches import prepare_hotpaths
-    from core_yabause_arm64 import prepare as prepare_yabause
-    from core_citra_arm64 import prepare as prepare_citra
+    from core_hotpath_patches import prepare_hotpaths, SUPPORTED
     from core_build_policy import prepare_cmake
+
+    # Load only the requested JIT implementation. An integration branch may
+    # not yet contain the other candidate's patcher; never advance a pin
+    # without validating its own production recipe.
+    name = core["core"]
+    if name == "citra2018":
+        from core_citra_arm64 import prepare
+    elif name == "yabause":
+        from core_yabause_arm64 import prepare
+    else:
+        raise ValueError(f"No native JIT preflight for {name}")
 
     github_repo(core["repo"])
     with tempfile.TemporaryDirectory(prefix="ambient-jit-update-") as directory:
@@ -121,10 +135,11 @@ def preflight_jit_core(core: dict, revision: str) -> None:
         run("checkout", "--detach", "FETCH_HEAD")
         if run("rev-parse", "HEAD") != revision:
             raise ValueError("Candidate checkout pin mismatch")
-        prepare_hotpaths(root, core["core"])
-        (prepare_citra if core["core"] == "citra2018" else prepare_yabause)(root)
-        if core["core"] == "citra2018":
-            prepare_cmake(root, "citra2018", "citra-arm64-jit")
+        if name in SUPPORTED:
+            prepare_hotpaths(root, name)
+        prepare(root)
+        if name == "citra2018":
+            prepare_cmake(root, name, "citra-arm64-jit")
 
 
 def cores_latest(cores: list[dict], withheld: dict[str, str] | None = None,

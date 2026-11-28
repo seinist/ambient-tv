@@ -29,5 +29,6 @@ object LocalNetworkAccess {
             (preferences.embyEnabled && preferences.isEmbyConfigured) ||
             (preferences.tvheadendEnabled && preferences.isTvheadendConfigured) ||
             preferences.spotifyEnabled ||
+            (com.ambient.tv.BuildConfig.MOONLIGHT_EXPERIMENTAL && preferences.hasMoonlightHosts) ||
             preferences.activeConnectivityFileSources().any { it.network }
 }

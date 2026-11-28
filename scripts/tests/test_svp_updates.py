@@ -162,6 +162,9 @@ class SvpUpdateTest(unittest.TestCase):
                     "MONOGRAM_VERSION", "MONOGRAM_REF", "MONOGRAM_MONO_RS_REF",
                     "MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION")
             }))
+            stack.enter_context(mock.patch.object(updater, "moonlight_latest", return_value={
+                key: props[key] for key in ("MOONLIGHT_ANDROID_TAG", "MOONLIGHT_ANDROID_REF")
+            }))
             self.run_updater("--apply", only=False)
         self.assertIn(f"SPOTIFY_RUSTY_REF={props['SPOTIFY_RUSTY_REF']}", self.props.read_text())
         self.assertIn(f"MONOGRAM_REF={props['MONOGRAM_REF']}", self.props.read_text())

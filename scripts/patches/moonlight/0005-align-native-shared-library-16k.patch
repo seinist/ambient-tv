@@ -1,0 +1,9 @@
+diff --git a/app/src/main/jni/moonlight-core/Android.mk b/app/src/main/jni/moonlight-core/Android.mk
+--- a/app/src/main/jni/moonlight-core/Android.mk
++++ b/app/src/main/jni/moonlight-core/Android.mk
+@@ -61,4 +61,4 @@
+ LOCAL_STATIC_LIBRARIES := libopus libcrypto cpufeatures
+-LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL
++LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384
+ 
+ LOCAL_BRANCH_PROTECTION := standard

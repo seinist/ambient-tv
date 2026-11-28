@@ -31,6 +31,7 @@ data class HomeRowDefinition(
         const val GAMES_RECENT = "recent"
         /** RomM's games; the content keys are the same as for [SYSTEM_GAMES]. */
         const val SYSTEM_ROMM = "romm"
+        const val SYSTEM_MOONLIGHT = "moonlight"
         const val RADIO_POPULAR = "popular"
         const val RADIO_FAVORITES = "favorites"
         const val RADIO_RECENT = "recent"
@@ -116,6 +117,7 @@ fun homeSystemReady(
     radioReady: Boolean = false,
     gamesReady: Boolean = false,
     rommReady: Boolean = false,
+    moonlightReady: Boolean = false,
     telegramReady: Boolean = false,
     embyReady: Boolean = false,
     photosReady: Boolean = false,
@@ -134,5 +136,6 @@ fun homeSystemReady(
     HomeRowDefinition.SYSTEM_RADIO -> radioReady
     HomeRowDefinition.SYSTEM_GAMES -> gamesReady
     HomeRowDefinition.SYSTEM_ROMM -> rommReady
+    HomeRowDefinition.SYSTEM_MOONLIGHT -> moonlightReady
     else -> false
 }

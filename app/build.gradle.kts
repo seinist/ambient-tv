@@ -147,6 +147,16 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
+// Full GameStream native core is opt-in until its authenticated Ambient TV adapter is complete.
+// "1" and "true" both opt in, like MONOGRAM_NATIVE; ./build.sh passes the environment variable.
+val moonlightNative = providers.gradleProperty("MOONLIGHT_NATIVE")
+    .orElse(providers.environmentVariable("MOONLIGHT_NATIVE")).orElse("0").get()
+    .let { it == "1" || it.equals("true", ignoreCase = true) }
+// Experimental UI and discovery only until native transport and pairing are usable.
+val moonlightExperimental = providers.gradleProperty("MOONLIGHT_EXPERIMENTAL")
+    .orElse(providers.environmentVariable("MOONLIGHT_EXPERIMENTAL")).orElse("0").get()
+    .let { it == "1" || it.equals("true", ignoreCase = true) }
+
 val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }
@@ -256,6 +266,15 @@ android {
         }
     }
     ndkVersion = "30.0.16248370"
+    if (moonlightNative) {
+        // Only the Ambient TV adapter to the official GameStream protocol. No upstream UI.
+        sourceSets.getByName("main").java.directories.add("src/moonlight/java")
+        sourceSets.getByName("main").kotlin.directories.add("src/moonlight/java")
+    } else {
+        // Explicit no-op backend; never show pairing controls for normal APKs.
+        sourceSets.getByName("main").java.directories.add("src/moonlightStub/java")
+        sourceSets.getByName("main").kotlin.directories.add("src/moonlightStub/java")
+    }
     if (monogramEnabled) {
         // This folder is not compiled or packaged in normal CC0 builds.
         sourceSets.getByName("main").java.directories.add("src/monogram/java")
@@ -288,6 +307,9 @@ android {
         buildConfigField("String", "MONOGRAM_PGO_STAMP", quotedBuildConfigString(
             if (monogramPgoGenerate) file("libs/.monogram-native-version").readText() else ""))
         buildConfigField("boolean", "MONOGRAM_PERF_COUNTERS", (providers.environmentVariable("MONOGRAM_PERF_COUNTERS").orNull == "1").toString())
+        buildConfigField("boolean", "MOONLIGHT_EXPERIMENTAL", (moonlightExperimental || moonlightNative).toString())
+        buildConfigField("boolean", "MOONLIGHT_NATIVE", moonlightNative.toString())
+        buildConfigField("String", "MOONLIGHT_UPSTREAM_REF", quotedBuildConfigString(externalVersion("MOONLIGHT_ANDROID_REF")))
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
         buildConfigField("boolean", "LIBRASHADER_NATIVE", (
             providers.gradleProperty("LIBRASHADER_NATIVE")
@@ -572,6 +594,12 @@ kotlin {
 }
 
 dependencies {
+    if (moonlightNative) {
+        check(rootProject.findProject(":moonlight_native") != null) {
+            "Pinned native Moonlight core missing. Run bash scripts/fetch_moonlight_sources.sh"
+        }
+        implementation(project(":moonlight_native"))
+    }
     // Only :native:mtproto from Monogram. No Monogram :app, feature/*, chat
     // UI, database, networking bridge or HTTP downloader is compiled.
     if (monogramEnabled) {

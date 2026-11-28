@@ -1,0 +1,61 @@
+diff --git a/src/VideoStream.c b/src/VideoStream.c
+--- a/src/VideoStream.c
++++ b/src/VideoStream.c
+@@ -199,6 +199,15 @@
+     videoReceiveStartedMs = PltGetMillis();
+     unsigned int resizeCheck = 0;
+     unsigned int appliedTier = 0;
++    unsigned int resizeAttempts = 0;
++    unsigned int attemptedTier = 0;
++    uint64_t retryResizeAt = 0;
++    int effectiveBytes = 0;
++    socklen_t effectiveLen = sizeof(effectiveBytes);
++    if (getsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&effectiveBytes, &effectiveLen) != 0) effectiveBytes = 0;
++#if defined(__linux__)
++    effectiveBytes /= 2;
++#endif
+ #if defined(__ANDROID__)
+     bool useBatch = !useSelect;
+     char* batchBuffers[VIDEO_UDP_BATCH] = {0};
+@@ -225,16 +234,38 @@
+             unsigned int tier = __atomic_load_n(&adaptiveVideoBufferTier, __ATOMIC_RELAXED);
+-            if (tier != appliedTier) {
++            if (tier != attemptedTier) {
++                attemptedTier = tier;
++                resizeAttempts = 0;
++                retryResizeAt = 0;
++            }
++            if (tier != appliedTier && resizeAttempts < 3 &&
++                    (retryResizeAt == 0 || PltGetMillis() >= retryResizeAt)) {
+                 int bytes = videoReceiveBufferBytes(StreamConfig.bitrate, StreamConfig.fps, StreamConfig.packetSize, tier);
+-                if (setsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&bytes, sizeof(bytes)) == 0) {
++                bool alreadySufficient = effectiveBytes > 0 &&
++                    (tier < appliedTier ? effectiveBytes <= bytes : effectiveBytes >= bytes);
++                bool resized = alreadySufficient;
++                if (!alreadySufficient && setsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&bytes, sizeof(bytes)) == 0) {
++                    resized = true;
+                     int effective = 0;
+                     socklen_t effectiveLen = sizeof(effective);
+                     if (getsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&effective, &effectiveLen) == 0) {
+                         // Linux reports double the requested size (kernel overhead accounting).
+                         // Log both; do not assume the kernel accepted the requested capacity.
+                         Limelog("Video UDP receive capacity: %d requested, %d kernel-reported bytes\n", bytes, effective);
++#if defined(__linux__)
++                        effectiveBytes = effective / 2;
++#else
++                        effectiveBytes = effective;
++#endif
+                     }
+                 }
+-                appliedTier = tier; // Avoid repeated syscalls if the OS rejects the request.
++                if (resized) {
++                    appliedTier = tier;
++                    resizeAttempts = 0;
++                    retryResizeAt = 0;
++                } else {
++                    resizeAttempts++;
++                    retryResizeAt = PltGetMillis() + 1000 * resizeAttempts;
++                }
+             }
+         }
+         char* receivedEncryptedBuffer = encryptedBuffer;

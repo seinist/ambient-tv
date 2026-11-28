@@ -1,0 +1,12 @@
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -141,7 +141,7 @@
+ 
+     err = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSetupMethod, videoFormat, width, height, redrawRate);
+     if ((*env)->ExceptionCheck(env)) {
+-        // This is called on a Java thread, so it's safe to return
++        recordCallbackFailure(env);
+         return -1;
+     }
+     else if (err != 0) {

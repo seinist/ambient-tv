@@ -925,6 +925,7 @@ internal fun ArtworkFallback(
     title: String,
     icon: androidx.compose.ui.graphics.painter.Painter? = null,
     iconModifier: Modifier = Modifier,
+    preserveIconColors: Boolean = false,
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -965,7 +966,7 @@ internal fun ArtworkFallback(
                 icon,
                 contentDescription = null,
                 modifier = Modifier.size(iconSize).then(iconModifier),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (preserveIconColors) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (withTitle) Text(
                 text = title.take(42),

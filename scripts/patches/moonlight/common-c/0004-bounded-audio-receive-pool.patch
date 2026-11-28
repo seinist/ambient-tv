@@ -1,0 +1,104 @@
+diff --git a/src/AudioStream.c b/src/AudioStream.c
+--- a/src/AudioStream.c
++++ b/src/AudioStream.c
+@@ -28,6 +28,7 @@
+ typedef struct _QUEUE_AUDIO_PACKET_HEADER {
+     LINKED_BLOCKING_QUEUE_ENTRY lentry;
+-    int size;
+-} QUEUED_AUDIO_PACKET_HEADER, *PQUEUED_AUDIO_PACKET_HEADER;
++    int size;
++    bool pooled;
++} QUEUED_AUDIO_PACKET_HEADER, *PQUEUED_AUDIO_PACKET_HEADER;
+ 
+ typedef struct _QUEUED_AUDIO_PACKET {
+@@ -34,5 +35,34 @@
+     QUEUED_AUDIO_PACKET_HEADER header;
+     char data[MAX_PACKET_SIZE];
+-} QUEUED_AUDIO_PACKET, *PQUEUED_AUDIO_PACKET;
++} QUEUED_AUDIO_PACKET, *PQUEUED_AUDIO_PACKET;
++
++// Fixed-size receive buffers only. FEC output may be smaller and is never pooled.
++#define AUDIO_RECEIVE_POOL_LIMIT 8
++static pthread_mutex_t audioPoolLock = PTHREAD_MUTEX_INITIALIZER;
++static PQUEUED_AUDIO_PACKET audioPool[AUDIO_RECEIVE_POOL_LIMIT];
++static unsigned int audioPoolCount;
++
++static PQUEUED_AUDIO_PACKET acquireReceivePacket(void) {
++    PQUEUED_AUDIO_PACKET packet = NULL;
++    pthread_mutex_lock(&audioPoolLock);
++    if (audioPoolCount != 0) packet = audioPool[--audioPoolCount];
++    pthread_mutex_unlock(&audioPoolLock);
++    if (packet == NULL) packet = malloc(sizeof(*packet));
++    if (packet != NULL) packet->header.pooled = true;
++    return packet;
++}
++
++static void releaseAudioPacket(PQUEUED_AUDIO_PACKET packet) {
++    if (packet->header.pooled) {
++        pthread_mutex_lock(&audioPoolLock);
++        if (audioPoolCount < AUDIO_RECEIVE_POOL_LIMIT) {
++            audioPool[audioPoolCount++] = packet;
++            pthread_mutex_unlock(&audioPoolLock);
++            return;
++        }
++        pthread_mutex_unlock(&audioPoolLock);
++    }
++    free(packet);
++}
+ 
+ static void AudioPingThreadProc(void* context) {
+@@ -117,5 +147,5 @@
+ 
+         // The entry is stored within the data allocation
+-        free(entry->data);
++        releaseAudioPacket(entry->data);
+ 
+         entry = nextEntry;
+@@ -137,5 +167,9 @@
+     PltDestroyCryptoContext(audioDecryptionCtx);
+     freePacketList(LbqDestroyLinkedBlockingQueue(&packetQueue));
+-    RtpaCleanupQueue(&rtpAudioQueue);
++    RtpaCleanupQueue(&rtpAudioQueue);
++    // Receive and decoder threads have been joined before stream destruction.
++    pthread_mutex_lock(&audioPoolLock);
++    while (audioPoolCount != 0) free(audioPool[--audioPoolCount]);
++    pthread_mutex_unlock(&audioPoolLock);
+ }
+ 
+@@ -260,5 +294,5 @@
+     while (!PltIsThreadInterrupted(&receiveThread)) {
+         if (packet == NULL) {
+-            packet = (PQUEUED_AUDIO_PACKET)malloc(sizeof(*packet));
++            packet = acquireReceivePacket();
+             if (packet == NULL) {
+                 Limelog("Audio Receive: malloc() failed\n");
+@@ -351,5 +385,6 @@
+                 while ((queuedPacket = (PQUEUED_AUDIO_PACKET)RtpaGetQueuedPacket(&rtpAudioQueue, sizeof(QUEUED_AUDIO_PACKET_HEADER), &length)) != NULL) {
+                     // Populate header data (not preserved in queued packets)
+-                    queuedPacket->header.size = length;
++                    queuedPacket->header.size = length;
++                    queuedPacket->header.pooled = false;
+ 
+                     if (!directSubmit) {
+@@ -378,7 +413,7 @@
+     }
+ 
+-    if (packet != NULL) {
+-        free(packet);
+-    }
++    if (packet != NULL) {
++        releaseAudioPacket(packet);
++    }
+ }
+ 
+@@ -394,7 +429,7 @@
+         }
+ 
+-        decodeInputData(packet);
+-
+-        free(packet);
++        decodeInputData(packet);
++
++        releaseAudioPacket(packet);
+     }
+ }

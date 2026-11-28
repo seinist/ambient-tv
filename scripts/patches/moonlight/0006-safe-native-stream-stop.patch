@@ -1,0 +1,77 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+index f29563f..423247a 100644
+--- a/app/src/main/java/com/limelight/nvstream/NvConnection.java
++++ b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+@@ -22,6 +22,7 @@ import java.security.cert.X509Certificate;
+ import java.util.Timer;
+ import java.util.TimerTask;
+ import java.util.concurrent.Semaphore;
++import java.util.concurrent.atomic.AtomicBoolean;
+ 
+ import javax.crypto.KeyGenerator;
+ import javax.crypto.SecretKey;
+@@ -46,6 +47,8 @@ public class NvConnection {
+     private String uniqueId;
+     private ConnectionContext context;
+     private static Semaphore connectionAllowed = new Semaphore(1);
++    private final AtomicBoolean nativeSlotHeld = new AtomicBoolean(false);
++    private volatile boolean stopping = false;
+     private final boolean isMonkey;
+     private final Context appContext;
+ 
+@@ -87,18 +90,22 @@ public class NvConnection {
+     }
+ 
+     public void stop() {
++        // A stop before the native start took ownership must not release the global connection
++        // semaphore; the start thread sees this flag and releases its own count.
++        stopping = true;
+         // Interrupt any pending connection. This is thread-safe.
+         MoonBridge.interruptConnection();
+ 
+-        // Moonlight-core is not thread-safe with respect to connection start and stop, so
+-        // we must not invoke that functionality in parallel.
++        // Moonlight-core start and stop are serialized here, so a stop can never fall between the
++        // start thread's 'stopping' check and its ownership of the native connection slot.
+         synchronized (MoonBridge.class) {
+-            MoonBridge.stopConnection();
+-            MoonBridge.cleanupBridge();
++            if (nativeSlotHeld.compareAndSet(true, false)) {
++                MoonBridge.stopConnection();
++                MoonBridge.cleanupBridge();
++                // Now a pending connection can be processed
++                connectionAllowed.release();
++            }
+         }
+-
+-        // Now a pending connection can be processed
+-        connectionAllowed.release();
+     }
+ 
+     private InetAddress resolveServerAddress() throws IOException {
+@@ -424,6 +431,12 @@ public class NvConnection {
+                 // Moonlight-core is not thread-safe with respect to connection start and stop, so
+                 // we must not invoke that functionality in parallel.
+                 synchronized (MoonBridge.class) {
++                    if (stopping) {
++                        // The screen was closed before the native stream took ownership.
++                        connectionAllowed.release();
++                        return;
++                    }
++                    nativeSlotHeld.set(true);
+                     MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener);
+                     int ret = MoonBridge.startConnection(context.serverAddress.address,
+                             context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,
+@@ -442,7 +455,11 @@ public class NvConnection {
+                         // LiStartConnection() failed, so the caller is not expected
+                         // to stop the connection themselves. We need to release their
+                         // semaphore count for them.
+-                        connectionAllowed.release();
++                        if (nativeSlotHeld.compareAndSet(true, false)) {
++                            // Drop the renderer and listener references of the failed attempt.
++                            MoonBridge.cleanupBridge();
++                            connectionAllowed.release();
++                        }
+                         return;
+                     }
+                 }

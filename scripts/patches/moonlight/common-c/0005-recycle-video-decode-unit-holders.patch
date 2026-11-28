@@ -1,0 +1,85 @@
+diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
+--- a/src/VideoDepacketizer.c
++++ b/src/VideoDepacketizer.c
+@@ -30,7 +30,33 @@
+ #define CONSECUTIVE_DROP_LIMIT 120
+ static unsigned int consecutiveFrameDrops;
+ 
+-static LINKED_BLOCKING_QUEUE decodeUnitQueue;
++static LINKED_BLOCKING_QUEUE decodeUnitQueue;
++
++// Only queued holders are recycled. Direct-submit holders remain on the stack.
++#define VIDEO_DU_POOL_LIMIT 8
++static pthread_mutex_t videoDuPoolLock = PTHREAD_MUTEX_INITIALIZER;
++static PQUEUED_DECODE_UNIT videoDuPool[VIDEO_DU_POOL_LIMIT];
++static unsigned int videoDuPoolCount;
++
++static PQUEUED_DECODE_UNIT acquireDecodeUnit(void) {
++    PQUEUED_DECODE_UNIT unit = NULL;
++    pthread_mutex_lock(&videoDuPoolLock);
++    if (videoDuPoolCount != 0) unit = videoDuPool[--videoDuPoolCount];
++    pthread_mutex_unlock(&videoDuPoolLock);
++    if (unit == NULL) unit = malloc(sizeof(*unit));
++    return unit;
++}
++
++static void releaseDecodeUnit(PQUEUED_DECODE_UNIT unit) {
++    pthread_mutex_lock(&videoDuPoolLock);
++    if (videoDuPoolCount < VIDEO_DU_POOL_LIMIT) {
++        videoDuPool[videoDuPoolCount++] = unit;
++        pthread_mutex_unlock(&videoDuPoolLock);
++        return;
++    }
++    pthread_mutex_unlock(&videoDuPoolLock);
++    free(unit);
++}
+ 
+ typedef struct _BUFFER_DESC {
+     char* data;
+@@ -150,8 +176,11 @@
+ 
+ // Cleanup video depacketizer and free malloced memory
+ void destroyVideoDepacketizer(void) {
+-    freeDecodeUnitList(LbqDestroyLinkedBlockingQueue(&decodeUnitQueue));
+-    cleanupFrameState();
++    freeDecodeUnitList(LbqDestroyLinkedBlockingQueue(&decodeUnitQueue));
++    cleanupFrameState();
++    pthread_mutex_lock(&videoDuPoolLock);
++    while (videoDuPoolCount != 0) free(videoDuPool[--videoDuPoolCount]);
++    pthread_mutex_unlock(&videoDuPoolLock);
+ }
+ 
+ // NB: This function also ensures an additional byte for the NALU type exists after the start sequence
+@@ -303,9 +332,9 @@
+     }
+ 
+     // We will have stack-allocated entries iff we have a direct-submit decoder
+-    if ((VideoCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+-        free(qdu);
+-    }
++    if ((VideoCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
++        releaseDecodeUnit(qdu);
++    }
+ }
+ 
+ static bool isSeqReferenceFrameStart(PBUFFER_DESC buffer) {
+@@ -473,7 +502,7 @@
+ 
+         // Use a stack allocation if we won't be queuing this
+         if ((VideoCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+-            qdu = (PQUEUED_DECODE_UNIT)malloc(sizeof(*qdu));
++            qdu = acquireDecodeUnit();
+         }
+         else {
+             qdu = &qduDS;
+@@ -521,8 +550,8 @@
+                     nalChainDataLength = qdu->decodeUnit.fullLength;
+                     dropFrameState();
+ 
+-                    // Free the DU we were going to queue
+-                    free(qdu);
++                    // Recycle the DU we were going to queue
++                    releaseDecodeUnit(qdu);
+ 
+                     // Free all frames in the decode unit queue
+                     freeDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue));

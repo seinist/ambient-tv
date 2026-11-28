@@ -1,0 +1,25 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+index 423247a..934270f 100644
+--- a/app/src/main/java/com/limelight/nvstream/NvConnection.java
++++ b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+@@ -42,6 +42,8 @@ import com.limelight.nvstream.input.MouseButtonPacket;
+ import com.limelight.nvstream.jni.MoonBridge;
+ 
+ public class NvConnection {
++    /** displayMessage() text when the host runs a different application; see startApp(). */
++    public static final String AMBIENT_OTHER_APP_RUNNING = "ambient:other-app-running";
+     // Context parameters
+     private LimelightCryptoProvider cryptoProvider;
+     private String uniqueId;
+@@ -323,7 +325,10 @@ public class NvConnection {
+                         return false;
+                     }
+                 } else {
+-                    return quitAndLaunch(h, context);
++                    // Never end another application on the host as a side effect of starting a
++                    // stream. The caller asks the user first and quits it explicitly.
++                    context.connListener.displayMessage(AMBIENT_OTHER_APP_RUNNING);
++                    return false;
+                 }
+             } catch (HostHttpResponseException e) {
+                 if (e.getErrorCode() == 470) {

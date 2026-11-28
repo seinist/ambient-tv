@@ -1,0 +1,8 @@
+46f786bd0158cda1ae9210b88c01972a9ee6835a openssl/arm64-v8a/libcrypto.a
+62613cb856ea22661c363928092eea3464b94dbf openssl/armeabi-v7a/libcrypto.a
+e0067f07fe31c1dc08565b36b89437c9a0e7be85 openssl/x86/libcrypto.a
+a4fa86ec559a324fb0d83ebe3149e4c55330cf89 openssl/x86_64/libcrypto.a
+8df94d4075b30ea1f6bc363151d59677956e5792 opus/arm64-v8a/libopus.a
+ff4065b3657b3d1df31d127af3f1161e6077837a opus/armeabi-v7a/libopus.a
+bed89efd2a91c3ede41e7fa10d0ad6514b213e10 opus/x86/libopus.a
+9f2cdfeddcfaa4e0fa138b06d644ebaef4cada45 opus/x86_64/libopus.a

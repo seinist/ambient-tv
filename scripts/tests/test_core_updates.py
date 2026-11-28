@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -125,6 +126,33 @@ class CoreUpdateTest(unittest.TestCase):
             with mock.patch.object(updater, "preflight_jit_core", side_effect=ValueError("changed anchor")):
                 self.assertFalse(updater.core_candidate_compatible(candidate, NEW))
 
+    def test_missing_native_jit_patcher_retains_pin_without_blocking_others(self):
+        for name, module in (("citra2018", "core_citra_arm64"), ("yabause", "core_yabause_arm64")):
+            core = {"core": name, "repo": "https://github.com/a/b", "commit": "a"*40}
+            with self.subTest(core=name), mock.patch.dict(sys.modules, {module: None}), mock.patch(
+                    "subprocess.check_output") as checkout:
+                self.assertFalse(updater.core_candidate_compatible(core, NEW))
+                checkout.assert_not_called()
+
+    def test_jit_preflight_loads_only_requested_patcher_and_skips_unavailable_hotpaths(self):
+        for name, module, other in (("citra2018", "core_citra_arm64", "core_yabause_arm64"),
+                                    ("yabause", "core_yabause_arm64", "core_citra_arm64")):
+            core = {"core": name, "repo": "https://github.com/a/b", "commit": "a"*40}
+            fake = types.ModuleType(module)
+            fake.prepare = mock.Mock()
+            with self.subTest(core=name), mock.patch.dict(sys.modules, {module: fake, other: None}), mock.patch(
+                    "subprocess.check_output", side_effect=["", "", "", "", NEW]), mock.patch(
+                    "core_hotpath_patches.SUPPORTED", set()), mock.patch(
+                    "core_hotpath_patches.prepare_hotpaths") as hotpaths, mock.patch(
+                    "core_build_policy.prepare_cmake") as cmake:
+                self.assertTrue(updater.core_candidate_compatible(core, NEW))
+                fake.prepare.assert_called_once()
+                hotpaths.assert_not_called()
+                if name == "citra2018":
+                    cmake.assert_called_once_with(mock.ANY, name, "citra-arm64-jit")
+                else:
+                    cmake.assert_not_called()
+
     def test_selected_core_updates_only_its_source_group(self):
         before = json.loads(self.cores.read_text())
         selected = next(c for c in before["cores"] if c["core"] == "mgba")
@@ -170,7 +198,7 @@ class CoreUpdateTest(unittest.TestCase):
         self.assertEqual(withheld, {"first": NEW})
 
     def test_build_system_preflight_runs_production_helpers(self):
-        from core_hotpath_remaining import PATCHES
+        from core_hotpath_patches import SUPPORTED
         for name, jni, required, helper in (
                 ("mupen64plus_next_gles3", "libretro", {"libretro/jni/Android.mk", "libretro-common/libco/amd64.c"}, "prepare_ndk"),
                 ("snes9x2010", ".", {"jni/Android.mk", "build/Makefile.common"}, "prepare_ndk"),
@@ -178,16 +206,22 @@ class CoreUpdateTest(unittest.TestCase):
                 ("swanstation", ".", {"CMakeLists.txt"}, "prepare_cmake")):
             core = {"core": name, "jni": jni, "repo": "https://github.com/a/b", "commit": "a"*40}
             with mock.patch.object(updater, "get_bytes", return_value=b"source") as fetch, mock.patch(
-                    "core_hotpath_patches.prepare_hotpaths"), mock.patch(
+                    "core_hotpath_patches.prepare_hotpaths") as hotpaths, mock.patch(
                     "core_build_policy."+helper, side_effect=ValueError("incompatible build recipe")) as prepare:
                 self.assertFalse(updater.core_candidate_compatible(core, NEW))
                 self.assertTrue(required <= {call.args[0].split(NEW+"/", 1)[1] for call in fetch.call_args_list})
                 prepare.assert_called_once()
+                if name in SUPPORTED:
+                    hotpaths.assert_called_once()
+                else:
+                    hotpaths.assert_not_called()
 
     def test_candidate_anchor_preflight(self):
+        # FCEUmm has a single reviewed source anchor in the production patch table.
+        # PicoDrive's SH2 profile uses build flags, not this patch table.
         from core_hotpath_remaining import PATCHES
-        path, old, _ = PATCHES["picodrive"][0]
-        core = {"core": "picodrive", "repo": "https://github.com/a/b", "commit": "a"*40}
+        path, old, _ = PATCHES["fceumm"][0]
+        core = {"core": "fceumm", "repo": "https://github.com/a/b", "commit": "a"*40}
         with mock.patch.object(updater, "get_bytes", return_value=old.encode()) as fetch:
             self.assertTrue(updater.core_candidate_compatible(core, NEW))
             fetch.assert_called_once_with(f"https://raw.githubusercontent.com/a/b/{NEW}/{path}")

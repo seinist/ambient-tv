@@ -79,7 +79,8 @@ jobs:
   unit-tests:
     needs: core-policy
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Keep room for a bounded retry of Maven Central rate limiting.
+    timeout-minutes: 65
     env:
       # Robolectric downloads android-all separately from Gradle; repo1 can return 429.
       ROBOLECTRIC_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
@@ -177,7 +178,7 @@ jobs:
         # :libretrodroid:assembleDebug builds its native library, so the core options patch compiles with the NDK.
         run: |
           set -o pipefail
-          if ! ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :libretrodroid:testDebugUnitTest :libretrodroid:assembleDebug -PAPK_ABI=arm64 --continue 2>&1 | tee gradle.log; then
+          if ! bash scripts/ci_gradle_rate_limit_retry.sh :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :libretrodroid:testDebugUnitTest :libretrodroid:assembleDebug -PAPK_ABI=arm64 --continue 2>&1 | tee gradle.log; then
             # Kotlin compile errors, failed tests and Gradle's own failure summary as annotations.
             grep -E '^e: |error: |FAILED$|tests completed|What went wrong' -A3 gradle.log | grep -v '^--$' | head -40 \
               | sed 's/%/%25/g; s/^/::error title=gradle::/'
@@ -239,7 +240,7 @@ jobs:
       - name: Apply pinned LibretroDroid patches
         run: ./scripts/fetch_libretrodroid.sh
       - name: Build native LibretroDroid (${{ matrix.abi }})
-        run: ./gradlew :libretrodroid:assembleDebug -PAPK_ABI=${{ matrix.build }} --no-daemon
+        run: bash scripts/ci_gradle_rate_limit_retry.sh :libretrodroid:assembleDebug -PAPK_ABI=${{ matrix.build }} --no-daemon
       - name: Verify ELF 16-KiB alignment (${{ matrix.abi }})
         run: |
           set -euo pipefail

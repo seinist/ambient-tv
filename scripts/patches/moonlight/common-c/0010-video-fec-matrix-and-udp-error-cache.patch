@@ -1,0 +1,86 @@
+diff --git a/src/RtpVideoQueue.c b/src/RtpVideoQueue.c
+--- a/src/RtpVideoQueue.c
++++ b/src/RtpVideoQueue.c
+@@ -22,7 +22,22 @@
+ static pthread_mutex_t packetPoolLock = PTHREAD_MUTEX_INITIALIZER;
+ static void* packetPool[VIDEO_PACKET_POOL_LIMIT];
+ static unsigned int packetPoolCount;
+-static size_t packetPoolSize;
++static size_t packetPoolSize;
++
++// Video FEC runs on the receive thread; keep one matrix for recurring shard layouts.
++static reed_solomon* videoFecMatrix;
++static unsigned int videoFecDataShards;
++static unsigned int videoFecParityShards;
++
++static reed_solomon* getVideoFecMatrix(unsigned int data, unsigned int parity) {
++    if (videoFecMatrix != NULL && videoFecDataShards == data && videoFecParityShards == parity)
++        return videoFecMatrix;
++    if (videoFecMatrix != NULL) reed_solomon_release(videoFecMatrix);
++    videoFecMatrix = reed_solomon_new(data, parity);
++    videoFecDataShards = data;
++    videoFecParityShards = parity;
++    return videoFecMatrix;
++}
+ 
+ void* RtpvAcquirePacket(size_t size) {
+     void* packet = NULL;
+@@ -73,7 +88,9 @@
+     list->count = 0;
+ }
+ 
+-void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue) {
++void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue) {
++    if (videoFecMatrix != NULL) reed_solomon_release(videoFecMatrix);
++    videoFecMatrix = NULL;
+     purgeListEntries(&queue->pendingFecBlockList);
+     purgeListEntries(&queue->completedFecBlockList);
+     pthread_mutex_lock(&packetPoolLock);
+@@ -312,7 +329,7 @@
+         goto cleanup;
+     }
+ 
+-    rs = reed_solomon_new(queue->bufferDataPackets, queue->bufferParityPackets);
++    rs = getVideoFecMatrix(queue->bufferDataPackets, queue->bufferParityPackets);
+ 
+     // This could happen in an OOM condition, but it could also mean the FEC data
+     // that we fed to reed_solomon_new() is bogus, so we'll assert to get a better look.
+@@ -498,8 +515,8 @@
+         }
+     }
+ 
+-cleanup:
+-    reed_solomon_release(rs);
++cleanup:
++    // Matrix belongs to the receive session and is freed on layout change or teardown.
+ 
+     if (heapScratch) {
+         free(packets);
+diff --git a/src/PlatformSockets.c b/src/PlatformSockets.c
+--- a/src/PlatformSockets.c
++++ b/src/PlatformSockets.c
+@@ -203,17 +203,18 @@
+             // socket via SO_RCVTIMEO, so we can avoid a syscall
+             // for each packet.
+             err = (int)recvfrom(s, buffer, size, 0, NULL, NULL);
+-            if (err < 0 &&
+-                    (LastSocketError() == EWOULDBLOCK ||
+-                     LastSocketError() == EINTR ||
+-                     LastSocketError() == EAGAIN ||
++            const int socketError = err < 0 ? LastSocketError() : 0;
++            if (err < 0 &&
++                    (socketError == EWOULDBLOCK ||
++                     socketError == EINTR ||
++                     socketError == EAGAIN ||
+          #if defined(LC_WINDOWS) && !defined(NXDK)
+                      // This error is specific to overlapped I/O which isn't even
+                      // possible to perform with recvfrom(). It seems to randomly
+                      // be returned instead of WSAETIMEDOUT on certain systems.
+-                     LastSocketError() == WSA_IO_PENDING ||
++                     socketError == WSA_IO_PENDING ||
+          #endif
+-                     LastSocketError() == ETIMEDOUT)) {
++                     socketError == ETIMEDOUT)) {
+                 // Return 0 for timeout
+                 return 0;
+             }

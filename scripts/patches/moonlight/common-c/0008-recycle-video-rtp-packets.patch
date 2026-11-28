@@ -1,0 +1,197 @@
+diff --git a/src/RtpVideoQueue.h b/src/RtpVideoQueue.h
+--- a/src/RtpVideoQueue.h
++++ b/src/RtpVideoQueue.h
+@@ -53,7 +53,10 @@
+ #define RTPF_RET_QUEUED    0
+ #define RTPF_RET_REJECTED  1
+ 
+-void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue);
++// Fixed-size RTP packet storage shared by receive, FEC and depacketizer.
++void* RtpvAcquirePacket(size_t size);
++void RtpvReleasePacket(void* packet);
++void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue);
+ void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue);
+ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry);
+ uint32_t RtpvGetCurrentFrameNumber(PRTP_VIDEO_QUEUE queue);
+diff --git a/src/RtpVideoQueue.c b/src/RtpVideoQueue.c
+--- a/src/RtpVideoQueue.c
++++ b/src/RtpVideoQueue.c
+@@ -15,11 +15,48 @@
+ #define SPECULATIVE_RFI_COOLDOWN_PERIOD_US 300000000
+ 
+ // RTP packets use a 90 KHz presentation timestamp clock
+-#define PTS_DIVISOR 90
++#define PTS_DIVISOR 90
++
++// Bounded cache, with nonblocking acquisition and release on hot paths.
++#define VIDEO_PACKET_POOL_LIMIT 64
++static pthread_mutex_t packetPoolLock = PTHREAD_MUTEX_INITIALIZER;
++static void* packetPool[VIDEO_PACKET_POOL_LIMIT];
++static unsigned int packetPoolCount;
++static size_t packetPoolSize;
++
++void* RtpvAcquirePacket(size_t size) {
++    void* packet = NULL;
++    if (pthread_mutex_trylock(&packetPoolLock) == 0) {
++        LC_ASSERT(packetPoolSize == size);
++        if (packetPoolCount != 0 && packetPoolSize == size) {
++            packet = packetPool[--packetPoolCount];
++        }
++        pthread_mutex_unlock(&packetPoolLock);
++    }
++    return packet != NULL ? packet : malloc(size);
++}
++
++void RtpvReleasePacket(void* packet) {
++    if (packet == NULL) return;
++    if (pthread_mutex_trylock(&packetPoolLock) == 0) {
++        if (packetPoolSize != 0 && packetPoolCount < VIDEO_PACKET_POOL_LIMIT) {
++            packetPool[packetPoolCount++] = packet;
++            pthread_mutex_unlock(&packetPoolLock);
++            return;
++        }
++        pthread_mutex_unlock(&packetPoolLock);
++    }
++    free(packet);
++}
+ 
+ void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
+     reed_solomon_init();
+-    memset(queue, 0, sizeof(*queue));
++    memset(queue, 0, sizeof(*queue));
++    // StreamConfig.packetSize stays constant for this connection.
++    pthread_mutex_lock(&packetPoolLock);
++    LC_ASSERT(packetPoolCount == 0);
++    packetPoolSize = StreamConfig.packetSize + MAX_RTP_HEADER_SIZE + sizeof(RTPV_QUEUE_ENTRY);
++    pthread_mutex_unlock(&packetPoolLock);
+ 
+     queue->currentFrameNumber = 1;
+     queue->multiFecCapable = APP_VERSION_AT_LEAST(7, 1, 431);
+@@ -29,7 +66,7 @@
+     while (list->head != NULL) {
+         PRTPV_QUEUE_ENTRY entry = list->head;
+         list->head = entry->next;
+-        free(entry->packet);
++        RtpvReleasePacket(entry->packet);
+     }
+ 
+     list->tail = NULL;
+@@ -38,8 +75,12 @@
+ 
+ void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue) {
+     purgeListEntries(&queue->pendingFecBlockList);
+-    purgeListEntries(&queue->completedFecBlockList);
+-}
++    purgeListEntries(&queue->completedFecBlockList);
++    pthread_mutex_lock(&packetPoolLock);
++    packetPoolSize = 0;
++    while (packetPoolCount != 0) free(packetPool[--packetPoolCount]);
++    pthread_mutex_unlock(&packetPoolLock);
++}
+ 
+ static void insertEntryIntoList(PRTPV_QUEUE_LIST list, PRTPV_QUEUE_ENTRY entry) {
+     LC_ASSERT(entry->prev == NULL);
+@@ -187,7 +228,7 @@
+     Limelog("FEC recovery returned corrupt packet %d" \
+             " (frame %d)", rtpPacket->sequenceNumber, \
+             queue->currentFrameNumber);               \
+-    free(packets[i]);                                 \
++    RtpvReleasePacket(packets[i]);                    \
+     continue
+ 
+ // Returns 0 if the frame is completely constructed
+@@ -327,7 +368,7 @@
+     unsigned int i;
+     for (i = 0; i < totalPackets; i++) {
+         if (marks[i]) {
+-            packets[i] = malloc(packetBufferSize);
++            packets[i] = RtpvAcquirePacket(packetBufferSize);
+             if (packets[i] == NULL) {
+                 ret = -4;
+                 goto cleanup_packets;
+@@ -421,7 +462,7 @@
+ 
+                     // This drop was fake, so we don't want to actually submit it to the depacketizer.
+                     // It will get confused because it's already seen this packet before.
+-                    free(packets[i]);
++                    RtpvReleasePacket(packets[i]);
+                     continue;
+                 }
+ #endif
+@@ -452,7 +493,7 @@
+                 LC_ASSERT(isBefore16(rtpPacket->sequenceNumber, queue->bufferFirstParitySequenceNumber));
+                 queuePacket(queue, queueEntry, rtpPacket, StreamConfig.packetSize + dataOffset, false, true);
+             } else if (packets[i] != NULL) {
+-                free(packets[i]);
++                RtpvReleasePacket(packets[i]);
+             }
+         }
+     }
+@@ -491,7 +532,7 @@
+                 removeEntryFromList(&queue->pendingFecBlockList, parityEntry);
+ 
+                 // Free the entry and packet
+-                free(parityEntry->packet);
++                RtpvReleasePacket(parityEntry->packet);
+ 
+                 continue;
+             }
+diff --git a/src/VideoStream.c b/src/VideoStream.c
+--- a/src/VideoStream.c
++++ b/src/VideoStream.c
+@@ -126,7 +126,7 @@
+         PRTP_PACKET packet;
+ 
+         if (buffer == NULL) {
+-            buffer = (char*)malloc(bufferSize);
++            buffer = RtpvAcquirePacket(bufferSize);
+             if (buffer == NULL) {
+                 Limelog("Video Receive: malloc() failed\n");
+                 ListenerCallbacks.connectionTerminated(-1);
+@@ -235,9 +235,9 @@
+         }
+     }
+ 
+-    if (buffer != NULL) {
+-        free(buffer);
+-    }
++    if (buffer != NULL) {
++        RtpvReleasePacket(buffer);
++    }
+ 
+     if (encryptedBuffer != NULL) {
+         free(encryptedBuffer);
+diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
+--- a/src/VideoDepacketizer.c
++++ b/src/VideoDepacketizer.c
+@@ -113,7 +113,9 @@
+     while (nalChainHead != NULL) {
+         lastEntry = (PLENTRY_INTERNAL)nalChainHead;
+         nalChainHead = lastEntry->entry.next;
+-        free(lastEntry->allocPtr);
++        // Copied fragments own variable-size allocations; RTP fragments do not.
++        if (lastEntry->allocPtr == lastEntry) free(lastEntry);
++        else RtpvReleasePacket(lastEntry->allocPtr);
+     }
+ 
+     nalChainTail = NULL;
+@@ -328,7 +330,9 @@
+     while (qdu->decodeUnit.bufferList != NULL) {
+         lastEntry = (PLENTRY_INTERNAL)qdu->decodeUnit.bufferList;
+         qdu->decodeUnit.bufferList = lastEntry->entry.next;
+-        free(lastEntry->allocPtr);
++        // Copied fragments own variable-size allocations; RTP fragments do not.
++        if (lastEntry->allocPtr == lastEntry) free(lastEntry);
++        else RtpvReleasePacket(lastEntry->allocPtr);
+     }
+ 
+     // We will have stack-allocated entries iff we have a direct-submit decoder
+@@ -1216,7 +1220,7 @@
+ 
+     if (existingEntry != NULL) {
+         // processRtpPayload didn't want this packet, so just free it
+-        free(existingEntry->allocPtr);
++        RtpvReleasePacket(existingEntry->allocPtr);
+     }
+ }
+ 

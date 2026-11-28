@@ -43,6 +43,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     @Inject lateinit var onlineServiceAvailability: com.ambient.tv.data.browse.OnlineServiceAvailability
     @Inject lateinit var hostConnectivity: com.ambient.tv.connectivity.HostConnectivity
     @Inject lateinit var preferences: AppPreferences
+    @Inject lateinit var moonlightPreloader: Provider<com.ambient.tv.moonlight.MoonlightBrowsePreloader>
     @Inject lateinit var tvheadendGuideRepository: Provider<com.ambient.tv.tvheadend.data.TvheadendRepository>
     @Inject lateinit var spotifyRepository: Provider<SpotifyRepository>
     @Inject lateinit var filesPhotoSource: Provider<com.ambient.tv.data.photos.FilesPhotoSource>
@@ -216,6 +217,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         onlineServiceAvailability.start()
         resumeConnectivityMonitor.start()
+        if (com.ambient.tv.moonlight.MoonlightFeature.nativeAvailable) moonlightPreloader.get().start()
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             while (!preferences.isTvheadendConfigured || !com.ambient.tv.data.browse.BrowseWorkBudget.idle())
                 kotlinx.coroutines.delay(2000)

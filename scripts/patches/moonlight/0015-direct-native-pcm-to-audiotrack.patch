@@ -1,0 +1,144 @@
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -48,7 +48,10 @@
+ static jshortArray DecodedAudioBuffer;
+ static jshort* DecodedAudioScratch;
+ static int DecodedAudioSamples;
+-static jshort* DecodedStereoScratch;
++static jshort* DecodedStereoScratch;
++static jobject DecodedDirectAudioBuffer;
++static jmethodID BridgeArSupportsDirectPcmMethod;
++static jmethodID BridgeArPlayDirectPcmMethod;
+ static jmethodID BridgeArWantsNativeStereoMethod;
+ static int DecodedFrameCapacity;
+ static jmethodID BridgeDrSupportsDirectPictureMethod;
+@@ -107,7 +110,9 @@
+     BridgeArStartMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStart", "()V");
+     BridgeArStopMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStop", "()V");
+     BridgeArCleanupMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArCleanup", "()V");
+-    BridgeArPlaySampleMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArPlaySample", "([S)V");
++    BridgeArPlaySampleMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArPlaySample", "([S)V");
++    BridgeArSupportsDirectPcmMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArSupportsDirectPcm", "(I)Z");
++    BridgeArPlayDirectPcmMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArPlayDirectPcm", "(Ljava/nio/ByteBuffer;I)V");
+     BridgeClStageStartingMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClStageStarting", "(I)V");
+     BridgeClStageCompleteMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClStageComplete", "(I)V");
+     BridgeClStageFailedMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClStageFailed", "(II)V");
+@@ -366,13 +371,30 @@
+         if (nativeStereo && (opusConfig->channelCount == 6 || opusConfig->channelCount == 8))
+             DecodedStereoScratch = malloc((size_t)opusConfig->samplesPerFrame * 2 * sizeof(*DecodedStereoScratch));
+         int outputSamples = DecodedStereoScratch != NULL ? opusConfig->samplesPerFrame * 2 : DecodedAudioSamples;
+-        jshortArray local = (*env)->NewShortArray(env, outputSamples);
+-        DecodedAudioBuffer = local != NULL ? (*env)->NewGlobalRef(env, local) : NULL;
+-        if (local != NULL) (*env)->DeleteLocalRef(env, local);
+-        if (DecodedAudioScratch == NULL || DecodedAudioBuffer == NULL) {
++        int outputChannels = DecodedStereoScratch != NULL ? 2 : opusConfig->channelCount;
++        bool direct = (*env)->CallStaticBooleanMethod(env, GlobalBridgeClass, BridgeArSupportsDirectPcmMethod, outputChannels);
++        if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); direct = false; }
++        jshort* output = DecodedStereoScratch != NULL ? DecodedStereoScratch : DecodedAudioScratch;
++        if (direct && output != NULL) {
++            jobject localBuffer = (*env)->NewDirectByteBuffer(env, output, (jlong)outputSamples * sizeof(*output));
++            if (localBuffer != NULL) {
++                DecodedDirectAudioBuffer = (*env)->NewGlobalRef(env, localBuffer);
++                (*env)->DeleteLocalRef(env, localBuffer);
++            }
++            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
++        }
++        // Direct buffer creation failure and non-opt-in renderers retain the legacy path.
++        if (DecodedDirectAudioBuffer == NULL) {
++            jshortArray local = (*env)->NewShortArray(env, outputSamples);
++            DecodedAudioBuffer = local != NULL ? (*env)->NewGlobalRef(env, local) : NULL;
++            if (local != NULL) (*env)->DeleteLocalRef(env, local);
++        }
++        if (DecodedAudioScratch == NULL || (DecodedAudioBuffer == NULL && DecodedDirectAudioBuffer == NULL)) {
+             if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+-            free(DecodedAudioScratch);
+-            DecodedAudioScratch = NULL;
++            if (DecodedDirectAudioBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedDirectAudioBuffer);
++            DecodedDirectAudioBuffer = NULL;
++            free(DecodedAudioScratch);
++            DecodedAudioScratch = NULL;
+             free(DecodedStereoScratch);
+             DecodedStereoScratch = NULL;
+             if (DecodedAudioBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
+@@ -404,8 +426,10 @@
+ 
+     opus_multistream_decoder_destroy(Decoder);
+ 
+-    (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
+-    DecodedAudioBuffer = NULL;
++    if (DecodedAudioBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedAudioBuffer);
++    DecodedAudioBuffer = NULL;
++    if (DecodedDirectAudioBuffer != NULL) (*env)->DeleteGlobalRef(env, DecodedDirectAudioBuffer);
++    DecodedDirectAudioBuffer = NULL;
+     free(DecodedAudioScratch);
+     DecodedAudioScratch = NULL;
+     free(DecodedStereoScratch);
+@@ -433,14 +457,22 @@
+         if (validSamples > DecodedAudioSamples) return;
+         if (validSamples < DecodedAudioSamples)
+             memset(decodedData + validSamples, 0, (size_t)(DecodedAudioSamples - validSamples) * sizeof(*decodedData));
+-        if (DecodedStereoScratch != NULL) {
+-            downmixStereo(decodedData, DecodedStereoScratch, OpusConfig.samplesPerFrame, OpusConfig.channelCount);
+-            (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, OpusConfig.samplesPerFrame * 2, DecodedStereoScratch);
+-        }
+-        else (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, DecodedAudioSamples, decodedData);
+-        if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return; }
+-
+-        (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod, DecodedAudioBuffer);
++        int outputSamples = DecodedAudioSamples;
++        if (DecodedStereoScratch != NULL) {
++            downmixStereo(decodedData, DecodedStereoScratch, OpusConfig.samplesPerFrame, OpusConfig.channelCount);
++            decodedData = DecodedStereoScratch;
++            outputSamples = OpusConfig.samplesPerFrame * 2;
++        }
++        if (DecodedDirectAudioBuffer != NULL) {
++            // Callback is synchronous. The renderer must not retain this session-owned view.
++            (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlayDirectPcmMethod,
++                    DecodedDirectAudioBuffer, outputSamples);
++        }
++        else {
++            (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, outputSamples, decodedData);
++            if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return; }
++            (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod, DecodedAudioBuffer);
++        }
+         if ((*env)->ExceptionCheck(env)) {
+             // We will crash here
+             (*JVM)->DetachCurrentThread(JVM);
+diff --git a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+--- a/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
++++ b/app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java
+@@ -274,7 +274,15 @@
+         }
+     }
+ 
+-    public static void bridgeArPlaySample(short[] pcmData) {
++    public static boolean bridgeArSupportsDirectPcm(int channels) {
++        return audioRenderer != null && audioRenderer.supportsDirectPcm(channels);
++    }
++
++    public static void bridgeArPlayDirectPcm(java.nio.ByteBuffer pcm, int samples) {
++        if (audioRenderer != null) audioRenderer.playDirectPcm(pcm, samples);
++    }
++
++    public static void bridgeArPlaySample(short[] pcmData) {
+         if (audioRenderer != null) {
+             audioRenderer.playDecodedAudio(pcmData);
+         }
+diff --git a/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java b/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
+--- a/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
++++ b/app/src/main/java/com/limelight/nvstream/av/audio/AudioRenderer.java
+@@ -12,7 +12,12 @@
+     void playDecodedAudio(short[] audioData);
+ 
+     // Opt in only when the sink has negotiated a stereo fallback for surround input.
+-    default boolean wantsNativeStereoDownmix() { return false; }
++    default boolean wantsNativeStereoDownmix() { return false; }
++
++    default boolean supportsDirectPcm(int channels) { return false; }
++
++    // Synchronous, borrowed native view: never retain it after returning.
++    default void playDirectPcm(java.nio.ByteBuffer pcm, int samples) { }
+     
+     void cleanup();
+ }

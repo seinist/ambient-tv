@@ -30,13 +30,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 enum class SearchViewMode { ROWS, LIST }
 enum class SearchSourceState { IDLE, DISABLED, LOADING, READY, PARTIAL, ERROR }
-enum class SearchSource { PLEX, JELLYFIN, EMBY, LIVE_TV, ROMM, TRAILERS, TELEGRAM, YOUTUBE, SPOTIFY, RADIO }
+enum class SearchSource { PLEX, JELLYFIN, EMBY, LIVE_TV, ROMM, MOONLIGHT, TRAILERS, TELEGRAM, YOUTUBE, SPOTIFY, RADIO }
 
-private val LOCAL_SEARCH_SOURCES = setOf(SearchSource.PLEX, SearchSource.JELLYFIN, SearchSource.EMBY, SearchSource.LIVE_TV, SearchSource.ROMM)
+private val LOCAL_SEARCH_SOURCES = setOf(SearchSource.PLEX, SearchSource.JELLYFIN, SearchSource.EMBY, SearchSource.LIVE_TV, SearchSource.ROMM, SearchSource.MOONLIGHT)
 internal fun defaultSearchSources(available: Set<SearchSource>): Set<SearchSource> =
     (available intersect LOCAL_SEARCH_SOURCES).ifEmpty { available }
 internal fun reconcileSearchSources(selected: Set<SearchSource>, previous: Set<SearchSource>, available: Set<SearchSource>): Set<SearchSource> =
@@ -94,6 +96,7 @@ data class SearchUiState(
     val trailerResults: List<MediaItem> = emptyList(),
     /** RomM games from the catalog on this device, as game cards (game Home keys). */
     val rommResults: List<MediaItem> = emptyList(),
+    val moonlightResults: List<com.ambient.tv.ui.moonlight.MoonlightBrowseGame> = emptyList(),
     /** Playable Telegram posts, already mapped; opened through the Telegram post detail. */
     val telegramResults: List<MediaItem> = emptyList(),
     val youtubeResults: List<YouTubeItem> = emptyList(),
@@ -109,6 +112,7 @@ data class SearchUiState(
     val embyState: SearchSourceState = SearchSourceState.IDLE,
     val trailerState: SearchSourceState = SearchSourceState.IDLE,
     val rommState: SearchSourceState = SearchSourceState.IDLE,
+    val moonlightState: SearchSourceState = SearchSourceState.IDLE,
     val telegramState: SearchSourceState = SearchSourceState.IDLE,
     /** Seconds Telegram asked to wait (FLOOD_WAIT) before the next search, if it did. */
     val telegramRetryAfterSeconds: Int? = null,
@@ -122,9 +126,9 @@ data class SearchUiState(
     val resultResetRevision: Long = 0,
     val playbackReturnRevision: Long = 0,
 ) {
-    val resultCount: Int get() = results.size + jellyfinResults.size + embyResults.size + rommResults.size + trailerResults.size + telegramResults.size + youtubeResults.size + spotifyResults.size + radioResults.size + tvheadendResults.size
+    val resultCount: Int get() = results.size + jellyfinResults.size + embyResults.size + rommResults.size + moonlightResults.size + trailerResults.size + telegramResults.size + youtubeResults.size + spotifyResults.size + radioResults.size + tvheadendResults.size
     val hasResults: Boolean get() = resultCount > 0
-    val isSearching: Boolean get() = listOf(plexState, jellyfinState, embyState, rommState, trailerState, telegramState, youtubeState, spotifyState, radioState, tvheadendState).any { it == SearchSourceState.LOADING }
+    val isSearching: Boolean get() = listOf(plexState, jellyfinState, embyState, rommState, moonlightState, trailerState, telegramState, youtubeState, spotifyState, radioState, tvheadendState).any { it == SearchSourceState.LOADING }
 }
 
 private const val MIN_QUERY_LENGTH = 2
@@ -148,6 +152,7 @@ class SearchViewModel @Inject constructor(
     private val unreachableServers: UnreachableServerGate,
     private val telegramRepository: com.ambient.tv.data.telegram.TelegramRepository,
     private val rommLibrary: com.ambient.tv.romm.RommLibrary,
+    private val moonlightStore: com.ambient.tv.moonlight.MoonlightLibraryStore,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
 ) : ViewModel() {
     private var youtubeSignedIn = false
@@ -161,6 +166,7 @@ class SearchViewModel @Inject constructor(
             addAll(liveTvRegistry.configured().map { it.source.system })
             if (preferences.trailersEnabled && trailerRepository.configured) add("trailers")
             if (preferences.isRommConfigured) add("romm")
+            if (com.ambient.tv.moonlight.MoonlightFeature.configured(preferences)) add("moonlight")
             if (preferences.youtubeEnabled) add("youtube")
             if (preferences.spotifyEnabled) add("spotify")
             if (preferences.radioEnabled) add("radio")
@@ -174,6 +180,8 @@ class SearchViewModel @Inject constructor(
             if (preferences.isEmbyConfigured) add(SearchSource.EMBY)
             if (liveTvRegistry.configured().any { liveTvSearchSource(it.source.system) == SearchSource.LIVE_TV }) add(SearchSource.LIVE_TV)
             if (preferences.isRommConfigured) add(SearchSource.ROMM)
+            if (com.ambient.tv.moonlight.MoonlightFeature.configured(preferences))
+                add(SearchSource.MOONLIGHT)
             if (preferences.trailersEnabled && trailerRepository.configured) add(SearchSource.TRAILERS)
             if (com.ambient.tv.data.telegram.telegramSearchAvailable(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE,
                     preferences.telegramEnabled, telegramRepository.available)) add(SearchSource.TELEGRAM)
@@ -201,7 +209,75 @@ class SearchViewModel @Inject constructor(
     private var searchRevision = 0L
     private var resultSourceIdentity = currentSourceIdentity()
     private fun currentSourceIdentity(): List<String> = listOf("plex", "jellyfin", "emby").map(browseScopes::forProvider) +
-        liveTvRegistry.configured().map { liveTvRegistry.displayCacheIdentity(it).orEmpty() }
+        liveTvRegistry.configured().map { liveTvRegistry.displayCacheIdentity(it).orEmpty() } +
+        (if (preferences.hasMoonlightHosts) preferences.moonlightHosts.map {
+            "moonlight:${it.id}:${it.host}:${it.port}:${moonlightStore.peerIdentity(it.id)}"
+        } else emptyList())
+
+    init {
+        viewModelScope.launch {
+            combine(moonlightStore.metadataRevisions, moonlightStore.trustRevisions) { metadata, trust -> metadata to trust }
+                .collectLatest {
+                    val snapshot = _uiState.value
+                    if (!snapshot.hasSearched || SearchSource.MOONLIGHT !in snapshot.selectedSources) return@collectLatest
+                    if (currentSourceIdentity() != resultSourceIdentity) {
+                        startSearch(preserveResults = false)
+                    } else {
+                        val query = snapshot.query.trim()
+                        val revision = searchRevision
+                        val result = suspendResult { cachedMoonlightResults(query) }
+                        updateForQuery(query, revision) { state ->
+                            result.fold(
+                                onSuccess = { state.copy(moonlightResults = it, moonlightState = SearchSourceState.READY) },
+                                onFailure = { state.copy(moonlightState = SearchSourceState.ERROR) },
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            var seen = moonlightStore.artworkChanges.value.values.maxOrNull() ?: 0L
+            moonlightStore.artworkChanges.collectLatest { changes ->
+                val keys = changes.filterValues { it > seen }.keys
+                val snapshot = _uiState.value
+                if (keys.isEmpty() || !snapshot.hasSearched || SearchSource.MOONLIGHT !in snapshot.selectedSources) return@collectLatest
+                val revision = searchRevision
+                val query = snapshot.query.trim()
+                val replacements = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    snapshot.moonlightResults.filter { it.key in keys }.associate { game ->
+                        val art = moonlightStore.artworkInfo(game.host.id, game.app.id)
+                        game.key to game.copy(artworkPath = art?.file?.absolutePath, artworkRatio = art?.aspectRatio ?: 2f / 3f)
+                    }
+                }
+                updateForQuery(query, revision) { state ->
+                    if (state.moonlightResults !== snapshot.moonlightResults) state
+                    else state.copy(moonlightResults = state.moonlightResults.map { replacements[it.key] ?: it })
+                }
+                seen = changes.values.maxOrNull() ?: seen
+            }
+        }
+    }
+
+    private suspend fun cachedMoonlightResults(query: String) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val favorites = moonlightStore.favorites()
+            val recent = moonlightStore.recent().withIndex().associate { it.value to it.index }
+            preferences.moonlightHosts.flatMap { host ->
+                moonlightStore.catalog(host.id)?.apps.orEmpty()
+                    .filter { it.title.contains(query, ignoreCase = true) }
+                    .map { app ->
+                        val key = host.id + ":" + app.id
+                        com.ambient.tv.ui.moonlight.MoonlightBrowseGame(host, app, key in favorites,
+                            recent[key] ?: Int.MAX_VALUE)
+                    }
+            }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.app.title }).take(60).map { game ->
+                val artwork = moonlightStore.artworkInfo(game.host.id, game.app.id)
+                game.copy(artworkPath = artwork?.file?.absolutePath, artworkRatio = artwork?.aspectRatio ?: 2f / 3f)
+            }
+        }
 
     fun refreshSources() = refreshSources(preserveResults = false)
 
@@ -271,10 +347,12 @@ class SearchViewModel @Inject constructor(
         return state.copy(
             resultResetRevision = state.resultResetRevision + 1,
             results = emptyList(), jellyfinResults = emptyList(), embyResults = emptyList(),
-            trailerResults = emptyList(), rommResults = emptyList(), telegramResults = emptyList(), youtubeResults = emptyList(), spotifyResults = emptyList(), radioResults = emptyList(),
+            trailerResults = emptyList(), rommResults = emptyList(), moonlightResults = emptyList(),
+            telegramResults = emptyList(), youtubeResults = emptyList(), spotifyResults = emptyList(), radioResults = emptyList(),
             tvheadendResults = TvhSearchResults(), hasSearched = false,
             plexState = SearchSourceState.IDLE, jellyfinState = SearchSourceState.IDLE,
-            embyState = SearchSourceState.IDLE, trailerState = SearchSourceState.IDLE, rommState = SearchSourceState.IDLE,
+            embyState = SearchSourceState.IDLE, trailerState = SearchSourceState.IDLE,
+            rommState = SearchSourceState.IDLE, moonlightState = SearchSourceState.IDLE,
             telegramState = SearchSourceState.IDLE, telegramRetryAfterSeconds = null,
             youtubeState = SearchSourceState.IDLE, spotifyState = SearchSourceState.IDLE, radioState = SearchSourceState.IDLE,
             tvheadendState = SearchSourceState.IDLE,
@@ -339,6 +417,7 @@ class SearchViewModel @Inject constructor(
         val embyEnabled = SearchSource.EMBY in enabled
         val trailersEnabled = SearchSource.TRAILERS in enabled
         val rommEnabled = SearchSource.ROMM in enabled
+        val moonlightEnabled = SearchSource.MOONLIGHT in enabled
         val telegramEnabled = SearchSource.TELEGRAM in enabled
         // Returning to the page re-runs the search (entry/reconnect refresh). Telegram rate-limits
         // searches (FLOOD_WAIT): keep its answer to this exact query instead of asking again.
@@ -361,6 +440,7 @@ class SearchViewModel @Inject constructor(
                 embyResults = if (preserveResults && embyEnabled) it.embyResults else emptyList(),
                 trailerResults = if (preserveResults && trailersEnabled) it.trailerResults else emptyList(),
                 rommResults = if (preserveResults && rommEnabled) it.rommResults else emptyList(),
+                moonlightResults = if (preserveResults && moonlightEnabled) it.moonlightResults else emptyList(),
                 telegramResults = if (preserveResults && telegramEnabled) it.telegramResults else emptyList(),
                 telegramRetryAfterSeconds = null,
                 youtubeResults = if (preserveResults && youtubeEnabled) it.youtubeResults else emptyList(),
@@ -373,6 +453,7 @@ class SearchViewModel @Inject constructor(
                 embyState = if (embyEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 trailerState = if (trailersEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 rommState = if (rommEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
+                moonlightState = if (moonlightEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 telegramState = if (reuseTelegram) SearchSourceState.READY
                     else if (telegramEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 youtubeState = if (youtubeEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
@@ -384,6 +465,17 @@ class SearchViewModel @Inject constructor(
         }
         coroutineScope {
             // The device's catalog copy: no request to the server, so it answers offline too.
+            // Search the locally authenticated catalog only; no Sunshine login/network
+            // request on each keystroke. A title can be discovered while its PC is offline.
+            if (moonlightEnabled) launch {
+                val result = suspendResult { cachedMoonlightResults(query) }
+                updateForQuery(query, revision) { state ->
+                    result.fold(
+                        onSuccess = { state.copy(moonlightResults = it, moonlightState = SearchSourceState.READY) },
+                        onFailure = { state.copy(moonlightState = SearchSourceState.ERROR) },
+                    )
+                }
+            }
             if (rommEnabled) launch {
                 val result = suspendResult {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

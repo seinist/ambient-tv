@@ -77,6 +77,7 @@ internal fun sidebarConcreteRoute(
     Destinations.SECTION -> sectionKey?.let(Destinations::section)
     Destinations.GAME_LIBRARY_SECTION -> sectionKey?.let(Destinations::gameLibrarySection)
     Destinations.ROMM_SECTION -> sectionKey?.let(Destinations::rommSection)
+    Destinations.MOONLIGHT_SECTION -> sectionKey?.let(Destinations::moonlightSection)
     Destinations.YOUTUBE_FEED -> youtubeFeedKey?.let(Destinations::youtubeFeed)
     Destinations.TRAILER_FEED -> trailerFeedKey?.let(Destinations::trailerFeed)
     Destinations.SPOTIFY_SECTION -> spotifySectionKey?.let(Destinations::spotifySection)
@@ -92,6 +93,7 @@ internal fun isParameterizedSidebarRoute(route: String): Boolean =
     route.startsWith("section/") ||
         route.startsWith("game_library/") ||
         route.startsWith("romm/") ||
+        route.startsWith("moonlight/") ||
         route.startsWith("youtube_feed/") ||
         route.startsWith("trailers/feed/") ||
         route.startsWith("spotify_section/") ||
@@ -133,8 +135,9 @@ internal fun sidebarShowsGlobalSearch(
     spotifyCanSearch: Boolean,
     radioEnabled: Boolean = false,
     telegramCanSearch: Boolean = false,
+    moonlightConfigured: Boolean = false,
 ): Boolean = plexConfigured || jellyfinConfigured || embyConfigured ||
-    tvheadendConfigured || youtubeEnabled || spotifyCanSearch || radioEnabled || telegramCanSearch
+    tvheadendConfigured || youtubeEnabled || spotifyCanSearch || radioEnabled || telegramCanSearch || moonlightConfigured
 
 /** Home rail entry: systems that contribute home-like rows (Files-only has no Home). */
 internal fun sidebarShowsHome(
@@ -146,8 +149,9 @@ internal fun sidebarShowsHome(
     spotifyEnabled: Boolean,
     radioHomeEnabled: Boolean = false,
     telegramHomeEnabled: Boolean = false,
+    moonlightConfigured: Boolean = false,
 ): Boolean = plexConfigured || jellyfinConfigured || embyConfigured ||
-    tvheadendConfigured || youtubeEnabled || spotifyEnabled || radioHomeEnabled || telegramHomeEnabled
+    tvheadendConfigured || youtubeEnabled || spotifyEnabled || radioHomeEnabled || telegramHomeEnabled || moonlightConfigured
 
 
 internal data class SidebarNavSystem(

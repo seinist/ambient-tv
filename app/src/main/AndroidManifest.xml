@@ -74,6 +74,13 @@
         <meta-data
             android:name="android.software.leanback.supports_touch"
             android:value="true" />
+        <!-- Local-only experimental GameStream player; never exported or shown in Android Auto. -->
+        <activity
+            android:name=".ui.moonlight.MoonlightStreamActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboard|keyboardHidden|navigation" />
+
         <!-- Official Android Auto media browser integration (audio, no projection). -->
         <meta-data android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />

@@ -86,7 +86,7 @@ internal fun menuSystemIcon(system: MediaSystem): ImageVector = when (system) {
     MediaSystem.SPOTIFY, MediaSystem.RADIO -> Icons.Filled.Headphones
     MediaSystem.TVHEADEND -> Icons.Filled.Tv
     MediaSystem.IPTV -> Icons.Filled.LiveTv
-    MediaSystem.ROMM -> Icons.Filled.SportsEsports
+    MediaSystem.ROMM, MediaSystem.MOONLIGHT -> Icons.Filled.SportsEsports
     else -> Icons.Filled.VideoLibrary
 }
 
@@ -140,6 +140,7 @@ internal fun menuOrderSystems(state: SidebarUiState): List<MediaSystem> =
         if (state.telegramEnabled && state.telegramAuthorized) add(MediaSystem.TELEGRAM)
         if (state.radioEnabled) add(MediaSystem.RADIO)
         if (state.rommEnabled) add(MediaSystem.ROMM)
+        if (state.moonlightEnabled) add(MediaSystem.MOONLIGHT)
         if (state.tvheadendEnabled) add(MediaSystem.TVHEADEND)
         if (state.liveTvSources.any { it.source.system == "iptv" }) add(MediaSystem.IPTV)
     }

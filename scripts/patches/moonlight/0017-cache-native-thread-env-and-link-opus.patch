@@ -1,0 +1,213 @@
+diff --git a/app/src/main/jni/moonlight-core/callbacks.c b/app/src/main/jni/moonlight-core/callbacks.c
+--- a/app/src/main/jni/moonlight-core/callbacks.c
++++ b/app/src/main/jni/moonlight-core/callbacks.c
+@@ -58,41 +58,47 @@
+ static jmethodID BridgeDrSubmitPictureMethod;
+ static bool directPictureEnabled;
+ 
+-void DetachThread(void* context) {
+-    (*JVM)->DetachCurrentThread(JVM);
+-}
+-
+-void JniEnvKeyInit(void) {
+-    // Create a TLS slot for the JNIEnv. We aren't in
+-    // a pthread during init, so we must wait until we
+-    // are to initialize this.
+-    pthread_key_create(&JniEnvKey, DetachThread);
+-}
+-
+-JNIEnv* GetThreadEnv(void) {
+-    JNIEnv* env;
+-
+-    // First check if this is already attached to the JVM
+-    if ((*JVM)->GetEnv(JVM, (void**)&env, JNI_VERSION_1_4) == JNI_OK) {
+-        return env;
+-    }
+-
+-    // Create the TLS slot now that we're safely in a pthread
+-    pthread_once(&JniEnvKeyInitOnce, JniEnvKeyInit);
+-
+-    // Try the TLS to see if we already have a JNIEnv
+-    env = pthread_getspecific(JniEnvKey);
+-    if (env)
+-        return env;
+-
+-    // This is the thread's first JNI call, so attach now
+-    (*JVM)->AttachCurrentThread(JVM, &env, NULL);
+-
+-    // Write our JNIEnv to TLS, so we detach before dying
+-    pthread_setspecific(JniEnvKey, env);
+-
+-    return env;
+-}
++// Only cache threads attached by this bridge. Java-owned callers still query
++// the VM; their attachment lifetime is not under native control.
++static __thread JNIEnv* bridgeThreadEnv;
++static bool jniEnvKeyReady;
++
++void DetachThread(void* context) {
++    (void)context;
++    bridgeThreadEnv = NULL;
++    (*JVM)->DetachCurrentThread(JVM);
++}
++
++void JniEnvKeyInit(void) {
++    jniEnvKeyReady = pthread_key_create(&JniEnvKey, DetachThread) == 0;
++}
++
++static void detachCallbackThread(void) {
++    if (bridgeThreadEnv != NULL) {
++        bridgeThreadEnv = NULL;
++        // An exceptional manual detach must not leave the destructor armed.
++        pthread_setspecific(JniEnvKey, NULL);
++    }
++    (*JVM)->DetachCurrentThread(JVM);
++}
++
++JNIEnv* GetThreadEnv(void) {
++    if (bridgeThreadEnv != NULL) return bridgeThreadEnv;
++
++    JNIEnv* env = NULL;
++    if ((*JVM)->GetEnv(JVM, (void**)&env, JNI_VERSION_1_4) == JNI_OK)
++        return env;
++
++    pthread_once(&JniEnvKeyInitOnce, JniEnvKeyInit);
++    if (!jniEnvKeyReady || (*JVM)->AttachCurrentThread(JVM, &env, NULL) != JNI_OK || env == NULL)
++        abort(); // All existing bridge callers require a valid JNIEnv.
++    if (pthread_setspecific(JniEnvKey, env) != 0) {
++        (*JVM)->DetachCurrentThread(JVM);
++        abort();
++    }
++    bridgeThreadEnv = env;
++    return env;
++}
+ 
+ JNIEXPORT void JNICALL
+ Java_com_limelight_nvstream_jni_MoonBridge_init(JNIEnv *env, jclass clazz) {
+@@ -234,12 +240,12 @@
+     for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
+         if (entry->bufferType == BUFFER_TYPE_PICDATA) continue;
+         (*env)->SetByteArrayRegion(env, DecodedFrameBuffer, 0, entry->length, (jbyte*)entry->data);
+-        if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return DR_OK; }
++        if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return DR_OK; }
+         int ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
+                 DecodedFrameBuffer, entry->length, entry->bufferType,
+                 decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
+                 (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
+-        if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return DR_OK; }
++        if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return DR_OK; }
+         if (ret != DR_OK) return ret;
+     }
+     int ret;
+@@ -259,7 +265,7 @@
+         for (PLENTRY entry = decodeUnit->bufferList; entry != NULL; entry = entry->next) {
+             if (entry->bufferType != BUFFER_TYPE_PICDATA) continue;
+             (*env)->SetByteArrayRegion(env, DecodedFrameBuffer, offset, entry->length, (jbyte*)entry->data);
+-            if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return DR_OK; }
++            if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return DR_OK; }
+             offset += entry->length;
+         }
+         ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
+@@ -267,7 +273,7 @@
+                 decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
+                 (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
+     }
+-    if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return DR_OK; }
++    if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return DR_OK; }
+     return ret;
+ }
+ 
+@@ -470,12 +476,12 @@
+         }
+         else {
+             (*env)->SetShortArrayRegion(env, DecodedAudioBuffer, 0, outputSamples, decodedData);
+-            if ((*env)->ExceptionCheck(env)) { (*JVM)->DetachCurrentThread(JVM); return; }
++            if ((*env)->ExceptionCheck(env)) { detachCallbackThread(); return; }
+             (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod, DecodedAudioBuffer);
+         }
+         if ((*env)->ExceptionCheck(env)) {
+             // We will crash here
+-            (*JVM)->DetachCurrentThread(JVM);
++            detachCallbackThread();
+         }
+     }
+ }
+@@ -510,7 +516,7 @@
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClConnectionTerminatedMethod, errorCode);
+     if ((*env)->ExceptionCheck(env)) {
+         // We will crash here
+-        (*JVM)->DetachCurrentThread(JVM);
++        detachCallbackThread();
+     }
+ }
+ 
+@@ -523,7 +529,7 @@
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClRumbleMethod, controllerNumber, (short)lowFreqMotor, (short)highFreqMotor);
+     if ((*env)->ExceptionCheck(env)) {
+         // We will crash here
+-        (*JVM)->DetachCurrentThread(JVM);
++        detachCallbackThread();
+     }
+ }
+ 
+@@ -533,7 +539,7 @@
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClConnectionStatusUpdateMethod, connectionStatus);
+     if ((*env)->ExceptionCheck(env)) {
+         // We will crash here
+-        (*JVM)->DetachCurrentThread(JVM);
++        detachCallbackThread();
+         return;
+     }
+ }
+@@ -553,7 +559,7 @@
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetHdrModeMethod, enabled, hdrMetadataByteArray);
+     if ((*env)->ExceptionCheck(env)) {
+         // We will crash here
+-        (*JVM)->DetachCurrentThread(JVM);
++        detachCallbackThread();
+     }
+ }
+ 
+@@ -566,7 +572,7 @@
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClRumbleTriggersMethod, controllerNumber, (short)leftTrigger, (short)rightTrigger);
+     if ((*env)->ExceptionCheck(env)) {
+         // We will crash here
+-        (*JVM)->DetachCurrentThread(JVM);
++        detachCallbackThread();
+     }
+ }
+ 
+@@ -576,7 +582,7 @@
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetMotionEventStateMethod, controllerNumber, motionType, reportRateHz);
+     if ((*env)->ExceptionCheck(env)) {
+         // We will crash here
+-        (*JVM)->DetachCurrentThread(JVM);
++        detachCallbackThread();
+     }
+ }
+ 
+@@ -587,7 +593,7 @@
+     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetControllerLEDMethod, controllerNumber, (jbyte)r, (jbyte)g, (jbyte)b);
+     if ((*env)->ExceptionCheck(env)) {
+         // We will crash here
+-        (*JVM)->DetachCurrentThread(JVM);
++        detachCallbackThread();
+     }
+ }
+ 
+diff --git a/app/src/main/jni/moonlight-core/Android.mk b/app/src/main/jni/moonlight-core/Android.mk
+--- a/app/src/main/jni/moonlight-core/Android.mk
++++ b/app/src/main/jni/moonlight-core/Android.mk
+@@ -64,7 +64,11 @@
+ endif
+ endif
+ 
+-LOCAL_LDLIBS := -llog
++LOCAL_LDLIBS := -llog -lm
++# Opus is a ThinLTO archive in both debug and release builds.
++ifeq ($(NDK_DEBUG),1)
++LOCAL_LDFLAGS += -flto=thin
++endif
+ 
+ LOCAL_STATIC_LIBRARIES := libopus libcrypto cpufeatures
+ LOCAL_LDFLAGS += -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384

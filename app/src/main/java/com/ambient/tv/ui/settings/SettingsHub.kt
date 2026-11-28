@@ -369,6 +369,7 @@ internal fun SettingsHub(
         if (category == SettingsCategory.RECEIVER && handheld) return@filter false
         // Monogram needs the optional native core; normal builds show no Telegram page at all.
         if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) return@filter false
+        if (category == SettingsCategory.MOONLIGHT && !com.ambient.tv.BuildConfig.MOONLIGHT_EXPERIMENTAL) return@filter false
         if (category == SettingsCategory.SPOTIFY && !com.ambient.tv.BuildConfig.SPOTIFY_ENABLED) return@filter false
         // A renamed system is still found under its provider name.
         val haystack = buildString {
@@ -1132,6 +1133,7 @@ internal fun settingsSystem(category: SettingsCategory): com.ambient.tv.ui.commo
     SettingsCategory.RADIO -> com.ambient.tv.ui.common.MediaSystem.RADIO
     SettingsCategory.DLNA -> com.ambient.tv.ui.common.MediaSystem.DLNA
     SettingsCategory.ROMM -> com.ambient.tv.ui.common.MediaSystem.ROMM
+    SettingsCategory.MOONLIGHT -> com.ambient.tv.ui.common.MediaSystem.MOONLIGHT
     SettingsCategory.FILES -> com.ambient.tv.ui.common.MediaSystem.FILES
     else -> null
 }
@@ -1173,6 +1175,8 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.FILES -> state.filesEnabled && state.fileSourceCount > 0
     SettingsCategory.DLNA -> state.dlnaServerCount > 0
     SettingsCategory.ROMM -> state.rommEnabled && state.rommConfigured
+    // Saved native sources remain listed even while a PC is offline or needs pairing.
+    SettingsCategory.MOONLIGHT -> state.moonlightConfigured
     SettingsCategory.IPTV -> state.iptvSourceCount > 0
     SettingsCategory.WIREGUARD -> state.wireGuardSummary.isNotBlank()
     else -> false
@@ -1195,6 +1199,7 @@ internal fun homeRowSourceAddable(system: String, contentKey: String, state: Set
             radioReady = sourceConfigured(SettingsCategory.RADIO, state),
             gamesReady = true,
             rommReady = sourceConfigured(SettingsCategory.ROMM, state),
+            moonlightReady = sourceConfigured(SettingsCategory.MOONLIGHT, state),
             telegramReady = sourceConfigured(SettingsCategory.TELEGRAM, state),
             photosReady = sourceConfigured(SettingsCategory.PLEX, state) ||
                 sourceConfigured(SettingsCategory.JELLYFIN, state) || sourceConfigured(SettingsCategory.EMBY, state),

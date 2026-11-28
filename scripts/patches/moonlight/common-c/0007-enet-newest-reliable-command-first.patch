@@ -1,0 +1,18 @@
+diff --git a/src/ControlStream.c b/src/ControlStream.c
+--- a/src/ControlStream.c
++++ b/src/ControlStream.c
+@@ -676,9 +676,10 @@
+     ENetListIterator currentCommand;
+ 
+-    // Look for our packet on the sent commands list
+-    for (currentCommand = enet_list_begin(&peer->sentReliableCommands);
+-         currentCommand != enet_list_end(&peer->sentReliableCommands);
+-         currentCommand = enet_list_next(currentCommand))
++    // Newly sent reliable commands are appended at the tail by ENet.
++    // Search newest first for the packet we have just submitted.
++    for (currentCommand = enet_list_previous(enet_list_end(&peer->sentReliableCommands));
++         currentCommand != enet_list_end(&peer->sentReliableCommands);
++         currentCommand = enet_list_previous(currentCommand))
+     {
+         outgoingCommand = (ENetOutgoingCommand*)currentCommand;
+         if (outgoingCommand->packet == packet) {

@@ -22,7 +22,7 @@ internal class EndpointConfigurationKey private constructor(private val values: 
             "server_host", "server_mac", "server_profiles_v1",
             "jellyfin_host", "jellyfin_mac", "jellyfin_server_profiles_v1",
             "emby_host", "emby_mac", "emby_server_profiles_v1",
-            "tvh_host", "tvh_mac", "file_sources", "romm_server_url", "romm_auth_mode",
+            "tvh_host", "tvh_mac", "file_sources", "romm_server_url", "romm_auth_mode", "moonlight_hosts",
         )
 
         fun read(preferences: SharedPreferences): EndpointConfigurationKey = EndpointConfigurationKey(buildList {
@@ -32,6 +32,7 @@ internal class EndpointConfigurationKey private constructor(private val values: 
             add(value { preferences.getBoolean("emby_enabled", false) })
             add(value { preferences.getBoolean("tvh_enabled", false) })
             add(value { preferences.getBoolean("romm_enabled", false) })
+            add(value { preferences.getBoolean("moonlight_enabled", false) })
             add(value { preferences.getInt("server_port", 32400) })
             add(value { preferences.getInt("jellyfin_port", 8096) })
             add(value { preferences.getInt("emby_port", 8096) })

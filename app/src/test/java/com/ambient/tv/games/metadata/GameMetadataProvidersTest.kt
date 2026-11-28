@@ -85,6 +85,25 @@ class GameMetadataProvidersTest {
         assertNull(url.fragment)
     }
 
+    @Test fun libretroBracketedRomNamesPassStrictUriPolicyOnPrimaryAndMirror() {
+        val filename = "[Release] Super Mario World (Europe) [!].sfc"
+        val candidates = GameMetadataPlatforms.libretroCandidates(query("snes", filename),
+            listOf("Super Mario World (Europe)"))
+        val candidate = candidates.single { it.metadata.canonicalTitle == filename.substringBeforeLast('.') }
+        for (reference in listOf(candidate.metadata.coverUrl, candidate.metadata.backdropUrl,
+                candidate.metadata.titleScreenUrl)) {
+            val url = reference!!.toHttpUrl()
+            assertTrue(url.encodedPath.contains("%5BRelease%5D"))
+            assertTrue(url.encodedPath.contains("%5B!%5D"))
+            assertEquals(filename.substringBeforeLast('.') + ".png", url.pathSegments.last())
+            assertEquals(reference, sanitizedGameArtworkUrl(GameMetadataProviderIds.LIBRETRO, reference))
+            val mirror = libretroArtworkMirrorUrl(url)!!
+            assertEquals(url.pathSegments.last(), mirror.pathSegments.last())
+            assertEquals(mirror.toString(), sanitizedGameArtworkUrl(GameMetadataProviderIds.LIBRETRO, mirror.toString()))
+            assertNull(mirror.query)
+        }
+    }
+
     @Test fun libretroPinnedIdentitySurvivesDisplayRenameAndCanonicalNameIsPreferred() {
         val original = GameMetadataPlatforms.libretroCandidates(query().copy(canonicalTitle = "Tetris (World)")).first()
         val renamed = GameMetadataPlatforms.libretroCandidates(query().copy(title = "My favourite puzzle",

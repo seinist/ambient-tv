@@ -93,6 +93,13 @@ internal fun LazyListScope.settingsSystemCategoryItems(
     onOpenDlna: () -> Unit,
 ) {
     when (category) {
+        SettingsCategory.MOONLIGHT -> {
+            item(key = "moonlight-settings") {
+                com.ambient.tv.ui.moonlight.MoonlightSettingsSection(
+                    nameField = { SystemNameField(MediaSystem.MOONLIGHT, uiState, viewModel) },
+                )
+            }
+        }
         SettingsCategory.ROMM -> {
             item(key = "romm-settings") {
                 com.ambient.tv.ui.romm.RommSettingsSection(

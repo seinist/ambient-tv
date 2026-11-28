@@ -34,6 +34,15 @@ fun HomeRowDefinition.displayTitle(context: Context): String {
         }
         return context.getString(R.string.game_library_title) + " · " + context.getString(suffix)
     }
+    if (system == HomeRowDefinition.SYSTEM_MOONLIGHT) {
+        val suffix = when (contentKey) {
+            HomeRowDefinition.GAMES_FAVORITES -> R.string.game_library_home_favorites
+            HomeRowDefinition.GAMES_RECENT -> R.string.game_library_home_recent
+            else -> R.string.game_library_all
+        }
+        return (MediaSystem.MOONLIGHT.customName ?: context.getString(R.string.moonlight_title)) +
+            " · " + context.getString(suffix)
+    }
     if (system == HomeRowDefinition.SYSTEM_ROMM) {
         val suffix = when (contentKey) {
             HomeRowDefinition.GAMES_FAVORITES -> R.string.game_library_home_favorites

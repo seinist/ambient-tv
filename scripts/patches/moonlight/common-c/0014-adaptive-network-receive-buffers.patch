@@ -1,0 +1,123 @@
+diff --git a/src/RtpAudioQueue.c b/src/RtpAudioQueue.c
+--- a/src/RtpAudioQueue.c
++++ b/src/RtpAudioQueue.c
+@@ -20,7 +20,17 @@
+ #define RTP_PAYLOAD_TYPE_AUDIO   97
+ #define RTP_PAYLOAD_TYPE_FEC     127
+ 
+-void RtpaInitializeQueue(PRTP_AUDIO_QUEUE queue) {
++// Written infrequently by session telemetry, read only on the FEC gap path.
++static unsigned int adaptiveAudioReorderWaitMs = RTPQ_OOS_WAIT_TIME_MS;
++
++void AmbientSetAudioReorderWaitMs(unsigned int ms) {
++    if (ms < 4) ms = 4;
++    if (ms > 30) ms = 30;
++    __atomic_store_n(&adaptiveAudioReorderWaitMs, ms, __ATOMIC_RELAXED);
++}
++
++void RtpaInitializeQueue(PRTP_AUDIO_QUEUE queue) {
++    AmbientSetAudioReorderWaitMs(RTPQ_OOS_WAIT_TIME_MS);
+     memset(queue, 0, sizeof(*queue));
+ 
+     // We will start in the synchronizing state, where we wait for the first
+@@ -539,7 +549,11 @@
+     // At this point, we know we've got a second FEC block queued up waiting on the first one to complete.
+     // If we've never seen OOS data from this host, we'll assume the first one is lost and skip forward.
+     // If we have seen OOS data, we'll wait for a little while longer to see if OOS packets arrive before giving up.
+-    if (!queue->receivedOosData || PltGetMicroseconds() - queue->blockHead->queueTimeUs > (uint64_t)(AudioPacketDuration * RTPA_DATA_SHARDS) + (RTPQ_OOS_WAIT_TIME_MS * 1000)) {
++    // Both the negotiated packet duration and reorder reserve are milliseconds.
++    // Convert the full deadline to the monotonic microsecond clock.
++    unsigned int waitMs = __atomic_load_n(&adaptiveAudioReorderWaitMs, __ATOMIC_RELAXED);
++    uint64_t deadlineUs = ((uint64_t)AudioPacketDuration * RTPA_DATA_SHARDS + waitMs) * 1000;
++    if (!queue->receivedOosData || PltGetMicroseconds() - queue->blockHead->queueTimeUs > deadlineUs) {
+         LC_ASSERT(!isBefore16(queue->nextRtpSequenceNumber, queue->blockHead->fecHeader.baseSequenceNumber));
+ 
+         queue->stats.packetCountFecFailed++;
+diff --git a/src/VideoStream.c b/src/VideoStream.c
+--- a/src/VideoStream.c
++++ b/src/VideoStream.c
+@@ -47,10 +47,32 @@
+ // much kernel memory with larger packet sizes. It also
+ // can smooth over transient pauses in network traffic
+ // and subsequent packet/frame bursts that follow.
+-#define RTP_RECV_PACKETS_BUFFERED 2048
++#define RTP_RECV_PACKETS_BUFFERED 2048
++#define RTP_RECV_PACKETS_MAX 4096
++static unsigned int adaptiveVideoBufferTier;
++
++void AmbientSetVideoBufferTier(unsigned int tier) {
++    __atomic_store_n(&adaptiveVideoBufferTier, tier > 2 ? 2 : tier, __ATOMIC_RELAXED);
++}
++
++// Keep the upstream floor, accommodate several frames at high bitrate, and
++// allow bounded extra capacity under sustained network pressure. The kernel
++// may impose a lower effective SO_RCVBUF; capacity is not a playout delay.
++static int videoReceiveBufferBytes(int bitrateKbps, int fps, int packetSize, unsigned int tier) {
++    uint64_t packetBytes = (packetSize > 0 && packetSize <= 65000 ? packetSize : 1024) + MAX_RTP_HEADER_SIZE;
++    uint64_t floor = RTP_RECV_PACKETS_BUFFERED * packetBytes;
++    uint64_t cap = RTP_RECV_PACKETS_MAX * packetBytes;
++    uint64_t burst = bitrateKbps > 0 && fps > 0 ? (uint64_t)bitrateKbps * 1000 * 4 / (8 * (uint64_t)fps) : 0;
++    uint64_t target = burst > floor ? burst : floor;
++    if (target > cap) target = cap;
++    if (tier > 2) tier = 2;
++    target = target * (2 + tier) / 2;
++    return (int)(target > cap ? cap : target);
++}
+ 
+ // Initialize the video stream
+-void initializeVideoStream(void) {
++void initializeVideoStream(void) {
++    AmbientSetVideoBufferTier(0);
+     initializeVideoDepacketizer(StreamConfig.packetSize);
+     RtpvInitializeQueue(&rtpQueue);
+     decryptionCtx = PltCreateCryptoContext();
+@@ -136,8 +158,10 @@
+         encryptedBuffer = NULL;
+     }
+ 
+-    waitingForVideoMs = 0;
+-#if defined(__ANDROID__)
++    waitingForVideoMs = 0;
++    unsigned int resizeCheck = 0;
++    unsigned int appliedTier = 0;
++#if defined(__ANDROID__)
+     bool useBatch = !useSelect;
+     char* batchBuffers[VIDEO_UDP_BATCH] = {0};
+     struct mmsghdr messages[VIDEO_UDP_BATCH];
+@@ -145,8 +169,25 @@
+     unsigned int batchCount = 0, batchIndex = 0;
+ #endif
+     while (!PltIsThreadInterrupted(&receiveThread)) {
+-        PRTP_PACKET packet;
+-        char* receivedEncryptedBuffer = encryptedBuffer;
++        PRTP_PACKET packet;
++        // Socket owner applies changes at a sampled cadence, never under a JNI lock.
++        if ((resizeCheck++ & 127) == 0) {
++            unsigned int tier = __atomic_load_n(&adaptiveVideoBufferTier, __ATOMIC_RELAXED);
++            if (tier != appliedTier) {
++                int bytes = videoReceiveBufferBytes(StreamConfig.bitrate, StreamConfig.fps, StreamConfig.packetSize, tier);
++                if (setsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&bytes, sizeof(bytes)) == 0) {
++                    int effective = 0;
++                    socklen_t effectiveLen = sizeof(effective);
++                    if (getsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&effective, &effectiveLen) == 0) {
++                        // Linux reports double the requested size (kernel overhead accounting).
++                        // Log both; do not assume the kernel accepted the requested capacity.
++                        Limelog("Video UDP receive capacity: %d requested, %d kernel-reported bytes\n", bytes, effective);
++                    }
++                }
++                appliedTier = tier; // Avoid repeated syscalls if the OS rejects the request.
++            }
++        }
++        char* receivedEncryptedBuffer = encryptedBuffer;
+ #if defined(__ANDROID__)
+         // A rejected plaintext datagram retains its original slot allocation.
+         if (useBatch && !encrypted && buffer != NULL && batchIndex != 0) {
+@@ -414,7 +455,7 @@
+     }
+ 
+     rtpSocket = bindUdpSocket(RemoteAddr.ss_family, &LocalAddr, AddrLen,
+-                              RTP_RECV_PACKETS_BUFFERED * (StreamConfig.packetSize + MAX_RTP_HEADER_SIZE),
++                              videoReceiveBufferBytes(StreamConfig.bitrate, StreamConfig.fps, StreamConfig.packetSize, 0),
+                               SOCK_QOS_TYPE_VIDEO);
+     if (rtpSocket == INVALID_SOCKET) {
+         VideoCallbacks.cleanup();

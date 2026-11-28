@@ -130,6 +130,7 @@ internal fun sidebarRowOfflineKey(row: SidebarNavRow.Item): String? {
         row.opensPage -> row.systemId
         id.startsWith("files:source:") -> "files:" + id.removePrefix("files:source:")
         id.startsWith("dlna:") && id != "dlna:manage" -> id
+        id.startsWith("moonlight:host:") -> "moonlight:" + id.removePrefix("moonlight:host:")
         id == WEATHER_MENU_ID -> "weather"
         else -> null
     }
@@ -284,6 +285,10 @@ internal fun SidebarContent(
             ROMM_MENU_ID, menuSystemName(MediaSystem.ROMM), Icons.Filled.SportsEsports, system = MediaSystem.ROMM,
             entries = rommMenuDestinations(sidebarState),
         ))
+        if (sidebarState.moonlightEnabled) add(MenuSystem(
+            MOONLIGHT_MENU_ID, menuSystemName(MediaSystem.MOONLIGHT), Icons.Filled.SportsEsports,
+            system = MediaSystem.MOONLIGHT, entries = moonlightMenuDestinations(sidebarState),
+        ))
         if (plexShown) add(MenuSystem("plex", menuSystemName(MediaSystem.PLEX), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
             providerMenuDestinations(sidebarState, "plex")))
         if (jellyfinShown) add(MenuSystem("jellyfin", menuSystemName(MediaSystem.JELLYFIN), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
@@ -424,7 +429,7 @@ internal fun SidebarContent(
     val activeSystem = systems.firstOrNull { system -> system.entries.any { it.isActive(activeRoute) } }
     // Home: systems that contribute home-like rows (media servers, Live TV, YT, Spotify). Files-only has no Home.
     // Search: only backends SearchViewModel can query — FilesRepository.search is a stub, so Files is excluded.
-    val showHome = sidebarState.trailersConfigured || sidebarShowsHome(plexShown, jellyfinShown, embyShown, tvheadendUsable, youtubeEnabled, spotifyEnabled, sidebarState.radioHomeEnabled, sidebarState.telegramHomeEnabled && telegramEnabled)
+    val showHome = sidebarState.trailersConfigured || sidebarShowsHome(plexShown, jellyfinShown, embyShown, tvheadendUsable, youtubeEnabled, spotifyEnabled, sidebarState.radioHomeEnabled, sidebarState.telegramHomeEnabled && telegramEnabled, sidebarState.moonlightEnabled && sidebarState.moonlightHomeEnabled)
     val showSearch = sidebarShowsGlobalSearch(
         plexConfigured = plexShown,
         jellyfinConfigured = jellyfinShown,
@@ -435,6 +440,7 @@ internal fun SidebarContent(
         radioEnabled = radioEnabled,
         telegramCanSearch = com.ambient.tv.data.telegram.telegramSearchAvailable(
             com.ambient.tv.BuildConfig.MONOGRAM_NATIVE, sidebarState.telegramEnabled, sidebarState.telegramAuthorized),
+        moonlightConfigured = sidebarState.moonlightEnabled,
     )
     val globals = buildList {
         // Plex-style order: Search above Home.

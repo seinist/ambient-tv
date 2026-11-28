@@ -70,13 +70,15 @@ enum class MediaSystem(
         "romm", R.string.romm_title, R.drawable.system_romm,
         coloredLogo = R.drawable.system_romm, brand = "RomM", preserveLogoColors = true,
     ),
+    MOONLIGHT("moonlight", R.string.moonlight_title, R.drawable.system_moonlight,
+        coloredLogo = R.drawable.system_moonlight, brand = "Moonlight", preserveLogoColors = true),
     FILES("files", R.string.files_title, null);
 
     /** A provider mark already names its system, so a text label next to it is a duplicate. */
     val hasBrandMark: Boolean get() = logo != null
 
     /** TMDB's lettering is unreadable at icon size and DLNA's symbol has none, so neither spells its name. */
-    val markSpellsName: Boolean get() = hasBrandMark && this !in setOf(TRAILERS, DLNA, IPTV, RADIO, TELEGRAM, ROMM)
+    val markSpellsName: Boolean get() = hasBrandMark && this !in setOf(TRAILERS, DLNA, IPTV, RADIO, TELEGRAM, ROMM, MOONLIGHT)
 
     /** Name given to this system in Settings; null while it keeps the provider's own name. */
     val customName: String? get() = SystemNameOverrides.names[key]
@@ -95,9 +97,10 @@ enum class MediaSystem(
          * offered by builds that contain its optional native MTProto core.
          */
         val addOrder: List<MediaSystem> = listOf(
-            PLEX, JELLYFIN, EMBY, DLNA, ROMM, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
+            PLEX, JELLYFIN, EMBY, DLNA, ROMM, MOONLIGHT, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
         ).filter { it != TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
             .filter { it != SPOTIFY || com.ambient.tv.BuildConfig.SPOTIFY_ENABLED }
+            .filter { it != MOONLIGHT || com.ambient.tv.moonlight.MoonlightFeature.setupAvailable }
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND
@@ -126,8 +129,8 @@ fun systemString(system: MediaSystem, @StringRes id: Int): String = system.renam
 /** Informational only: provider marks never add a D-pad focus stop or perform network work. */
 @Composable
 fun SystemLogo(system: MediaSystem, modifier: Modifier = Modifier, size: Dp = 22.dp, tint: Color? = null) {
-    // Theme the monochrome marks. RomM's full-color circular artwork needs its original fills:
-    // tinting its alpha silhouette would hide the controller and leave only a solid disc.
+    // Theme monochrome marks. Multicolor circular artwork (RomM and Moonlight) must
+    // keep its original fills; tinting the alpha silhouette would leave a solid disc.
     if (system.logo != null) {
         Icon(painterResource(system.logo), null, modifier.size(size),
             tint = if (system.preserveLogoColors) Color.Unspecified
@@ -232,6 +235,10 @@ fun SystemWordmark(system: MediaSystem?, fallback: String, modifier: Modifier = 
                     color = system.brandColor ?: MaterialTheme.colorScheme.onSurface,
                 )
             }
+        system == MediaSystem.MOONLIGHT -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SystemLogo(system, size = height)
+            Text(fallback, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         else -> Text(fallback, style = MaterialTheme.typography.titleMedium, modifier = modifier)
     }
 }

@@ -496,6 +496,90 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_RADIO_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_RADIO_ENABLED, value) }
 
+    /** Experimental Moonlight host addresses only; TLS keys/certificates stay device-local. */
+    var moonlightEnabled: Boolean
+        get() = prefs.getBoolean("moonlight_enabled", false)
+        set(value) = prefs.edit { putBoolean("moonlight_enabled", value) }
+
+    var moonlightHosts: List<com.ambient.tv.moonlight.MoonlightHost>
+        get() = runCatching {
+            json.decodeFromString<List<com.ambient.tv.moonlight.MoonlightHost>>(
+                prefs.getString("moonlight_hosts", "[]") ?: "[]")
+        }.getOrDefault(emptyList())
+            .mapNotNull { runCatching { it.validated() }.getOrNull() }
+            .distinctBy { it.host to it.port }.take(16)
+        set(value) = prefs.edit {
+            putString("moonlight_hosts", json.encodeToString(value.map { it.validated() }
+                .distinctBy { it.host to it.port }.take(16)))
+        }
+
+    /** Streaming resolution, FPS, bitrate, codec and audio; no auth material. */
+    var moonlightStreamProfile: com.ambient.tv.moonlight.MoonlightStreamProfile
+        get() = runCatching {
+            json.decodeFromString<com.ambient.tv.moonlight.MoonlightStreamProfile>(
+                prefs.getString("moonlight_stream_profile", "") ?: "").validated()
+        }.getOrDefault(com.ambient.tv.moonlight.MoonlightStreamProfile())
+        set(value) = prefs.edit {
+            putString("moonlight_stream_profile", json.encodeToString(value.validated()))
+        }
+
+    /** Host-specific settings are local to a saved PC, never pairing credentials. */
+    var moonlightHostProfiles: Map<String, com.ambient.tv.moonlight.MoonlightStreamProfile>
+        get() = runCatching {
+            val ids = moonlightHosts.map { it.id }.toSet()
+            json.decodeFromString<Map<String, com.ambient.tv.moonlight.MoonlightStreamProfile>>(
+                prefs.getString("moonlight_host_profiles", "{}") ?: "{}")
+                .filterKeys { it in ids }.mapNotNull { (id, profile) ->
+                    runCatching { id to profile.validated() }.getOrNull()
+                }.toMap()
+        }.getOrDefault(emptyMap())
+        set(value) {
+            val ids = moonlightHosts.map { it.id }.toSet()
+            val validated = value.filterKeys { it in ids }.mapValues { it.value.validated() }
+            prefs.edit { putString("moonlight_host_profiles", json.encodeToString(validated)) }
+        }
+
+    fun moonlightProfileFor(hostId: String) = moonlightHostProfiles[hostId] ?: moonlightStreamProfile
+
+    fun setMoonlightHostProfile(hostId: String, profile: com.ambient.tv.moonlight.MoonlightStreamProfile?) {
+        require(moonlightHosts.any { it.id == hostId })
+        synchronized(prefs) {
+            moonlightHostProfiles = if (profile == null) moonlightHostProfiles - hostId
+                else moonlightHostProfiles + (hostId to profile.validated())
+        }
+    }
+
+    var moonlightLibraryView: String
+        get() = prefs.getString("moonlight_library_view", "grid")?.takeIf { it in setOf("grid", "list", "rows") } ?: "grid"
+        set(value) { if (value in setOf("grid", "list", "rows")) prefs.edit { putString("moonlight_library_view", value) } }
+
+    var moonlightGridColumns: Int
+        get() = prefs.getInt("moonlight_grid_columns", 8).coerceIn(4, 12)
+        set(value) = prefs.edit { putInt("moonlight_grid_columns", value.coerceIn(4, 12)) }
+    var moonlightListRows: Int
+        get() = prefs.getInt("moonlight_list_rows", 7).coerceIn(4, 10)
+        set(value) = prefs.edit { putInt("moonlight_list_rows", value.coerceIn(4, 10)) }
+    var moonlightSortKey: String
+        get() = prefs.getString("moonlight_sort", "name")?.takeIf { it in setOf("name", "recent", "system") } ?: "name"
+        set(value) { if (value in setOf("name", "recent", "system")) prefs.edit { putString("moonlight_sort", value) } }
+    var moonlightSortDescending: Boolean
+        get() = prefs.getBoolean("moonlight_sort_descending", false)
+        set(value) = prefs.edit { putBoolean("moonlight_sort_descending", value) }
+
+    val hasMoonlightHosts: Boolean get() = moonlightEnabled && moonlightHosts.isNotEmpty()
+
+    /** Per-install GameStream client ID; never replicated to other TVs/phones. */
+    val moonlightDeviceId: String get() = synchronized(prefs) { prefs.getString("moonlight_device_id", null)
+        ?.takeIf { it.length == 16 && it.all { ch -> ch in '0'..'9' || ch in 'A'..'F' } }
+        ?: UUID.randomUUID().toString().replace("-", "").take(16).uppercase().also { id ->
+            prefs.edit { putString("moonlight_device_id", id) }
+        }
+    }
+
+    fun resetMoonlightDeviceId() = synchronized(prefs) {
+        prefs.edit { remove("moonlight_device_id") }
+    }
+
     /** RomM game server (Settings › RomM). Its secret (token or password) lives in TokenStore. */
     var rommEnabled: Boolean
         get() = prefs.getBoolean("romm_enabled", false)
@@ -716,7 +800,8 @@ class AppPreferences @Inject constructor(
     }
 
     val needsInitialSetup: Boolean
-        get() = !initialSetupCompleted && !filesEnabled && fileSources.isEmpty() && !radioEnabled && !(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && telegramEnabled) && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured && !isRommConfigured
+        get() = !initialSetupCompleted && !filesEnabled && fileSources.isEmpty() && !radioEnabled && !(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && telegramEnabled) && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured && !isRommConfigured &&
+            !(com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && hasMoonlightHosts)
 
     var host: String
         get() = prefs.getString(KEY_HOST, "") ?: ""
@@ -2615,6 +2700,7 @@ class AppPreferences @Inject constructor(
             HomeRowDefinition.SYSTEM_TRAILERS,
             HomeRowDefinition.SYSTEM_GAMES,
             HomeRowDefinition.SYSTEM_ROMM,
+            HomeRowDefinition.SYSTEM_MOONLIGHT,
         )
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
         const val KEY_TELEGRAM_ENABLED = "telegram_enabled"

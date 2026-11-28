@@ -54,6 +54,13 @@ data class PortableSettingsExtras(
     /** Source-linked ROM folder assignments live in Extras to stay under JVM 255-slot limit. */
     val gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>? = null,
     val gameMetadataOptions: com.ambient.tv.games.metadata.GameMetadataOptions? = null,
+    /** Portable playback quality; no GameStream certificates or private client keys. */
+    val moonlightStreamProfile: com.ambient.tv.moonlight.MoonlightStreamProfile? = null,
+    val moonlightLibraryView: String? = null,
+    val moonlightGridColumns: Int? = null,
+    val moonlightListRows: Int? = null,
+    val moonlightSortKey: String? = null,
+    val moonlightSortDescending: Boolean? = null,
 )
 
 @Serializable
@@ -69,6 +76,10 @@ data class ConnectionSettingsExtras(
     val rommEnabled: Boolean? = null,
     val rommServerUrl: String? = null,
     val rommUsername: String? = null,
+    /** Host metadata is portable, but pairing certificates and AndroidKeyStore client keys are not. */
+    val moonlightEnabled: Boolean? = null,
+    val moonlightHosts: List<com.ambient.tv.moonlight.MoonlightHost>? = null,
+    val moonlightHostProfiles: Map<String, com.ambient.tv.moonlight.MoonlightStreamProfile>? = null,
 )
 
 @Serializable

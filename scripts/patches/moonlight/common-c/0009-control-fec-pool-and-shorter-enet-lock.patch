@@ -1,0 +1,187 @@
+diff --git a/src/ControlStream.c b/src/ControlStream.c
+--- a/src/ControlStream.c
++++ b/src/ControlStream.c
+@@ -115,7 +115,36 @@
+ static uint64_t firstFrameTimeMs;
+ 
+ static LINKED_BLOCKING_QUEUE referenceFrameControlQueue;
+-static LINKED_BLOCKING_QUEUE frameFecStatusQueue;
++static LINKED_BLOCKING_QUEUE frameFecStatusQueue;
++
++// Eight queued reports plus a sender and a producer holding a slot.
++// Reports are best-effort: no heap allocation or wait for a free slot.
++#define FRAME_FEC_QUEUE_LIMIT 8
++#define FRAME_FEC_POOL_LIMIT (FRAME_FEC_QUEUE_LIMIT + 2)
++static QUEUED_FRAME_FEC_STATUS frameFecPool[FRAME_FEC_POOL_LIMIT];
++static unsigned int frameFecPoolUsed;
++
++static PQUEUED_FRAME_FEC_STATUS acquireFrameFecStatus(void) {
++    unsigned int used = __atomic_load_n(&frameFecPoolUsed, __ATOMIC_RELAXED);
++    for (unsigned int attempt = 0; attempt < FRAME_FEC_POOL_LIMIT; attempt++) {
++        unsigned int available = ((1U << FRAME_FEC_POOL_LIMIT) - 1U) & ~used;
++        if (available == 0) return NULL;
++        unsigned int slot = (unsigned int)__builtin_ctz(available);
++        if (__atomic_compare_exchange_n(&frameFecPoolUsed, &used, used | (1U << slot),
++                                        false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
++            return &frameFecPool[slot];
++        }
++    }
++    return NULL;
++}
++
++static void releaseFrameFecStatus(PQUEUED_FRAME_FEC_STATUS status) {
++    unsigned int slot = (unsigned int)(status - frameFecPool);
++    LC_ASSERT(slot < FRAME_FEC_POOL_LIMIT);
++    unsigned int previous = __atomic_fetch_and(&frameFecPoolUsed, ~(1U << slot), __ATOMIC_RELEASE);
++    LC_ASSERT(previous & (1U << slot));
++    (void)previous;
++}
+ static LINKED_BLOCKING_QUEUE asyncCallbackQueue;
+ static PLT_EVENT idrFrameRequiredEvent;
+ 
+@@ -302,7 +331,8 @@
+     stopping = false;
+     PltCreateEvent(&idrFrameRequiredEvent);
+     LbqInitializeLinkedBlockingQueue(&referenceFrameControlQueue, 20);
+-    LbqInitializeLinkedBlockingQueue(&frameFecStatusQueue, 8); // Limits number of frame status reports per periodic ping interval
++    __atomic_store_n(&frameFecPoolUsed, 0, __ATOMIC_RELAXED);
++    LbqInitializeLinkedBlockingQueue(&frameFecStatusQueue, FRAME_FEC_QUEUE_LIMIT); // Limits reports per periodic ping interval
+     LbqInitializeLinkedBlockingQueue(&asyncCallbackQueue, 30);
+     PltCreateMutex(&enetMutex);
+ 
+@@ -377,7 +407,15 @@
+     PltDestroyCryptoContext(decryptionCtx);
+     PltCloseEvent(&idrFrameRequiredEvent);
+     freeBasicLbqList(LbqDestroyLinkedBlockingQueue(&referenceFrameControlQueue));
+-    freeBasicLbqList(LbqDestroyLinkedBlockingQueue(&frameFecStatusQueue));
++    // The producer and loss-stats consumer have stopped. Return queued static slots,
++    // rather than passing their addresses to the heap allocator.
++    PLINKED_BLOCKING_QUEUE_ENTRY fecEntry = LbqDestroyLinkedBlockingQueue(&frameFecStatusQueue);
++    while (fecEntry != NULL) {
++        PLINKED_BLOCKING_QUEUE_ENTRY next = fecEntry->flink;
++        releaseFrameFecStatus(fecEntry->data);
++        fecEntry = next;
++    }
++    LC_ASSERT(__atomic_load_n(&frameFecPoolUsed, __ATOMIC_RELAXED) == 0);
+     freeBasicLbqList(LbqDestroyLinkedBlockingQueue(&asyncCallbackQueue));
+ 
+     PltDeleteMutex(&enetMutex);
+@@ -459,13 +497,13 @@
+     }
+ 
+     // Queue a frame FEC status message. This is best-effort only.
+-    PQUEUED_FRAME_FEC_STATUS queuedFecStatus = malloc(sizeof(*queuedFecStatus));
+-    if (queuedFecStatus != NULL) {
+-        queuedFecStatus->fecStatus = *fecStatus;
+-        if (LbqOfferQueueItem(&frameFecStatusQueue, queuedFecStatus, &queuedFecStatus->entry) == LBQ_BOUND_EXCEEDED) {
+-            free(queuedFecStatus);
+-        }
+-    }
++    PQUEUED_FRAME_FEC_STATUS queuedFecStatus = acquireFrameFecStatus();
++    if (queuedFecStatus != NULL) {
++        queuedFecStatus->fecStatus = *fecStatus;
++        if (LbqOfferQueueItem(&frameFecStatusQueue, queuedFecStatus, &queuedFecStatus->entry) != LBQ_SUCCESS) {
++            releaseFrameFecStatus(queuedFecStatus);
++        }
++    }
+ }
+ 
+ void connectionSawFrame(uint32_t frameIndex) {
+@@ -704,9 +742,22 @@
+     if (encryptedControlStream) {
+         PNVCTL_ENCRYPTED_PACKET_HEADER encPacket;
+         PNVCTL_ENET_PACKET_HEADER_V2 packet;
+-        char tempBuffer[256];
+-
+-        enetPacket = enet_packet_create(NULL,
++        union {
++            NVCTL_ENET_PACKET_HEADER_V2 alignment;
++            char bytes[256];
++        } tempBuffer;
++
++        // Prepare plaintext outside the shared encryption/transport lock.
++        if (paylen < 0 || (size_t)paylen > sizeof(tempBuffer.bytes) - sizeof(*packet) ||
++                (paylen != 0 && payload == NULL)) {
++            return false;
++        }
++        packet = (PNVCTL_ENET_PACKET_HEADER_V2)tempBuffer.bytes;
++        packet->type = ptype;
++        packet->payloadLength = paylen;
++        if (paylen != 0) memcpy(&packet[1], payload, paylen);
++
++        enetPacket = enet_packet_create(NULL,
+                                         sizeof(*encPacket) + AES_GCM_TAG_LENGTH + sizeof(*packet) + paylen,
+                                         flags);
+         if (enetPacket == NULL) {
+@@ -722,12 +773,6 @@
+         encPacket->length = sizeof(encPacket->seq) + AES_GCM_TAG_LENGTH + sizeof(*packet) + paylen;
+         encPacket->seq = currentEnetSequenceNumber++;
+ 
+-        // Construct the plaintext data for encryption
+-        LC_ASSERT(sizeof(*packet) + paylen < sizeof(tempBuffer));
+-        packet = (PNVCTL_ENET_PACKET_HEADER_V2)tempBuffer;
+-        packet->type = ptype;
+-        packet->payloadLength = paylen;
+-        memcpy(&packet[1], payload, paylen);
+ 
+         // Encrypt the data into the final packet (and byteswap for BE machines)
+         if (!encryptControlMessage(encPacket, packet)) {
+@@ -754,12 +799,15 @@
+         PltLockMutex(&enetMutex);
+     }
+ 
+-    volatile bool packetFreed = false;
+-
+-    // Set a callback to use to let us know if the packet has been freed.
+-    // Freeing can only happen when the packet is acked or send fails.
+-    enetPacket->userData = (void*)&packetFreed;
+-    enetPacket->freeCallback = enetPacketFreeCb;
++    volatile bool packetFreed = false;
++    bool waitForSend = !moreData && (flags & ENET_PACKET_FLAG_RELIABLE);
++
++    // Only the reliable immediate-send path observes packet lifetime.
++    // Unreliable telemetry and batched input need no stack callback.
++    if (waitForSend) {
++        enetPacket->userData = (void*)&packetFreed;
++        enetPacket->freeCallback = enetPacketFreeCb;
++    }
+ 
+     // Always use channel 0 for GFE and if the requested channel exceeds
+     // the peer's supported channel count.
+@@ -776,7 +824,7 @@
+         err = enet_host_service(client, NULL, 0);
+ 
+         // Wait until the packet is actually sent to provide backpressure on senders
+-        if (flags & ENET_PACKET_FLAG_RELIABLE) {
++        if (waitForSend) {
+             // Don't wait longer than 10 milliseconds to avoid blocking callers for too long
+             for (int i = 0; err >= 0 && i < 10; i++) {
+                 // Break on disconnected, acked/freed, or sent (pending ack).
+@@ -801,8 +849,8 @@
+     }
+ 
+     // Remove the free callback now that the packet was sent
+-    if (!packetFreed) {
+-        enetPacket->userData = NULL;
++    if (waitForSend && !packetFreed) {
++        enetPacket->userData = NULL;
+         enetPacket->freeCallback = NULL;
+     }
+ 
+@@ -1414,11 +1462,11 @@
+                                          LbqGetItemCount(&frameFecStatusQueue) > 0)) {
+                         Limelog("Loss Stats: Sending frame FEC status message failed: %d\n", (int)LastSocketError());
+                         ListenerCallbacks.connectionTerminated(LastSocketFail());
+-                        free(queuedFrameStatus);
+-                        return;
+-                    }
+-
+-                    free(queuedFrameStatus);
++                        releaseFrameFecStatus(queuedFrameStatus);
++                        return;
++                    }
++
++                    releaseFrameFecStatus(queuedFrameStatus);
+                 }
+             }
+ 

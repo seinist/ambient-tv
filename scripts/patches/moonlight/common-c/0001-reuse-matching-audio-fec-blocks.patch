@@ -1,0 +1,69 @@
+diff --git a/src/RtpAudioQueue.c b/src/RtpAudioQueue.c
+--- a/src/RtpAudioQueue.c
++++ b/src/RtpAudioQueue.c
+@@ -107,36 +107,31 @@
+-static PRTPA_FEC_BLOCK allocateFecBlock(PRTP_AUDIO_QUEUE queue, uint16_t blockSize) {
+-    PRTPA_FEC_BLOCK block = queue->freeBlockHead;
+-
+-    if (block != NULL) {
+-        LC_ASSERT(queue->freeBlockCount > 0);
+-
+-        // If the block size matches, we're good to go
+-        if (block->blockSize == blockSize) {
+-            // Advance the free block list to the next entry
+-            queue->freeBlockHead = block->next;
+-            queue->freeBlockCount--;
+-
+-            // Return the new block
+-            return block;
+-        }
+-        else {
+-            // The block size didn't match. This should never happen with GFE
+-            // because it uses constant sized data shards, but Sunshine can
+-            // trigger this condition. If it does happen, let's free the cached
+-            // entry so we can populate the cache with correctly sized blocks.
+-            queue->freeBlockHead = block->next;
+-            queue->freeBlockCount--;
+-
+-            // Free the existing block
+-            free(block);
+-        }
+-    }
+-    else {
+-        LC_ASSERT(queue->freeBlockCount == 0);
+-    }
+-
+-    // We either didn't have any free entries or the block
+-    // size didn't match, so allocate a new FEC block now.
++static PRTPA_FEC_BLOCK allocateFecBlock(PRTP_AUDIO_QUEUE queue, uint16_t blockSize) {
++    // Sunshine can vary shard sizes. Search the bounded free list before
++    // evicting an entry, retaining the fast path for constant-size streams.
++    PRTPA_FEC_BLOCK* link = &queue->freeBlockHead;
++    while (*link != NULL && (*link)->blockSize != blockSize) {
++        link = &(*link)->next;
++    }
++
++    if (*link != NULL) {
++        PRTPA_FEC_BLOCK block = *link;
++        LC_ASSERT(queue->freeBlockCount > 0);
++        *link = block->next;
++        queue->freeBlockCount--;
++        return block;
++    }
++
++    // Preserve the upstream cache bound and eviction policy on a miss.
++    if (queue->freeBlockHead != NULL) {
++        PRTPA_FEC_BLOCK block = queue->freeBlockHead;
++        LC_ASSERT(queue->freeBlockCount > 0);
++        queue->freeBlockHead = block->next;
++        queue->freeBlockCount--;
++        free(block);
++    }
++    else {
++        LC_ASSERT(queue->freeBlockCount == 0);
++    }
++
+     uint16_t dataPacketSize = blockSize + sizeof(RTP_PACKET);
+-    return malloc(sizeof(*block) + (RTPA_DATA_SHARDS * dataPacketSize) + (RTPA_FEC_SHARDS * blockSize));
++    return malloc(sizeof(RTPA_FEC_BLOCK) + (RTPA_DATA_SHARDS * dataPacketSize) + (RTPA_FEC_SHARDS * blockSize));
+ }

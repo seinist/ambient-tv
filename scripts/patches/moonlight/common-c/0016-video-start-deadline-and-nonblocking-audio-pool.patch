@@ -1,0 +1,172 @@
+diff --git a/src/VideoStream.c b/src/VideoStream.c
+--- a/src/VideoStream.c
++++ b/src/VideoStream.c
+@@ -100,7 +100,23 @@
+     decryptionCtx = PltCreateCryptoContext();
+     receivedDataFromPeer = false;
+     firstDataTimeMs = 0;
+-    receivedFullFrame = false;
++    __atomic_store_n(&receivedFullFrame, false, __ATOMIC_RELAXED);
+ }
+ 
++// Return the startup failure reason using a monotonic clock. No progress
++// is inferred from interrupted receives or invalid datagrams.
++static int videoStartupError(uint64_t now, uint64_t started, uint64_t first,
++                             bool received, bool fullFrame) {
++    if (!received && now - started >= FIRST_FRAME_TIMEOUT_SEC * 1000)
++        return ML_ERROR_NO_VIDEO_TRAFFIC;
++#ifndef LC_FUZZING
++    if (received && !fullFrame && now - first >= FIRST_FRAME_TIMEOUT_SEC * 1000)
++        return ML_ERROR_NO_VIDEO_FRAME;
++#else
++    (void)first;
++    (void)fullFrame;
++#endif
++    return 0;
++}
++
+ // Clean up the video stream
+@@ -148,7 +164,7 @@
+     char* encryptedBuffer;
+     int queueStatus;
+     bool useSelect;
+-    int waitingForVideoMs;
++    uint64_t videoReceiveStartedMs;
+     bool encrypted;
+ 
+     encrypted = !!(EncryptionFeaturesEnabled & SS_ENC_VIDEO);
+@@ -180,7 +196,7 @@
+         encryptedBuffer = NULL;
+     }
+ 
+-    waitingForVideoMs = 0;
++    videoReceiveStartedMs = PltGetMillis();
+     unsigned int resizeCheck = 0;
+     unsigned int appliedTier = 0;
+ #if defined(__ANDROID__)
+@@ -192,7 +208,18 @@
+     unsigned int batchTarget = 2, fullBatches = 0, sparseBatches = 0;
+ #endif
+     while (!PltIsThreadInterrupted(&receiveThread)) {
+-        PRTP_PACKET packet;
++        PRTP_PACKET packet;
++        // Stop checking the clock after the first complete frame.
++        bool fullFrame = __atomic_load_n(&receivedFullFrame, __ATOMIC_RELAXED);
++        if (!receivedDataFromPeer || !fullFrame) {
++            int startupError = videoStartupError(PltGetMillis(), videoReceiveStartedMs,
++                    firstDataTimeMs, receivedDataFromPeer, fullFrame);
++            if (startupError != 0) {
++                Limelog("Video startup deadline exceeded: %d\n", startupError);
++                ListenerCallbacks.connectionTerminated(startupError);
++                break;
++            }
++        }
+         // Socket owner applies changes at a sampled cadence, never under a JNI lock.
+         if ((resizeCheck++ & 127) == 0) {
+             unsigned int tier = __atomic_load_n(&adaptiveVideoBufferTier, __ATOMIC_RELAXED);
+@@ -285,43 +312,13 @@
+             ListenerCallbacks.connectionTerminated(LastSocketFail());
+             break;
+         }
+-        else if  (err == 0) {
+-            if (!receivedDataFromPeer) {
+-                // If we wait many seconds without ever receiving a video packet,
+-                // assume something is broken and terminate the connection.
+-                waitingForVideoMs += UDP_RECV_POLL_TIMEOUT_MS;
+-                if (waitingForVideoMs >= FIRST_FRAME_TIMEOUT_SEC * 1000) {
+-                    Limelog("Terminating connection due to lack of video traffic\n");
+-                    ListenerCallbacks.connectionTerminated(ML_ERROR_NO_VIDEO_TRAFFIC);
+-                    break;
+-                }
+-            }
+-
+-            // Receive timed out; try again
+-            continue;
+-        }
+-
+-        if (!receivedDataFromPeer) {
+-            receivedDataFromPeer = true;
+-            Limelog("Received first video packet after %d ms\n", waitingForVideoMs);
+-
+-            firstDataTimeMs = PltGetMillis();
+-        }
+-
+-#ifndef LC_FUZZING
+-        if (!receivedFullFrame) {
+-            if (PltGetMillis() - firstDataTimeMs >= FIRST_FRAME_TIMEOUT_SEC * 1000) {
+-                Limelog("Terminating connection due to lack of a successful video frame\n");
+-                ListenerCallbacks.connectionTerminated(ML_ERROR_NO_VIDEO_FRAME);
+-                break;
+-            }
+-        }
+-#endif
+-
+-        if (err < minSize) {
+-            // Runt packet
+-            continue;
+-        }
++        else if (err == 0) {
++            continue;
++        }
++
++        if (err < minSize || err > receiveSize) {
++            continue;
++        }
+ 
+         // Decrypt the packet into the buffer if encryption is enabled
+         if (encrypted) {
+@@ -363,7 +360,16 @@
+             }
+         }
+ 
+-        // Convert fields to host byte-order
++        // Validate the actual decrypted length before reading the RTP header.
++        if (err < (int)sizeof(RTP_PACKET) || err > decryptedSize) continue;
++        if (!receivedDataFromPeer) {
++            receivedDataFromPeer = true;
++            firstDataTimeMs = PltGetMillis();
++            Limelog("Received first valid video packet after %llu ms\n",
++                    (unsigned long long)(firstDataTimeMs - videoReceiveStartedMs));
++        }
++
++        // Convert fields to host byte-order
+         packet = (PRTP_PACKET)&buffer[0];
+         packet->sequenceNumber = BE16(packet->sequenceNumber);
+         packet->timestamp = BE32(packet->timestamp);
+@@ -394,7 +400,7 @@
+ 
+ void notifyKeyFrameReceived(void) {
+     // Remember that we got a full frame successfully
+-    receivedFullFrame = true;
++    __atomic_store_n(&receivedFullFrame, true, __ATOMIC_RELAXED);
+ }
+ 
+ // Decoder thread proc
+diff --git a/src/AudioStream.c b/src/AudioStream.c
+--- a/src/AudioStream.c
++++ b/src/AudioStream.c
+@@ -44,9 +44,10 @@
+ 
+ static PQUEUED_AUDIO_PACKET acquireReceivePacket(void) {
+     PQUEUED_AUDIO_PACKET packet = NULL;
+-    pthread_mutex_lock(&audioPoolLock);
+-    if (audioPoolCount != 0) packet = audioPool[--audioPoolCount];
+-    pthread_mutex_unlock(&audioPoolLock);
++    if (pthread_mutex_trylock(&audioPoolLock) == 0) {
++        if (audioPoolCount != 0) packet = audioPool[--audioPoolCount];
++        pthread_mutex_unlock(&audioPoolLock);
++    }
+     if (packet == NULL) packet = malloc(sizeof(*packet));
+     if (packet != NULL) packet->header.pooled = true;
+     return packet;
+@@ -62,8 +63,8 @@
+ }
+ 
+ static void releaseAudioPacket(PQUEUED_AUDIO_PACKET packet) {
+-    if (packet->header.pooled) {
+-        pthread_mutex_lock(&audioPoolLock);
++    if (packet == NULL) return;
++    if (packet->header.pooled && pthread_mutex_trylock(&audioPoolLock) == 0) {
+         if (audioPoolCount < AUDIO_RECEIVE_POOL_LIMIT) {
+             audioPool[audioPoolCount++] = packet;
+             pthread_mutex_unlock(&audioPoolLock);

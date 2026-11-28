@@ -829,6 +829,7 @@ fun SettingsScreen(
                         }
                         SettingsCategory.DLNA,
                         SettingsCategory.ROMM,
+                        SettingsCategory.MOONLIGHT,
                         SettingsCategory.FILES,
                         SettingsCategory.WIREGUARD,
                         SettingsCategory.PLEX,
@@ -1713,6 +1714,7 @@ fun SettingsScreen(
                             item { AboutGameIconsCard() }
                             item { AboutInputControllerArtworkCard() }
                             item { AboutRommLogoCard() }
+                            item { AboutMoonlightLogoCard() }
                         }
                     }
                 }
@@ -1849,6 +1851,8 @@ private fun aboutServiceComponents() = listOf(
         "SerafiniJose/rusty / GitHub").takeIf { BuildConfig.SPOTIFY_ENABLED },
     AboutComponent("MG", "Monogram", BuildConfig.MONOGRAM_VERSION, R.string.settings_about_role_telegram,
         "monogram-android / GitHub", BuildConfig.MONOGRAM_REF.shortRef()).takeIf { BuildConfig.MONOGRAM_NATIVE },
+    AboutComponent("ML", "Moonlight", BuildConfig.MOONLIGHT_UPSTREAM_REF.shortRef(), R.string.moonlight_about_role,
+        "moonlight-stream / GitHub · GPL-3.0", BuildConfig.MOONLIGHT_UPSTREAM_REF.shortRef()).takeIf { BuildConfig.MOONLIGHT_NATIVE },
 )
 
 @Composable
@@ -2172,6 +2176,9 @@ private fun HomeRowAddButtons(
         stringResource(R.string.game_library_home_recent) to (HomeRowDefinition.SYSTEM_ROMM to HomeRowDefinition.GAMES_RECENT),
         stringResource(R.string.game_library_home_favorites) to (HomeRowDefinition.SYSTEM_ROMM to HomeRowDefinition.GAMES_FAVORITES),
         stringResource(R.string.game_library_all) to (HomeRowDefinition.SYSTEM_ROMM to HomeRowDefinition.GAMES_ALL),
+        stringResource(R.string.game_library_all) to (HomeRowDefinition.SYSTEM_MOONLIGHT to HomeRowDefinition.GAMES_ALL),
+        stringResource(R.string.game_library_home_favorites) to (HomeRowDefinition.SYSTEM_MOONLIGHT to HomeRowDefinition.GAMES_FAVORITES),
+        stringResource(R.string.game_library_home_recent) to (HomeRowDefinition.SYSTEM_MOONLIGHT to HomeRowDefinition.GAMES_RECENT),
         stringResource(R.string.settings_home_source_photos_recent) to (HomeRowDefinition.SYSTEM_PHOTOS to "recent"),
         stringResource(R.string.trailers_cinema) to (HomeRowDefinition.SYSTEM_TRAILERS to "CINEMA"),
         stringResource(R.string.trailers_upcoming) to (HomeRowDefinition.SYSTEM_TRAILERS to "UPCOMING"),
@@ -2209,6 +2216,7 @@ private fun HomeRowAddButtons(
             HomeRowDefinition.SYSTEM_RADIO,
             HomeRowDefinition.SYSTEM_GAMES,
             HomeRowDefinition.SYSTEM_ROMM,
+            HomeRowDefinition.SYSTEM_MOONLIGHT,
             HomeRowDefinition.SYSTEM_PHOTOS,
             HomeRowDefinition.SYSTEM_TRAILERS,
         )

@@ -171,7 +171,10 @@ class CompanionSettingsCompletenessTest {
         for (device in listOf(false, true)) {
             val target = preferences().apply { imageCacheMb = 256; tvheadendHtspPort = 10002 }
             val restored = send(incoming, target, device = device)
-            assertEquals(portable.copy(gameLibraryOptions = target.gameLibraryOptions, gameLibraryOverrides = emptyList(), gameLibraryFolders = emptyList()), restored.extras?.portable)
+            assertEquals(portable.copy(gameLibraryOptions = target.gameLibraryOptions, gameLibraryOverrides = emptyList(), gameLibraryFolders = emptyList(), moonlightStreamProfile = target.moonlightStreamProfile,
+                moonlightLibraryView = target.moonlightLibraryView,
+                moonlightGridColumns = target.moonlightGridColumns, moonlightListRows = target.moonlightListRows,
+                moonlightSortKey = target.moonlightSortKey, moonlightSortDescending = target.moonlightSortDescending), restored.extras?.portable)
             assertEquals(setOf("jellyfin"), target.allContinueSystems)
             assertFalse(target.filterBarShown)
             assertTrue(target.launcherIntegrationEnabled)
@@ -209,6 +212,20 @@ class CompanionSettingsCompletenessTest {
         assertEquals("cinematic", accountsTarget.viewTransitionStyleKey)
         assertEquals(256, accountsTarget.imageCacheMb)
         assertEquals(9984, accountsTarget.tvheadendHtspPort)
+    }
+
+    @Test fun moonlightBrowseAndQualityPreferencesTravelWithoutHostInventory() {
+        val target = preferences().apply { moonlightLibraryView = "list" }
+        val quality = com.ambient.tv.moonlight.MoonlightStreamProfile(width = 1280, height = 720)
+        val incoming = source().copy(extras = SettingsBackupExtras(
+            portable = PortableSettingsExtras(moonlightLibraryView = "grid", moonlightStreamProfile = quality),
+            connections = ConnectionSettingsExtras(moonlightEnabled = true)))
+        send(incoming, target, "preferences")
+        assertEquals("grid", target.moonlightLibraryView)
+        assertEquals(quality.validated(), target.moonlightStreamProfile)
+        assertFalse(target.moonlightEnabled)
+        receive("""{"schemaVersion":85,"exportedAtEpochMs":0}""", target)
+        assertEquals("grid", target.moonlightLibraryView)
     }
 
     @Test fun missingAndPartialExtrasPreserveOtherReceiverChoices() {

@@ -65,6 +65,9 @@ import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.ui.radio.radioStationSubtitle
 import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.spotify.SpotifyBrowseItem
+import com.ambient.tv.ui.moonlight.MoonlightBrowseGame
+import coil3.compose.AsyncImage
+import java.io.File
 import com.ambient.tv.spotify.SpotifyEntityType
 import com.ambient.tv.tvheadend.domain.TvhChannel
 import com.ambient.tv.tvheadend.domain.TvhDvrEntry
@@ -130,6 +133,8 @@ fun SearchScreen(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
+    onMoonlightClick: (String, Int) -> Unit = { _, _ -> },
+    onMoonlightDetails: (String, Int) -> Unit = onMoonlightClick,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
@@ -293,11 +298,11 @@ fun SearchScreen(
                         !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
                         uiState.hasSearched && !uiState.hasResults && !uiState.isSearching ->
                             com.ambient.tv.ui.common.BrowseStatusPanel(
-                                title = stringResource(if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState,
+                                title = stringResource(if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState, uiState.moonlightState,
                                     uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState,
                                     uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL })
                                     R.string.offline_browse_search_unavailable else R.string.search_no_results),
-                                body = if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState, uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
+                                body = if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState, uiState.moonlightState, uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
                                     stringResource(R.string.search_no_results_partial_error)
                                 } else stringResource(R.string.search_no_results_body),
                             )
@@ -308,6 +313,8 @@ fun SearchScreen(
                                 onItemClick,
                                 onYouTubeClick,
                                 onSpotifyClick,
+                                onMoonlightClick,
+                                onMoonlightDetails,
                                 { station -> viewModel.playRadio(station, onRadioStarted) },
                                 onTvheadendChannelClick,
                                 onTvheadendProgramClick,
@@ -319,6 +326,8 @@ fun SearchScreen(
                                 onItemClick,
                                 onYouTubeClick,
                                 onSpotifyClick,
+                                onMoonlightClick,
+                                onMoonlightDetails,
                                 { station -> viewModel.playRadio(station, onRadioStarted) },
                                 onTvheadendChannelClick,
                                 onTvheadendProgramClick,
@@ -361,6 +370,7 @@ private fun searchSourceLabel(source: SearchSource): String = when (source) {
     SearchSource.EMBY -> searchSystemName(MediaSystem.EMBY)
     SearchSource.LIVE_TV -> stringResource(R.string.tvh_live)
     SearchSource.ROMM -> searchSystemName(MediaSystem.ROMM)
+    SearchSource.MOONLIGHT -> searchSystemName(MediaSystem.MOONLIGHT)
     SearchSource.TRAILERS -> searchSystemName(MediaSystem.TRAILERS)
     SearchSource.TELEGRAM -> searchSystemName(MediaSystem.TELEGRAM)
     SearchSource.YOUTUBE -> searchSystemName(MediaSystem.YOUTUBE)
@@ -383,6 +393,28 @@ private fun RecentSearches(recent: List<String>, onSelect: (String) -> Unit, onC
     }
 }
 
+/** Moonlight art comes from authenticated HTTPS into a private, bounded local image cache. */
+@Composable
+private fun MoonlightSearchCard(
+    game: MoonlightBrowseGame,
+    onClick: () -> Unit,
+    onInfo: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focused = LocalSearchResultFocused.current
+    val presentation = remember(game) {
+        object : com.ambient.tv.domain.model.GameBrowseItem by game {
+            override val fileId = "search:moonlight:" + game.key
+        }
+    }
+    com.ambient.tv.ui.games.GameTile(presentation,
+        modifier = modifier.width(deviceDp(238.dp, 174.dp)),
+        artworkSlotAspectRatio = 1f,
+        onPlay = onClick, onInfo = onInfo,
+        onFocus = { focused(presentation.fileId) }, onRequester = {}, onDisposed = {},
+    )
+}
+
 @Composable
 private fun SearchRows(
     state: SearchUiState,
@@ -390,6 +422,8 @@ private fun SearchRows(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
+    onMoonlightClick: (String, Int) -> Unit,
+    onMoonlightDetails: (String, Int) -> Unit,
     onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
@@ -419,6 +453,7 @@ private fun SearchRows(
         ?: telegramGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
     val firstExternalGroup = when {
         firstMediaKey != null -> null
+        state.moonlightResults.isNotEmpty() -> "moonlight"
         state.tvheadendResults.channels.isNotEmpty() -> "tvh-channels"
         state.tvheadendResults.programs.isNotEmpty() -> "tvh-programs"
         state.tvheadendResults.recordings.isNotEmpty() -> "tvh-recordings"
@@ -451,6 +486,15 @@ private fun SearchRows(
         status(state.jellyfinState); mediaGroups(jellyfinGroups, "jellyfin")
         status(state.embyState); mediaGroups(embyGroups, "emby")
         status(state.rommState); mediaGroups(rommGroups, "romm")
+        status(state.moonlightState)
+        if (state.moonlightResults.isNotEmpty()) {
+            val indexForRow = index
+            state.moonlightResults.forEach { game ->
+                add(BrowseFocusSlot(BrowseFocusKey(
+                    "search:moonlight", "search:moonlight:" + game.key, true), indexForRow))
+            }
+            index++
+        }
         status(state.trailerState); mediaGroups(trailerGroups, "trailers")
         status(state.telegramState); mediaGroups(telegramGroups, "telegram")
         status(state.tvheadendState)
@@ -588,6 +632,39 @@ private fun SearchRows(
                                 (requestInitialResultFocus && item.ratingKey == firstMediaKey))
                     }
                 }
+                }
+            }
+        }
+        sourceStatusItem("moonlight-status", MediaSystem.MOONLIGHT, state.moonlightState)
+        if (state.moonlightResults.isNotEmpty()) {
+            item(key = "moonlight-results") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SearchGroupTitle(MediaSystem.MOONLIGHT, R.string.game_library_all)
+                    val rowKey = "search:moonlight"
+                    val keys = remember(state.moonlightResults) {
+                        state.moonlightResults.map { "search:moonlight:" + it.key }
+                    }
+                    val rowState = rememberBrowseRowState(
+                        initialFirstVisibleItemIndex = keys.indexOf(resultFocus.itemKey).coerceAtLeast(0))
+                    RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
+                    BrowseFocusRow(rowKey) {
+                        LazyRow(
+                            state = rowState,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(18.dp),
+                            modifier = Modifier.containRowFocusExit(),
+                        ) {
+                            items(state.moonlightResults, key = { it.key }) { game ->
+                                val key = "search:moonlight:" + game.key
+                                MoonlightSearchCard(
+                                    game = game,
+                                    onClick = { onMoonlightClick(game.host.id, game.app.id) },
+                                    onInfo = { onMoonlightDetails(game.host.id, game.app.id) },
+                                    modifier = Modifier.rowColumnFocusTarget(rowFocus, rowKey, key),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1138,6 +1215,8 @@ private fun SearchList(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
+    onMoonlightClick: (String, Int) -> Unit,
+    onMoonlightDetails: (String, Int) -> Unit,
     onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
@@ -1166,6 +1245,7 @@ private fun SearchList(
         ?: telegramGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
     val firstExternalGroup = when {
         firstMediaKey != null -> null
+        state.moonlightResults.isNotEmpty() -> "moonlight"
         state.tvheadendResults.channels.isNotEmpty() -> "tvh-channels"
         state.tvheadendResults.programs.isNotEmpty() -> "tvh-programs"
         state.tvheadendResults.recordings.isNotEmpty() -> "tvh-recordings"
@@ -1197,6 +1277,13 @@ private fun SearchList(
         status(state.jellyfinState); mediaGroups(jellyfinGroups)
         status(state.embyState); mediaGroups(embyGroups)
         status(state.rommState); mediaGroups(rommGroups)
+        status(state.moonlightState)
+        if (state.moonlightResults.isNotEmpty()) {
+            index++ // heading
+            state.moonlightResults.forEach { game ->
+                add(BrowseFocusSlot(BrowseFocusKey(null, "search:moonlight:" + game.key, true), index++))
+            }
+        }
         status(state.trailerState); mediaGroups(trailerGroups)
         status(state.telegramState); mediaGroups(telegramGroups)
         status(state.tvheadendState)
@@ -1304,6 +1391,26 @@ private fun SearchList(
             }
         }
 
+        sourceListStatusItem("moonlight-list-status", MediaSystem.MOONLIGHT, state.moonlightState)
+        if (state.moonlightResults.isNotEmpty()) {
+            item(key = "moonlight-list-header") {
+                SearchListGroupHeader(MediaSystem.MOONLIGHT, R.string.game_library_all)
+            }
+            items(state.moonlightResults, key = { "moonlight-list:" + it.key }) { game ->
+                ExternalSearchListItem(
+                    imageUrl = game.artworkPath?.let { android.net.Uri.fromFile(File(it)).toString() },
+                    title = game.app.title,
+                    subtitle = game.host.name.ifBlank { game.host.host },
+                    onClick = { onMoonlightClick(game.host.id, game.app.id) },
+                    focusKey = "search:moonlight:" + game.key,
+                    gameCover = game,
+                    onInfo = { onMoonlightDetails(game.host.id, game.app.id) },
+                    requestInitialFocus = requestInitialResultFocus &&
+                        firstExternalGroup == "moonlight" &&
+                        game == state.moonlightResults.firstOrNull(),
+                )
+            }
+        }
         sourceListStatusItem("trailers-list-status", MediaSystem.TRAILERS, state.trailerState)
         trailerGroups.forEach { (groupRes, groupItems) ->
             item(key = "trailers-list-header:$groupRes") { SearchListGroupHeader(MediaSystem.TRAILERS, groupRes) }
@@ -1528,8 +1635,10 @@ private fun ExternalSearchListItem(
     onClick: () -> Unit,
     requestInitialFocus: Boolean = false,
     focusKey: String,
+    gameCover: MoonlightBrowseGame? = null,
+    onInfo: (() -> Unit)? = null,
 ) {
-    var focused by remember(title, imageUrl) { mutableStateOf(false) }
+    var focused by remember(focusKey) { mutableStateOf(false) }
     val onResultFocused = LocalSearchResultFocused.current
     val rowShape = RoundedCornerShape(10.dp)
     Surface(
@@ -1537,7 +1646,7 @@ private fun ExternalSearchListItem(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = rowShape),
-        modifier = initialFocusModifier(requestInitialFocus).fillMaxWidth().browseFocusTarget(focusKey).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onClick).bringFocusedContextIntoView().onFocusChanged {
+        modifier = initialFocusModifier(requestInitialFocus).fillMaxWidth().browseFocusTarget(focusKey).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onClick, onLongClick = onInfo ?: onClick).bringFocusedContextIntoView().onFocusChanged {
             focused = it.isFocused
             if (it.isFocused) onResultFocused(focusKey)
         },
@@ -1556,7 +1665,13 @@ private fun ExternalSearchListItem(
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ArtworkImage(
+            if (gameCover != null) {
+                com.ambient.tv.ui.games.GameCoverArtwork(
+                    cover = gameCover.coverModel, title = title, systemId = gameCover.systemId,
+                    modifier = Modifier.width(76.dp).aspectRatio(1f).clip(RoundedCornerShape(9.dp)),
+                    focused = focused, fileId = focusKey, systemIcon = gameCover.artworkIcon,
+                )
+            } else ArtworkImage(
                 model = imageUrl,
                 title = title,
                 headers = imageHeaders,

@@ -1,0 +1,12 @@
+diff --git a/app/src/main/jni/moonlight-core/opus/Android.mk b/app/src/main/jni/moonlight-core/opus/Android.mk
+--- a/app/src/main/jni/moonlight-core/opus/Android.mk
++++ b/app/src/main/jni/moonlight-core/opus/Android.mk
+@@ -2,6 +2,6 @@
+  
+ include $(CLEAR_VARS)
+ LOCAL_MODULE:= libopus
+-LOCAL_SRC_FILES:= $(TARGET_ARCH_ABI)/libopus.a
+-LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/include
++LOCAL_SRC_FILES:= ambient-built/$(TARGET_ARCH_ABI)/libopus.a
++LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/source/include
+ include $(PREBUILT_STATIC_LIBRARY)

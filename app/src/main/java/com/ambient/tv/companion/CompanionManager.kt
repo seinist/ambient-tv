@@ -1459,6 +1459,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         }
         try {
             require(admitHandshake(socket.inetAddress))
+            // Avoid Nagle delays for the small authenticated controller and ACK records.
+            socket.tcpNoDelay = true
             socket.soTimeout = 8_000
             socket.startHandshake()
             val input = DataInputStream(socket.inputStream); val output = DataOutputStream(socket.outputStream)
@@ -1541,6 +1543,35 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 val request = input.readFrame()
                 sequence.accept(request)
                 require(acceptAddress(link, socket.inetAddress) && sessionLan()?.address == link.address)
+                // Only ordinary authenticated realtime packets for the already claimed Moonlight
+                // context can bypass Main. Pairing, commands, consent, port changes, backup and
+                // every other receiver mode still use the existing control plane.
+                if (request.type == "gamepad_input" && request.gamepadState != null &&
+                    !observer && returnSession == null && transfer == null &&
+                    request.capabilities.isEmpty() && request.syncAck == 0L &&
+                    request.syncResultId.isEmpty() && request.syncResult.isEmpty()) {
+                    fun authorized(): Boolean {
+                        val current = mutable.value
+                        val pinned = current.paired.firstOrNull { it.fingerprint == sessionPin }
+                        return television && foreground && receiverActive() && pinned != null &&
+                            sockets[socket] == sessionPin && companionCommandAllowed(television, request.type) &&
+                            current.backupOffer == null && !current.backupBusy && !current.restoreDialog &&
+                            current.prompt == null && current.pullRequest == null &&
+                            (request.syncPort !in 1..65535 ||
+                                (pinned.port == request.syncPort && pinned.host == socket.inetAddress.hostAddress.orEmpty()))
+                    }
+                    val fast = CompanionGamepadSession.tryMoonlightContinuousInput(nonce, request.gamepadState, ::authorized)
+                    if (fast != null) {
+                        // Realtime ACKs never carry a settings-return frame. The client only
+                        // consumes context, port and lease fields from a gamepad_input reply.
+                        val response = CompanionFrame(type = "state", nonce = nonce, sequence = request.sequence,
+                            gamepadInfo = fast.info, gamepadPort = fast.port, controller = mutable.value.controller,
+                            inputGranted = synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) },
+                            error = if (fast.accepted) "" else "gamepad_unavailable")
+                        output.writeFrame(response, compact = true)
+                        continue
+                    }
+                }
                 val reply = withContext(Dispatchers.Main) {
                     val mutatesPlayback = request.type in setOf("start", "queue_add", "queue_remove", "queue_move", "queue_clear", "queue_play", "play", "pause", "stop", "seek", "next", "previous", "select", "volume", "shuffle", "repeat", "retry")
                     if (mutatesPlayback) playbackMutation.lock()
@@ -1809,6 +1840,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     clientSocket = socket
                 }
                 socket.enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2")
+                socket.tcpNoDelay = true
                 socket.soTimeout = 8_000
                 socket.startHandshake()
                 val serverCertificate = socket.session.peerCertificates.single() as java.security.cert.X509Certificate
@@ -1993,12 +2025,12 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         } else {
                             val gameMenuPolling = mutable.value.let { current ->
                                 current.gamepadPanel && current.remote?.gamepadInfo?.let {
-                                    it.interaction != null && !it.acceptsGameplay
+                                    it.interaction != null && (!it.acceptsGameplay || it.systemId == "moonlight")
                                 } == true
                             }
                             command = live.receive(queue, when {
                                 returnTransfer != null || returnAck != 0L -> 50L
-                                gameMenuPolling -> 250L
+                                gameMenuPolling -> if (mutable.value.remote?.gamepadInfo?.systemId == "moonlight") 100L else 250L
                                 else -> 1_000L
                             }) ?: CompanionFrame(type = if (gameMenuPolling && returnTransfer == null && returnAck == 0L &&
                                 SystemClock.elapsedRealtime() - lastFullStateRequestAt < 1_000L)
