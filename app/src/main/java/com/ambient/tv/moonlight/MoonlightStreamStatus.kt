@@ -30,7 +30,19 @@ data class MoonlightVideoMetrics(
     val presentationP95Ms: Int? = null,
     val recentPresentationMs: Double? = null,
     val presentationSampleNanos: Long = 0L,
-)
+    val outputColorStandard: Int? = null,
+    val outputColorTransfer: Int? = null,
+    val outputColorRange: Int? = null,
+    val outputHdrStaticBytes: Int? = null,
+) {
+    // Android COLOR_STANDARD_BT2020=6, COLOR_TRANSFER_ST2084=6.
+    // Decoder metadata is evidence only, not a physical HDMI/panel measurement.
+    val hdrOutputEvidence: String get() = when {
+        !hdr || outputColorStandard == null || outputColorTransfer == null -> "unknown"
+        outputColorStandard == 6 && outputColorTransfer == 6 -> "confirmed"
+        else -> "mismatch"
+    }
+}
 data class MoonlightAudioMetrics(
     val channels: Int = 0, val rate: Int = 0, val bufferFrames: Int = 0,
     val underruns: Int = 0, val droppedSamples: Long = 0,

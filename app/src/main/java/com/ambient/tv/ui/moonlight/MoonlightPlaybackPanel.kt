@@ -11,7 +11,13 @@ import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import android.content.ClipboardManager
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.Context
+import com.ambient.tv.moonlight.moonlightBoundedText
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -118,15 +124,31 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     MoonlightDisplaySettingsSection(streamProfile, onUpdateProfile)
                 }
                 MoonlightPlaybackPage.TEXT -> {
-                    var message by rememberSaveable { mutableStateOf("") }
+                    // Clipboard and typed text are transient, never saved in Activity state.
+                    val context = LocalContext.current
+                    var message by remember { mutableStateOf("") }
                     Text(stringResource(R.string.moonlight_player_input_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     TvTextField(
                         value = message,
-                        onValueChange = { message = it.take(512) },
+                        onValueChange = { message = moonlightBoundedText(it) },
                         label = stringResource(R.string.moonlight_player_input_placeholder),
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                    TvActionButton(
+                        text = stringResource(R.string.moonlight_player_paste_text),
+                        onClick = {
+                            // Read only after an explicit click in the foreground. Never coerce
+                            // content URIs or intents to text, or send clipboard data automatically.
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            val text = runCatching {
+                                if (clipboard?.primaryClipDescription?.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) == true)
+                                    clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text
+                                else null
+                            }.getOrNull()
+                            if (text != null) message = moonlightBoundedText(text)
+                        },
                     )
                     TvActionButton(
                         text = stringResource(R.string.moonlight_player_send_text),
@@ -163,6 +185,16 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                             video.width, video.height, video.fps,
                             stringResource(if (video.hdr) R.string.moonlight_stats_hdr else R.string.moonlight_stats_sdr)))
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_output, metrics.outputFps))
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_decoder, video.decoder.ifBlank { "–" }))
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_color,
+                            video.outputColorStandard?.toString() ?: "–", video.outputColorTransfer?.toString() ?: "–",
+                            video.outputColorRange?.toString() ?: "–", video.outputHdrStaticBytes?.toString() ?: "–"))
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_hdr_verification,
+                            stringResource(when (video.hdrOutputEvidence) {
+                                "confirmed" -> R.string.moonlight_hdr_output_confirmed
+                                "mismatch" -> R.string.moonlight_hdr_output_mismatch
+                                else -> R.string.moonlight_hdr_output_unknown
+                            })))
                         if (video.presented > 0) RightPanelInfoRow(stringResource(R.string.moonlight_stats_presented, metrics.presentedFps))
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_drops, video.missing, video.dropped))
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_video_queue, metrics.pendingVideoFrames))
@@ -197,6 +229,18 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     }
                     if (metrics.audioQueueReductionMs > 0)
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio_queue_reduction, metrics.audioQueueReductionMs))
+                    val context = LocalContext.current
+                    TvActionButton(
+                        text = stringResource(R.string.moonlight_copy_diagnostics),
+                        enabled = video.width > 0,
+                        onClick = {
+                            // Explicit local export: no host names, IDs, pairing data or text.
+                            val report = com.ambient.tv.moonlight.moonlightDiagnosticReport(metrics,
+                                displayResult.hdr10, displayResult.mode?.label.orEmpty())
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            clipboard?.setPrimaryClip(ClipData.newPlainText("Moonlight diagnostics", report))
+                        },
+                    )
                 }
                 MoonlightPlaybackPage.QUIT -> {
                     Text(stringResource(R.string.moonlight_quit_confirm_hint),

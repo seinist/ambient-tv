@@ -605,8 +605,7 @@ class MoonlightStreamEngine @Inject constructor(
     /** Remote text entry is explicit, short and independent of Android system-key controls. */
     fun sendText(owner: Any, text: String) {
         enqueueInput(owner) {
-            val clean = text.filter { !it.isISOControl() || it == '\n' || it == '\t' }
-                .take(512)
+            val clean = moonlightBoundedText(text)
             if (clean.isEmpty()) return@enqueueInput
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             runCatching { conn?.sendUtf8Text(clean) }

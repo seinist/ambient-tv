@@ -39,6 +39,17 @@ class MoonlightMediaCodecRenderer(
     private val presented = AtomicLong()
     private var presentationThread: android.os.HandlerThread? = null
     @Volatile private var activeHdr = false
+    private data class OutputColor(val standard: Int? = null, val transfer: Int? = null,
+                                   val range: Int? = null, val hdrStaticBytes: Int? = null)
+    @Volatile private var outputColor = OutputColor()
+
+    private fun captureOutputColor(decoder: MediaCodec) {
+        val format = runCatching { decoder.outputFormat }.getOrNull() ?: return
+        fun integer(key: String) = runCatching { format.getInteger(key) }.getOrNull()
+        outputColor = OutputColor(integer(MediaFormat.KEY_COLOR_STANDARD), integer(MediaFormat.KEY_COLOR_TRANSFER),
+            integer(MediaFormat.KEY_COLOR_RANGE),
+            runCatching { format.getByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO)?.remaining() }.getOrNull())
+    }
     private var hdrMasteringInfo: ByteArray? = null
     private var hdrReconfigure = false
     private var lastFrame: Int? = null
@@ -115,6 +126,7 @@ class MoonlightMediaCodecRenderer(
                     decoder.start()
                     codecStarted = true
                     decoderName = info.name
+                    outputColor = OutputColor()
                     val handlerThread = presentationThread ?: android.os.HandlerThread("moonlight-frame-presented").also {
                         it.start()
                         presentationThread = it
@@ -340,7 +352,7 @@ class MoonlightMediaCodecRenderer(
             try {
                 var index = decoder.dequeueOutputBuffer(info, 8_000)
                 if (index < 0) {
-                    if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) pacer.reset()
+                    if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { captureOutputColor(decoder); pacer.reset() }
                     continue
                 }
                 if (info.size <= 0 || info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
@@ -357,7 +369,7 @@ class MoonlightMediaCodecRenderer(
                     if (now >= deadline || !pacer.shouldDrain(pts, now)) break
                     val newer = decoder.dequeueOutputBuffer(next, 0)
                     if (newer < 0) {
-                        if (newer == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) pacer.reset()
+                        if (newer == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { captureOutputColor(decoder); pacer.reset() }
                         break
                     }
                     // Metadata or empty output must not displace a ready picture.
@@ -393,12 +405,14 @@ class MoonlightMediaCodecRenderer(
 
     internal fun metrics(): MoonlightVideoMetrics {
         val timing = presentationSample
+        val color = outputColor
         return MoonlightVideoMetrics(
         currentMime, decoderName, decodedWidth, decodedHeight, decodedFps, activeHdr,
         received.get(), missing.get(), rendered.get(), dropped.get(), decodeMicros.get(),
         hostTenthsMs.get(), hostSamples.get(), presented.get(),
         assemblyLatency.p95Ms(), releaseLatency.p95Ms(), presentationLatency.p95Ms(),
         timing.delayUs.takeIf { timing.sampledAt != 0L }?.div(1000.0), timing.sampledAt,
+        color.standard, color.transfer, color.range, color.hdrStaticBytes,
         )
     }
 

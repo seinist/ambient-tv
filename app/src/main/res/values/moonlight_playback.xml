@@ -24,4 +24,12 @@
     <string name="moonlight_stats_sdr">SDR</string>
     <string name="moonlight_stats_presented">Display-confirmed frames: %1$.1f FPS</string>
     <string name="moonlight_stats_audio_queue">Estimated audio queue: %1$.1f ms</string>
+    <string name="moonlight_player_paste_text">Paste clipboard into text field</string>
+    <string name="moonlight_stats_decoder">Decoder: %1$s</string>
+    <string name="moonlight_stats_color">Decoder color: standard %1$s · transfer %2$s · range %3$s · HDR metadata bytes %4$s</string>
+    <string name="moonlight_stats_hdr_verification">Decoder HDR evidence: %1$s</string>
+    <string name="moonlight_hdr_output_confirmed">BT.2020 / PQ reported</string>
+    <string name="moonlight_hdr_output_mismatch">Color metadata mismatch</string>
+    <string name="moonlight_hdr_output_unknown">Not reported / SDR</string>
+    <string name="moonlight_copy_diagnostics">Copy diagnostic snapshot</string>
 </resources>
