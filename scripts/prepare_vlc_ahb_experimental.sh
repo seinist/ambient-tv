@@ -51,7 +51,7 @@ for file in dovi_fel_hvce.h dovi_fel_dual.h ambient_metadata_wire.h; do
 done
 dest="$VLC/modules/video_output/libplacebo"
 for file in ahb_import.h conversion_cache.h conversion_key.h display_bridge.h display_owner.h display_owner.cpp \
-    frame_lease.h placebo_bridge.h queue_transfer.h queue_retirement.h rgb_target.h sample_pass.h slot_pool.h \
+    frame_lease.h placebo_bridge.h present_retirement.h queue_transfer.h queue_retirement.h rgb_target.h sample_pass.h slot_pool.h \
     submission.h sync_fd.h unique_fd.h vlc_picture_bridge.h; do
     cp "$SRC/$file" "$dest/$file"
 done
@@ -91,6 +91,7 @@ PY
 # The pinned libplacebo shader generator has a missing ')' for mixed MMR
 # orders reaching order 3. Apply only inside the isolated experimental tree.
 cp "$SRC/libplacebo-patches/ambient-mmr-order3.patch" "$VLC/contrib/src/libplacebo/ambient-mmr-order3.patch"
+cp "$SRC/libplacebo-patches/ambient-wsi-retirement.patch" "$VLC/contrib/src/libplacebo/ambient-wsi-retirement.patch"
 python3 - "$VLC/contrib/src/libplacebo/rules.mak" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
@@ -100,6 +101,12 @@ line = "\t$(APPLY) $(SRC)/libplacebo/ambient-mmr-order3.patch\n"
 if line not in s:
     if s.count(anchor) != 1:
         raise SystemExit("Expected pinned libplacebo contrib patch")
-    p.write_text(s.replace(anchor, anchor + line))
+    s = s.replace(anchor, anchor + line)
+wsi = "\t$(APPLY) $(SRC)/libplacebo/ambient-wsi-retirement.patch\n"
+if wsi not in s:
+    if s.count(line) != 1:
+        raise SystemExit("Expected MMR patch before WSI retirement patch")
+    s = s.replace(line, line + wsi)
+p.write_text(s)
 PY
 echo "Staged experimental VLC AHB display integration (runtime flag remains off by default)"

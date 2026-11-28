@@ -71,6 +71,9 @@ void ambient_ahb_poll(struct ambient_ahb_owner *);
 /* After flushing libplacebo: bounded proof of queue retirement or explicit
  * device loss. On false retain the entire renderer/device until process exit. */
 bool ambient_ahb_retire(struct ambient_ahb_owner *);
+/* After queue-fence retirement, also establish presentation queue idle.
+ * False retains the entire context, including any detached wait worker. */
+bool ambient_ahb_retire_present(struct ambient_ahb_owner *);
 /* Only destroy after retirement. False means caller must quarantine the
  * entire libplacebo context as well as this owner; never destroy its device. */
 bool ambient_ahb_close(struct ambient_ahb_owner *);

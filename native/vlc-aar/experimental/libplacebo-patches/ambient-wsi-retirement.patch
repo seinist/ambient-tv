@@ -1,0 +1,84 @@
+diff --git a/src/include/libplacebo/vulkan.h b/src/include/libplacebo/vulkan.h
+--- a/src/include/libplacebo/vulkan.h
++++ b/src/include/libplacebo/vulkan.h
+@@ -349,7 +349,12 @@
+ // This will return true if the vulkan swapchain is internally detected
+ // as being suboptimal (VK_SUBOPTIMAL_KHR). This might be of use to clients
+ // who have `params->allow_suboptimal` enabled.
+-bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw);
++bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw);
++
++// Ambient VLC: caller has flushed the GPU and proven the single graphics
++// queue idle, including present operations. No submissions may follow.
++// Return false if command callbacks are still pending; retain the device.
++bool pl_vulkan_swapchain_ambient_mark_retired(pl_swapchain sw);
+ 
+ // Vulkan interop API, for sharing a single VkDevice (and associated vulkan
+ // resources) directly with the API user. The use of this API is a bit sketchy
+diff --git a/src/vulkan/swapchain.c b/src/vulkan/swapchain.c
+--- a/src/vulkan/swapchain.c
++++ b/src/vulkan/swapchain.c
+@@ -44,7 +44,8 @@
+     int swapchain_depth;
+     pl_rc_t frames_in_flight;       // number of frames currently queued
+     bool suboptimal;                // true once VK_SUBOPTIMAL_KHR is returned
+-    bool needs_recreate;            // swapchain needs to be recreated
++    bool needs_recreate;            // swapchain needs to be recreated
++    bool ambient_retired;           // externally verified terminal queue idle
+     struct pl_color_repr color_repr;
+     struct pl_color_space color_space;
+     struct pl_hdr_metadata hdr_metadata;
+@@ -406,16 +407,14 @@
+     struct priv *p = PL_PRIV(sw);
+     struct vk_ctx *vk = p->vk;
+ 
+-    pl_gpu_flush(gpu);
+-    vk_wait_idle(vk);
+-
+-    // Vulkan offers no way to know when a queue presentation command is done,
+-    // leading to spec-mandated undefined behavior when destroying resources
+-    // tied to the swapchain. Use an extra `vkQueueWaitIdle` on all of the
+-    // queues we may have oustanding presentation calls on, to hopefully inform
+-    // the driver that we want to wait until the device is truly idle.
+-    for (int i = 0; i < vk->pool_graphics->num_queues; i++)
+-        vk->QueueWaitIdle(vk->pool_graphics->queues[i]);
++    if (!p->ambient_retired) {
++        pl_gpu_flush(gpu);
++        vk_wait_idle(vk);
++
++        // Default upstream path for clients without external retirement proof.
++        for (int i = 0; i < vk->pool_graphics->num_queues; i++)
++            vk->QueueWaitIdle(vk->pool_graphics->queues[i]);
++    }
+ 
+     for (int i = 0; i < p->images.num; i++)
+         pl_tex_destroy(gpu, &p->images.elem[i]);
+@@ -884,8 +883,26 @@
+     pl_mutex_unlock(&p->lock);
+ }
+ 
+-bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw)
+-{
++bool pl_vulkan_swapchain_ambient_mark_retired(pl_swapchain sw)
++{
++    if (!sw)
++        return false;
++    struct priv *p = PL_PRIV(sw);
++    struct vk_ctx *vk = p->vk;
++    if (p->impl.destroy != vk_sw_destroy || vk->pool_graphics->num_queues != 1)
++        return false;
++    // The caller already flushed and waited on the sole queue. Run deferred
++    // callbacks nonblocking, and reject if any submission remains outstanding.
++    vk_poll_commands(vk, 0);
++    pl_mutex_lock(&vk->lock);
++    bool empty = vk->cmds_pending.num == 0;
++    pl_mutex_unlock(&vk->lock);
++    p->ambient_retired = empty;
++    return empty;
++}
++
++bool pl_vulkan_swapchain_suboptimal(pl_swapchain sw)
++{
+     struct priv *p = PL_PRIV(sw);
+     return p->suboptimal;
+ }

@@ -2,6 +2,7 @@
 #include "conversion_cache.h"
 #include "submission.h"
 #include "queue_retirement.h"
+#include "present_retirement.h"
 #include "slot_pool.h"
 #include "queue_transfer.h"
 #include <array>
@@ -65,6 +66,8 @@ struct ambient_ahb_owner {
     bool retired{};
     bool device_lost{};
     QueueRetirement retirement_fence;
+    PFN_vkQueueWaitIdle present_idle{};
+    bool present_retired{};
 
     bool init() {
         auto get = reinterpret_cast<PFN_vkGetDeviceProcAddr>(c.get_proc(c.instance, "vkGetDeviceProcAddr"));
@@ -108,6 +111,8 @@ struct ambient_ahb_owner {
         // Export is not needed for this conservative same-device path.
         sync.export_fd = reinterpret_cast<PFN_vkGetSemaphoreFdKHR>(get(c.device, "vkGetSemaphoreFdKHR"));
         D(sync, submit, QueueSubmit); D(sync, fence_status, GetFenceStatus);
+        present_idle = reinterpret_cast<PFN_vkQueueWaitIdle>(get(c.device, "vkQueueWaitIdle"));
+        if (!present_idle) return false;
         D(sync, reset_fences, ResetFences);
         D(commands, get_queue, GetDeviceQueue);
         D(commands, create_pool, CreateCommandPool); D(commands, destroy_pool, DestroyCommandPool);
@@ -387,6 +392,16 @@ struct ambient_ahb_owner {
         return false;
     }
 
+    bool retire_present() {
+        if (present_retired) return true;
+        if (!retired || !queue || !present_idle) return false;
+        const auto result = PresentRetirement::wait(queue, present_idle, c.opaque,
+            c.lock_queue, c.unlock_queue, std::chrono::seconds(2));
+        if (result == VK_ERROR_DEVICE_LOST) device_lost = true;
+        present_retired = result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST;
+        return present_retired;
+    }
+
     bool drain() {
         if (!retire()) return false;
         for (auto &s : slots) {
@@ -437,6 +452,9 @@ extern "C" void ambient_ahb_poll(ambient_ahb_owner *owner) {
 }
 extern "C" bool ambient_ahb_retire(ambient_ahb_owner *owner) {
     return !owner || owner->retire();
+}
+extern "C" bool ambient_ahb_retire_present(ambient_ahb_owner *owner) {
+    return owner && owner->retire_present();
 }
 extern "C" bool ambient_ahb_close(ambient_ahb_owner *owner) {
     if (!owner) return true;
