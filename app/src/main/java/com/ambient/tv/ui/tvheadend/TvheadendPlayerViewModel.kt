@@ -973,6 +973,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         val local = com.ambient.tv.ui.player.LocalAudioFallbackPolicy.nextBackend(
             active, localFallbackBackends,
             com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable,
+            vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
             enabled = (com.ambient.tv.ui.player.playbackProfileAudio(BackgroundPlaybackSession.activeHandle())?.options
                 ?: (com.ambient.tv.ui.player.TitleVideoSettingsStore.load(context, metadata(current))?.audio
                     ?: com.ambient.tv.ui.player.ResolutionVideoProfileStore.load(context, metadata(current))?.audio
@@ -1101,6 +1102,7 @@ class TvheadendPlayerViewModel @Inject constructor(
             recovery = recoveryRendererKey,
             dolbyVision = sourceHdrStandard == com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION,
             mpvAvailable = com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable,
+            vlcAvailable = com.ambient.tv.ui.player.backend.VlcBackendAvailability.isAvailable,
         )
         val change = com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(playbackBackendKey) !=
             com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(selected.key)
