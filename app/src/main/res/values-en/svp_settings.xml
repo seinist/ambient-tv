@@ -55,5 +55,5 @@
     <string name="svp_adaptive_hint">Starts with light analysis and reduces motion analysis quality under load. Frame rate and timestamps stay unchanged.</string>
     <string name="svp_hdr_two_pass">HDR10+ two-pass (experimental)</string>
     <string name="svp_hdr_two_pass_on">Analyze and replay</string>
-    <string name="svp_hdr_two_pass_hint">Local HEVC HDR10+ files only. The first playback measures every frame; after a complete run playback restarts from the beginning with scene metadata. Seeking cancels the analysis.</string>
+    <string name="svp_hdr_two_pass_hint">Local or finite network HEVC HDR10+ files up to the selected resolution. Attempts an accelerated offscreen analysis; if unsupported, the first playback measures every frame and restarts after completion. Seeking cancels analysis.</string>
 </resources>
