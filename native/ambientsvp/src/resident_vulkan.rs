@@ -772,7 +772,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"finish")?,c"finish")?])
     }else{None};
     Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
-        stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=3&&
+        stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=4&&
             limits.max_storage_buffer_range>=100001*4*3&&
             u64::from(limits.max_storage_buffer_range)>=4*(3*100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
         stats:Mutex::new(None)})))
