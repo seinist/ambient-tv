@@ -9,15 +9,30 @@ internal class ModuleDexOwnership(
     private val classes: Set<String>,
     private val required: Set<String> = emptySet(),
     private val requiredPrefixes: Set<String> = emptySet(),
+    private val hostResourceClasses: Boolean = false,
 ) {
     fun owns(name: String): Boolean =
-        prefixes.any { name.startsWith(it) } ||
-            classes.any { name == it || name.startsWith(it + "$") }
+        !(hostResourceClasses && (name.substringAfterLast('.') == "R" ||
+            name.substringAfterLast('.').startsWith("R$"))) &&
+        (prefixes.any { name.startsWith(it) } ||
+            classes.any { name == it || name.startsWith(it + "$") })
 
     fun accepts(definitions: Set<String>): Boolean = definitions.containsAll(required) &&
         definitions.all(::owns) && requiredPrefixes.all { prefix -> definitions.any { it.startsWith(prefix) } }
 
     companion object {
+        val SMARTTUBE = ModuleDexOwnership(
+            setOf("com.liskovsoft.", "com.eclipsesource.v8."),
+            setOf("com.ambient.tv.youtube.SmartTubeModuleAdapter"),
+            required = setOf(
+                "com.ambient.tv.youtube.SmartTubeModuleAdapter",
+                "com.liskovsoft.youtubeapi.service.YouTubeServiceManager",
+                "com.liskovsoft.sharedutils.prefs.GlobalPreferences",
+                "com.liskovsoft.youtubeapi.lounge.LoungeService",
+                "com.eclipsesource.v8.V8",
+            ),
+            hostResourceClasses = true,
+        )
         val MONOGRAM = ModuleDexOwnership(
             setOf("org.monogram.mtproto.", "uniffi.monogram_mtproto.", "com.sun.jna.", "org.rustls."),
             setOf(
