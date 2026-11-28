@@ -88,7 +88,8 @@ def build_commands(log, cwd=None, root=None, strict=False):
             if "&&" not in tokens:
                 continue
             tokens = tokens[tokens.index("&&") + 1:]
-        if tokens and Path(tokens[0]).name == "ccache":
+        # Upstream and CMake may both install the same launcher.
+        while tokens and Path(tokens[0]).name == "ccache":
             tokens = tokens[1:]
         if not tokens:
             continue

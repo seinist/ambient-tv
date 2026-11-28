@@ -291,6 +291,16 @@ jobs:
           # libretro's own CI does not fetch either.
           # Only submodules .gitmodules declares (mupen64plus-nx carries a gitlink without one).
           paths=$(git -C src config -f .gitmodules --get-regexp '\.path$' 2>/dev/null | awk '{ print $2 }' || true)
+          # Ymir vendors the dr_libs headers; this obsolete declaration has no gitlink.
+          if [[ "$CORE_REPO" == https://github.com/warmenhoven/Emir ]]; then
+            stale=vendor/dr_libs/dr_libs
+            if ! git -C src ls-files --error-unmatch "$stale" >/dev/null 2>&1; then
+              for header in dr_flac.h dr_mp3.h dr_wav.h; do
+                git -C src ls-files --error-unmatch "vendor/dr_libs/include/dr_libs/$header" >/dev/null
+              done
+              paths=$(printf '%s\n' "$paths" | grep -Fxv "$stale")
+            fi
+          fi
           if [ -n "$paths" ]; then
             # shellcheck disable=SC2086
             git -C src submodule update -q --init --depth 1 -- $paths || git -C src submodule update -q --init -- $paths

@@ -350,6 +350,62 @@ class CoreBuildPolicyTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Malformed compiler command"):
             list(compiler_commands(malformed, strict=True))
 
+    def test_nested_ccache_link_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "build"
+            nested.mkdir()
+            log = ("cd build && ccache /usr/bin/ccache /ndk/bin/clang++ -O3 -c ../src/a.cpp -o a.o\n"
+                   "cd build && /usr/bin/ccache /usr/bin/ccache /ndk/bin/clang -O3 -c ../src/b.c -o b.o\n"
+                   "cd build && /ndk/bin/clang++ -shared a.o b.o -o libretro.so\n")
+            commands, graph = target_commands(log, root, root, nested / "libretro.so",
+                                               ("a.cpp", "b.c"))
+            self.assertEqual(graph["unresolved_local_inputs"], [])
+            self.assertEqual(graph["linked_compile_commands"], 2)
+            self.assertEqual(len(commands), 3)
+
+    def test_external_archive_contract(self):
+        from core_build_policy import external_archive_evidence
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = "src/.deps/lib/libzstd.a"
+            path = root / relative
+            path.parent.mkdir(parents=True)
+            obj = bytearray(64)
+            obj[:7] = b"\x7fELF" + bytes((2, 1, 1))
+            struct.pack_into("<HHI", obj, 16, 1, 183, 1)
+            header = b"member.o/       " + b"0           " + b"0     " + b"0     " + b"644     " + b"64        " + bytes((96, 10))
+            self.assertEqual(len(header), 60)
+            path.write_bytes(b"!<arch>\n" + header + obj)
+            missing, proof = external_archive_evidence(root, "armsx2", "arm64-v8a", [relative, "unknown.a"])
+            self.assertEqual(missing, ["unknown.a"])
+            self.assertEqual(proof[relative]["elf_members"], 1)
+            self.assertFalse(proof[relative]["compiler_flags_verified"])
+            self.assertEqual(len(proof[relative]["sha256"]), 64)
+            self.assertEqual(external_archive_evidence(root, "cemu", "arm64-v8a", [relative]), ([relative], {}))
+            struct.pack_into("<H", obj, 18, 62)
+            path.write_bytes(b"!<arch>\n" + header + obj)
+            with self.assertRaises(ValueError):
+                external_archive_evidence(root, "armsx2", "arm64-v8a", [relative])
+
+    def test_dolphin_and_ppsspp_explicit_optimization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mbed = root / "Externals/mbedtls/CMakeLists.txt"
+            mbed.parent.mkdir(parents=True)
+            mbed.write_text('set(CMAKE_C_FLAGS_RELEASE     "-O2")\n' * 2)
+            prepare_cmake(root, "dolphin", "optimized")
+            self.assertEqual(mbed.read_text().count("-O3 -DNDEBUG"), 2)
+            source = root / "Common/Input/InputState.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text("#include <cstdio>\n")
+            cmake = root / "CMakeLists.txt"
+            cmake.write_text("\n".join(f'target_compile_options({target} PRIVATE "-O2")'
+                                       for target in ("udis86", "cityhash", "zlib")))
+            prepare_cmake(root, "ppsspp", "optimized-a57")
+            self.assertIn("#include <cstdlib>", source.read_text())
+            self.assertEqual(cmake.read_text().count('"-O3"'), 3)
+
     def test_command_boundaries_and_working_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -256,6 +256,68 @@ ALLOWED_NEEDED = {
 }
 
 
+# Separately built pinned dependency packages: their ABI and bytes are
+# verified, but their compiler flags are not claimed as core flag evidence.
+EXTERNAL_ARCHIVES = {
+    "cemu": {"boost_container", "boost_context", "boost_nowide", "boost_program_options",
+             "crypto", "curl", "fmt", "glm", "glslang", "pugixml", "ssl", "usb-1.0", "z", "zip", "zstd"},
+    "armsx2": {"SDL3", "freetype", "jpeg", "lz4", "plutosvg", "plutovg", "png16",
+               "shaderc_combined", "sharpyuv", "webp", "zstd"},
+}
+
+
+def external_archive_evidence(root, core, abi, unresolved):
+    triplet = {"arm64-v8a": "arm64-android", "x86_64": "x64-android"}.get(abi)
+    if core == "cemu" and triplet:
+        directory = f"build/vcpkg_installed/{triplet}/lib"
+    elif core == "armsx2" and abi == "arm64-v8a":
+        directory = "src/.deps/lib"
+    else:
+        directory = None
+    allowed = {f"{directory}/lib{name}.a" for name in EXTERNAL_ARCHIVES.get(core, ())} if directory else set()
+    root = Path(root).resolve()
+    machine, elfclass = ELF_ABIS[abi]
+    evidence = {}
+    remaining = []
+    for relative in unresolved:
+        if relative not in allowed:
+            remaining.append(relative)
+            continue
+        path = root / relative
+        if not path.is_file() or path.resolve() != path or not path.is_relative_to(root):
+            raise ValueError(f"Invalid external archive path: {relative}")
+        members = 0
+        with path.open("rb") as stream:
+            size = path.stat().st_size
+            if stream.read(8) != b"!<arch>\n":
+                raise ValueError(f"Invalid external archive: {relative}")
+            while stream.tell() < size:
+                header = stream.read(60)
+                if len(header) != 60 or header[58:] != bytes((96, 10)):
+                    raise ValueError(f"Invalid archive header: {relative}")
+                name = header[:16].decode("ascii").strip()
+                length = int(header[48:58].decode("ascii").strip())
+                start = stream.tell()
+                end = start + length
+                if length < 0 or end + (length & 1) > size:
+                    raise ValueError(f"Invalid archive member size: {relative}")
+                if name not in {"/", "//", "/SYM64/"}:
+                    name_size = int(name[3:]) if name.startswith("#1/") else 0
+                    if not 0 <= name_size <= length:
+                        raise ValueError(f"Invalid archive member name: {relative}")
+                    stream.seek(start + name_size)
+                    elf = stream.read(min(64, length - name_size))
+                    if (len(elf) < (64 if elfclass == 2 else 52) or
+                            elf[:7] != b"\x7fELF" + bytes((elfclass, 1, 1)) or
+                            struct.unpack_from("<HHI", elf, 16) != (1, machine, 1)):
+                        raise ValueError(f"External archive member is not a native {abi} object: {relative}")
+                    members += 1
+                stream.seek(end + (length & 1))
+        evidence[relative] = {"sha256": file_digest(path), "elf_members": members,
+                              "compiler_flags_verified": False}
+    return remaining, evidence
+
+
 def dynamic_dependencies(readelf, binary):
     result = subprocess.check_output([readelf, "--dynamic", str(binary)], text=True)
     needed = re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", result)
@@ -413,6 +475,30 @@ def prepare_swan_cmake(root):
 def prepare_cmake(root, core, profile):
     if core == "citra2018":
         prepare_citra_cmake(root)
+    if core == "ppsspp":
+        path = root / "Common/Input/InputState.cpp"
+        source = path.read_text()
+        marker = "#include <cstdio>\n"
+        if source.count(marker) != 1:
+            raise ValueError("PPSSPP input include anchor changed")
+        path.write_text(source.replace(marker, marker + "#include <cstdlib>\n"))
+    if "-O3" in PROFILES[profile][0]:
+        if core == "dolphin":
+            path = root / "Externals/mbedtls/CMakeLists.txt"
+            source = path.read_text()
+            marker = 'set(CMAKE_C_FLAGS_RELEASE     "-O2")'
+            if source.count(marker) != 2:
+                raise ValueError("Dolphin mbedTLS release flag anchors changed")
+            path.write_text(source.replace(marker, 'set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG")'))
+        elif core == "ppsspp":
+            path = root / "CMakeLists.txt"
+            source = path.read_text()
+            for target in ("udis86", "cityhash", "zlib"):
+                marker = f'target_compile_options({target} PRIVATE "-O2")'
+                if source.count(marker) != 1:
+                    raise ValueError(f"PPSSPP optimization anchor changed: {target}")
+                source = source.replace(marker, f'target_compile_options({target} PRIVATE "-O3")')
+            path.write_text(source)
     if profile not in ({"o3", "thinlto", "o3-thinlto"} | PGO_PROFILES | PUBLIC_EXPERIMENTS):
         return
     if core == "panda3ds":
@@ -620,6 +706,9 @@ def main():
         scoped, link_evidence = target_commands(
             build_log, args.build_cwd, Path.cwd(), args.linked_library,
             patched_sources(args.core, args.abi, args.profile))
+        remaining, external = external_archive_evidence(Path.cwd(), args.core, args.abi, link_evidence["unresolved_local_inputs"])
+        link_evidence["unresolved_local_inputs"] = remaining
+        link_evidence["external_archive_evidence"] = external
         if link_evidence["unresolved_local_inputs"]:
             raise ValueError(f"Core has unaudited local linker inputs: {link_evidence['unresolved_local_inputs']}")
         report = {**identity, **link_evidence, "needed_libraries": dependencies, "core": args.core, "abi": args.abi, "commit": args.commit,
