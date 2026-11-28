@@ -59,6 +59,10 @@ void svp_mpv_compile_entrypoints(void *lib,struct mp_image *img)
 #ifdef SVP_METADATA_TEST
 #include <assert.h>
 #include <stddef.h>
+int av_buffer_is_writable(const AVBufferRef *ref){return ref&&ref->data;}
+void pl_map_hdr_metadata(struct pl_hdr_metadata *hdr,const struct pl_av_hdr_metadata *meta){
+    if(meta&&meta->dhp)hdr->scene_avg=(float)meta->dhp->params[0].average_maxrgb.num/meta->dhp->params[0].average_maxrgb.den;
+}
 bool pl_hdr_metadata_equal(const struct pl_hdr_metadata *a,const struct pl_hdr_metadata *b)
 {
     return a->min_luma==b->min_luma && a->max_luma==b->max_luma;
@@ -145,6 +149,28 @@ int main(void)
     h2.params[1].overlap_process_option=h.params[1].overlap_process_option;
     h2.num_cols_targeted_system_display_actual_peak_luminance=3;
     assert(!svp_hdrplus_lerp(&mid,&x,&y,.5,128,64));
+    // Actual second-pass metadata mapping, including reserved values
+    // and a Profile-A-style absent tone mapping target.
+    memset(&h,0,sizeof(h));h.itu_t_t35_country_code=0xb5;
+    h.application_version=1;h.num_windows=1;
+    h.targeted_system_display_maximum_luminance=(AVRational){0,1};
+    AVHDRPlusColorTransformParams *scene=&h.params[0];
+    static const unsigned percentages[]={1,5,10,25,50,75,90,95,99};
+    scene->num_distribution_maxrgb_percentiles=9;
+    for(unsigned j=0;j<3;j++)scene->maxscl[j]=(AVRational){1000,100000};
+    scene->average_maxrgb=(AVRational){500,100000};scene->fraction_bright_pixels=(AVRational){0,1000};
+    for(unsigned j=0;j<9;j++)scene->distribution_maxrgb[j]=(AVHDRPlusPercentile){
+        percentages[j],{j==1?0:j==2?255:500,100000}};
+    a.w=128;a.h=64;a.params.color.transfer=PL_COLOR_TRC_PQ;a.params.color.primaries=PL_COLOR_PRIM_BT_2020;
+    assert(svp_vk_scene_compatible(&a));
+    AmbientSvpHdrSceneResult measured={.first=0,.end=2,.brightest_frame=1,
+        .maxscl={1200,1100,1000},.average=600,.percentiles={100,0,255,200,400,600,800,900,1100},.fraction=321};
+    assert(svp_vk_scene_metadata(&a,&measured));
+    assert(scene->maxscl[0].num==1200&&scene->average_maxrgb.num==600&&scene->fraction_bright_pixels.num==321);
+    assert(scene->distribution_maxrgb[2].percentile.num==255&&!scene->tone_mapping_flag&&a.ambient_svp_hdr_generated);
+    scene->distribution_maxrgb[3].percentage=26;
+    assert(!svp_vk_scene_compatible(&a));
+    assert(!svp_vk_scene_metadata(&a,&measured));
     struct dovi_fixture d=make_dovi(),d2;
     memcpy(&d2,&d,sizeof(d));
     x.data=(uint8_t *)&d;x.size=sizeof(d);y.data=(uint8_t *)&d2;y.size=sizeof(d2);
