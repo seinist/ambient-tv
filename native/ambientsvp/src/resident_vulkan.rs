@@ -442,7 +442,7 @@ struct Core{
     quality:Option<(Pipeline,Pipeline,Pipeline)>,tuning:Option<ResidentTuning>,
     masks:Option<[Pipeline;3]>,algorithm:AtomicU32,
     width:u32,height:u32,gw:u32,gh:u32,field_size:u64,mode:u32,
-    in_flight:AtomicU32,
+    in_flight:AtomicU32,aux_in_flight:AtomicU32,
     idle:Mutex<Vec<PairResources>>,
     lost:AtomicBool,
     stats_supported:bool,
@@ -478,7 +478,7 @@ pub struct VulkanPair{
     command:vk::CommandBuffer,
     a:VulkanPicture,b:VulkanPicture,
     phases:usize,
-    extended:Vec<VulkanPair>,
+    extended:Vec<VulkanPair>,auxiliary:bool,
     rgb_outputs:[vk::ImageView;MAX_PHASES],
     hdr_jobs:[Option<StatsJob>;MAX_PHASES],
     fence:vk::Fence,
@@ -493,19 +493,25 @@ impl Drop for VulkanPair{
         d.free_memory(self.memory,None);
         #[cfg(target_os="android")]
         if let Some(inputs)=self.ahb_inputs.take(){for p in inputs{(&*p).release_consumer();}}
-        self.core.in_flight.fetch_sub(1,Ordering::AcqRel);
+        let counter=if self.auxiliary{&self.core.aux_in_flight}else{&self.core.in_flight};
+        counter.fetch_sub(1,Ordering::AcqRel);
     }}
 }
 impl VulkanPair{
     fn new(core:Arc<Core>,command:vk::CommandBuffer,a:VulkanPicture,b:VulkanPicture)->Result<Self>{
+        Self::new_kind(core,command,a,b,false)
+    }
+    fn new_kind(core:Arc<Core>,command:vk::CommandBuffer,a:VulkanPicture,b:VulkanPicture,auxiliary:bool)->Result<Self>{
         if core.lost.load(Ordering::Acquire) || command==vk::CommandBuffer::null() || !a.valid() || !b.valid() || a.rgb()!=b.rgb()
             || (matches!(core.mode,1|4)&&(a.nv12!=1||b.nv12!=1)) || (matches!(core.mode,2|5)&&(a.nv12!=0||b.nv12!=0)) || (core.mode==3&&!a.rgb())
             || (core.mode>=4&&a.chroma_location!=b.chroma_location)
         {return Err("invalid resident pictures".into());}
-        core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
-            (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
+        let counter=if auxiliary{&core.aux_in_flight}else{&core.in_flight};
+        let max=if auxiliary{2*MAX_IN_FLIGHT}else{MAX_IN_FLIGHT};
+        counter.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
+            (n<max).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
-            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),
+            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,extended:Vec::new(),auxiliary,
             rgb_outputs:[vk::ImageView::null();MAX_PHASES],hdr_jobs:std::array::from_fn(|_|None),fence:vk::Fence::null(),
             #[cfg(target_os="android")]
             ahb_inputs:None};
@@ -710,7 +716,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     // Keep the first two directional fields and scene word ABI stable;
     // append immutable coarse snapshots and two global predictors.
     let n=u64::from(gw)*u64::from(gh);
-    let field_size=n*32+if tuning.is_some(){n*128+48}else{0};
+    let field_size=n*32+if tuning.is_some(){n*128+80}else{0};
     if width>limits.max_image_dimension2_d || height>limits.max_image_dimension2_d
         || limits.max_per_stage_descriptor_sampled_images<6 || limits.max_per_stage_descriptor_storage_images<raw_planes(mode) as u32
         || limits.max_per_stage_descriptor_storage_buffers<1 || limits.max_push_constants_size<16
@@ -760,7 +766,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"scatter")?,c"scatter")?,
             Pipeline::new(&device,&types,&mask_spirv(mode,t,"finish")?,c"finish")?])
     }else{None};
-    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
+    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=3&&
             limits.max_storage_buffer_range>=100001*4*3,
         stats:Mutex::new(None)})))
@@ -853,8 +859,8 @@ pub unsafe extern "C" fn ambient_svp_vk_begin_extended(s:*const VulkanResident,c
         // Allocate all three pairs BEFORE recording. Failure leaves the
         // caller's command buffer untouched and permits the two-frame path.
         let Ok(mut center)=VulkanPair::new(core.clone(),command,a,b)else{return ptr::null_mut();};
-        let Ok(left)=VulkanPair::new(core.clone(),command,p,a)else{return ptr::null_mut();};
-        let Ok(right)=VulkanPair::new(core.clone(),command,b,n)else{return ptr::null_mut();};
+        let Ok(left)=VulkanPair::new_kind(core.clone(),command,p,a,true)else{return ptr::null_mut();};
+        let Ok(right)=VulkanPair::new_kind(core.clone(),command,b,n,true)else{return ptr::null_mut();};
         unsafe{
             center.analyse();left.analyse();right.analyse();
             let d=&core.device;
@@ -867,9 +873,11 @@ pub unsafe extern "C" fn ambient_svp_vk_begin_extended(s:*const VulkanResident,c
             // the resident source-to-destination naming. The previous
             // pair's B->A and next pair's A->B are the extended vectors.
             d.cmd_copy_buffer(command,left.field,center.field,
-                &[vk::BufferCopy::default().src_offset(n*16).dst_offset((8*n+3)*16).size(n*16)]);
+                &[vk::BufferCopy::default().src_offset(n*16).dst_offset((8*n+3)*16).size(n*16),
+                  vk::BufferCopy::default().src_offset(2*n*16).dst_offset((10*n+3)*16).size(16)]);
             d.cmd_copy_buffer(command,right.field,center.field,
-                &[vk::BufferCopy::default().src_offset(0).dst_offset((9*n+3)*16).size(n*16)]);
+                &[vk::BufferCopy::default().src_offset(0).dst_offset((9*n+3)*16).size(n*16),
+                  vk::BufferCopy::default().src_offset(2*n*16).dst_offset((10*n+4)*16).size(16)]);
             let after=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ)];
             d.cmd_pipeline_barrier(command,vk::PipelineStageFlags::TRANSFER,
