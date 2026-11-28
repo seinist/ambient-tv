@@ -84,14 +84,6 @@ jobs:
         run: python3 native/ambientsvp/tests/hdr10plus_reference.py -v
       - name: Test synthetic versioned HDR10+ bitstream payloads
         run: python3 native/ambientsvp/tests/hdr10plus_bitstream_reference.py --self-test
-      - name: Compare real FFmpeg FATE HDR10+ bitstream with reference metadata
-        run: |
-          set -euo pipefail
-          sample="$(mktemp)"
-          trap 'rm -f "$sample"' EXIT
-          curl --proto '=https' --proto-redir '=https' -fSL --retry 3 --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
-            https://fate-suite.ffmpeg.org/hevc/hdr10_plus_h265_sample.hevc -o "$sample"
-          python3 native/ambientsvp/tests/hdr10plus_bitstream_reference.py "$sample" --fate
       - name: Prepare Rust
         run: rustup toolchain install stable --profile minimal
       - name: Test native CPU fallback
@@ -195,3 +187,18 @@ jobs:
             LD_LIBRARY_PATH="$tmp/$variant" "$tmp/loader" "$expected"
           done
       # Full synthesis/hardware throughput tests still require a physical GPU.
+
+  hdr10plus-external-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compare real FFmpeg FATE HDR10+ bitstream with reference metadata
+        run: |
+          set -euo pipefail
+          sample="$(mktemp)"
+          trap 'rm -f "$sample"' EXIT
+          curl --proto '=https' --proto-redir '=https' -fSL --retry 3 --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+            https://fate-suite.ffmpeg.org/hevc/hdr10_plus_h265_sample.hevc -o "$sample"
+          echo "663bd5179571133660a1e8ac260aa1f5bf8ce61d33dedb828a1cd7188771abcc  $sample" | sha256sum --check --strict
+          python3 native/ambientsvp/tests/hdr10plus_bitstream_reference.py "$sample" --fate
