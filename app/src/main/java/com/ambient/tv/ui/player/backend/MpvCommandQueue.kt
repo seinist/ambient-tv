@@ -22,7 +22,10 @@ internal class MpvCommandQueue(
         var obsolete: Work? = null
         var start = false
         val accepted = synchronized(lock) {
-            if (closed || (key !in pending && pending.size >= capacity)) false
+            // Two fixed lifecycle slots remain available even under a saturated command backlog.
+            // Replacements still coalesce, so the queue remains bounded by capacity + 2.
+            val lifecycle = key == "surface-attach" || key == "surface-detach"
+            if (closed || (!lifecycle && key !in pending && pending.size >= capacity)) false
             else {
                 obsolete = pending.remove(key)
                 pending[key] = Work(action, discard, keepOnClose)
@@ -60,7 +63,13 @@ internal class MpvCommandQueue(
     private fun runNext() {
         var key: String? = null
         val work = synchronized(lock) {
-            key = pending.keys.firstOrNull()
+            // A dying Surface has a bounded main-thread wait. Prioritize its retirement over
+            // non-lifecycle commands, but keep initialization and attach/detach order intact.
+            key = when {
+                "initialize" in pending -> "initialize"
+                "surface-detach" in pending -> pending.keys.firstOrNull { it == "surface-attach" || it == "surface-detach" }
+                else -> pending.keys.firstOrNull()
+            }
             key?.let { pending.remove(it) } ?: run { scheduled = false; null }
         } ?: return
         running(key)

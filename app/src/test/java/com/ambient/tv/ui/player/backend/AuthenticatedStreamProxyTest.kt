@@ -76,4 +76,76 @@ class AuthenticatedStreamProxyTest {
         }
         get(url = proxy.url.substringBeforeLast('/') + "/unknown").use { assertEquals(404, it.code) }
     }
+    @Test fun splitStreamsRequireSameOriginAndDirectMedia() {
+        assertTrue(vlcDirectHttpRelaySupported("https://media.example/video.mp4?ticket=1"))
+        assertFalse(vlcDirectHttpRelaySupported("https://media.example/live.M3U8?ticket=1"))
+        assertFalse(vlcDirectHttpRelaySupported("https://media.example/live.mpd"))
+        assertFalse(vlcDirectHttpRelaySupported("file:///sdcard/video.mp4"))
+        assertTrue(vlcSameHttpOrigin("https://media.example/video", "https://media.example/audio"))
+        assertFalse(vlcSameHttpOrigin("https://media.example/video", "https://other.example/audio"))
+        assertFalse(vlcSameHttpOrigin("https://media.example/video", "https://media.example:8443/audio"))
+        assertFalse(vlcSameHttpOrigin("https://media.example/video", "http://media.example/audio"))
+    }
+
+    @Test fun redirectNeverForwardsCustomCredentialsToAnotherOrigin() {
+        val other = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val received = java.util.concurrent.atomic.AtomicBoolean(false)
+        other.createContext("/") { exchange ->
+            received.set(true)
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        other.start()
+        server.createContext("/redirect") { exchange ->
+            exchange.responseHeaders.add("Location", "http://127.0.0.1:${other.address.port}/")
+            exchange.sendResponseHeaders(302, -1)
+            exchange.close()
+        }
+        try {
+            AuthenticatedStreamProxy("http://127.0.0.1:${server.address.port}/redirect",
+                mapOf("X-Custom-Token" to "test-only", "Cookie" to "session=test-only")).use { relay ->
+                runCatching { get(url = relay.url).use { it.body.bytes() } }
+                assertFalse(received.get())
+            }
+        } finally { other.stop(0) }
+    }
+
+    @Test fun hlsPlaylistRewritesOnlyReferencedResourcesAndKeepsHeaders() {
+        val tokenSeen = mutableListOf<String?>()
+        server.createContext("/hls/master.m3u8") { exchange ->
+            tokenSeen += exchange.requestHeaders.getFirst("X-Stream-Token")
+            val body = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=200000\nchild.m3u8?ticket=abc\n".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.createContext("/hls/child.m3u8") { exchange ->
+            tokenSeen += exchange.requestHeaders.getFirst("X-Stream-Token")
+            assertEquals("ticket=abc", exchange.requestURI.rawQuery)
+            val body = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:4,\nsegment.m4s\n".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/x-mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.createContext("/hls/segment.m4s") { exchange ->
+            tokenSeen += exchange.requestHeaders.getFirst("X-Stream-Token")
+            val data = byteArrayOf(5, 6, 7)
+            exchange.responseHeaders.add("Content-Type", "video/mp4")
+            exchange.sendResponseHeaders(200, data.size.toLong())
+            exchange.responseBody.use { it.write(data) }
+        }
+        AuthenticatedStreamProxy("http://127.0.0.1:${server.address.port}/hls/master.m3u8",
+            mapOf("X-Stream-Token" to "test")).use { relay ->
+            val master = get(url = relay.url).use { response -> assertEquals(200, response.code); response.body.string() }
+            val child = master.lineSequence().first { it.startsWith("http://") }
+            assertTrue(child.startsWith(relay.url + "/"))
+            val media = get(url = child).use { response -> assertEquals(200, response.code); response.body.string() }
+            assertTrue(media.contains("#EXT-X-MAP:URI=\"" + relay.url + "/"))
+            val segment = media.lineSequence().first { it.startsWith("http://") }
+            get(url = segment).use { assertArrayEquals(byteArrayOf(5, 6, 7), it.body.bytes()) }
+            get(url = relay.url + "/not-registered").use { assertEquals(404, it.code) }
+            assertEquals(listOf("test", "test", "test"), tokenSeen)
+        }
+    }
+
 }

@@ -1,0 +1,51 @@
+diff --git a/src/input/decoder.c b/src/input/decoder.c
+--- a/src/input/decoder.c
++++ b/src/input/decoder.c
+@@ -800,35 +800,47 @@
+     };
++    /* RequestVout may close the old resource while the decoder thread
++     * is active. Hide the borrowed pointer under the same FIFO lock used
++     * by CreateVoutIfNeeded, and keep a reference until notification. */
++    vout_Hold(cfg.vout);
++    p_owner->video.vout = NULL;
++    p_owner->video.started = false;
+     vlc_fifo_Unlock(p_owner->p_fifo);
+ 
+     enum input_resource_vout_state vout_state;
+     vout_thread_t *p_vout =
+         input_resource_RequestVout(p_owner->p_resource, vctx, &cfg, NULL,
+                                    &vout_state);
+     if (p_vout != NULL)
+     {
+         assert(vout_state == INPUT_RESOURCE_VOUT_NOTCHANGED ||
+                vout_state == INPUT_RESOURCE_VOUT_STARTED);
+ 
+         vlc_fifo_Lock(p_owner->p_fifo);
++        p_owner->video.vout = p_vout;
+         p_owner->video.started = true;
+ 
+         Decoder_UpdateOutState( p_owner );
+ 
+         if (vout_state == INPUT_RESOURCE_VOUT_STARTED)
+             decoder_Notify(p_owner, on_vout_started, p_vout,
+                            p_owner->video.vout_order);
+         vlc_fifo_Unlock(p_owner->p_fifo);
++        vout_Release(cfg.vout);
+         return 0;
+     }
+     else
+     {
+         assert(vout_state == INPUT_RESOURCE_VOUT_NOTCHANGED ||
+                vout_state == INPUT_RESOURCE_VOUT_STOPPED);
+ 
++        msg_Warn(p_dec, "AMBIENT_VOUT_START_FAILED: retiring failed video output");
++        /* Leave the pointer NULL: the next decoder attempt must request
++         * a fresh resource rather than reusing the failed output. */
+         if (vout_state == INPUT_RESOURCE_VOUT_STOPPED)
+             decoder_Notify(p_owner, on_vout_stopped, cfg.vout);
++        vout_Release(cfg.vout);
+     }
+ 
+ error:
+     /* Clean fmt and vctx to trigger a new vout creation on the next update
+      * call */

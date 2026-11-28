@@ -26,10 +26,17 @@ class Media3PlaybackHandle(
     @Volatile var waitingForPreviousRelease = waitingForPreviousRelease
         private set
 
-    /** The previous player closed (or the wait ended): open the stream now, exactly once. */
+    private var releaseWaitError: String? = null
+
+    internal fun previousReleaseTimedOut(message: String) {
+        if (!released && waitingForPreviousRelease) releaseWaitError = message
+    }
+
+    /** The previous player closed: open the stream now, exactly once. */
     fun previousReleaseSettled() {
         if (!waitingForPreviousRelease) return
         waitingForPreviousRelease = false
+        releaseWaitError = null
         if (!released && player.playbackState == Player.STATE_IDLE) player.prepare()
     }
 
@@ -58,6 +65,12 @@ class Media3PlaybackHandle(
     private var released = false
     private var frameDropGeneration = 0
     private var frameDropCounters: DecoderCounters? = null
+    private var audioSyncCounters: DecoderCounters? = null
+    private val frameTimeline = Media3AudioProcessing.session(player)?.media3Frames ?: Media3FrameTimeline()
+    private var frameStepCursorUs: Long? = null
+    private val frameListener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { ptsUs, _, _, _ ->
+        frameTimeline.presentedFromOutput(ptsUs)
+    }
 
     /** A polling window must not bridge a short seek, pause or decoder replacement. */
     internal fun frameDropSampleGeneration(): Int {
@@ -87,15 +100,35 @@ class Media3PlaybackHandle(
     private val conversionListener = object : Player.Listener {
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
             frameDropGeneration++
+            // A step seek retains neighboring timestamps; any other seek/period transition
+            // invalidates the history, including a seek issued outside this handle.
+            val expected = frameStepCursorUs
+            if (reason != Player.DISCONTINUITY_REASON_SEEK ||
+                expected == null || kotlin.math.abs(newPosition.positionMs - expected / 1000L) > 1L) {
+                frameStepCursorUs = null
+                frameTimeline.clear()
+            } else frameTimeline.invalidatePending()
             hdrOutput.discontinuity()
         }
+        override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+            frameStepCursorUs = null
+            frameTimeline.clear()
+        }
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying && frameStepCursorUs != null) {
+                frameStepCursorUs = null
+                frameTimeline.clear()
+            }
             frameDropGeneration++
             hdrOutput.discontinuity()
         }
         override fun onPlaybackStateChanged(playbackState: Int) { frameDropGeneration++ }
     }
-    init { handles[player] = WeakReference(this); player.addListener(conversionListener) }
+    init {
+        handles[player] = WeakReference(this)
+        player.addListener(conversionListener)
+        player.setVideoFrameMetadataListener(frameListener)
+    }
     internal fun attachVideoView(view: SurfaceView) {
         surfaceView = view
         hdrOutput.attach(view)
@@ -103,6 +136,8 @@ class Media3PlaybackHandle(
     internal fun detachVideoView(view: SurfaceView?) {
         if (surfaceView !== view) return
         surfaceView = null
+        frameStepCursorUs = null
+        frameTimeline.clear()
         hdrOutput.detach()
     }
     override fun updateSdrToHdr(request: SdrToHdrRequest?): SdrToHdrStatus {
@@ -160,7 +195,7 @@ class Media3PlaybackHandle(
         durationMs = player.duration.coerceAtLeast(0),
         playing = player.isPlaying,
         ended = player.playbackState == Player.STATE_ENDED,
-        error = outputError ?: player.playerError?.localizedMessage,
+        error = releaseWaitError ?: outputError ?: player.playerError?.localizedMessage,
     )
     internal fun liveSyncSample(): LiveSyncSample? {
         if (released || waitingForPreviousRelease || !player.isPlaying || player.playbackState != Player.STATE_READY ||
@@ -169,8 +204,16 @@ class Media3PlaybackHandle(
             !player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) return null
         val counters = player.videoDecoderCounters ?: return null
         counters.ensureUpdated()
+        val audio = player.audioDecoderCounters
+        if (audio !== audioSyncCounters) {
+            audioSyncCounters = audio
+            frameDropGeneration++
+        }
+        audio?.ensureUpdated()
         return LiveSyncSample(android.os.SystemClock.elapsedRealtime(), player.currentPosition,
-            frameDropSampleGeneration(), renderedFrames = counters.renderedOutputBufferCount.toLong())
+            frameDropSampleGeneration(), renderedFrames = counters.renderedOutputBufferCount.toLong(),
+            // Passthrough/unsupported counters may remain at zero; zero is not evidence.
+            audioBuffers = audio?.renderedOutputBufferCount?.toLong()?.takeIf { it > 0L })
     }
 
     /** Reprepare the same source, flushing both decoders. A local buffer keeps its wall-clock position. */
@@ -186,17 +229,48 @@ class Media3PlaybackHandle(
     override fun wantsToPlay(): Boolean = player.playWhenReady && player.playbackState != Player.STATE_ENDED
     override fun canSeekNow(): Boolean = player.isCurrentMediaItemSeekable
     override fun play() {
+        if (frameStepCursorUs != null) frameTimeline.clear()
+        frameStepCursorUs = null
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
         if (media3PrepareNow(player.playbackState == Player.STATE_IDLE, waitingForPreviousRelease)) player.prepare()
         player.play()
     }
     override fun pause() = player.pause()
-    /** Exact seek by one frame time of the playing video (ExoPlayer seeks exactly by default). */
+    /** Use known presentation timestamps for VFR; unknown frames use the nominal cadence. */
     override fun stepFrame(forward: Boolean) {
+        // Ad positions are not content positions. ExoPlayer may ignore seeks in an ad;
+        // retaining an advanced frame cursor in that case would corrupt the next content step.
+        if (released || waitingForPreviousRelease || !player.isCurrentMediaItemSeekable || player.isPlayingAd) return
         player.pause()
-        val fps = player.videoFormat?.frameRate?.takeIf { it > 1f } ?: (1000f / DEFAULT_FRAME_MS)
-        val duration = player.duration.takeIf { it != androidx.media3.common.C.TIME_UNSET } ?: 0L
-        seekTo(frameStepTarget(player.currentPosition, duration, forward, (1000f / fps).toLong().coerceAtLeast(1L)))
+        val fps = player.videoFormat?.frameRate?.takeIf { it.isFinite() && it > 1f } ?: (1000f / DEFAULT_FRAME_MS)
+        val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+        val timeline = player.currentTimeline
+        val knownTimeline = !player.isCurrentMediaItemLive && !timeline.isEmpty &&
+            !hdrOutput.active && !Media3ImageProcessing.gpuInitialized(player) &&
+            timeline.getWindow(player.currentMediaItemIndex, androidx.media3.common.Timeline.Window()).let { window ->
+                window.firstPeriodIndex == window.lastPeriodIndex &&
+                    timeline.getPeriod(window.firstPeriodIndex, androidx.media3.common.Timeline.Period()).positionInWindowUs == 0L
+            }
+        val positionUs = player.currentPosition.coerceAtLeast(0L) * 1000L
+        val anchor = frameStepCursorUs ?: if (knownTimeline) frameTimeline.anchor(positionUs) else positionUs
+        val candidate = if (knownTimeline) frameTimeline.neighbor(anchor, forward) else null
+        val plan = media3FrameStepPlan(anchor, candidate, duration, forward, fps, player.isCurrentMediaItemLive)
+        // Do not issue a redundant decoder flush at the first/last picture or for
+        // timestamps that the millisecond seek API cannot distinguish.
+        if (forward && plan.targetMs <= anchor / 1000L || !forward && plan.targetMs >= anchor / 1000L) return
+        frameStepCursorUs = plan.cursorUs
+        val resetTicket = frameTimeline.expectRendererReset(retainHistory = true)
+        if (!Media3ResumePrimer.retarget(player, plan.targetMs)) {
+            // Scrubbing/fast seek parameters must not move this request to a sync sample.
+            val previous = player.seekParameters
+            player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
+            try {
+                if (!player.seekToPlaybackPosition(plan.targetMs)) {
+                    frameStepCursorUs = null
+                    frameTimeline.cancelExpectedReset(resetTicket)
+                }
+            } finally { player.setSeekParameters(previous) }
+        }
     }
     private var outputMuteVolume: Float? = null
     override fun setOutputMuted(muted: Boolean) {
@@ -209,7 +283,10 @@ class Media3PlaybackHandle(
         }
     }
     override fun seekTo(positionMs: Long) {
-        if (!Media3ResumePrimer.retarget(player, positionMs)) player.seekToPlaybackPosition(positionMs)
+        frameStepCursorUs = null
+        val resetTicket = frameTimeline.expectRendererReset(retainHistory = false)
+        if (!Media3ResumePrimer.retarget(player, positionMs) && !player.seekToPlaybackPosition(positionMs))
+            frameTimeline.cancelExpectedReset(resetTicket)
     }
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
         if (!isLive) seekTo(positionMs.coerceAtLeast(0L))
@@ -224,25 +301,35 @@ class Media3PlaybackHandle(
         if (released) return
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "release")
         val gateRelease = if (joinsReleaseGate) com.ambient.tv.ui.player.backend.nativeAudioReleases.beginRelease() else null
-        detachVideoOutput()
-        released = true
-        Media3GaplessQueue.released(player)
-        Media3ResumePrimer.release(player)
-        player.removeListener(conversionListener)
-        hdrOutput.release()
-        handles.remove(player)
-        Media3ImageProcessing.release(player)
-        Media3AudioProcessing.release(player)
-        // Live TVHeadend (and similar unbounded HTTP streams) keep the server subscription
-        // open until the data source is cancelled. clearMediaItems() drops the media source
-        // before release() so a renderer switch does not briefly hold two subscriptions.
-        runCatching {
-            player.playWhenReady = false
-            player.clearMediaItems()
+        var failure: Throwable? = null
+        fun cleanup(action: () -> Unit) {
+            try { action() } catch (error: Throwable) {
+                val previous = failure
+                if (previous == null) failure = error else if (previous !== error) previous.addSuppressed(error)
+            }
         }
-        runCatching { player.release() }
-            .onSuccess { gateRelease?.complete(Unit) }
-            .onFailure { gateRelease?.completeExceptionally(it); throw it }
+        cleanup { detachVideoOutput() }
+        released = true
+        cleanup { Media3GaplessQueue.released(player) }
+        cleanup { Media3ResumePrimer.release(player) }
+        cleanup { player.removeListener(conversionListener) }
+        cleanup { player.clearVideoFrameMetadataListener(frameListener) }
+        frameTimeline.clear()
+        cleanup { hdrOutput.release() }
+        handles.remove(player)
+        cleanup { Media3ImageProcessing.release(player) }
+        cleanup { Media3AudioProcessing.release(player) }
+        cleanup { player.playWhenReady = false }
+        cleanup { player.clearMediaItems() }
+        // Even a failed ancillary cleanup must not strand the decoder or release gate.
+        val nativeFailure = runCatching { player.release() }.exceptionOrNull()
+        if (nativeFailure == null) gateRelease?.complete(Unit)
+        else gateRelease?.completeExceptionally(com.ambient.tv.ui.player.backend.NativeOutputReleaseUncertain(nativeFailure))
+        val error = nativeFailure ?: failure
+        if (error != null) {
+            timber.log.Timber.e(error, "Media3 release encountered a cleanup failure")
+            if (error is Error) throw error
+        }
     }
     companion object {
         private val handles = WeakHashMap<ExoPlayer, WeakReference<Media3PlaybackHandle>>()

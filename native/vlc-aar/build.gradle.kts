@@ -6,6 +6,9 @@ android {
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     buildFeatures { buildConfig = true }
+    // Native release binaries are already stripped by libvlcjni. Preserve
+    // their exact linked bytes for the per-ABI receipt and APK verification.
+    packaging.jniLibs.keepDebugSymbols.add("**/libvlc*.so")
     // AGP 9.2+: use the sourceSets {} block (new DSL type). getByName() hits the
     // legacy AndroidLibrarySourceSet ClassCastException on library modules.
     sourceSets {

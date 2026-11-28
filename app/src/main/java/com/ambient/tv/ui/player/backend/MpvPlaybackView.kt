@@ -142,6 +142,12 @@ fun rememberMpvPlaybackController(
     // Failures and detections follow the title (source + id), not the URL: Plex remux URLs share one path.
     val mediaKey = mpvHdrGpuMediaKey(metadata, url)
     val resolutionKey = mpvHdrGpuResolutionKey(profileMetadata)
+    // Keep failures scoped to the actual media/variant instead of all codecs on this device.
+    // Unknown resolutions still have a per-media scope. Do not put credentials in the scope.
+    val zeroCopyScope = metadata?.let {
+        listOf(it.source, it.mediaId, it.route.substringBefore('?'), it.liveTvSourceId.orEmpty(),
+            resolutionKey.orEmpty(), it.handheldHdrStandard?.name.orEmpty()).joinToString("|")
+    }
     val hdrFailure = MpvHdrGpuSession.failure(mediaKey, resolutionKey, displayKey)
     // The player's own HDR "direct" (automaticHdrDirect) is no explicit choice.
     val explicitDirect = mpvHdrGpuExplicitDirect(BackgroundPlaybackSession.videoSettingsOverride(metadata)?.mpvOutput,
@@ -179,7 +185,7 @@ fun rememberMpvPlaybackController(
                 liveStream = metadata?.isLive == true, declaredHdr = declaredHdr, audioOnly = metadata?.hasVideo == false, preferOriginalAudio = metadata?.source == "youtube",
                 reopeningTimeshift = previous?.url == url,
                 broadcastSource = metadata?.isLive == true || metadata?.liveTvSourceId != null,
-                hdrGpuPassthrough = hdrGpu.gpu).also {
+                hdrGpuPassthrough = hdrGpu.gpu, zeroCopyScope = zeroCopyScope).also {
                 it.saveImageDefaults = saveDefaults
                 restoreOutputState?.invoke(it)
                 if (previous == null) (title?.mpvDeinterlaceMode ?: resolution?.mpvDeinterlaceMode)?.let { mode ->

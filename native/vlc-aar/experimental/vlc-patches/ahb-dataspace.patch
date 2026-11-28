@@ -1,0 +1,99 @@
+diff --git a/modules/video_output/android/utils.h b/modules/video_output/android/utils.h
+--- a/modules/video_output/android/utils.h
++++ b/modules/video_output/android/utils.h
+@@ -40,6 +40,7 @@
+ 
+ #include <vlc_vout_display.h>
+ #include <vlc_common.h>
++#include <vlc_threads.h>
+ 
+ /* AWH using a VideoLAN AWindow helpers */
+ #define AWH_CAPS_SET_VIDEO_LAYOUT 0x1
+@@ -130,6 +131,8 @@
+     /* AImageReader, API 31+ (because AHardwareBuffer) */
+     struct {
+         pfn_AImageReader_newWithUsage newWithUsage;
++        media_status_t (*newWithDataSpace)(int32_t, int32_t, uint64_t, int32_t,
++                                           uint32_t, int32_t, AImageReader **);
+         pfn_AImageReader_delete delete;
+         pfn_AImageReader_getWindow getWindow;
+         pfn_AImageReader_acquireNextImageAsync acquireNextImageAsync;
+@@ -142,6 +145,7 @@
+         pfn_AImage_getCropRect getCropRect;
+         pfn_AImage_getWidth getWidth;
+         pfn_AImage_getHeight getHeight;
++        media_status_t (*getDataSpace)(const AImage *, int32_t *);
+     } AImage;
+     pfn_sync_merge sync_merge;
+     struct {
+@@ -210,6 +214,8 @@
+     struct aimage_reader_api *air_api;
+     struct asurface_control_api *asc_api;
+     AImageReader *air;
++    vlc_mutex_t ambient_listener_lock;
++    void *ambient_listener_dec;
+ 
+     struct vlc_asurfacetexture *texture;
+     void *dec_opaque;
+@@ -305,6 +311,10 @@
+ struct aimage_reader_api *
+ AWindowHandler_getAImageReaderApi(AWindowHandler *p_awh);
+ 
++/* GPU sampling only: no ASurfaceControl or stable AHB-ID requirement. */
++struct aimage_reader_api *
++AWindowHandler_getGpuAImageReaderApi(AWindowHandler *p_awh);
++
+ struct asurface_control_api *
+ AWindowHandler_getASurfaceControlApi(AWindowHandler *p_awh);
+ 
+diff --git a/modules/video_output/android/utils.c b/modules/video_output/android/utils.c
+--- a/modules/video_output/android/utils.c
++++ b/modules/video_output/android/utils.c
+@@ -395,7 +395,8 @@
+     p_awh->ndk_air_api.object.name = dlsym(p_android_lib, #object "_" #name); \
+     if (p_awh->ndk_air_api.object.name == NULL) return VLC_EGENERIC
+ 
+-    LOAD(AHardwareBuffer, getId);
++    // API 31+: optional for the experimental GPU-only route.
++    p_awh->ndk_air_api.AHardwareBuffer.getId = dlsym(p_android_lib, "AHardwareBuffer_getId");
+     LOAD(AHardwareBuffer, describe);
+ 
+ #undef LOAD
+@@ -410,6 +411,8 @@
+ 
+     /* API 29+ */
+     LOAD(AImageReader, newWithUsage);
++    // API 34: optional explicit hardware-buffer format and dataspace request.
++    p_awh->ndk_air_api.AImageReader.newWithDataSpace = dlsym(p_library, "AImageReader_newWithDataSpace");
+     LOAD(AImageReader, delete);
+     LOAD(AImageReader, getWindow);
+     LOAD(AImageReader, acquireNextImageAsync);
+@@ -421,6 +424,8 @@
+     LOAD(AImage, getCropRect);
+     LOAD(AImage, getWidth);
+     LOAD(AImage, getHeight);
++    /* Optional since Android API 34; do not disable SDR interop on older devices. */
++    p_awh->ndk_air_api.AImage.getDataSpace = dlsym(p_library, "AImage_getDataSpace");
+ 
+ #undef LOAD
+ 
+@@ -838,10 +843,17 @@
+ struct aimage_reader_api *
+ AWindowHandler_getAImageReaderApi(AWindowHandler *p_awh)
+ {
+-    return p_awh->b_has_ndk_air_api && p_awh->b_has_ndk_asc_api ?
+-           &p_awh->ndk_air_api : NULL;
++    // Preserve the exact upstream contract for all ordinary callers.
++    return p_awh->b_has_ndk_air_api && p_awh->b_has_ndk_asc_api &&
++           p_awh->ndk_air_api.AHardwareBuffer.getId ? &p_awh->ndk_air_api : NULL;
+ }
+ 
++struct aimage_reader_api *
++AWindowHandler_getGpuAImageReaderApi(AWindowHandler *p_awh)
++{
++    return p_awh->b_has_ndk_air_api ? &p_awh->ndk_air_api : NULL;
++}
++
+ struct asurface_control_api *
+ AWindowHandler_getASurfaceControlApi(AWindowHandler *p_awh)
+ {

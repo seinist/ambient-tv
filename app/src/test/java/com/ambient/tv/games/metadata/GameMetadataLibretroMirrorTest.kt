@@ -32,6 +32,21 @@ class GameMetadataLibretroMirrorTest {
             name = "Tetris (World) (Rev 1).png"))!!.pathSegments[1])
     }
 
+    @Test fun releaseTagsSurviveStrictUriValidationAndMirrorConstruction() {
+        val title = "[Release] Super Mario World (Europe) [!]"
+        val candidate = GameMetadataPlatforms.libretroCandidates(GameMetadataQuery(
+            "snes", title, "$title.sfc")).first().metadata
+        for (reference in listOf(candidate.coverUrl, candidate.backdropUrl, candidate.titleScreenUrl)) {
+            val safe = requireNotNull(sanitizedGameArtworkUrl(provider, reference))
+            val url = safe.toHttpUrl()
+            assertEquals("$title.png", url.pathSegments.last())
+            assertTrue(url.encodedPath.contains("%5BRelease%5D"))
+            val mirror = requireNotNull(libretroArtworkMirrorUrl(url))
+            assertEquals("$title.png", mirror.pathSegments.last())
+            assertNotNull(sanitizedGameArtworkUrl(provider, mirror.toString()))
+        }
+    }
+
     @Test fun fallbackConstructionDropsEveryQueryAndFragmentWithoutChangingTheCanonicalReference() {
         val canonical = primary().newBuilder().addQueryParameter("apikey", "secret")
             .addQueryParameter("download", "1").fragment("secret").build()

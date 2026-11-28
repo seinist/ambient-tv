@@ -2,6 +2,8 @@ package com.ambient.tv.ui.player.backend
 
 import kotlinx.serialization.Serializable
 import com.ambient.tv.data.local.MpvImageOptions
+import com.ambient.tv.ui.player.HdrStandard
+import com.ambient.tv.ui.player.nativeHdrSurfacePreferred
 
 internal fun mpvNeedsGpuProcessing(o: MpvImageOptions): Boolean =
     o.scaler != "bilinear" || o.chromaScaler != "bilinear" || o.downscaler != "bilinear" ||
@@ -27,8 +29,24 @@ data class VulkanDeviceCapabilities(
     // Present only in newer probes; absence must not be mistaken for a negative result.
     val surfaceColorSpaces: List<Int>? = null,
     val surfaceFormats: List<VulkanSurfaceFormat>? = null,
+    val androidHardwareBufferImport: Boolean? = null,
+    val foreignQueueFamily: Boolean? = null,
+    val samplerYcbcrConversion: Boolean? = null,
+    val syncFdImportExport: Boolean? = null,
+    val deviceUuid: String = "",
 ) {
+    /** Hardware prerequisites only, not a claim that the loaded vout implements interop. */
+    val androidInteropPrerequisites: Boolean get() = render && androidHardwareBufferImport == true &&
+        foreignQueueFamily == true && samplerYcbcrConversion == true && syncFdImportExport == true
     val hdr10SurfaceSupported: Boolean? get() = surfaceColorSpaces?.contains(1000104008)
+}
+
+/** Reuse only immutable device evidence for the same validated device. Surface data is fresh. */
+internal fun mergeValidatedVulkanSurface(device: VulkanDeviceCapabilities, surface: VulkanDeviceCapabilities): VulkanDeviceCapabilities {
+    if (!device.render || !surface.render || surface.device != device.device || surface.version != device.version ||
+        surface.deviceUuid != device.deviceUuid)
+        return surface.copy(render = false, reason = if (surface.render) "device_changed" else surface.reason)
+    return device.copy(surfaceColorSpaces = surface.surfaceColorSpaces, surfaceFormats = surface.surfaceFormats)
 }
 
 data class VideoAccelerationCapabilities(
@@ -218,3 +236,103 @@ fun useVlcVulkan(output: String, capabilities: VideoAccelerationCapabilities, gp
 internal fun vlcHdrToSdrOutputOptions(vulkan: Boolean, toneMappingRequired: Boolean): List<String> =
     if (toneMappingRequired && !vulkan) listOf("--vout=gles2,none", "--no-mediacodec-dr")
     else emptyList()
+
+/**
+ * A failed opaque MediaCodec path can be specific to the source format, resolution or the
+ * current driver state. Do not poison every other title for the lifetime of the app version.
+ * The legacy device-wide lock remains an explicit fallback for callers without source identity.
+ * Cache only process-local media/format keys, expire transient failures, and bound memory.
+ */
+internal class MpvZeroCopyFailureCache(
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L },
+    private val ttlMs: Long = 30 * 60 * 1000L,
+    private val capacity: Int = 64,
+) {
+    private val failed = LinkedHashMap<String, Long>(16, 0.75f, true)
+    private fun prune(now: Long) {
+        failed.entries.removeAll { now - it.value !in 0 until ttlMs }
+    }
+    @Synchronized fun contains(scope: String?): Boolean {
+        prune(nowMs())
+        return scope != null && failed[scope] != null
+    }
+    @Synchronized fun record(scope: String) {
+        val now = nowMs()
+        prune(now)
+        failed[scope] = now
+        while (failed.size > capacity) failed.remove(failed.keys.first())
+    }
+    @Synchronized fun any(): Boolean {
+        prune(nowMs())
+        return failed.isNotEmpty()
+    }
+    @Synchronized fun clear() { failed.clear() }
+}
+
+internal val mpvZeroCopyFailures = MpvZeroCopyFailureCache()
+
+/** The experimental MediaCodec path has no RPU output. When the display
+ * requires Dolby Vision GPU conversion, select the existing FFmpeg decoder
+ * which attaches RPU metadata to each decoded picture. Native HDR remains
+ * untouched. This is intentionally a correctness fallback, not zero-copy. */
+internal fun vlcDoviRpuDecoderRequired(
+    experiment: Boolean,
+    dolbyVision: Boolean,
+    nativeHdrPreferred: Boolean,
+    audioOnly: Boolean,
+    hardwareRoute: Boolean = false,
+): Boolean = experiment && dolbyVision && !nativeHdrPreferred && !audioOnly && !hardwareRoute
+
+/** Explicit default-off Vulkan HDR output. Android capability, not source metadata. */
+internal data class VlcHdrPlusTarget(val mode: Int, val minNits: Float, val maxNits: Float)
+
+internal fun vlcHdrPlusTarget(
+    enabled: Boolean, explicitVulkan: Boolean, hdr10PlusSource: Boolean, api: Int,
+    pqSupported: Boolean, hlgSupported: Boolean, minNits: Float, maxNits: Float,
+): VlcHdrPlusTarget? {
+    if (!enabled || !explicitVulkan || !hdr10PlusSource || api < 34 ||
+        !minNits.isFinite() || !maxNits.isFinite() || maxNits !in 100f..10000f ||
+        minNits < 0f || minNits >= maxNits) return null
+    if (pqSupported) return VlcHdrPlusTarget(1, minNits, maxNits)
+    if (!hlgSupported) return null
+    val gamma = maxOf(1.0, 1.2 + 0.42 * Math.log10(maxNits / 1000.0))
+    val beta = Math.sqrt(3.0 * Math.pow((minNits / maxNits).toDouble(), 1.0 / gamma))
+    return if (beta < 1.0) VlcHdrPlusTarget(2, minNits, maxNits) else null
+}
+
+/** Prefer a matching HLG display transfer for HLG, otherwise PQ when
+ * available. Dolby Vision is reconstructed to HDR10/HLG, never advertised
+ * as a proprietary Dolby Vision output. No characterized target => native. */
+internal fun vlcHdrGpuTarget(
+    built: Boolean, experiment: Boolean, hdrGpu: Boolean, output: String,
+    source: HdrStandard?, api: Int, pqSupported: Boolean, hlgSupported: Boolean,
+    minNits: Float, maxNits: Float,
+): VlcHdrPlusTarget? = vlcHdrPlusTarget(
+    built && experiment && hdrGpu, output in setOf("auto", "vulkan"), source != null, api,
+    pqSupported && !(source == HdrStandard.HLG && hlgSupported), hlgSupported, minNits, maxNits,
+)
+
+/** Validate a previously negotiated target on the actual attached display.
+ * No display is not a confirmed mismatch (surface replacement can be pending). */
+internal fun vlcHdrPlusTargetChanged(expected: VlcHdrPlusTarget?, displayId: Int?,
+    defaultDisplayId: Int, actual: VlcHdrPlusTarget?): Boolean =
+    expected != null && displayId != null &&
+        (displayId != defaultDisplayId || actual != expected)
+
+/** Reevaluate the original source/base-layer native route after an HDR GPU failure. */
+internal fun vlcHdrPlusFallbackNativeHdr(previous: Boolean, attachedStandards: Set<HdrStandard>?,
+    source: HdrStandard? = HdrStandard.HDR10_PLUS, baseLayer: HdrStandard? = null): Boolean =
+    attachedStandards?.let { nativeHdrSurfacePreferred(source, it, baseLayer) } ?: previous
+
+/** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
+internal fun vlcAhbExperimentEligible(
+    experiment: Boolean,
+    vulkan: Boolean,
+    preserveHdr: Boolean,
+    softwareProcessing: Boolean,
+    svpMode: String,
+    deinterlaceMode: String,
+    copyBackRetried: Boolean,
+    supportedHdrGpu: Boolean = false,
+): Boolean = experiment && vulkan && (!preserveHdr || supportedHdrGpu) && !softwareProcessing &&
+    svpMode == "off" && deinterlaceMode == "off" && !copyBackRetried

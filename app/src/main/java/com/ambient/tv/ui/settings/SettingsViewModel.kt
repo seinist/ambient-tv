@@ -511,6 +511,8 @@ class SettingsViewModel @Inject constructor(
             scale = appPreferences.uiScale,
             renderResolutionKey = appPreferences.uiRenderResolutionKey,
             mousePointerHideSeconds = appPreferences.mousePointerHideSeconds,
+            vlcExperimentalFeaturesEnabled = appPreferences.vlcExperimentalFeaturesEnabled,
+            vlcHdrGpuEnabled = appPreferences.vlcHdrGpuEnabled,
         ),
         accentColorKey = appPreferences.accentColorKey,
         customAccentHex = appPreferences.customAccentHex,
@@ -2275,8 +2277,12 @@ class SettingsViewModel @Inject constructor(
     }
     fun onMpvSdrCurveChanged(value: String) = _uiState.update { it.copy(mpvSdrCurveKey = value) }
     /** A runtime lock, not a draft setting: cleared at once so the next playback tries zero-copy. */
-    fun mpvZeroCopyLocked(): Boolean = appPreferences.mpvZeroCopyFailed
-    fun resetMpvZeroCopyLock() { appPreferences.mpvZeroCopyFailed = false }
+    fun mpvZeroCopyLocked(): Boolean = appPreferences.mpvZeroCopyFailed ||
+        com.ambient.tv.ui.player.backend.mpvZeroCopyFailures.any()
+    fun resetMpvZeroCopyLock() {
+        appPreferences.mpvZeroCopyFailed = false
+        com.ambient.tv.ui.player.backend.mpvZeroCopyFailures.clear()
+    }
     fun onAllowThreeTwoPulldownChanged(value: Boolean) = _uiState.update { it.copy(allowThreeTwoPulldown = value) }
     fun onSyncPlaybackToDisplayChanged(value: Boolean) = _uiState.update { it.copy(syncPlaybackToDisplay = value) }
     fun onDisplaySwitchPauseChanged(value: Int) = _uiState.update { it.copy(displaySwitchPauseMs = AppPreferences.normalizeDisplaySwitchPauseMs(value)) }
@@ -2615,6 +2621,14 @@ class SettingsViewModel @Inject constructor(
         // Old runtime verdicts belong to the previous setting; start clean either way.
         com.ambient.tv.ui.player.backend.MpvHdrGpuSession.clear()
         _uiState.update { it.copy(mpvHdrGpuEnabled = value) }
+    }
+
+    fun onVlcHdrGpuChanged(enabled: Boolean) = _uiState.update {
+        it.copy(uiDisplay = it.uiDisplay.copy(vlcHdrGpuEnabled = enabled))
+    }
+
+    fun onVlcExperimentChanged(enabled: Boolean) = _uiState.update {
+        it.copy(uiDisplay = it.uiDisplay.copy(vlcExperimentalFeaturesEnabled = enabled))
     }
 
     fun onVlcVideoOutputModeChanged(value: String) = _uiState.update {
@@ -3114,6 +3128,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.mpvVideoDecoderKey = state.mpvVideoDecoderKey
         appPreferences.mpvHdrGpuEnabled = state.mpvHdrGpuEnabled
         appPreferences.vlcVideoOutputModeKey = state.vlcVideoOutputModeKey
+        appPreferences.vlcExperimentalFeaturesEnabled = state.vlcExperimentalFeaturesEnabled
+        appPreferences.vlcHdrGpuEnabled = state.vlcHdrGpuEnabled
         appPreferences.autoPictureInPicture = state.autoPictureInPicture
         appPreferences.visibleBackgroundVideoPlayback = state.visibleBackgroundVideoPlayback
         appPreferences.backgroundVideoDimPercent = state.backgroundVideoDimPercent

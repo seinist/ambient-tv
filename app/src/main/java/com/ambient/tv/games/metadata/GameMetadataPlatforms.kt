@@ -113,6 +113,8 @@ internal object GameMetadataPlatforms {
             val imageName = name.map { if (it in "&*/:`<>?\\|\"" || it.isISOControl()) '_' else it }.joinToString("") + ".png"
             fun image(type: String) = HttpUrl.Builder().scheme("https").host("thumbnails.libretro.com")
                 .addPathSegment(system).addPathSegment(type).addPathSegment(imageName).build().toString()
+                // Encode release-tag brackets for the strict persisted-URL URI parser.
+                .replace("[", "%5B").replace("]", "%5D")
             GameMetadataCandidate(GameMetadata(
                 title = name, canonicalTitle = name, provider = GameMetadataProviderIds.LIBRETRO,
                 providerGameId = system + "|" + name, coverUrl = image("Named_Boxarts"),

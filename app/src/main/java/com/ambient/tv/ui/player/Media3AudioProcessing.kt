@@ -25,14 +25,24 @@ import java.lang.ref.WeakReference
 object Media3AudioProcessing {
     private val sessions = WeakHashMap<ExoPlayer, AudioSession>()
     private val listeners = WeakHashMap<ExoPlayer, Player.Listener>()
+    private val restartCancels = WeakHashMap<ExoPlayer, () -> Unit>()
+    private const val AUDIO_RECONFIGURE_COALESCE_MS = 100L
     fun session(player: ExoPlayer): AudioSession? = sessions[player]
 
     fun attach(player: ExoPlayer, session: AudioSession, context: Context) {
         sessions[player] = session
         val playerRef = WeakReference(player)
-        fun reconfigure(reason: String) {
+        val restartHandler = Handler(player.applicationLooper)
+        var restartTask: Runnable? = null
+        fun cancelRestart() {
+            restartTask?.let(restartHandler::removeCallbacks)
+            restartTask = null
+        }
+        restartCancels.remove(player)?.invoke()
+        restartCancels[player] = ::cancelRestart
+        fun reconfigureNow(reason: String) {
             val target = playerRef.get() ?: return
-            if (target.mediaItemCount == 0) return
+            if (sessions[target] !== session || target.mediaItemCount == 0) return
             // Still waiting for the previous MPV/VLC player to close: nothing is open yet, and
             // previousReleaseSettled() prepares with the new route/options. Opening here would
             // start the stream while the old player still holds the audio output.
@@ -40,16 +50,31 @@ object Media3AudioProcessing {
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "audio $reason restart deferred until previous player released")
                 return
             }
+            // An unprepared or completed item does not own active audio output. The next
+            // prepare will configure the sink with the latest settings without reopening now.
+            if (target.playbackState == Player.STATE_IDLE || target.playbackState == Player.STATE_ENDED) return
             val playing = target.playWhenReady
+            val index = target.currentMediaItemIndex
             val position = target.currentPosition
             val live = target.isCurrentMediaItemLive
             target.stop()
             // Timeshift: continue where the viewer is instead of jumping to the thin live edge.
             if (!target.reopenTimeshiftKeepingPosition("media3-audio-$reason")) {
-                if (live) target.seekToDefaultPosition() else target.seekTo(position)
+                if (live) target.seekToDefaultPosition(index) else target.seekTo(index, position)
             }
             target.prepare()
             target.playWhenReady = playing
+        }
+        fun reconfigure(reason: String) {
+            // HDMI/AudioTrack and profile callbacks can arrive as a burst; perform a single
+            // reopen with the latest options and capture the user's current transport intent.
+            cancelRestart()
+            val task = Runnable {
+                restartTask = null
+                reconfigureNow(reason)
+            }
+            restartTask = task
+            restartHandler.postDelayed(task, AUDIO_RECONFIGURE_COALESCE_MS)
         }
         session.apply = update@ { old, next ->
             val target = playerRef.get() ?: return@update
@@ -79,6 +104,7 @@ object Media3AudioProcessing {
     }
 
     fun release(player: ExoPlayer) {
+        restartCancels.remove(player)?.invoke()
         listeners.remove(player)?.let(player::removeListener)
         sessions.remove(player)?.release()
     }
@@ -165,6 +191,46 @@ object Media3AudioProcessing {
                         .setEventListener(eventListener)
                         .setMaxDroppedFramesToNotify(50),
                 ) {
+                    private val frameTimeline = session.media3Frames
+                    private var previousCodec: androidx.media3.exoplayer.mediacodec.MediaCodecAdapter? = null
+                    override fun onPositionReset(positionUs: Long, joining: Boolean, sampleStreamIsResetToKeyFrame: Boolean) {
+                        super.onPositionReset(positionUs, joining, sampleStreamIsResetToKeyFrame)
+                        frameTimeline.rendererReset(retainHistory = true)
+                    }
+
+                    override fun onStreamChanged(formats: Array<Format>, startPositionUs: Long, offsetUs: Long,
+                        mediaPeriodId: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId) {
+                        super.onStreamChanged(formats, startPositionUs, offsetUs, mediaPeriodId)
+                        frameTimeline.rendererReset()
+                    }
+
+                    override fun onDisabled() {
+                        try { super.onDisabled() } finally { previousCodec = null; frameTimeline.rendererReset() }
+                    }
+
+                    override fun processOutputBuffer(
+                        positionUs: Long, elapsedRealtimeUs: Long,
+                        codec: androidx.media3.exoplayer.mediacodec.MediaCodecAdapter?,
+                        buffer: java.nio.ByteBuffer?, bufferIndex: Int, bufferFlags: Int, sampleCount: Int,
+                        bufferPresentationTimeUs: Long, isDecodeOnlyBuffer: Boolean, isLastBuffer: Boolean,
+                        format: Format,
+                    ): Boolean {
+                        if (previousCodec != null && previousCodec !== codec) frameTimeline.clear()
+                        previousCodec = codec
+                        val token = frameTimeline.beginOutput()
+                        val ptsUs = bufferPresentationTimeUs - getOutputStreamOffsetUs()
+                        return try {
+                            val consumed = super.processOutputBuffer(positionUs, elapsedRealtimeUs, codec, buffer,
+                                bufferIndex, bufferFlags, sampleCount, bufferPresentationTimeUs,
+                                isDecodeOnlyBuffer, isLastBuffer, format)
+                            val picture = !isDecodeOnlyBuffer && bufferFlags and
+                                (android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG or android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0
+                            if (consumed && picture) frameTimeline.decoded(ptsUs, token)
+                            frameTimeline.pending(if (!consumed && picture) ptsUs else -1L, token)
+                            consumed
+                        } finally { frameTimeline.endOutput() }
+                    }
+
                     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
                         // Shift only video scheduling relative to the audio master clock. Adding
                         // PCM silence would be cancelled by the sink clock and break seeks.

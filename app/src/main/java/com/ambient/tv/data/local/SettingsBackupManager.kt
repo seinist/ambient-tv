@@ -653,6 +653,8 @@ class SettingsBackupManager @Inject constructor(
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
                     cardImages1080 = preferences.cardImages1080,
+                    vlcExperimentalFeaturesEnabled = preferences.vlcExperimentalFeaturesEnabled,
+                    vlcHdrGpuEnabled = preferences.vlcHdrGpuEnabled,
                 ),
                 connections = ConnectionSettingsExtras(
                     tvheadendHtspPort = preferences.tvheadendHtspPort,
@@ -1221,6 +1223,8 @@ class SettingsBackupManager @Inject constructor(
                 (context?.applicationContext as? com.ambient.tv.AmbientTvApplication)?.applyImageCacheMb(preferences.imageCacheMb)
             }
             settings.cardImages1080?.let { preferences.cardImages1080 = it }
+            settings.vlcExperimentalFeaturesEnabled?.let { preferences.vlcExperimentalFeaturesEnabled = it }
+            settings.vlcHdrGpuEnabled?.let { preferences.vlcHdrGpuEnabled = it }
         }
         extras?.connections?.tvheadendHtspPort?.let { preferences.tvheadendHtspPort = it }
         extras?.connections?.let { connections ->

@@ -1,0 +1,40 @@
+diff --git a/modules/video_output/android/display.c b/modules/video_output/android/display.c
+--- a/modules/video_output/android/display.c
++++ b/modules/video_output/android/display.c
+@@ -724,9 +724,14 @@
+         return VLC_EGENERIC;
+     }
+ 
+-    if (sys->avctx->air != NULL)
+-    {
+-        int ret = CreateSurfaceControl(vd);
++    if (sys->avctx->air != NULL)
++    {
++        // A Vulkan-only reader deliberately has no SurfaceControl API.
++        if (!sys->avctx->asc_api) {
++            free(sys);
++            return VLC_EGENERIC;
++        }
++        int ret = CreateSurfaceControl(vd);
+         if (ret == VLC_EGENERIC)
+         {
+             free(sys);
+diff --git a/modules/video_output/opengl/interop_aimage.c b/modules/video_output/opengl/interop_aimage.c
+--- a/modules/video_output/opengl/interop_aimage.c
++++ b/modules/video_output/opengl/interop_aimage.c
+@@ -333,9 +333,12 @@
+ }
+ 
+ static int
+-InitAImage(struct vlc_gl_interop *interop, android_video_context_t *avctx)
+-{
+-    struct priv *priv = interop->priv;
++InitAImage(struct vlc_gl_interop *interop, android_video_context_t *avctx)
++{
++    // The experimental GPU-only reader is not an ordinary GLES/ASC context.
++    if (!avctx->air_api || !avctx->asc_api || !avctx->air_api->AHardwareBuffer.getId)
++        return VLC_EGENERIC;
++    struct priv *priv = interop->priv;
+ 
+ #define LOAD_GL_SYMBOL(name) \
+     priv->gl.name = vlc_gl_GetProcAddress(interop->gl, "gl" # name); \

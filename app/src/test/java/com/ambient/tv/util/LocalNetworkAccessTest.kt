@@ -79,9 +79,12 @@ class LocalNetworkAccessTest {
             spotifyEnabled = false
             filesEnabled = false
         }
-        val source = FileSource(id = "local", name = "Local", kind = "local", showInFiles = false)
+        val source = FileSource(id = "local", name = "Local", kind = "local",
+            treeUri = "content://com.android.externalstorage.documents/tree/primary%3AROMs",
+            showInFiles = false)
         preferences.fileSources = listOf(source)
         preferences.gameLibraryFolders = listOf(GameLibraryFolder(sourceId = source.id, path = "ROMs"))
+        assertEquals(listOf(source.id), preferences.activeConnectivityFileSources().map { it.id })
         assertFalse(LocalNetworkAccess.hasConfiguredService(preferences))
     }
 }

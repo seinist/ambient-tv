@@ -146,7 +146,20 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 }
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
-val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
+// Normal APKs use the extended AAR produced by build.sh. The explicit
+// property still selects the isolated AAR for native CI and developer tests.
+val isolatedVlc = providers.gradleProperty("VLC_AHB_EXPERIMENT").orElse("0").get() == "1"
+val vulkanVlcAar = if (isolatedVlc)
+    rootProject.file("native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar")
+else file("libs/libvlc-vulkan.aar")
+val extendedVlc = vulkanVlcAar.isFile && ZipFile(vulkanVlcAar).use {
+    it.getEntry("assets/ambient-vlc-extended-v1") != null
+}
+require(!isolatedVlc || extendedVlc) { "Build the isolated extended AAR first with VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh" }
+val vlcAhbExperiment = extendedVlc
+val vlcDoviAhbExperiment = extendedVlc
+val vlcDoviFelExperiment = extendedVlc
+val vlcHdrplusSpatialExperiment = extendedVlc
 val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }
@@ -320,6 +333,10 @@ android {
         // Only the app's own VLC 4 build (scripts/build_vlc_vulkan.sh) carries the ambientsvp
         // filter; the Maven libVLC fallback cannot interpolate, so SVP is hidden there.
         buildConfigField("boolean", "VLC_SVP", vulkanVlcAar.isFile.toString())
+        buildConfigField("boolean", "VLC_AHB_EXPERIMENT", vlcAhbExperiment.toString())
+        buildConfigField("boolean", "VLC_DOVI_AHB_EXPERIMENT", vlcDoviAhbExperiment.toString())
+        buildConfigField("boolean", "VLC_DOVI_FEL_EXPERIMENT", vlcDoviFelExperiment.toString())
+        buildConfigField("boolean", "VLC_HDR10PLUS_SPATIAL_EXPERIMENT", vlcHdrplusSpatialExperiment.toString())
         buildConfigField("String", "LIBVLC_VERSION", quotedBuildConfigString(if (vulkanVlcAar.isFile) "4.0.0-dev-vulkan+c84ef1e" else libs.versions.libvlc.get()))
         buildConfigField("String", "MEDIA3_VERSION", quotedBuildConfigString(libs.versions.media3.get()))
         buildConfigField("String", "COMPOSE_BOM_VERSION", quotedBuildConfigString(libs.versions.composeBom.get()))

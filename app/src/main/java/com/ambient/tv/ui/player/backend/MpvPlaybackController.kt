@@ -44,6 +44,7 @@ class MpvPlaybackController(
     broadcastSource: Boolean = liveStream,
     /** gpu-next/Vulkan HDR passthrough chosen by [mpvHdrGpuDecision]. */
     val hdrGpuPassthrough: Boolean = false,
+    zeroCopyScope: String? = null,
 ) : PlaybackHandle, VideoPresentationTarget, SubtitleDelayTarget, com.ambient.tv.ui.player.FrameStepTarget {
     val audioSession = AudioSession(videoImagePreferences(context), "mpv", audioPassthroughEnabled, audioOnly = audioOnly)
     private val main = Handler(Looper.getMainLooper())
@@ -52,6 +53,8 @@ class MpvPlaybackController(
     private var engine: MpvPlaybackEngine? = null // owner thread only
     private var ownedSurface: Surface? = null // independent Surface reference; owner thread only
     private var surfaceIdentity: Surface? = null // UI's SurfaceHolder identity
+    private var retiringSurfaceIdentity: Surface? = null // last requested detach, UI thread only
+    @Volatile private var surfaceGeneration = 0L // main writes, owner validates before attaching
     private val surfaceGate = MpvSurfaceDetachGate()
     @Volatile private var released = false
     @Volatile private var lastProgress = SystemClock.elapsedRealtime()
@@ -75,7 +78,7 @@ class MpvPlaybackController(
     private val expectedGpuFilters = runCatching {
         initialMpvAccelerationPlan(context, videoOutputMode, decoderMode, initialImageOptions, nativeHdrPreferred,
             hdrGpuPassthrough, declaredHdr != null &&
-                !nativeHdrSurfacePreferred(declaredHdr, HdrSupport.displayStandards(context))).gpu
+                !nativeHdrSurfacePreferred(declaredHdr, HdrSupport.displayStandards(context)), zeroCopyScope).gpu
     }.getOrDefault(false)
     private var state by mutableStateOf(MpvEngineState(imageOptions = initialImageOptions.normalized(),
         status = PlaybackStatus(positionMs = initialStartPositionMs), supportsGpuFilters = expectedGpuFilters))
@@ -94,10 +97,12 @@ class MpvPlaybackController(
     }
     private val queries = ConcurrentHashMap<String, Query>()
     private val sampledValues = mutableMapOf<String, Any?>() // owner thread only
+    private var publishedReadings: Map<String, Any?> = emptyMap() // owner thread only
+    private var lastTickSampleAt = 0L // main thread only
     private var sampledMediaInfoGeneration = -1 // owner thread only
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = SystemClock.elapsedRealtime()
-    /** Completed once the previous player closed, failed to close, or [PREVIOUS_RELEASE_LIMIT_MS] passed. */
+    /** Completed only once ownership settles or this controller is cancelled. */
     private val ownerReady = java.util.concurrent.CompletableFuture<PreviousReleaseOutcome>()
     /**
      * The previous player (MPV, VLC or live Media3) is still closing its output. Shown as a short
@@ -140,7 +145,12 @@ class MpvPlaybackController(
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", report)
             }
             backendUnresponsive = stalled
-            mailbox.submit("sample") { sample() }
+            val fast = openingPhase || playIntent || pendingSeek.isPending || stalled ||
+                queries.values.any { now - it.requested <= 2_500L }
+            if (fast || now - lastTickSampleAt >= 1_000L) {
+                lastTickSampleAt = now
+                mailbox.submit("sample") { sample() }
+            }
             main.postDelayed(this, 250L)
         }
     }
@@ -153,17 +163,35 @@ class MpvPlaybackController(
             // Construction can happen inside remember(). Cross the main queue once so that
             // composition commits before the owner reads AudioSession's Compose state.
             main.post {
+                if (released) return@post
                 waitingForPreviousPlayer = false
-                ownerReady.complete(outcome)
+                if (outcome == PreviousReleaseOutcome.TIMED_OUT) {
+                    failure = context.getString(com.ambient.tv.R.string.audio_output_release_failed)
+                    // Keep the initialization and queued transport commands pending. A late
+                    // release is not a permanent failure of this controller.
+                    val weak = java.lang.ref.WeakReference(this@MpvPlaybackController)
+                    val previous = previousAudioRelease
+                    val handler = main
+                    previous.future.whenComplete { _, _ ->
+                        handler.post {
+                            val target = weak.get() ?: return@post
+                            if (!target.released) {
+                                if (!previous.blocked) target.failure = null
+                                target.ownerReady.complete(requireNotNull(previousReleaseOutcome(true, previous.failed, 0L, blocked = previous.blocked)))
+                            }
+                        }
+                    }
+                } else ownerReady.complete(outcome)
             }
         }
         mailbox.submit("initialize") {
             // Already settled: the mailbox only runs once ownerReady completed. Never blocks.
+            if (released) return@submit
             val outcome = ownerReady.getNow(PreviousReleaseOutcome.TIMED_OUT)
             val waited = SystemClock.elapsedRealtime() - createdAt
             com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", "previous player $outcome after $waited ms")
             when (outcome) {
-                PreviousReleaseOutcome.TIMED_OUT -> {
+                PreviousReleaseOutcome.BLOCKED, PreviousReleaseOutcome.TIMED_OUT -> {
                     Timber.w("MPV start: previous player still closing after %d ms; not starting", waited)
                     main.post { if (!released) failure = context.getString(com.ambient.tv.R.string.audio_output_release_failed) }
                     return@submit
@@ -178,7 +206,7 @@ class MpvPlaybackController(
             engine = MpvPlaybackEngine(context, audioSession, worker, {
                 main.post { if (!released && BackgroundPlaybackSession.owns(this)) PlaybackOutputTransition.begin(context) }
             }, url, initialStartPositionMs, headers, audioPassthroughEnabled, videoOutputMode,
-                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, hdrGpuPassthrough, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource, ownerStep)
+                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, hdrGpuPassthrough, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource, ownerStep, zeroCopyScope)
             ownerStep.mark("initialize:first_sample")
             sample()
         }
@@ -250,7 +278,8 @@ class MpvPlaybackController(
             restoredOutputAudioSelection = player.restoredOutputAudioSelection,
             restoreOutput = player.captureOutputRestartState(),
         )
-        val readings = sampledValues.toMap()
+        if (publishedReadings != sampledValues) publishedReadings = sampledValues.toMap()
+        val readings = publishedReadings
         val completed = appliedRevision
         lastProgress = SystemClock.elapsedRealtime()
         main.post {
@@ -452,33 +481,52 @@ class MpvPlaybackController(
             Surface.CREATOR.createFromParcel(parcel)
         } finally { parcel.recycle() }
         surfaceIdentity = surface
+        val generation = ++surfaceGeneration
         // A queued detach must not be overwritten by a foreground reattach: retire
         // the previous VO before binding the (possibly surviving) SurfaceView again.
-        mailbox.submit("surface-attach", discard = { copy.release() }) {
+        val accepted = mailbox.submit("surface-attach", discard = { copy.release() }) {
             val player = engine
-            if (player == null) copy.release()
+            if (player == null || !copy.isValid || generation != surfaceGeneration || released) copy.release()
             else {
-                player.detachSurface()
-                ownedSurface?.release()
-                ownedSurface = copy
-                surfaceGate.attaching()
-                player.attachSurface(copy, width, height)
-                sample()
+                // Until ownership is transferred, the new reference must be released even
+                // if retiring the old VO throws. After transfer, retain it until confirmed detach.
+                var transferred = false
+                try {
+                    player.detachSurface()
+                    ownedSurface?.release()
+                    // Detach may have blocked while a new Surface generation was requested.
+                    if (generation != surfaceGeneration || released || !copy.isValid) {
+                        ownedSurface = null
+                        return@submit
+                    }
+                    ownedSurface = copy
+                    transferred = true
+                    surfaceGate.attaching()
+                    player.attachSurface(copy, width, height)
+                    sample()
+                } finally {
+                    if (!transferred) copy.release()
+                }
             }
         }
+        if (!accepted && surfaceIdentity === surface) surfaceIdentity = null
     }
     fun detachSurface(surface: Surface? = null) {
         if (surface != null && surfaceIdentity !== surface) return
+        if (surfaceIdentity != null) retiringSurfaceIdentity = surfaceIdentity
         surfaceIdentity = null
+        surfaceGeneration++
         // Kept across close(): Stop's release() must not drop the detach queued just before it.
         if (!released) {
             val ticket = surfaceGate.requestDetach()
             mailbox.submit("surface-detach", keepOnClose = true) {
-                try {
-                    engine?.detachSurface()
-                    ownedSurface?.release()
-                    ownedSurface = null
-                } finally { surfaceGate.detached(ticket) }
+                engine?.detachSurface()
+                // An exception is not evidence that the VO has stopped. Only acknowledge
+                // the detach after the native operation succeeds; release can settle it later.
+                surfaceGate.detached(ticket)
+                val previous = ownedSurface
+                ownedSurface = null
+                previous?.release()
                 sample()
             }
         }
@@ -490,9 +538,12 @@ class MpvPlaybackController(
      */
     fun detachSurfaceAndWait(surface: Surface, timeoutMs: Long = SURFACE_DETACH_WAIT_MS) {
         val owner = surfaceIdentity === surface
-        detachSurface(surface)
-        if (!owner && !released) return
-        if (Looper.myLooper() === thread.looper) return
+        val retiring = surfaceIdentity == null && retiringSurfaceIdentity === surface
+        if (!owner && !retiring && !released) return
+        if (owner) detachSurface(surface)
+        // ON_STOP or detachVideoOutput may already have enqueued retirement. A later
+        // surfaceDestroyed must still wait for that operation rather than return early.
+        if (!ownerReady.isDone || Looper.myLooper() === thread.looper) return
         val started = SystemClock.elapsedRealtime()
         val detached = surfaceGate.await(timeoutMs)
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", "surface detach " +
@@ -510,25 +561,31 @@ class MpvPlaybackController(
         hostRequestedPlay = false
         backendUnresponsive = false
         surfaceIdentity = null
+        surfaceGeneration++
         main.removeCallbacks(tick)
-        audioSession.release()
         val audioRelease = nativeAudioReleases.beginRelease()
+        runCatching { audioSession.release() }.onFailure { Timber.w(it, "MPV audio session release failed") }
         mailbox.close {
             // Never interrupt or destroy a handle concurrently with an in-flight native call.
             try {
                 engine?.release()
-                audioRelease.complete(Unit)
                 engine = null
-                ownedSurface?.release()
+                surfaceGate.closed()
+                // The native handle is gone; a Java Surface cleanup failure is ancillary.
+                val previous = ownedSurface
                 ownedSurface = null
+                runCatching { previous?.release() }.onFailure { Timber.w(it, "MPV Surface release failed") }
+                audioRelease.complete(Unit)
             } catch (error: Throwable) {
-                audioRelease.completeExceptionally(error)
+                audioRelease.completeExceptionally(NativeOutputReleaseUncertain(error))
                 throw error
             } finally {
-                surfaceGate.closed()
                 thread.quitSafely()
             }
         }
+        // If still waiting for a previous owner, discard initialization and release this
+        // controller immediately. The earlier owner's gate entry remains independent.
+        ownerReady.complete(PreviousReleaseOutcome.TIMED_OUT)
     }
     fun loadedImageShaders(): List<String> = read("loadedImageShaders", emptyList(), 750L) { loadedImageShaders() }
     fun activeBuiltinSharpen(): String? = read("activeBuiltinSharpen", null, 750L) { activeBuiltinSharpen() }
