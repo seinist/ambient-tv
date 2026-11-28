@@ -150,6 +150,25 @@ impl StatsJob{
                 vk::DependencyFlags::empty(),&after,&[],&[]);
         }
     }
+    pub(super) fn gradients(&self,out:&mut[[f32;4]])->Result<()>{
+        if !self.tracking||out.len()!=self.windows.len(){return Err("HDR affine read contract".into());}
+        let mut data=vec![0u32;STRIDE*out.len()];
+        unsafe{
+            let mapped=self.summary.map()?;
+            std::ptr::copy_nonoverlapping(mapped,data.as_mut_ptr(),data.len());
+            self.device.unmap_memory(self.summary.memory);
+        }
+        for (i,g) in out.iter_mut().enumerate(){
+            let row=&data[i*STRIDE..(i+1)*STRIDE];
+            *g=[0.0;4];
+            if row[60]>1||i==0&&row[60]!=0{return Err("invalid HDR affine flag".into());}
+            if row[60]==1{
+                for k in 0..4{g[k]=f32::from_bits(row[56+k]);}
+                if g.iter().any(|v|!v.is_finite()||v.abs()>0.5){return Err("invalid HDR affine gradient".into());}
+            }
+        }
+        Ok(())
+    }
     pub(super) fn read(&self,out:&mut[HdrResult],mut shifts:Option<&mut[[i32;2]]>)->Result<()>{
         if shifts.as_ref().is_some_and(|s|s.len()!=out.len())||self.tracking!=shifts.is_some(){return Err("HDR tracking read contract".into());}
         if out.len()!=self.windows.len(){return Err("HDR statistics count mismatch".into());}
