@@ -564,6 +564,12 @@ class MpvPlaybackController(
         surfaceGeneration++
         main.removeCallbacks(tick)
         val audioRelease = nativeAudioReleases.beginRelease()
+        // The deadline covers the entire queued owner operation, including
+        // a native call already stuck before close() can be dispatched.
+        armNativeRetirementDeadline(audioRelease, delay = { ms, block -> main.postDelayed({ block() }, ms) }) {
+            MpvRetainedOwners.retain(this)
+            Timber.e("MPV native owner did not retire; playback quarantined until process restart")
+        }
         runCatching { audioSession.release() }.onFailure { Timber.w(it, "MPV audio session release failed") }
         mailbox.close {
             // Never interrupt or destroy a handle concurrently with an in-flight native call.
@@ -577,8 +583,9 @@ class MpvPlaybackController(
                 runCatching { previous?.release() }.onFailure { Timber.w(it, "MPV Surface release failed") }
                 audioRelease.complete(Unit)
             } catch (error: Throwable) {
+                MpvRetainedOwners.retain(this)
                 audioRelease.completeExceptionally(NativeOutputReleaseUncertain(error))
-                throw error
+                Timber.e(error, "MPV native release uncertain; owner retained")
             } finally {
                 thread.quitSafely()
             }

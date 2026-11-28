@@ -653,12 +653,18 @@ internal class MpvPlaybackEngine(
         } catch (failure: Throwable) {
             // A constructor exception otherwise loses the only reference to the native handle.
             runCatching { imageScope.cancel() }
+            val retirement = nativeAudioReleases.beginRelease()
+            val main = android.os.Handler(android.os.Looper.getMainLooper())
+            armNativeRetirementDeadline(retirement, delay = { ms, block -> main.postDelayed({ block() }, ms) }) {
+                MpvRetainedOwners.retain(this)
+            }
             runCatching {
                 released = true
                 stopEventPump()
                 MpvNativeBridge.nativeDestroy(handle)
-            }.onFailure { destroyFailure ->
-                nativeAudioReleases.beginRelease().completeExceptionally(NativeOutputReleaseUncertain(destroyFailure))
+            }.onSuccess { retirement.complete(Unit) }.onFailure { destroyFailure ->
+                MpvRetainedOwners.retain(this)
+                retirement.completeExceptionally(NativeOutputReleaseUncertain(destroyFailure))
                 if (destroyFailure !== failure) failure.addSuppressed(destroyFailure)
             }
             throw failure
@@ -2550,21 +2556,21 @@ internal class MpvPlaybackEngine(
         eventDriven = false
         runCatching { MpvNativeBridge.nativeInterruptWakeup(handle) }
         val pump = eventPump ?: return
+        val deadline = android.os.SystemClock.elapsedRealtime() + 2_000L
         var interrupted = false
-        var warned = false
-        while (pump.isAlive) {
-            try {
-                pump.join(EVENT_PUMP_POLL_MS + 500L)
-            } catch (_: InterruptedException) {
-                interrupted = true
+        try {
+            while (pump.isAlive) {
+                val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+                if (remaining <= 0L) {
+                    MpvRetainedOwners.retain(this)
+                    throw NativeOutputReleaseUncertain(IllegalStateException("MPV event waiter did not retire"))
+                }
+                try { pump.join(remaining) } catch (_: InterruptedException) { interrupted = true }
             }
-            if (pump.isAlive && !warned) {
-                warned = true
-                Timber.w("MPV event waiter still active; deferring native destruction")
-            }
+            eventPump = null
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt()
         }
-        eventPump = null
-        if (interrupted) Thread.currentThread().interrupt()
     }
 
     private fun recordPropertyChange() {
@@ -3218,8 +3224,14 @@ internal class MpvPlaybackEngine(
         cleanup { imageScope.cancel() }
         cleanup { detachVideoOutput() }
         released = true
-        stopEventPump()
-        MpvNativeBridge.nativeDestroy(handle)
+        try {
+            stopEventPump()
+            MpvNativeBridge.nativeDestroy(handle)
+        } catch (failure: Throwable) {
+            retiredHdrScenes.forEach(HdrSceneSession::quarantine)
+            MpvRetainedOwners.retain(this)
+            throw failure
+        }
         retiredHdrScenes.forEach { scene -> cleanup { scene.cleanup() } }
         retiredHdrScenes.clear()
     }

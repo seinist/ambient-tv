@@ -59,7 +59,7 @@ struct svp_placebo_quality {
     int (*retire_capture_group)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t,uint64_t);
     uint64_t capture_end;
     bool capture_failed,device_lost,stalled;
-    bool allow_quarantine,terminal_uncertain;
+    bool terminal_uncertain;
     int (*submit_stats)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
         const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
@@ -97,7 +97,7 @@ static inline void svp_placebo_discard_stats(struct svp_placebo_quality *s,uint6
 static inline bool svp_placebo_collect_stats(pl_gpu gpu,struct svp_placebo_quality *s,uint64_t token,
     struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index)
 {
-    if(!token||!hdr||!s->collect_stats||s->device_lost)return false;
+    if(!token||!hdr||!s->collect_stats||s->device_lost||s->terminal_uncertain)return false;
     for(unsigned i=0;i<s->pending_count;i++){
         struct svp_placebo_pending *p=&s->pending[i];
         if(p->stats_token!=token)continue;
@@ -127,18 +127,8 @@ static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality 
     svp_placebo_remove_pending(gpu,s,i);
     return true;
 }
-static inline void svp_placebo_quality_retire_texture(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
-{
-    while(s->pending_count){
-        bool wait=texture==NULL;
-        for(unsigned i=0;i<s->pending_count;i++)
-            for(unsigned j=0;j<s->pending[i].count;j++)wait|=s->pending[i].textures[j]==texture;
-        if(!svp_placebo_retire_one(gpu,s,0,wait))break;
-    }
-}
-// For live replacement, never block indefinitely on a driver. Keep
-// the existing allocation and reject this synthesis if ownership
-// has not returned. Final destruction uses the stricter drain above.
+// Both live replacement and terminal retirement use a bounded fence wait.
+// The caller must retain the complete owner if retirement fails.
 static inline bool svp_placebo_quality_try_retire_texture(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
 {
     if(s->terminal_uncertain)return false;
@@ -162,14 +152,16 @@ static inline void svp_placebo_quality_source_changed(pl_gpu gpu,struct svp_plac
     if(s->generation!=UINT64_MAX)++s->generation;
     else{s->generation=0;s->generation_exhausted=true;}
 }
-static inline void svp_placebo_quality_destroy(pl_gpu gpu,struct svp_placebo_quality *s)
+static inline bool svp_placebo_quality_destroy(pl_gpu gpu,struct svp_placebo_quality *s)
 {
-    svp_placebo_quality_retire_texture(gpu,s,NULL);
+    for(unsigned i=0;i<s->pending_count;i++)s->pending[i].stats_token=0;
+    if(!svp_placebo_quality_try_retire_texture(gpu,s,NULL))return false;
     // Renderer dependencies on the shared timeline may outlive native jobs.
     if(s->done){pl_gpu_finish(gpu);pl_vulkan_sem_destroy(gpu,&s->done);}
     if(s->engine)s->destroy(s->engine);
     if(s->lib)dlclose(s->lib);
     *s=(struct svp_placebo_quality){0};
+    return true;
 }
 static inline bool svp_placebo_quality_target(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex *tex,int w,int h,bool storage)
 {
@@ -179,7 +171,7 @@ static inline bool svp_placebo_quality_target(pl_gpu gpu,struct svp_placebo_qual
     if(*tex&&(*tex)->params.w==w&&(*tex)->params.h==h&&(*tex)->params.format==fmt&&
         (*tex)->params.sampleable&&(*tex)->params.renderable&&(!storage||(*tex)->params.storable))return true;
     if(*tex&&!svp_placebo_quality_try_retire_texture(gpu,s,*tex))return false;
-    if(s->device_lost)return false;
+    if(s->device_lost||s->terminal_uncertain)return false;
     return pl_tex_recreate(gpu,tex,pl_tex_params(.w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true,.storable=storage));
 }
 static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_placebo_quality *s,
@@ -281,8 +273,7 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
     PFN_vkGetDeviceProcAddr gdpa=(PFN_vkGetDeviceProcAddr)vk->get_proc_addr(vk->instance,"vkGetDeviceProcAddr");
     PFN_vkGetDeviceQueue get_queue=gdpa?(PFN_vkGetDeviceQueue)gdpa(vk->device,"vkGetDeviceQueue"):NULL;
     VkQueue queue=VK_NULL_HANDLE;uint32_t family=vk->queue_compute.index;
-    PFN_vkQueueWaitIdle wait_idle=gdpa?(PFN_vkQueueWaitIdle)gdpa(vk->device,"vkQueueWaitIdle"):NULL;
-    if(!get_queue||!wait_idle)goto cleanup;
+    if(!get_queue)goto cleanup;
     get_queue(vk->device,family,0,&queue);
     if(!queue)goto cleanup;
     vk->lock_queue(vk,family,0);
@@ -291,16 +282,10 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
         hdr->windows,hdr->tracks,hdr->axes,hdr->count,pass,index,&job,s->generation):
         capture&&pass&&s->submit_capture?s->submit_capture(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
         hdr->windows,hdr->tracks,hdr->axes,hdr->count,pass,index,&job,s->generation):
-        pass?s->render_pass(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
-        hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index):
-        hdr?s->render_hdr(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,
-        hdr->windows,hdr->tracks,hdr->axes,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count):
-        s->submit_cached?s->submit_cached(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,&job,s->generation):
-        s->submit?s->submit(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,&job):
-        s->render(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase);
-    // VLC's terminal owner can retain the complete device on an unknown
-    // native panic. Do not retry a driver call indefinitely under its lock.
-    if(rc==-2&&s->allow_quarantine){
+        s->submit_cached(s->engine,queue,family,images,count,holds,s->done,s->value+1,phase,&job,s->generation);
+    // The ABI cannot prove whether submission happened. Retain all images,
+    // semaphores and the device; neither player may attempt another GPU call.
+    if(rc==-2){
         s->terminal_uncertain=true;
         struct svp_placebo_pending *p=&s->pending[s->pending_count++];
         p->job=job;p->count=held;
@@ -309,9 +294,6 @@ static inline bool svp_placebo_quality_render_pass_ex(pl_gpu gpu,struct svp_plac
         vk->unlock_queue(vk,family,0);
         return false;
     }
-    // MPV's VO still owns the original terminal retirement path. Never
-    // destroy externally owned images without a proven idle/lost result.
-    if(rc==-2){VkResult status;do{status=wait_idle(queue);}while(status!=VK_SUCCESS&&status!=VK_ERROR_DEVICE_LOST);}
     vk->unlock_queue(vk,family,0);
     if(rc==0||rc==1){s->value++;retired=true;ok=rc==0;}
     // Metadata belongs to this exact output, but collection no longer

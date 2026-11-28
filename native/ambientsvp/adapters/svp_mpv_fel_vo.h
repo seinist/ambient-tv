@@ -11,6 +11,7 @@
 #include <libplacebo/gamut_mapping.h>
 #if defined(PL_HAVE_VULKAN)
 #include <libplacebo/vulkan.h>
+#include <pthread.h>
 #include "svp_placebo_quality.h"
 #endif
 static bool map_frame(pl_gpu gpu,pl_tex *tex,const struct pl_source_frame *src,struct pl_frame *frame);
@@ -23,18 +24,39 @@ struct svp_fel_vo_cache {
     struct svp_placebo_quality quality;
 #endif
 };
+// A failed GPU ownership proof must never return into upstream VO teardown.
+// Park without a Vulkan queue lock or retrying a driver call; Android's owner
+// deadline quarantines the handle and reports the terminal error to the UI.
+#if defined(PL_HAVE_VULKAN)
+static inline void svp_fel_vo_quarantine(void)
+{
+    static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+    static pthread_cond_t cv=PTHREAD_COND_INITIALIZER;
+    pthread_mutex_lock(&lock);
+    for(;;)pthread_cond_wait(&cv,&lock);
+}
+#endif
+static inline void svp_fel_vo_preflight_retirement(struct priv *p)
+{
+#if defined(PL_HAVE_VULKAN)
+    if(p->svp_fel&&!svp_placebo_quality_try_retire_texture(p->gpu,&p->svp_fel->quality,NULL))
+        svp_fel_vo_quarantine();
+#else
+    (void)p;
+#endif
+}
 static inline void svp_fel_vo_destroy(struct priv *p)
 {
     struct svp_fel_vo_cache *s=p->svp_fel;
     if(!s)return;
 #if defined(PL_HAVE_VULKAN)
-    svp_placebo_quality_retire_texture(p->gpu,&s->quality,NULL);
+    if(!svp_placebo_quality_try_retire_texture(p->gpu,&s->quality,NULL))svp_fel_vo_quarantine();
 #endif
     for(unsigned i=0;i<4;i++){
         pl_tex_destroy(p->gpu,&s->sources[i]);
     }
 #if defined(PL_HAVE_VULKAN)
-    svp_placebo_quality_destroy(p->gpu,&s->quality);
+    if(!svp_placebo_quality_destroy(p->gpu,&s->quality))svp_fel_vo_quarantine();
 #endif
     pl_renderer_destroy(&s->reconstruct);
     free(s);p->svp_fel=NULL;
@@ -42,7 +64,8 @@ static inline void svp_fel_vo_destroy(struct priv *p)
 static inline void svp_fel_vo_retire_output(struct priv *p,pl_tex output)
 {
 #if defined(PL_HAVE_VULKAN)
-    if(p->svp_fel&&output)svp_placebo_quality_retire_texture(p->gpu,&p->svp_fel->quality,output);
+    if(p->svp_fel&&output&&!svp_placebo_quality_try_retire_texture(p->gpu,&p->svp_fel->quality,output))
+        svp_fel_vo_quarantine();
 #else
     (void)p;(void)output;
 #endif
@@ -152,7 +175,8 @@ static inline bool svp_fel_vo_map(struct priv *p,struct vo *vo,struct mp_image *
         output=fp->svp_fel_output;
     // Each queue frame must own its output. For source/failure frames
     // use normal MPV mapping instead of exposing a mutable cache slot.
-    if(output!=fp->svp_fel_output)return false;
+    if(s->quality.terminal_uncertain)svp_fel_vo_quarantine();
+    if(!output||output!=fp->svp_fel_output)return false;
     *out=svp_fel_rgb(output);out->user_data=mpi;
     // No RPU or enhancement_layer attached to reconstructed RGB.
     return true;

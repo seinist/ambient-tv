@@ -122,6 +122,31 @@ class AudioOutputReleaseGateTest {
         assertTrue(gate.snapshot().isDone)
     }
 
+    @Test fun ownerDeadlinePermanentlyBlocksLateNativeRelease() {
+        val gate = AudioOutputReleaseGate()
+        val release = gate.beginRelease()
+        val timers = Timers()
+        var retained = 0
+        armNativeRetirementDeadline(release, delay = timers.delay) { retained++ }
+        val waiting = gate.snapshot()
+        timers.fire()
+        assertTrue(waiting.blocked)
+        assertFalse(release.complete(Unit))
+        assertEquals(1, retained)
+        assertTrue(gate.snapshot().blocked)
+    }
+
+    @Test fun successfulNativeReleaseDoesNotQuarantine() {
+        val gate = AudioOutputReleaseGate()
+        val release = gate.beginRelease()
+        val timers = Timers()
+        armNativeRetirementDeadline(release, delay = timers.delay) { fail("unexpected quarantine") }
+        release.complete(Unit)
+        timers.fire()
+        assertFalse(gate.snapshot().blocked)
+        assertTrue(gate.snapshot().isDone)
+    }
+
     @Test fun outcomeRules() {
         assertNull(previousReleaseOutcome(done = false, failed = false, waitedMs = 14_999L))
         assertEquals(PreviousReleaseOutcome.TIMED_OUT, previousReleaseOutcome(false, false, 15_000L))

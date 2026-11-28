@@ -5,6 +5,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VlcAhbExperimentPolicyTest {
+    @org.junit.Test fun extendedSdrResidentRequiresOptInAndNoCpuFilters() {
+        val requested = com.ambient.tv.data.local.VlcImageOptions(svpMode = "medium",
+            svp = com.ambient.tv.data.local.SvpOptions(hardwareResident = true))
+        org.junit.Assert.assertTrue(vlcCombinedSdrResidentEligible(true, false, requested))
+        org.junit.Assert.assertFalse(vlcCombinedSdrResidentEligible(false, false, requested))
+        org.junit.Assert.assertFalse(vlcCombinedSdrResidentEligible(true, true, requested))
+        org.junit.Assert.assertFalse(vlcCombinedSdrResidentEligible(true, false, requested.copy(softwareProcessing = true)))
+        org.junit.Assert.assertFalse(vlcCombinedSdrResidentEligible(true, false, requested.copy(svpMode = "off")))
+        org.junit.Assert.assertFalse(vlcCombinedSdrResidentEligible(true, false,
+            requested.copy(svp = requested.svp.copy(hardwareResident = false))))
+    }
+
     @Test fun dolbyVisionRpuFallbackNeverOverridesNativeHdrOrProduction() {
         assertTrue(vlcDoviRpuDecoderRequired(true, true, false, false))
         assertFalse(vlcDoviRpuDecoderRequired(true, true, false, false, hardwareRoute = true))

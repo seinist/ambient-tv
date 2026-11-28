@@ -54,12 +54,15 @@ internal object HdrOffscreenAnalysis {
 
     suspend fun mpv(session: HdrSceneSession, filter: String, hwdec: String, device: String): Boolean =
         withContext(Dispatchers.IO) {
-            Sink().use { sink ->
-                val api = MpvNativeBridge
-                val handle = api.nativeCreate()
-                if (handle == 0L) return@withContext false
-                var attached = false
-                try {
+            val sink = Sink()
+            val api = MpvNativeBridge
+            val handle = try { api.nativeCreate() } catch (failure: Throwable) {
+                sink.close()
+                throw failure
+            }
+            if (handle == 0L) { sink.close(); return@withContext false }
+            val retirement = nativeAudioReleases.beginRelease()
+            try {
                     val options = linkedMapOf(
                         "vo" to "gpu-next", "gpu-api" to "vulkan", "gpu-context" to "androidvk",
                         "vulkan-device" to device, "hwdec" to hwdec, "hwdec-codecs" to "hevc",
@@ -73,7 +76,6 @@ internal object HdrOffscreenAnalysis {
                         return@withContext false
                     if (api.nativeInitialize(handle)<0) return@withContext false
                     api.nativeAttachSurface(handle,sink.reader.surface)
-                    attached = true
                     if (api.nativeSetPropertyString(handle,"android-surface-size","320x180")<0 ||
                         api.nativeSetPropertyString(handle,"force-window","yes")<0 ||
                         api.nativeCommand(handle,arrayOf("loadfile",session.analysisPath(),"replace"))<0)
@@ -100,12 +102,20 @@ internal object HdrOffscreenAnalysis {
                     }
                     @Suppress("UNREACHABLE_CODE")
                     false
-                } finally {
-                    if (attached) {
-                        runCatching { api.nativeCommand(handle,arrayOf("stop")) }
-                        runCatching { api.nativeDetachSurface(handle) }
+            } finally {
+                // There is no event waiter for this handle. Destroy owns
+                // the surface and stream shutdown; do not race a second stop.
+                withContext(NonCancellable) {
+                    try {
+                        boundedNativeOperation(PREVIOUS_RELEASE_LIMIT_MS) { api.nativeDestroy(handle) }
+                        sink.close()
+                        retirement.complete(Unit)
+                    } catch (failure: Throwable) {
+                        session.quarantine()
+                        MpvRetainedOwners.retain(sink)
+                        retirement.completeExceptionally(NativeOutputReleaseUncertain(failure))
+                        throw NativeOutputReleaseUncertain(failure)
                     }
-                    api.nativeDestroy(handle)
                 }
             }
         }

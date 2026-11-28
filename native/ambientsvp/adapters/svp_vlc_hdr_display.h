@@ -37,7 +37,7 @@ struct ambient_svp_hdr_display {
     pl_tex output;
     struct svp_placebo_quality quality;
     struct ambient_hdrplus metadata;
-    bool has_metadata,metadata_aligned;
+    bool has_metadata,metadata_aligned,synthesized;
     struct ambient_svp_scene_config *scene;
     AmbientSvpHdrPass *scene_pass;
     void *scene_lib;
@@ -146,7 +146,9 @@ static inline bool ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp
         pl_tex_destroy(gpu,&s->sources[i].texture);
     }
     for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++)pl_tex_destroy(gpu,&s->phases[i].texture);
-    pl_tex_destroy(gpu,&s->output);svp_placebo_quality_destroy(gpu,&s->quality);pl_dispatch_destroy(&s->dp);
+    pl_tex_destroy(gpu,&s->output);
+    if(!svp_placebo_quality_destroy(gpu,&s->quality))return false;
+    pl_dispatch_destroy(&s->dp);
     if(s->progress_lib)dlclose(s->progress_lib);
     *s=(struct ambient_svp_hdr_display){0};
     return true;
@@ -532,7 +534,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct ambient_svp_hdr_display *s,struct ambient_ahb_owner *owner,
     const struct ambient_svp_pair *pair,bool raw,bool dovi,struct pl_frame *img)
 {
-    s->quality.allow_quarantine=true;
+    s->synthesized=false;
     if(s->quality.terminal_uncertain)return false;
     if(!pair||!owner||!pair->a||!pair->b||!isfinite(pair->phase)||pair->phase<0.f||pair->phase>1.f)return false;
     if(!s->dp)s->dp=pl_dispatch_create(log,gpu);
@@ -645,6 +647,7 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
         if(!ambient_svp_hdr_scene_end(gpu,s,pair))goto original;
     }
     *img=ambient_pl_rgb_frame(output,a->color);
+    s->synthesized=true;
     if(s->has_metadata){
         vlc_video_hdr_dynamic_metadata_t global;
         ambient_hdrplus_project_global(&global,&s->metadata);

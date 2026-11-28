@@ -39,11 +39,22 @@ static void svp_hdr_close(filter_t *f)
     dlclose(s->api.lib);
     vlc_video_context_Release(f->vctx_out);f->vctx_out=NULL;
 }
+// Match the actual AHB import contract, not every nominal SDR transfer.
+// Ambiguous colorimetry must use the existing copy-back path.
+static bool svp_bridge_sdr(const video_format_t *v)
+{
+    return v->primaries==COLOR_PRIMARIES_BT709&&v->transfer==TRANSFER_FUNC_BT709&&
+        v->space==COLOR_SPACE_BT709&&(v->color_range==COLOR_RANGE_FULL||v->color_range==COLOR_RANGE_LIMITED)&&
+        !v->mastering.max_luminance&&!v->lighting.MaxCLL&&!v->lighting.MaxFALL&&
+        !v->dovi.profile&&!v->dovi.rpu_present&&!v->dovi.el_present;
+}
 static bool svp_hdr_eligible(picture_t *p)
 {
     if(!p||!p->context||!p->b_progressive||p->date<=0||p->format.i_chroma!=VLC_CODEC_ANDROID_OPAQUE||
         p->format.orientation!=ORIENT_NORMAL||p->format.projection_mode!=PROJECTION_MODE_RECTANGULAR||
         picture_GetAncillary(p,AMBIENT_SVP_PAIR_ID))return false;
+    if(svp_bridge_sdr(&p->format))
+        return !picture_GetAncillary(p,VLC_ANCILLARY_ID_HDR10PLUS)&&!picture_GetAncillary(p,VLC_ANCILLARY_ID_DOVI);
     return p->format.transfer==TRANSFER_FUNC_SMPTE_ST2084||p->format.transfer==TRANSFER_FUNC_HLG||
         p->format.dovi.profile!=0;
 }
@@ -170,7 +181,8 @@ static int svp_android_open(filter_t *f)
         v->i_visible_width>3840||v->i_visible_height>2160||
         ((uint64_t)v->i_visible_width*v->i_visible_height>1920u*1080u&&!var_InheritInteger(f,"ambientsvp-hdr-pass"))||
         !v->i_frame_rate||!v->i_frame_rate_base||
-        (v->transfer!=TRANSFER_FUNC_SMPTE_ST2084&&v->transfer!=TRANSFER_FUNC_HLG&&!v->dovi.profile))
+        (!svp_bridge_sdr(v)&&v->transfer!=TRANSFER_FUNC_SMPTE_ST2084&&v->transfer!=TRANSFER_FUNC_HLG&&!v->dovi.profile)||
+        (svp_bridge_sdr(v)&&var_InheritInteger(f,"ambientsvp-hdr-pass")))
         return VLC_EGENERIC;
     android_video_context_t *ctx=vlc_video_context_GetPrivate(f->vctx_in,VLC_VIDEO_CONTEXT_AWINDOW);
     if(!ctx||!ctx->air||!ctx->air_api)return VLC_EGENERIC;

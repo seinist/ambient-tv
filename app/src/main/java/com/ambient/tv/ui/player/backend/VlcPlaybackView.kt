@@ -191,7 +191,10 @@ class VlcPlaybackController(
     }
 
     private var vulkanOutput = !audioOnly && useVlcVulkan(videoOutputMode, VideoAccelerationRuntime.current(context),
-        gpuProcessing = hdrPlusTarget != null || toneMappingRequired || initialImageOptions.softwareProcessing && !reducedVideoEffects(context),
+        gpuProcessing = hdrPlusTarget != null || toneMappingRequired || initialImageOptions.softwareProcessing && !reducedVideoEffects(context) ||
+            vlcCombinedSdrResidentEligible(com.ambient.tv.BuildConfig.VLC_SVP_HDR_BRIDGE && experimentalFeaturesEnabled &&
+                VlcNativeRetirement.supported && !VlcNativeRetirement.isQuarantined, preserveHdrSource,
+                effectiveVlcImageOptions(initialImageOptions, reducedVideoEffects(context), vlcSvpAllowed(context))),
         nativeHdrPreferred = nativeHdrPreferred && hdrPlusTarget == null)
     /** Live picture path. Software processing can still run swscale on this surface. */
     var usesAndroidSurfaceOutput by mutableStateOf(!vulkanOutput)
@@ -263,8 +266,11 @@ class VlcPlaybackController(
         extendedHdrSceneVlc && vulkanOutput && hdrPlusTarget != null && !ahbCopyBackRetried &&
             nativeHdrPreferred && sourceHdrStandard in setOf(HdrStandard.HDR10, HdrStandard.HLG,
                 HdrStandard.HDR10_PLUS, HdrStandard.DOLBY_VISION)
+    private fun combinedSdrResidentRoute(): Boolean =
+        extendedHdrSceneVlc && vulkanOutput && !preserveHdrSource && !ahbCopyBackRetried
+    private fun combinedResidentRoute(): Boolean = combinedHdrResidentRoute() || combinedSdrResidentRoute()
     private fun residentTransportAvailable(): Boolean =
-        if (com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT) combinedHdrResidentRoute()
+        if (com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT) combinedResidentRoute()
         else !vulkanOutput && (!preserveHdrSource || nativeHdrPreferred && svpStaticHdrResident(sourceHdrStandard))
     private fun hdrSceneOutputOptions(): List<String>? = runCatching {
         if (!combinedHdrResidentRoute() || sourceHdrStandard != HdrStandard.HDR10_PLUS || hdrPlusDisplayChanged())
@@ -410,7 +416,7 @@ class VlcPlaybackController(
     private var configuredDeinterlaceFilter = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
     private var residentLastOutput: Long? = null
     private var residentLastProgressMs = 0L
-    private fun residentOutputCount(): Long? = if (combinedHdrResidentRoute()) SvpNative.hdrResidentOutputsOrNull() else SvpNative.residentOutputsOrNull()
+    private fun residentOutputCount(): Long? = if (combinedResidentRoute()) SvpNative.hdrResidentOutputsOrNull() else SvpNative.residentOutputsOrNull()
     private fun wantsResident(options: VlcImageOptions, deint: String): Boolean =
         !residentRejected && !audioOnly && residentTransportAvailable() && (!preserveHdrSource || hdrResidentAvailable()) && deint == "off" &&
             !options.softwareProcessing && options.svpMode != "off" &&
@@ -425,7 +431,7 @@ class VlcPlaybackController(
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT &&
             experimentalFeaturesEnabled && VlcNativeRetirement.supported,
         vulkanOutput, preserveHdrSource,
-        configuredSoftwareProcessing, if (configuredResident && combinedHdrResidentRoute()) "off" else configuredSvpMode,
+        configuredSoftwareProcessing, if (configuredResident && combinedResidentRoute()) "off" else configuredSvpMode,
         configuredDeinterlaceMode, ahbCopyBackRetried,
         supportedHdrGpu = android.os.Build.VERSION.SDK_INT >= 34 &&
             (!nativeHdrPreferred || hdrPlusTarget != null) &&
@@ -2102,6 +2108,7 @@ class VlcPlaybackController(
                     // Retry the existing copy-back filter, not the experimental Surface again.
                     Timber.w("VLC resident SVP produced no output; reopening on standard transport")
                     residentRejected = true
+                    if (combinedSdrResidentRoute()) ahbCopyBackRetried = true
                     if (hdrSceneSession != null) cancelHdrScenePass()
                 }
             } else residentLastProgressMs = 0L

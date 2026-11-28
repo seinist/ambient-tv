@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.player.backend
 
+import com.ambient.tv.data.local.VlcImageOptions
+
 import kotlinx.serialization.Serializable
 import com.ambient.tv.data.local.MpvImageOptions
 import com.ambient.tv.ui.player.HdrStandard
@@ -335,6 +337,12 @@ internal fun vlcHdrPlusTargetChanged(expected: VlcHdrPlusTarget?, displayId: Int
 internal fun vlcHdrPlusFallbackNativeHdr(previous: Boolean, attachedStandards: Set<HdrStandard>?,
     source: HdrStandard? = HdrStandard.HDR10_PLUS, baseLayer: HdrStandard? = null): Boolean =
     attachedStandards?.let { nativeHdrSurfacePreferred(source, it, baseLayer) } ?: previous
+
+/** Auto may choose the extended Vulkan route for opted-in SDR SVP.
+ * Actual decoder colorimetry and surface capability are checked natively. */
+internal fun vlcCombinedSdrResidentEligible(bridge: Boolean, preserveHdr: Boolean,
+    options: VlcImageOptions): Boolean = bridge && !preserveHdr && !options.softwareProcessing &&
+    options.svpMode != "off" && svpResidentRequested(options.svp)
 
 /** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
 internal fun vlcAhbExperimentEligible(

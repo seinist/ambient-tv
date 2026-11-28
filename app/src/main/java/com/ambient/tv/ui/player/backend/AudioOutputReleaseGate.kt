@@ -98,4 +98,27 @@ internal class PreviousRelease(private val entries: List<CompletableFuture<Unit>
     }
 }
 
+/** Retain the Java owner, including its Surface/scene references, if a
+ * native deadline expires. Never cancel or destroy it from the watchdog. */
+internal object MpvRetainedOwners {
+    private val retained = mutableListOf<Any>()
+    @Synchronized fun retain(owner: Any) {
+        if (retained.none { it === owner }) retained.add(owner)
+    }
+}
+
+internal fun armNativeRetirementDeadline(
+    release: CompletableFuture<Unit>,
+    limitMs: Long = PREVIOUS_RELEASE_LIMIT_MS,
+    delay: (Long, () -> Unit) -> Unit,
+    onQuarantine: () -> Unit,
+) {
+    delay(limitMs) {
+        if (release.completeExceptionally(NativeOutputReleaseUncertain(
+                java.util.concurrent.TimeoutException("Native retirement exceeded ${limitMs}ms")))) {
+            onQuarantine()
+        }
+    }
+}
+
 internal val nativeAudioReleases = AudioOutputReleaseGate()

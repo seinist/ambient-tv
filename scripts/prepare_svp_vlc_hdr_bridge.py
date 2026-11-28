@@ -45,7 +45,10 @@ def replace(old, new):
     s = s.replace(old, new)
 
 replace('# include "dovi_fel_render.h"', '# include "dovi_fel_render.h"\n# include "svp_vlc_hdr_display.h" // ' + marker)
-replace('    struct ambient_fel_render fel;', '    struct ambient_fel_render fel;\n    struct ambient_svp_hdr_display svp_hdr;')
+replace('    struct ambient_fel_render fel;', '    struct ambient_fel_render fel;\n    struct ambient_svp_hdr_display svp_hdr;\n    bool svp_frame_synthesized;')
+replace('    pl_gpu_flush(gpu);\n    if (sys->ahb) {',
+        '    if (sys->svp_hdr.quality.terminal_uncertain) return false;\n'
+        '    pl_gpu_flush(gpu);\n    if (sys->ahb) {')
 replace('    ambient_fel_render_destroy(gpu, &sys->fel);',
         '    if (cancelled(token) || !ambient_svp_hdr_display_destroy(gpu, &sys->svp_hdr)) return false;\n'
         '    if (cancelled(token)) return false;\n'
@@ -55,13 +58,20 @@ replace('    struct ambient_ahb_output ahb_output = {0};\n    if (sys->ahb) {',
         '    struct vlc_ancillary *svp_anc = picture_GetAncillary(pic, AMBIENT_SVP_PAIR_ID);\n'
         '    const struct ambient_svp_pair *svp_pair = svp_anc ? vlc_ancillary_GetData(svp_anc) : NULL;\n'
         '    bool svp_generated = false;\n'
+        '    sys->svp_frame_synthesized = false;\n'
+        '    if (sys->svp_hdr.quality.terminal_uncertain) { vlc_placebo_ReleaseCurrent(sys->pl); return; }\n'
         '    if (svp_pair && !sys->ahb) { vlc_placebo_ReleaseCurrent(sys->pl); return; }\n'
         '    if (sys->ahb && !svp_pair) {')
 replace('    if (ahb_output.texture) {\n        // The opaque fourcc',
         '    if (svp_pair) {\n'
         '        if (!ambient_svp_hdr_render_pair(gpu, sys->pl->log, &sys->svp_hdr, sys->ahb,\n'
         '                svp_pair, sys->ahb_raw_p010, sys->ahb_dovi, &img)) {\n'
-        '            if (sys->svp_hdr.quality.terminal_uncertain) vlc_ambient_output_quarantine();\n'
+        '            if (sys->svp_hdr.quality.terminal_uncertain) {\n'
+        '                vlc_ambient_output_quarantine();\n'
+        '                sys->fbo = NULL;\n'
+        '                vlc_placebo_ReleaseCurrent(sys->pl);\n'
+        '                return;\n'
+        '            }\n'
         '            failed = true; goto done;\n'
         '        }\n'
         '        svp_generated = true;\n'
@@ -89,7 +99,12 @@ replace('        enum ambient_hdrplus_spatial_result spatial_result=ambient_hdrp
 replace('            full?vlc_ancillary_GetData(full):NULL,eligible,sys->hdr_target_mode!=0);',
         '            metadata,eligible,sys->hdr_target_mode!=0);')
 replace('    if (ahb_output.texture)\n        sys->ahb_frame_rendered = !failed;',
-        '    if (ahb_output.texture || svp_pair)\n        sys->ahb_frame_rendered = !failed;\n    if (svp_pair && !failed) ambient_svp_hdr_mark_output(&sys->svp_hdr);')
+        '    if (ahb_output.texture || svp_pair)\n        sys->ahb_frame_rendered = !failed;\n    sys->svp_frame_synthesized = svp_pair && !failed && sys->svp_hdr.synthesized;')
+replace('        if (sys->ahb && submitted && sys->ahb_frame_rendered &&\n            pl_vulkan_swapchain_ambient_presented(sys->pl->swapchain))\n            var_SetBool(vd, "ambient-ahb-dropped", false);',
+        '        if (sys->ahb && submitted && sys->ahb_frame_rendered &&\n            pl_vulkan_swapchain_ambient_presented(sys->pl->swapchain)) {\n'
+        '            var_SetBool(vd, "ambient-ahb-dropped", false);\n'
+        '            if (sys->svp_frame_synthesized) ambient_svp_hdr_mark_output(&sys->svp_hdr);\n'
+        '        }')
 backup.write_text(original)
 staged.write_text(s)
 display.write_text(s)
