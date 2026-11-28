@@ -9,11 +9,13 @@
 #include <stdlib.h>
 #include <libavutil/buffer.h>
 #include "video/mp_image.h"
+#include "ambientsvp_quality.h"
 #define SVP_FEL_PHASES 8
 struct svp_fel_pair {
     struct mp_image *source[2];
     uint64_t ids[2];
     float phase;
+    AmbientSvpQuality quality;
 };
 static inline const struct svp_fel_pair *svp_fel_get(const struct mp_image *img)
 {
@@ -72,10 +74,10 @@ static inline struct mp_image *svp_fel_previous(struct svp_fel_schedule *s)
     struct mp_image *out=s->previous;s->previous=NULL;s->previous_id=s->tick=0;
     return out;
 }
-static inline bool svp_fel_push(struct svp_fel_schedule *s,struct mp_image *img,double source,double target)
+static inline bool svp_fel_push(struct svp_fel_schedule *s,struct mp_image *img,double source,double target,const AmbientSvpQuality *quality)
 {
     static atomic_uint_fast64_t ids=1;
-    if(!svp_fel_eligible(img)||s->count||!isfinite(source)||!isfinite(target)||
+    if(!quality||!svp_fel_eligible(img)||s->count||!isfinite(source)||!isfinite(target)||
         !(source>0&&target>source&&target/source<=SVP_FEL_PHASES))return false;
     uint64_t id=atomic_fetch_add_explicit(&ids,1,memory_order_relaxed);
     if(!id)return false;
@@ -97,7 +99,7 @@ static inline bool svp_fel_push(struct svp_fel_schedule *s,struct mp_image *img,
         struct svp_fel_pair *p=calloc(1,sizeof(*p));
         if(!p){mp_image_unrefp(&out);goto fail;}
         p->source[0]=mp_image_new_ref(prev);p->source[1]=mp_image_new_ref(img);
-        p->ids[0]=s->previous_id;p->ids[1]=id;p->phase=(float)fmax(0,phase);
+        p->ids[0]=s->previous_id;p->ids[1]=id;p->phase=(float)fmax(0,phase);p->quality=*quality;
         if(!p->source[0]||!p->source[1]){
             svp_fel_pair_free(NULL,(uint8_t *)p);mp_image_unrefp(&out);goto fail;
         }
