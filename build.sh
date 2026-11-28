@@ -1237,7 +1237,11 @@ build_release() {
         UPDATE_APKS+=("$LAST_BUILT_APK")
     done
     if [[ "${MODULE_PACKAGING:-full}" == modular-preview ]]; then
-        python3 "$ROOT_DIR/scripts/check_modular_preview_apk.py" "${UPDATE_APKS[@]}"
+        local -a module_audit_args=()
+        if [[ "${SKIP_VLC_VULKAN:-0}" != 1 ]]; then
+            module_audit_args+=(--expect-vlc-external)
+        fi
+        python3 "$ROOT_DIR/scripts/check_modular_preview_apk.py" "${module_audit_args[@]}" "${UPDATE_APKS[@]}"
     fi
     generate_release_update_manifest
 }
