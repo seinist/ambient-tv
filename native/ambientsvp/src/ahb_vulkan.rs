@@ -5,7 +5,7 @@
 //! AHardwareBuffer_lock, host image upload or pixel readback.
 use ash::vk;
 use crate::mediacodec_reader::{Frame,FrameInfo,Desc,AHardwareBuffer_describe,AHardwareBuffer_acquire,AHardwareBuffer_release};
-use std::{ffi::{c_void,CStr,c_char},ptr,sync::{Arc,atomic::{AtomicU32,Ordering}},
+use std::{ffi::{c_void,CStr,c_char},ptr,sync::{Arc,Mutex,atomic::{AtomicU32,Ordering}},
     panic::{catch_unwind,AssertUnwindSafe}};
 use std::os::fd::{FromRawFd,IntoRawFd,OwnedFd,AsRawFd};
 
@@ -17,6 +17,36 @@ const MEMORY:vk::ExternalMemoryHandleTypeFlags=vk::ExternalMemoryHandleTypeFlags
 fn range()->vk::ImageSubresourceRange{
     vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).level_count(1).layer_count(1)
 }
+struct ImportCommands{
+    device:ash::Device,pool:vk::CommandPool,cmd:vk::CommandBuffer,fence:vk::Fence,
+}
+impl Drop for ImportCommands{
+    fn drop(&mut self){unsafe{
+        self.device.destroy_command_pool(self.pool,None);
+        self.device.destroy_fence(self.fence,None);
+    }}
+}
+impl ImportCommands{
+    fn acquire(core:&Core)->Result<Self>{
+        let cached=core.idle_commands.lock().unwrap_or_else(|e|e.into_inner()).pop();
+        if let Some(x)=cached{
+            unsafe{
+                x.device.reset_command_pool(x.pool,vk::CommandPoolResetFlags::empty()).map_err(err)?;
+                x.device.reset_fences(&[x.fence]).map_err(err)?;
+            }
+            return Ok(x);
+        }
+        let mut x=Self{device:core.device.clone(),pool:vk::CommandPool::null(),cmd:vk::CommandBuffer::null(),fence:vk::Fence::null()};
+        unsafe{
+            x.pool=x.device.create_command_pool(&vk::CommandPoolCreateInfo::default()
+                .queue_family_index(core.family).flags(vk::CommandPoolCreateFlags::TRANSIENT),None).map_err(err)?;
+            x.cmd=x.device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(x.pool)
+                .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).map_err(err)?[0];
+            x.fence=x.device.create_fence(&Default::default(),None).map_err(err)?;
+        }
+        Ok(x)
+    }
+}
 struct Core{
     device:ash::Device,
     ahb:ash::android::external_memory_android_hardware_buffer::Device,
@@ -24,7 +54,7 @@ struct Core{
     memory:vk::PhysicalDeviceMemoryProperties,
     limits:vk::PhysicalDeviceLimits,high_supported:bool,
     queue:vk::Queue,family:u32,
-    in_flight:AtomicU32,max_jobs:AtomicU32,
+    in_flight:AtomicU32,max_jobs:AtomicU32,idle_commands:Mutex<Vec<ImportCommands>>,
 }
 pub struct Importer(Arc<Core>);
 impl Importer{
@@ -119,7 +149,7 @@ unsafe fn make_importer(instance:vk::Instance,physical:vk::PhysicalDevice,device
     let ahb=ash::android::external_memory_android_hardware_buffer::Device::new(&instance,&d);
     let fd=ash::khr::external_semaphore_fd::Device::new(&instance,&d);
     let memory=unsafe{instance.get_physical_device_memory_properties(physical)};
-    Ok(Importer(Arc::new(Core{device:d,ahb,fd,memory,limits:properties.limits,high_supported,queue,family,in_flight:AtomicU32::new(0),max_jobs:AtomicU32::new(MAX_JOBS)})))
+    Ok(Importer(Arc::new(Core{device:d,ahb,fd,memory,limits:properties.limits,high_supported,queue,family,in_flight:AtomicU32::new(0),max_jobs:AtomicU32::new(MAX_JOBS),idle_commands:Mutex::new(Vec::new())})))
 }
 
 /// Borrowed player-owned storage image. The caller locks the AVVkFrame,
@@ -148,7 +178,7 @@ pub struct Job{
     output:vk::Image,output_memory:vk::DeviceMemory,output_view:vk::ImageView,
     destination:Option<Destination>,
     set_layout:vk::DescriptorSetLayout,pipeline_layout:vk::PipelineLayout,pipeline:vk::Pipeline,
-    pool:vk::DescriptorPool,commands:vk::CommandPool,fence:vk::Fence,
+    pool:vk::DescriptorPool,commands:vk::CommandPool,cmd:vk::CommandBuffer,fence:vk::Fence,
     wait:vk::Semaphore,signal:vk::Semaphore,
     frame:Option<Box<Frame>>,completed:bool,
     consumers:AtomicU32,
@@ -163,6 +193,16 @@ impl Drop for Job{
         // If a device is lost before its acquire wait completes, Frame's
         // Drop returns the original producer fence rather than -1.
         let d=&self.core.device;
+        // Only a positively signaled conversion fence qualifies for reuse.
+        // Device loss and all partially constructed jobs are discarded.
+        if self.completed&&self.commands!=vk::CommandPool::null()&&self.fence!=vk::Fence::null()&&
+            unsafe{d.get_fence_status(self.fence)}==Ok(true){
+            let mut idle=self.core.idle_commands.lock().unwrap_or_else(|e|e.into_inner());
+            if idle.len()<self.core.max_jobs.load(Ordering::Acquire) as usize{
+                idle.push(ImportCommands{device:d.clone(),pool:std::mem::replace(&mut self.commands,vk::CommandPool::null()),
+                    cmd:self.cmd,fence:std::mem::replace(&mut self.fence,vk::Fence::null())});
+            }
+        }
         unsafe{
             d.destroy_command_pool(self.commands,None);
             d.destroy_descriptor_pool(self.pool,None);
@@ -203,7 +243,7 @@ impl Job{
             source_view:vk::ImageView::null(),conversion:vk::SamplerYcbcrConversion::null(),sampler:vk::Sampler::null(),
             output:vk::Image::null(),output_memory:vk::DeviceMemory::null(),output_view:vk::ImageView::null(),destination,
             set_layout:vk::DescriptorSetLayout::null(),pipeline_layout:vk::PipelineLayout::null(),pipeline:vk::Pipeline::null(),
-            pool:vk::DescriptorPool::null(),commands:vk::CommandPool::null(),fence:vk::Fence::null(),
+            pool:vk::DescriptorPool::null(),commands:vk::CommandPool::null(),cmd:vk::CommandBuffer::null(),fence:vk::Fence::null(),
             wait:vk::Semaphore::null(),signal:vk::Semaphore::null(),frame:None,completed:false,consumers:AtomicU32::new(0)};
         unsafe{AHardwareBuffer_acquire(j.buffer)};
         j.import()?;
@@ -349,7 +389,10 @@ impl Job{
             }else if fd!= -1{return Err("invalid acquire fence".into());}
             let mut export=vk::ExportSemaphoreCreateInfo::default().handle_types(HANDLE);
             self.signal=d.create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut export),None).map_err(err)?;
-            self.fence=d.create_fence(&Default::default(),None).map_err(err)?;
+            let mut bundle=ImportCommands::acquire(&self.core)?;
+            self.commands=std::mem::replace(&mut bundle.pool,vk::CommandPool::null());
+            self.cmd=bundle.cmd;
+            self.fence=std::mem::replace(&mut bundle.fence,vk::Fence::null());
         }
         Ok(())
     }
@@ -378,10 +421,7 @@ impl Job{
                     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE).image_info(&output),
             ];
             d.update_descriptor_sets(&writes,&[]);
-            self.commands=d.create_command_pool(&vk::CommandPoolCreateInfo::default()
-                .queue_family_index(self.core.family).flags(vk::CommandPoolCreateFlags::TRANSIENT),None).map_err(err)?;
-            let cmd=d.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(self.commands)
-                .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).map_err(err)?[0];
+            let cmd=self.cmd;
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
             let acquire=[
                 // AHB content originates outside Vulkan. GENERAL is the

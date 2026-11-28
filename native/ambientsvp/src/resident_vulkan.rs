@@ -535,7 +535,7 @@ struct Core{
     held_hits:AtomicU32,
     lost:AtomicBool,
     stats_supported:bool,
-    stats:Mutex<Option<Arc<StatsPipelines>>>,
+    stats:Mutex<Option<Arc<StatsPipelines>>>,stats_idle:Mutex<Vec<StatsJob>>,
 }
 pub struct VulkanResident(Arc<Core>);
 #[repr(C)]
@@ -646,6 +646,12 @@ impl VulkanPair{
         if self.core.lost.load(Ordering::Acquire){return;}
         for aux in &mut self.extended{aux.recycle();}
         self.extended.clear();
+        {
+            let mut idle=self.core.stats_idle.lock().unwrap_or_else(|e|e.into_inner());
+            for slot in &mut self.hdr_jobs{
+                if let Some(job)=slot.take(){if idle.len()<MAX_PHASES{idle.push(job);}}
+            }
+        }
         let mut idle=self.core.idle.lock().unwrap_or_else(|e|e.into_inner());
         if idle.len()>=MAX_IN_FLIGHT as usize{return;}
         idle.push(PairResources{
@@ -863,7 +869,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=4&&
             limits.max_storage_buffer_range>=100001*4*3&&
             u64::from(limits.max_storage_buffer_range)>=4*(3*100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
-        stats:Mutex::new(None),
+        stats:Mutex::new(None),stats_idle:Mutex::new(Vec::new()),
         #[cfg(test)]
         held_hits:AtomicU32::new(0)})))
 }

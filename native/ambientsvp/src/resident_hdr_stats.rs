@@ -180,17 +180,34 @@ impl StatsJob{
         };
         if scene&&windows.len()>1&&ellipses.is_none(){return Err("local scene windows require ellipse geometry".into());}
         let proxy_count=if scene{u64::from(core.width.div_ceil(5))*u64::from(core.height.div_ceil(5))}else{0};
-        let hist=Buffer::new(core,(BINS*windows.len() as u64+proxy_count)*4,
-            vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
-        let scene_hist=if scene{Some(Buffer::new(core,BINS*4*windows.len() as u64,vk::BufferUsageFlags::TRANSFER_DST,
-            vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?)}else{None};
+        let hist_size=(BINS*windows.len() as u64+proxy_count)*4;
+        let scene_size=BINS*4*windows.len() as u64;
         let has_spans=ellipses.is_some()&&windows.len()>1;
         let static_spans=has_spans&&tracking.is_some_and(|t|t.1==0.0);
         let span_words=if has_spans{2*core.height as usize*(windows.len()-1)}else{0};
-        let summary=Buffer::new(core,((STRIDE*windows.len()+span_words)*4) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
-            vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
-        let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
-            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),scanlines:has_spans&&!static_spans,width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
+        let summary_size=((STRIDE*windows.len()+span_words)*4) as u64;
+        let cached={
+            let mut idle=core.stats_idle.lock().unwrap_or_else(|e|e.into_inner());
+            idle.iter().position(|x|x.hist.size==hist_size&&x.summary.size==summary_size&&
+                x.scene_hist.as_ref().map(|b|b.size)==scene.then_some(scene_size))
+                .map(|i|idle.swap_remove(i))
+        };
+        let mut s=if let Some(mut cached)=cached{
+            cached.windows.clear();cached.windows.extend_from_slice(windows);
+            cached.tracking=tracking.is_some();cached.affine=tracking.is_some_and(|t|t.2);
+            cached.scanlines=has_spans&&!static_spans;
+            cached
+        }else{
+            let hist=Buffer::new(core,hist_size,
+                vk::BufferUsageFlags::STORAGE_BUFFER|vk::BufferUsageFlags::TRANSFER_DST|vk::BufferUsageFlags::TRANSFER_SRC,vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
+            let scene_hist=if scene{Some(Buffer::new(core,scene_size,vk::BufferUsageFlags::TRANSFER_DST,
+                vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?)}else{None};
+            let summary=Buffer::new(core,summary_size,vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
+            Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,scene_hist,windows:windows.to_vec(),
+                pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),affine:tracking.is_some_and(|t|t.2),
+                scanlines:has_spans&&!static_spans,width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)}
+        };
         let mut config=vec![0u32;STRIDE*windows.len()+span_words];
         for (i,w) in windows.iter().enumerate(){
             let row=&mut config[i*STRIDE..(i+1)*STRIDE];
@@ -220,9 +237,11 @@ impl StatsJob{
             let sizes=[
                 vk::DescriptorPoolSize::default().ty(vk::DescriptorType::SAMPLED_IMAGE).descriptor_count(1),
                 vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(4)];
-            s.pool=s.device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(1).pool_sizes(&sizes),None).map_err(err)?;
-            s.set=s.device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(s.pool)
-                .set_layouts(&[s.pipelines.collect.set])).map_err(err)?[0];
+            if s.pool==vk::DescriptorPool::null(){
+                s.pool=s.device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(1).pool_sizes(&sizes),None).map_err(err)?;
+                s.set=s.device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(s.pool)
+                    .set_layouts(&[s.pipelines.collect.set])).map_err(err)?[0];
+            }
             let image=[vk::DescriptorImageInfo::default().image_view(view).image_layout(vk::ImageLayout::GENERAL)];
             let h=[vk::DescriptorBufferInfo::default().buffer(s.hist.buffer).range(s.hist.size)];
             let o=[vk::DescriptorBufferInfo::default().buffer(s.summary.buffer).range(s.summary.size)];
