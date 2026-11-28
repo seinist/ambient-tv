@@ -101,7 +101,7 @@ impl StatsJob{
         for (i,w) in windows.iter().enumerate(){
             let row=&mut config[i*STRIDE..(i+1)*STRIDE];
             row[..4].copy_from_slice(&w.rect);row[4]=w.count;row[5..20].copy_from_slice(&w.percentages);
-            if let Some((tracks,phase))=tracking{if i>0{
+            if let Some((tracks,phase,_))=tracking{if i>0{
                 let t=tracks[i];row[43]=phase.to_bits();row[44..48].copy_from_slice(&t.a);
                 row[48..52].copy_from_slice(&t.b);row[52..54].copy_from_slice(&t.ellipse);row[54]=1;row[55]=u32::from(s.affine);
                 if let Some(e)=ellipses{row[64..67].copy_from_slice(&e[i]);row[67]=1;}
